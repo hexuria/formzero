@@ -13,14 +13,18 @@ form/deadline dashboard, and a functional tax-calendar engine.
 | Tax deadline calculation | Functional; 20 compiled rule groups |
 | Calendar policy | Persisted in SQLite with sourced holidays and overrides |
 | Calendar export | Functional `.ics` handoff to the default calendar app |
-| Form editors and print previews | UI only; not filing-ready |
-| Profile setup, import, authentication, payment, and submission | UI only |
+| Tax profiles and Forms Set | Persisted, revisioned, effective-dated, and shared by calendar/form availability |
+| Recurring form drafts | 2551Q and 1701Q profile snapshots plus transaction values save/resume |
+| Other form editors and print previews | UI/projection coverage only; not filing-ready |
+| Import, authentication, filing payment, and submission | UI only |
 | Distribution | macOS development build; not notarized or production-ready |
 
 **Do not use this app as an authoritative filing plan yet.** Calendar export
-currently falls back to the full supported form catalog. It does not yet apply
-a taxpayer's persisted Forms Set, fiscal year, eFPS group, or scoped policy.
-Always confirm deadlines and filing requirements with official BIR guidance.
+applies a selected taxpayer's persisted Forms Set when configured and uses the
+catalog fallback only while that set is unconfigured. It does not yet fully
+model fiscal periods, eFPS groups, every scoped policy, filing submission, or
+official print/file parity. Always confirm deadlines and filing requirements
+with official BIR guidance.
 
 All bundled taxpayer data is synthetic. `reference/` is intentionally ignored
 because source-app captures may contain private taxpayer data.
@@ -30,12 +34,12 @@ because source-app captures may contain private taxpayer data.
 Requirements: Node.js 22.15+, Zig 0.16.0, and macOS.
 
 ```sh
-rtk npm ci
-rtk npm run generate
-rtk npx native test --yes -Dplatform=null
-rtk npx native check . --strict
-rtk npx native build . --yes
-rtk npx native dev . --yes
+npm ci
+npm run generate
+npx native test --yes -Dplatform=null
+npx native check . --strict
+npx native build . --yes
+npx native dev . --yes
 ```
 
 `@native-sdk/cli` is pinned to 0.6.1 in `package-lock.json`.
@@ -46,7 +50,7 @@ rtk npx native dev . --yes
 `src/pages/`, or `src/app-root.fragment`, then run:
 
 ```sh
-rtk npm run generate
+npm run generate
 ```
 
 Commit the regenerated `src/app.native`. The generator is deterministic and
@@ -61,6 +65,9 @@ idempotent.
 - `src/calendar/store.zig` — SQLite schema, policy, and provider mappings
 - `src/calendar/ics.zig` — RFC 5545 calendar generation
 - `src/calendar/ui_state.zig` — calendar state and application adapter
+- `src/tax_profile/` — reusable facts, immutable revisions, persistence, and profile UI state
+- `src/forms/` — generated form contracts, profile composition, draft persistence, and 2551Q/1701Q transaction state
+- `scripts/tax-catalog/` — strict TypeScript catalog authoring and deterministic Zig/report generation
 - `scripts/flatten-native.mjs` — modular markup generator
 - `app.zon` — product manifest, permissions, assets, and platform target
 
@@ -69,11 +76,12 @@ idempotent.
 Before merging:
 
 ```sh
-rtk npm run generate
-rtk git diff --check
-rtk npx native test --yes -Dplatform=null
-rtk npx native check . --strict
-rtk npx native build . --yes
+npm run generate
+npm run check:tax-catalog
+git diff --check
+npx native test --yes -Dplatform=null
+npx native check . --strict
+npx native build . --yes
 ```
 
 For visible changes, rebuild and relaunch the app before reviewing screenshots;
@@ -81,3 +89,4 @@ an already-running process may still show an older binary.
 
 See the [contributor guide](docs/NATIVE_SDK_GUIDE_AND_IMPROVEMENT_PLAN.md) for
 automation, security, packaging, and the remaining release gates.
+
