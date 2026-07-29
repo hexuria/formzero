@@ -34,12 +34,12 @@ because source-app captures may contain private taxpayer data.
 Requirements: Node.js 22.15+, Zig 0.16.0, and macOS.
 
 ```sh
-rtk npm ci
-rtk npm run generate
-rtk npx native test --yes -Dplatform=null
-rtk npx native check . --strict
-rtk npx native build . --yes
-rtk npx native dev . --yes
+npm ci
+npm run generate
+npx native test --yes -Dplatform=null
+npx native check . --strict
+npx native build . --yes
+npx native dev . --yes
 ```
 
 `@native-sdk/cli` is pinned to 0.6.1 in `package-lock.json`.
@@ -50,7 +50,7 @@ rtk npx native dev . --yes
 `src/pages/`, or `src/app-root.fragment`, then run:
 
 ```sh
-rtk npm run generate
+npm run generate
 ```
 
 Commit the regenerated `src/app.native`. The generator is deterministic and
@@ -76,12 +76,12 @@ idempotent.
 Before merging:
 
 ```sh
-rtk npm run generate
-rtk npm run check:tax-catalog
-rtk git diff --check
-rtk npx native test --yes -Dplatform=null
-rtk npx native check . --strict
-rtk npx native build . --yes
+npm run generate
+npm run check:tax-catalog
+git diff --check
+npx native test --yes -Dplatform=null
+npx native check . --strict
+npx native build . --yes
 ```
 
 For visible changes, rebuild and relaunch the app before reviewing screenshots;
