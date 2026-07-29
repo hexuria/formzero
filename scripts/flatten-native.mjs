@@ -9,17 +9,21 @@ const projectRoot = path.resolve(scriptDirectory, "..");
 const outputPath = "src/app.native";
 
 // Native markup templates must be defined before their first use. Keep this
-// order explicit and stable: shared shell, seven main pages plus the reviewer
-// gallery, ten form pages, seven auxiliary surfaces, then the editable root.
+// order explicit and stable: shared components, seven main pages plus the
+// reviewer gallery, ten form pages, seven auxiliary surfaces, then the
+// editable root.
 const sourceGroups = [
   {
-    name: "shell",
-    files: ["src/components/shell.native"],
+    name: "shared components",
+    files: [
+      "src/components/shell.native",
+      "src/components/multi-select-combobox.native",
+    ],
   },
   {
     name: "main pages",
     files: [
-      "src/pages/global-dashboard.native",
+      "src/pages/global-dashboard.fragment",
       "src/pages/taxpayer-dashboard.native",
       "src/pages/profile-setup.native",
       "src/pages/import-data.native",

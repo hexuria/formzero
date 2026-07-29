@@ -4,10 +4,11 @@
   Edit those files, then rerun the generator.
 
   Fixed concatenation order:
-  shell:
+  shared components:
     - src/components/shell.native
+    - src/components/multi-select-combobox.native
   main pages:
-    - src/pages/global-dashboard.native
+    - src/pages/global-dashboard.fragment
     - src/pages/taxpayer-dashboard.native
     - src/pages/profile-setup.native
     - src/pages/import-data.native
@@ -610,110 +611,336 @@
   </stack>
 </template>
 
+<!--
+  Reusable view contract for the app's bounded multi-select state.
+
+  The host supplies derived option rows and summary flags. The fixed
+  multi_select_* messages form the adapter seam to the host model:
+    - multi_select_open / multi_select_close
+    - multi_select_query_changed
+    - multi_select_toggle_option:{option.id}
+    - multi_select_select_all_filtered / multi_select_clear_all
+-->
+<template
+  name="multi-select-combobox"
+  args="value query open options allselected hiddencount width menuheight placeholder label">
+  <stack width="{width}">
+    <!-- The summary trigger and search editor are deliberately separate.
+         Mounting a menu around the same editor that initiated the click
+         creates a focus/dismiss race on AppKit. -->
+    <select
+      size="sm"
+      placeholder="Select options..."
+      label="{label}"
+      on-press="multi_select_open">{value}</select>
+
+    <if test="{open}">
+      <dropdown-menu
+        anchor="below"
+        anchor-alignment="stretch"
+        anchor-offset="4"
+        height="{menuheight}"
+        on-dismiss="multi_select_close">
+        <input
+          size="sm"
+          text="{query}"
+          placeholder="{placeholder}"
+          autofocus="true"
+          on-input="multi_select_query_changed"/>
+
+        <separator/>
+
+        <if test="{allselected}">
+          <menu-item icon="x" on-press="multi_select_clear_all">Deselect All</menu-item>
+        </if>
+        <else>
+          <menu-item icon="check" on-press="multi_select_select_all_filtered">Select All</menu-item>
+        </else>
+
+        <menu-item icon="x-circle" on-press="multi_select_clear_all">Clear All</menu-item>
+
+        <separator/>
+
+        <for each="options" key="id" as="option">
+          <if test="{option.selected}">
+            <menu-item
+              selected="true"
+              on-press="multi_select_toggle_option:{option.id}">{option.label}</menu-item>
+          </if>
+          <else>
+            <menu-item
+              selected="false"
+              on-press="multi_select_toggle_option:{option.id}">{option.label}</menu-item>
+          </else>
+        </for>
+        <else>
+          <menu-item disabled="true">No matching options</menu-item>
+        </else>
+
+        <if test="{hiddencount > 0}">
+          <separator/>
+          <menu-item disabled="true">{hiddencount} more matches - keep typing</menu-item>
+        </if>
+      </dropdown-menu>
+    </if>
+  </stack>
+</template>
+
+<template name="global-deadline-row" args="date form title detail">
+  <card padding="0">
+    <row padding="12" gap="14" cross="center">
+      <card padding="0" background="surface_subtle">
+        <column width="54" height="54" main="center" cross="center" gap="1">
+          <text foreground="text_muted"><span weight="bold">JUL</span></text>
+          <text size="heading"><span weight="bold">{date}</span></text>
+        </column>
+      </card>
+      <column grow="1" gap="4">
+        <text><span weight="bold">{form}</span></text>
+        <text wrap="true" foreground="text_muted">{title}</text>
+        <if test="{detail}">
+          <text wrap="true" foreground="text_muted">{detail}</text>
+        </if>
+      </column>
+    </row>
+  </card>
+</template>
+
 <template name="global-news-item" args="title body meta">
-  <card>
+  <card padding="0">
     <column padding="16" gap="8">
+      <row cross="center" gap="8">
+        <badge variant="secondary">RSS Feed</badge>
+        <text grow="1" text-alignment="end" foreground="text_muted">{meta}</text>
+      </row>
       <text><span weight="bold">{title}</span></text>
       <text wrap="true" foreground="text_muted">{body}</text>
-      <text foreground="text_muted">{meta}</text>
     </column>
   </card>
 </template>
 
+<template name="global-calendar-weekday" args="label">
+  <column height="34" padding="6" main="center" cross="center" background="surface_subtle">
+    <text text-alignment="center" foreground="text_muted">
+      <span weight="bold">{label}</span>
+    </text>
+  </column>
+</template>
+
+<template name="global-calendar-day" args="day marker=">
+  <column height="58" padding="7" main="space_between" cross="stretch" background="surface">
+    <text text-alignment="end">{day}</text>
+    <if test="{marker}">
+      <text text-alignment="center" foreground="destructive">{marker}</text>
+    </if>
+  </column>
+</template>
+
+<template name="global-calendar-warning-day" args="day marker=">
+  <column height="58" padding="7" main="space_between" cross="stretch" background="surface">
+    <text text-alignment="end">{day}</text>
+    <if test="{marker}">
+      <text text-alignment="center" foreground="warning">{marker}</text>
+    </if>
+  </column>
+</template>
+
+<template name="global-calendar-empty">
+  <column height="58" background="surface_subtle"></column>
+</template>
+
+<template name="global-calendar-today">
+  <column height="58" padding="7" main="space_between" cross="stretch" background="surface">
+    <row main="end">
+      <badge variant="outline">29</badge>
+    </row>
+    <spacer/>
+  </column>
+</template>
+
 <template name="global-calendar-column">
   <column grow="1" gap="12">
-    <row cross="center" gap="12">
-      <column grow="1" gap="4">
+    <if test="{constrainedLayout}">
+      <column gap="10">
         <text><span weight="bold">Compliance Calendar</span></text>
-        <text wrap="true" foreground="text_muted">One resolver for rules, dates, holidays, and extensions</text>
+        <use
+          template="multi-select-combobox"
+          value="{formFilterText}"
+          query="{formFilterQuery}"
+          open="{formFilterOpen}"
+          options="{visibleFormOptions}"
+          allselected="{formFilterAllFilteredSelected}"
+          hiddencount="{formFilterHiddenCount}"
+          width="240"
+          menuheight="420"
+          placeholder="Search form codes..."
+          label="Filter compliance calendar forms"/>
       </column>
-      <badge variant="secondary">{calendarDeadlineCount}</badge>
-    </row>
+    </if>
+    <else>
+      <row cross="center" gap="12">
+        <text grow="1"><span weight="bold">Compliance Calendar</span></text>
+        <use
+          template="multi-select-combobox"
+          value="{formFilterText}"
+          query="{formFilterQuery}"
+          open="{formFilterOpen}"
+          options="{visibleFormOptions}"
+          allselected="{formFilterAllFilteredSelected}"
+          hiddencount="{formFilterHiddenCount}"
+          width="240"
+          menuheight="420"
+          placeholder="Search form codes..."
+          label="Filter compliance calendar forms"/>
+      </row>
+    </else>
 
-    <card>
-      <column padding="20" gap="12">
-        <row gap="10" cross="center">
-          <icon name="clock" foreground="accent" width="26" height="26"/>
-          <column grow="1" gap="4">
-            <text><span weight="bold">{currentCalendarYear} tax deadline rules</span></text>
-            <text wrap="true" foreground="text_muted">
-              Shared rules and sourced policy records are used when a taxpayer
-              profile resolves its schedule.
-            </text>
-          </column>
+    <card padding="0">
+      <column gap="0">
+        <row padding="12" cross="center" gap="8">
+          <text grow="1"><span weight="bold">July 2026</span></text>
+          <row padding="4" cross="center" gap="2" background="surface_subtle" radius="md">
+            <button
+              size="sm"
+              variant="ghost"
+              icon="chevron-left"
+              label="Previous month"></button>
+            <button
+              size="sm"
+              variant="ghost"
+              icon="chevron-right"
+              label="Next month"></button>
+          </row>
         </row>
         <separator/>
-        <text wrap="true" foreground="text_muted">
-          Saturdays and Sundays adjust automatically. Only source-cited
-          SQLite non-working days and deadline overrides change the schedule.
-        </text>
-        <button variant="primary" icon="external-link" on-press="show_tax_calendar">Review Calendar Rules</button>
+        <grid columns="7" gap="1" background="border">
+          <use template="global-calendar-weekday" label="Sun"/>
+          <use template="global-calendar-weekday" label="Mon"/>
+          <use template="global-calendar-weekday" label="Tue"/>
+          <use template="global-calendar-weekday" label="Wed"/>
+          <use template="global-calendar-weekday" label="Thu"/>
+          <use template="global-calendar-weekday" label="Fri"/>
+          <use template="global-calendar-weekday" label="Sat"/>
+
+          <use template="global-calendar-empty"/>
+          <use template="global-calendar-empty"/>
+          <use template="global-calendar-empty"/>
+          <use template="global-calendar-day" day="1"/>
+          <use template="global-calendar-day" day="2"/>
+          <use template="global-calendar-day" day="3"/>
+          <use template="global-calendar-day" day="4"/>
+
+          <use template="global-calendar-day" day="5"/>
+          <use template="global-calendar-day" day="6"/>
+          <use template="global-calendar-day" day="7"/>
+          <use template="global-calendar-day" day="8"/>
+          <use template="global-calendar-day" day="9"/>
+          <use template="global-calendar-day" day="10" marker="{calendarDay10Marker}"/>
+          <use template="global-calendar-day" day="11"/>
+
+          <use template="global-calendar-day" day="12"/>
+          <use template="global-calendar-day" day="13"/>
+          <use template="global-calendar-day" day="14"/>
+          <use template="global-calendar-day" day="15" marker="{calendarDay15Marker}"/>
+          <use template="global-calendar-day" day="16"/>
+          <use template="global-calendar-day" day="17"/>
+          <use template="global-calendar-day" day="18"/>
+
+          <use template="global-calendar-day" day="19"/>
+          <use template="global-calendar-day" day="20"/>
+          <use template="global-calendar-day" day="21"/>
+          <use template="global-calendar-day" day="22"/>
+          <use template="global-calendar-day" day="23"/>
+          <use template="global-calendar-day" day="24"/>
+          <use template="global-calendar-day" day="25"/>
+
+          <use template="global-calendar-day" day="26"/>
+          <use template="global-calendar-day" day="27" marker="{calendarDay27Marker}"/>
+          <use template="global-calendar-day" day="28"/>
+          <use template="global-calendar-today"/>
+          <use template="global-calendar-day" day="30"/>
+          <use
+            template="global-calendar-warning-day"
+            day="31"
+            marker="{calendarDay31Marker}"/>
+          <use template="global-calendar-empty"/>
+        </grid>
       </column>
     </card>
+
+    <text><span weight="bold">Deadlines for July 2026</span></text>
+    <if test="{hasVisibleGlobalDeadlines}">
+      <for each="visibleGlobalDeadlines" key="id" as="deadline">
+        <use
+          template="global-deadline-row"
+          date="{deadline.day}"
+          form="{deadline.form}"
+          title="{deadline.title}"
+          detail="{deadline.detail}"/>
+      </for>
+    </if>
+    <else>
+      <card padding="0">
+        <column padding="24" gap="8" cross="center">
+          <icon name="file-text" foreground="text_muted" width="22" height="22"/>
+          <text><span weight="bold">No upcoming deadlines</span></text>
+          <text wrap="true" text-alignment="center" foreground="text_muted">
+            Select one or more forms to show their July filing deadlines.
+          </text>
+        </column>
+      </card>
+    </else>
   </column>
 </template>
 
 <template name="global-news-column">
   <column grow="1" gap="12">
     <row cross="center" gap="12">
-      <column grow="1" gap="4">
-        <text><span weight="bold">Important News</span></text>
-        <text wrap="true" foreground="text_muted">BIR updates and application notices</text>
-      </column>
-      <button size="sm" variant="ghost" icon="refresh-cw" disabled="true">Refresh</button>
+      <text grow="1"><span weight="bold">Important News</span></text>
+      <button size="sm" variant="secondary">Refresh</button>
     </row>
 
     <use
       template="global-news-item"
-      title="Stay current with BIR advisories"
-      body="Review official issuances before filing. The calendar is computed from compiled rules plus source-cited local policy records."
-      meta="Application notice"/>
+      title="Executive Order No. 115, s. 2026"
+      body="STRENGTHENING THE TECHNICAL COOPERATION COUNCIL OF THE PHILIPPINES"
+      meta="Wed, 29 Apr 2026 02:00:36 +0000"/>
     <use
       template="global-news-item"
-      title="Quarterly returns use typed taxable periods"
-      body="Confirm taxpayer classifications and registered tax types before preparing each return."
-      meta="Calendar guidance"/>
+      title="Republic Act No. 12321"
+      body="AN ACT INSTITUTIONALIZING SUPPORT FOR PUBLIC BASIC EDUCATION SCHOOLS IN GEOGRAPHICALLY ISOLATED AND DISADVANTAGED AREAS (GIDA) AND UNDERSERVED COMMUNITIES, AND APPROPRIATING FUNDS THEREFOR"
+      meta="Wed, 22 Jul 2026 03:04:07 +0000"/>
     <use
       template="global-news-item"
-      title="Keep profile information complete"
-      body="Accurate registration details help pre-fill forms consistently across the application."
-      meta="Profile guidance"/>
-
-    <card>
-      <column padding="20" gap="10">
-        <row gap="10" cross="center">
-          <icon name="info" foreground="info" width="22" height="22"/>
-          <text><span weight="bold">Calendar source of truth</span></text>
-        </row>
-        <text wrap="true" foreground="text_muted">
-          Calendar rules, year projection, overrides, non-working days, and
-          export now share one tested resolver. News content remains a static application notice.
-        </text>
-      </column>
-    </card>
+      title="DMW-Advisory No. 44, s. 2026"
+      body="OWWA E-CARD AS AN OFW'S PRIMARY IDENTIFICATION CARD AND VALID GOVERNMENT-ISSUED ID"
+      meta="Wed, 15 Jul 2026 02:00:38 +0000"/>
+    <use
+      template="global-news-item"
+      title="Executive Order No. 118, s. 2026"
+      body="MALACAÑAN PALACE MANILA BY THE PRESIDENT OF THE PHILIPPINES EXECUTIVE ORDER NO. 118 IMPOSITION OF A MANDATED PRICE CEILING ON IMPORTED RICE"
+      meta="Wed, 13 May 2026 08:00:36 +0000"/>
+    <use
+      template="global-news-item"
+      title="Proclamation No. 1317 s. 2026"
+      body="DECLARING WEDNESDAY, 01 JULY 2026 AS A SPECIAL (NON-WORKING) DAY IN THE CITY OF DIPOLOG, PROVINCE OF ZAMBOANGA DEL NORTE"
+      meta="Wed, 10 Jun 2026 04:05:31 +0000"/>
+    <use
+      template="global-news-item"
+      title="Proclamation No. 1316 s. 2026"
+      body="DECLARING WEDNESDAY, 01 JULY 2026, A SPECIAL (NON-WORKING) DAY IN THE MUNICIPALITY OF KIBAWE"
+      meta="Wed, 10 Jun 2026 04:00:31 +0000"/>
   </column>
 </template>
 
 <template name="global-dashboard-content" args="padding">
-  <column padding="{padding}" gap="24">
-    <if test="{constrainedLayout}">
-      <column gap="12">
-        <column gap="6">
-          <text size="heading">Global Dashboard</text>
-          <text wrap="true" foreground="text_muted">Overview of all taxpayer profiles for {currentCalendarYear}</text>
-        </column>
-        <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
-      </column>
-    </if>
-    <else>
-      <row cross="center" gap="16">
-        <column grow="1" gap="6">
-          <text size="heading">Global Dashboard</text>
-          <text foreground="text_muted">Overview of all taxpayer profiles for {currentCalendarYear}</text>
-        </column>
-        <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
-      </row>
-    </else>
+  <column padding="{padding}" gap="32">
+    <column gap="6">
+      <text size="heading">Global Dashboard</text>
+      <text wrap="true" foreground="text_muted">
+        Overview of all taxpayer profiles for 2026
+      </text>
+    </column>
 
     <if test="{constrainedLayout}">
       <column gap="24">
