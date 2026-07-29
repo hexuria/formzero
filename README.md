@@ -28,6 +28,12 @@ Rendered Native review captures are kept in `review/`:
 - `theme-light.png`
 - `theme-dark.png`
 
+## Engineering guide
+
+Read the
+[Native SDK guide and eBIRForms improvement plan](docs/NATIVE_SDK_GUIDE_AND_IMPROVEMENT_PLAN.md)
+before adding CI, full-loop tests, automation, extensions, or release signing.
+
 ## Source layout
 
 - `src/main.zig` owns page selection and System/Light/Dark appearance state.
