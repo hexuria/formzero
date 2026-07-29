@@ -195,10 +195,15 @@
         </column>
         <stack>
           <button
-            size="sm"
+            width="40"
+            height="40"
+            size="icon"
             variant="outline"
+            radius="xl"
             icon="wrench"
-            on-press="toggle_profile_actions">Actions</button>
+            label="Profile actions"
+            on-press="toggle_profile_actions">
+          </button>
           <if test="{profileActionsOpen}">
             <dropdown-menu
               anchor="below"
@@ -246,36 +251,34 @@
       </else>
     </else>
 
-    <card>
-      <column padding="16" gap="12">
-        <if test="{constrainedLayout}">
-          <column gap="12">
-            <search-field disabled="true" placeholder="Search tax forms" label="Search tax forms"/>
-            <select disabled="true" text="Tax Year 2026" label="Tax year"/>
-            <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
-          </column>
-        </if>
-        <else>
-          <row gap="12" cross="center">
-            <search-field grow="1" disabled="true" placeholder="Search tax forms" label="Search tax forms"/>
-            <select disabled="true" text="Tax Year 2026" label="Tax year"/>
-            <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
-          </row>
-        </else>
-        <tabs gap="4" label="Dashboard view">
-          <button
-            variant="ghost"
-            icon="file-text"
-            selected="{dashboardCalendarActive}"
-            on-press="show_dashboard_calendar">Calendar</button>
-          <button
-            variant="ghost"
-            icon="folder-open"
-            selected="{dashboardFormsActive}"
-            on-press="show_dashboard_forms">Tax Form Library</button>
-        </tabs>
-      </column>
-    </card>
+    <column gap="12">
+      <if test="{constrainedLayout}">
+        <column gap="12">
+          <search-field disabled="true" placeholder="Search tax forms" label="Search tax forms"/>
+          <select disabled="true" text="Tax Year 2026" label="Tax year"/>
+          <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
+        </column>
+      </if>
+      <else>
+        <row gap="12" cross="center">
+          <search-field grow="1" disabled="true" placeholder="Search tax forms" label="Search tax forms"/>
+          <select disabled="true" text="Tax Year 2026" label="Tax year"/>
+          <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
+        </row>
+      </else>
+      <tabs gap="4" label="Dashboard view">
+        <button
+          variant="ghost"
+          icon="file-text"
+          selected="{dashboardCalendarActive}"
+          on-press="show_dashboard_calendar">Calendar</button>
+        <button
+          variant="ghost"
+          icon="folder-open"
+          selected="{dashboardFormsActive}"
+          on-press="show_dashboard_forms">Tax Form Library</button>
+      </tabs>
+    </column>
 
     <if test="{dashboardCalendarActive}">
       <use template="taxpayer-calendar-section"/>
