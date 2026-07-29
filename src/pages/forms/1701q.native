@@ -2,19 +2,46 @@
   <grid columns="{columns}" gap="12">
     <column gap="4">
       <text foreground="text_muted">1 Taxable Year</text>
-      <input placeholder="YYYY" />
+      <input text="{incomeTaxYear}" placeholder="YYYY" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">2 Quarter</text>
-      <input placeholder="1st / 2nd / 3rd" />
+      <input text="{incomeTaxQuarter}" placeholder="Q1 / Q2 / Q3" disabled="true" />
+      <row gap="8">
+        <button
+          variant="outline"
+          selected="{incomeTaxQuarterQ1Selected}"
+          disabled="{incomeTaxInputsDisabled}"
+          on-press="income_tax_quarter_q1">
+          Q1
+        </button>
+        <button
+          variant="outline"
+          selected="{incomeTaxQuarterQ2Selected}"
+          disabled="{incomeTaxInputsDisabled}"
+          on-press="income_tax_quarter_q2">
+          Q2
+        </button>
+        <button
+          variant="outline"
+          selected="{incomeTaxQuarterQ3Selected}"
+          disabled="{incomeTaxInputsDisabled}"
+          on-press="income_tax_quarter_q3">
+          Q3
+        </button>
+      </row>
     </column>
     <column gap="4">
       <text foreground="text_muted">3 Amended Return?</text>
-      <input placeholder="No" />
+      <input text="{incomeTaxAmendedReturn}" placeholder="No" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">4 Number of Sheets Attached</text>
-      <input placeholder="Enter number" />
+      <input
+        text="{incomeTaxSheetsAttached}"
+        placeholder="Enter number"
+        disabled="{incomeTaxInputsDisabled}"
+        on-input="income_tax_sheets_attached_input"/>
     </column>
   </grid>
 </template>
@@ -23,39 +50,55 @@
   <grid columns="{columns}" gap="12">
     <column gap="4">
       <text foreground="text_muted">5 TIN</text>
-      <input placeholder="000-000-000-000" />
+      <input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">6 RDO Code</text>
-      <input placeholder="RDO" />
+      <input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">7 Taxpayer / Filer Name</text>
-      <input placeholder="Registered name" />
+      <input text="{formFilerTaxpayerName}" placeholder="Registered name" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Registered Address</text>
-      <input placeholder="Registered address" />
+      <input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Date of Birth</text>
-      <input placeholder="MM / DD / YYYY" />
+      <input text="{formFilerDateOfBirth}" placeholder="MM / DD / YYYY" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Email Address</text>
-      <input placeholder="name@example.com" />
+      <input text="{formFilerEmailAddress}" placeholder="name@example.com" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Citizenship</text>
-      <input placeholder="Citizenship" />
+      <input text="{formFilerCitizenship}" placeholder="Citizenship" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Foreign Tax Number</text>
-      <input placeholder="Foreign tax number" />
+      <input text="{formFilerForeignTaxNumber}" placeholder="Foreign tax number" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Income-tax-rate election</text>
-      <input placeholder="Graduated / 8 percent" />
+      <input text="{incomeTaxElection}" placeholder="Graduated / 8 percent" disabled="true" />
+      <row gap="8">
+        <button
+          variant="outline"
+          selected="{incomeTaxElectionGraduatedSelected}"
+          disabled="{incomeTaxInputsDisabled}"
+          on-press="income_tax_election_graduated">
+          Graduated
+        </button>
+        <button
+          variant="outline"
+          selected="{incomeTaxElectionEightPercentSelected}"
+          disabled="{incomeTaxInputsDisabled}"
+          on-press="income_tax_election_eight_percent">
+          8 percent
+        </button>
+      </row>
     </column>
   </grid>
 </template>
@@ -64,15 +107,15 @@
   <grid columns="{columns}" gap="12">
     <column gap="4">
       <text foreground="text_muted">Spouse TIN</text>
-      <input placeholder="000-000-000-000" />
+      <input text="{formSpouseTin}" placeholder="000-000-000-000" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Spouse RDO Code</text>
-      <input placeholder="RDO" />
+      <input text="{formSpouseRdo}" placeholder="RDO" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Spouse Name</text>
-      <input placeholder="Registered spouse name" />
+      <input text="{formSpouseName}" placeholder="Registered spouse name" disabled="true" />
     </column>
   </grid>
 </template>
@@ -81,23 +124,43 @@
   <grid columns="{columns}" gap="12">
     <column gap="4">
       <text foreground="text_muted">Sales / Revenues / Receipts</text>
-      <input placeholder="Enter amount" />
+      <input
+        text="{incomeTaxGraduatedSales}"
+        placeholder="Enter amount"
+        disabled="{incomeTaxGraduatedInputsDisabled}"
+        on-input="income_tax_graduated_sales_input"/>
     </column>
     <column gap="4">
       <text foreground="text_muted">Cost of Sales / Services</text>
-      <input placeholder="Enter amount" />
+      <input
+        text="{incomeTaxGraduatedCost}"
+        placeholder="Enter amount"
+        disabled="{incomeTaxGraduatedInputsDisabled}"
+        on-input="income_tax_graduated_cost_input"/>
     </column>
     <column gap="4">
       <text foreground="text_muted">Allowable Deductions</text>
-      <input placeholder="Enter amount" />
+      <input
+        text="{incomeTaxGraduatedDeductions}"
+        placeholder="Enter amount"
+        disabled="{incomeTaxGraduatedInputsDisabled}"
+        on-input="income_tax_graduated_deductions_input"/>
     </column>
     <column gap="4">
-      <text foreground="text_muted">Taxable Income</text>
-      <input placeholder="Enter amount" />
+      <text foreground="text_muted">Taxable Income (external policy result)</text>
+      <input
+        text="{incomeTaxGraduatedTaxableIncome}"
+        placeholder="Enter externally supplied amount"
+        disabled="{incomeTaxGraduatedInputsDisabled}"
+        on-input="income_tax_graduated_taxable_income_input"/>
     </column>
     <column gap="4">
-      <text foreground="text_muted">Income Tax Due</text>
-      <input placeholder="Enter amount" />
+      <text foreground="text_muted">Income Tax Due (external policy result)</text>
+      <input
+        text="{incomeTaxGraduatedTaxDue}"
+        placeholder="Enter externally supplied amount"
+        disabled="{incomeTaxGraduatedInputsDisabled}"
+        on-input="income_tax_graduated_tax_due_input"/>
     </column>
   </grid>
 </template>
@@ -106,15 +169,27 @@
   <grid columns="{columns}" gap="12">
     <column gap="4">
       <text foreground="text_muted">Gross Sales / Receipts</text>
-      <input placeholder="Enter amount" />
+      <input
+        text="{incomeTaxEightGrossSales}"
+        placeholder="Enter amount"
+        disabled="{incomeTaxEightPercentInputsDisabled}"
+        on-input="income_tax_eight_gross_sales_input"/>
     </column>
     <column gap="4">
       <text foreground="text_muted">Less: Non-Operating Income</text>
-      <input placeholder="Enter amount" />
+      <input
+        text="{incomeTaxEightNonOperatingIncome}"
+        placeholder="Enter amount"
+        disabled="{incomeTaxEightPercentInputsDisabled}"
+        on-input="income_tax_eight_non_operating_input"/>
     </column>
     <column gap="4">
-      <text foreground="text_muted">Tax Due at 8 percent</text>
-      <input placeholder="Enter amount" />
+      <text foreground="text_muted">Tax Due at 8 percent (external policy result)</text>
+      <input
+        text="{incomeTaxEightTaxDue}"
+        placeholder="Enter externally supplied amount"
+        disabled="{incomeTaxEightPercentInputsDisabled}"
+        on-input="income_tax_eight_tax_due_input"/>
     </column>
   </grid>
 </template>
@@ -123,15 +198,27 @@
   <grid columns="{columns}" gap="12">
     <column gap="4">
       <text foreground="text_muted">Prior-quarter income tax payments</text>
-      <input placeholder="Enter amount" />
+      <input
+        text="{incomeTaxPriorQuarterPayments}"
+        placeholder="Enter amount"
+        disabled="{incomeTaxInputsDisabled}"
+        on-input="income_tax_prior_payments_input"/>
     </column>
     <column gap="4">
       <text foreground="text_muted">Creditable tax withheld (BIR Form 2307)</text>
-      <input placeholder="Enter amount" />
+      <input
+        text="{incomeTaxWithheld2307}"
+        placeholder="Enter amount"
+        disabled="{incomeTaxInputsDisabled}"
+        on-input="income_tax_withheld_2307_input"/>
     </column>
     <column gap="4">
       <text foreground="text_muted">Other Tax Credits / Payments</text>
-      <input placeholder="Enter amount" />
+      <input
+        text="{incomeTaxOtherCredits}"
+        placeholder="Enter amount"
+        disabled="{incomeTaxInputsDisabled}"
+        on-input="income_tax_other_credits_input"/>
     </column>
   </grid>
 </template>
@@ -139,64 +226,160 @@
 <template name="form-1701q-grid-7" args="columns">
   <grid columns="{columns}" gap="12">
     <column gap="4">
-      <text foreground="text_muted">63 Tax Payable / (Overpayment)</text>
-      <input placeholder="Enter amount" />
+      <text foreground="text_muted">63 Tax Payable / (Overpayment) (external policy result)</text>
+      <input
+        text="{incomeTaxPayableOrOverpayment}"
+        placeholder="Enter externally supplied signed amount"
+        disabled="{incomeTaxInputsDisabled}"
+        on-input="income_tax_payable_input"/>
     </column>
     <column gap="4">
-      <text foreground="text_muted">64 Surcharge</text>
-      <input placeholder="Enter amount" />
+      <text foreground="text_muted">64 Surcharge (external policy result)</text>
+      <input
+        text="{incomeTaxSurcharge}"
+        placeholder="Enter externally supplied amount"
+        disabled="{incomeTaxInputsDisabled}"
+        on-input="income_tax_surcharge_input"/>
     </column>
     <column gap="4">
-      <text foreground="text_muted">65 Interest</text>
-      <input placeholder="Enter amount" />
+      <text foreground="text_muted">65 Interest (external policy result)</text>
+      <input
+        text="{incomeTaxInterest}"
+        placeholder="Enter externally supplied amount"
+        disabled="{incomeTaxInputsDisabled}"
+        on-input="income_tax_interest_input"/>
     </column>
     <column gap="4">
-      <text foreground="text_muted">66 Compromise</text>
-      <input placeholder="Enter amount" />
+      <text foreground="text_muted">66 Compromise (external policy result)</text>
+      <input
+        text="{incomeTaxCompromise}"
+        placeholder="Enter externally supplied amount"
+        disabled="{incomeTaxInputsDisabled}"
+        on-input="income_tax_compromise_input"/>
     </column>
   </grid>
 </template>
 
 <template name="form-1701q-table-1">
-  <column>
-    <if test="{constrainedLayout or tabletLayout}">
-      <column gap="12">
-      <column gap="8">
-        <column gap="2">
-          <text foreground="text_muted">Method</text>
-          <text>Cash / Check / Tax Debit Memo / Other</text>
-        </column>
-        <column gap="2">
-          <text foreground="text_muted">Bank / Agency</text>
-          <text>-</text>
-        </column>
-        <column gap="2">
-          <text foreground="text_muted">Reference</text>
-          <text>-</text>
-        </column>
-        <column gap="2">
-          <text foreground="text_muted">Amount</text>
-          <text>0.00</text>
-        </column>
+  <column gap="16">
+    <row gap="8" cross="center">
+      <column gap="2" grow="1">
+        <text><span weight="bold">Payment rows</span></text>
+        <text foreground="text_muted" wrap="true">
+          Optional, bounded payment evidence. Each row keeps a stable persistence identity.
+        </text>
       </column>
+      <button
+        variant="secondary"
+        disabled="{incomeTaxPaymentAddDisabled}"
+        on-press="income_tax_add_payment">
+        Add payment
+      </button>
+    </row>
+
+    <for each="incomeTaxPaymentRows" key="idLabel" as="payment">
+      <button
+        variant="outline"
+        selected="{payment.selected}"
+        disabled="{incomeTaxInputsDisabled}"
+        on-press="income_tax_select_payment:{payment.id}">
+        {payment.name} — {payment.bankOrAgencyText} — {payment.referenceText} — PHP {payment.amountText}
+      </button>
+    </for>
+    <else>
+      <text foreground="text_muted">No payment rows. Add one only when payment evidence exists.</text>
+    </else>
+
+    <table gap="4">
+      <table-row gap="8">
+        <table-cell>Method</table-cell>
+        <table-cell>Bank / Agency</table-cell>
+        <table-cell>Reference</table-cell>
+        <table-cell>Amount</table-cell>
+      </table-row>
+      <table-row gap="8">
+        <table-cell>{incomeTaxPaymentMethod}</table-cell>
+        <table-cell>{incomeTaxPaymentBankOrAgency}</table-cell>
+        <table-cell>{incomeTaxPaymentReference}</table-cell>
+        <table-cell>{incomeTaxPaymentAmount}</table-cell>
+      </table-row>
+    </table>
+
+    <if test="{incomeTaxPaymentEditorVisible}">
+      <separator/>
+      <column gap="12">
+        <row gap="8" cross="center">
+          <column gap="2" grow="1">
+            <text><span weight="bold">Selected payment</span></text>
+            <text foreground="text_muted">{incomeTaxPaymentMethod}</text>
+          </column>
+          <button
+            variant="ghost"
+            disabled="{incomeTaxPaymentRemoveDisabled}"
+            on-press="income_tax_remove_selected_payment">
+            Remove
+          </button>
+        </row>
+
+        <row gap="8">
+          <button
+            variant="outline"
+            selected="{incomeTaxPaymentMethodCashSelected}"
+            disabled="{incomeTaxInputsDisabled}"
+            on-press="income_tax_payment_method_cash">
+            Cash
+          </button>
+          <button
+            variant="outline"
+            selected="{incomeTaxPaymentMethodCheckSelected}"
+            disabled="{incomeTaxInputsDisabled}"
+            on-press="income_tax_payment_method_check">
+            Check
+          </button>
+          <button
+            variant="outline"
+            selected="{incomeTaxPaymentMethodTaxDebitMemoSelected}"
+            disabled="{incomeTaxInputsDisabled}"
+            on-press="income_tax_payment_method_tax_debit_memo">
+            Tax Debit Memo
+          </button>
+          <button
+            variant="outline"
+            selected="{incomeTaxPaymentMethodOtherSelected}"
+            disabled="{incomeTaxInputsDisabled}"
+            on-press="income_tax_payment_method_other">
+            Other
+          </button>
+        </row>
+
+        <column gap="12">
+          <column gap="4">
+            <text foreground="text_muted">Bank / Agency</text>
+            <input
+              text="{incomeTaxPaymentBankOrAgency}"
+              placeholder="Bank or collecting agency"
+              disabled="{incomeTaxInputsDisabled}"
+              on-input="income_tax_payment_bank_input"/>
+          </column>
+          <column gap="4">
+            <text foreground="text_muted">Reference</text>
+            <input
+              text="{incomeTaxPaymentReference}"
+              placeholder="Reference number"
+              disabled="{incomeTaxInputsDisabled}"
+              on-input="income_tax_payment_reference_input"/>
+          </column>
+          <column gap="4">
+            <text foreground="text_muted">Amount</text>
+            <input
+              text="{incomeTaxPaymentAmount}"
+              placeholder="Enter amount"
+              disabled="{incomeTaxInputsDisabled}"
+              on-input="income_tax_payment_amount_input"/>
+          </column>
+        </column>
       </column>
     </if>
-    <else>
-      <table gap="4">
-                  <table-row gap="8">
-                    <table-cell>Method</table-cell>
-                    <table-cell>Bank / Agency</table-cell>
-                    <table-cell>Reference</table-cell>
-                    <table-cell>Amount</table-cell>
-                  </table-row>
-                  <table-row gap="8">
-                    <table-cell>Cash / Check / Tax Debit Memo / Other</table-cell>
-                    <table-cell>-</table-cell>
-                    <table-cell>-</table-cell>
-                    <table-cell>0.00</table-cell>
-                  </table-row>
-                </table>
-    </else>
   </column>
 </template>
 
@@ -217,7 +400,12 @@
         <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
         <button variant="secondary" on-press="show_aux_html_print_preview">HTML Preview</button>
         <separator/>
-        <button variant="secondary" disabled="true">Save Draft</button>
+        <button
+          variant="secondary"
+          disabled="{incomeTaxSaveDisabled}"
+          on-press="save_recurring_form_draft">
+          Save Draft
+        </button>
         <button variant="primary" disabled="true">Manual / External Filing</button>
         </column>
       </column>
@@ -237,7 +425,12 @@
         <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
         <button variant="secondary" on-press="show_aux_html_print_preview">HTML Preview</button>
         <spacer/>
-        <button variant="secondary" disabled="true">Save Draft</button>
+        <button
+          variant="secondary"
+          disabled="{incomeTaxSaveDisabled}"
+          on-press="save_recurring_form_draft">
+          Save Draft
+        </button>
         <button variant="primary" disabled="true">Manual / External Filing</button>
         </row>
       </column>
@@ -282,6 +475,14 @@
   <scroll grow="1" global-key="page-form-1701q">
     <column padding="32" gap="24">
       <use template="form-1701q-masthead"/>
+
+      <!-- @include-template tax-profile-form-context -->
+
+      <if test="{incomeTaxNoticeVisible}">
+        <row gap="8" cross="center">
+          <badge variant="{incomeTaxNoticeTone}">{incomeTaxNotice}</badge>
+        </row>
+      </if>
 
       <use template="form-1701q-filing-status"/>
 
@@ -333,6 +534,9 @@
       <card>
         <column padding="20" gap="12">
           <text size="heading">PART V - SCHEDULE I: GRADUATED IT RATE</text>
+          <text foreground="text_muted" wrap="true">
+            Taxable income and income tax due are explicit externally supplied policy results. This form does not infer a rate or tax table.
+          </text>
           <if test="{constrainedLayout}">
             <use template="form-1701q-grid-4" columns="1"/>
           </if>
@@ -348,6 +552,9 @@
       <card>
         <column padding="20" gap="12">
           <text size="heading">PART V - SCHEDULE II: 8% IT RATE</text>
+          <text foreground="text_muted" wrap="true">
+            Tax due is an explicit externally supplied policy result. Selecting this election does not calculate or assume an 8 percent policy.
+          </text>
           <if test="{constrainedLayout}">
             <use template="form-1701q-grid-5" columns="1"/>
           </if>
@@ -392,14 +599,14 @@
             <column gap="8">
               <text>PART III - TOTAL TAX PAYABLE</text>
               <row cross="center">
-                <badge>PHP 0.00</badge>
+                <badge>{incomeTaxTotalTaxPayable}</badge>
               </row>
             </column>
           </if>
           <else>
             <row gap="8">
               <text grow="1">PART III - TOTAL TAX PAYABLE</text>
-              <badge>PHP 0.00</badge>
+              <badge>{incomeTaxTotalTaxPayable}</badge>
             </row>
           </else>
         </column>

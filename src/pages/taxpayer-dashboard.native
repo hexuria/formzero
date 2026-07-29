@@ -34,35 +34,35 @@
       code="0605"
       title="Payment Form"
       body="Prepare a payment reference for taxes and fees without a dedicated return.">
-      <button variant="secondary" icon="file-text" on-press="show_form_0605">Open Form 0605</button>
+      <button variant="secondary" icon="file-text" disabled="{taxpayerForm0605Disabled}" on-press="show_form_0605">Open Form 0605</button>
     </use>
     <use
       template="taxpayer-form-launcher"
       code="0619-E"
       title="Creditable Income Taxes Withheld"
       body="Monthly remittance form for expanded withholding tax.">
-      <button variant="secondary" icon="file-text" on-press="show_form_0619_e">Open Form 0619-E</button>
+      <button variant="secondary" icon="file-text" disabled="{taxpayerForm0619EDisabled}" on-press="show_form_0619_e">Open Form 0619-E</button>
     </use>
     <use
       template="taxpayer-form-launcher"
       code="0619-F"
       title="Final Income Taxes Withheld"
       body="Monthly remittance form for final withholding tax.">
-      <button variant="secondary" icon="file-text" on-press="show_form_0619_f">Open Form 0619-F</button>
+      <button variant="secondary" icon="file-text" disabled="{taxpayerForm0619FDisabled}" on-press="show_form_0619_f">Open Form 0619-F</button>
     </use>
     <use
       template="taxpayer-form-launcher"
       code="1601-C"
       title="Compensation Withholding"
       body="Monthly remittance return for taxes withheld on compensation.">
-      <button variant="secondary" icon="file-text" on-press="show_form_1601_c">Open Form 1601-C</button>
+      <button variant="secondary" icon="file-text" disabled="{taxpayerForm1601CDisabled}" on-press="show_form_1601_c">Open Form 1601-C</button>
     </use>
     <use
       template="taxpayer-form-launcher"
       code="1701"
       title="Annual Individual Income Tax Return"
       body="Annual return for individuals, estates, and trusts.">
-      <button variant="secondary" icon="file-text" on-press="show_form_1701">Open Form 1701</button>
+      <button variant="secondary" icon="file-text" disabled="{taxpayerForm1701Disabled}" on-press="show_form_1701">Open Form 1701</button>
     </use>
   </column>
 </template>
@@ -74,35 +74,35 @@
       code="1701Q"
       title="Quarterly Individual Income Tax Return"
       body="Quarterly return for self-employed individuals and professionals.">
-      <button variant="secondary" icon="file-text" on-press="show_form_1701q">Open Form 1701Q</button>
+      <button variant="secondary" icon="file-text" disabled="{taxpayerForm1701QDisabled}" on-press="show_form_1701q">Open Form 1701Q</button>
     </use>
     <use
       template="taxpayer-form-launcher"
       code="1702-RT"
       title="Regular-Rate Corporation Income Tax Return"
       body="Annual corporate return for taxpayers subject only to the regular rate.">
-      <button variant="secondary" icon="file-text" on-press="show_form_1702_rt">Open Form 1702-RT</button>
+      <button variant="secondary" icon="file-text" disabled="{taxpayerForm1702RTDisabled}" on-press="show_form_1702_rt">Open Form 1702-RT</button>
     </use>
     <use
       template="taxpayer-form-launcher"
       code="1702-MX"
       title="Mixed-Income Corporation Income Tax Return"
       body="Annual corporate return for mixed or special tax regimes.">
-      <button variant="secondary" icon="file-text" on-press="show_form_1702_mx">Open Form 1702-MX</button>
+      <button variant="secondary" icon="file-text" disabled="{taxpayerForm1702MXDisabled}" on-press="show_form_1702_mx">Open Form 1702-MX</button>
     </use>
     <use
       template="taxpayer-form-launcher"
       code="2550Q"
       title="Quarterly VAT Return"
       body="Quarterly value-added tax return for VAT-registered taxpayers.">
-      <button variant="secondary" icon="file-text" on-press="show_form_2550q">Open Form 2550Q</button>
+      <button variant="secondary" icon="file-text" disabled="{taxpayerForm2550QDisabled}" on-press="show_form_2550q">Open Form 2550Q</button>
     </use>
     <use
       template="taxpayer-form-launcher"
       code="2551Q"
       title="Quarterly Percentage Tax Return"
       body="Quarterly return for taxpayers subject to percentage tax.">
-      <button variant="secondary" icon="file-text" on-press="show_form_2551q">Open Form 2551Q</button>
+      <button variant="secondary" icon="file-text" disabled="{taxpayerForm2551QDisabled}" on-press="show_form_2551q">Open Form 2551Q</button>
     </use>
   </column>
 </template>
@@ -113,8 +113,9 @@
       <column grow="1" gap="4">
         <text><span weight="bold">Taxpayer Calendar</span></text>
         <text wrap="true" foreground="text_muted">
-          For now, Add to Calendar includes every supported form. Once this
-          profile has a registered Forms Set, only its forms will be included.
+          Add to Calendar follows this profile's registered Forms Set. An
+          unconfigured year uses the catalog fallback; an explicitly empty
+          set creates no obligations.
         </text>
       </column>
       <badge variant="secondary">{currentCalendarYear}</badge>
@@ -165,7 +166,8 @@
     <column gap="4">
       <text><span weight="bold">Tax Form Library</span></text>
       <text wrap="true" foreground="text_muted">
-        Choose a reconstructed return to review its static Native layout.
+        Available forms follow this profile's Forms Set for the selected tax
+        year. An unconfigured Forms Set uses the catalog fallback.
       </text>
     </column>
     <if test="{constrainedLayout}">

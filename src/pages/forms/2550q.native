@@ -26,15 +26,15 @@
     </column>
     <column gap="4">
       <text foreground="text_muted">TIN</text>
-      <input placeholder="000-000-000-000" />
+      <input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">RDO Code</text>
-      <input placeholder="RDO" />
+      <input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Taxpayer Name</text>
-      <input placeholder="Registered taxpayer name" />
+      <input text="{formFilerTaxpayerName}" placeholder="Registered taxpayer name" disabled="true" />
     </column>
   </grid>
 </template>
@@ -459,6 +459,8 @@
   <scroll grow="1" global-key="page-form-2550q">
     <column padding="32" gap="24">
       <use template="form-2550q-masthead"/>
+
+      <!-- @include-template tax-profile-form-context -->
 
       <use template="form-2550q-filing-status"/>
 

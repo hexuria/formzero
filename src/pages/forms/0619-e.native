@@ -14,11 +14,11 @@
     </column>
     <column gap="4">
       <text foreground="text_muted">5 ATC</text>
-      <input placeholder="Select ATC" />
+      <input text="{formFilerAtc}" placeholder="Select ATC" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">6 Tax Type Code</text>
-      <input placeholder="Tax type code" />
+      <input text="{formFilerTaxType}" placeholder="Tax type code" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Due date day</text>
@@ -26,15 +26,15 @@
     </column>
     <column gap="4">
       <text foreground="text_muted">TIN</text>
-      <input placeholder="000-000-000-000" />
+      <input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">RDO Code</text>
-      <input placeholder="RDO" />
+      <input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">12 Government withholding agent?</text>
-      <input placeholder="Yes / No" />
+      <input text="{formFilerGovernmentWithholdingAgent}" placeholder="Yes / No" disabled="true" />
     </column>
   </grid>
 </template>
@@ -233,6 +233,8 @@
   <scroll grow="1" global-key="page-form-0619-e">
     <column padding="32" gap="24">
       <use template="form-0619-e-masthead"/>
+
+      <!-- @include-template tax-profile-form-context -->
 
       <use template="form-0619-e-filing-status"/>
 

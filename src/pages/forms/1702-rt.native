@@ -14,23 +14,23 @@
     </column>
     <column gap="4">
       <text foreground="text_muted">TIN</text>
-      <input placeholder="000-000-000-000" />
+      <input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">RDO Code</text>
-      <input placeholder="RDO" />
+      <input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Registered Name</text>
-      <input placeholder="Corporation name" />
+      <input text="{formFilerRegisteredName}" placeholder="Corporation name" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Registered Address</text>
-      <input placeholder="Registered address" />
+      <input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Line of Business</text>
-      <input placeholder="Business activity" />
+      <input text="{formFilerLineOfBusiness}" placeholder="Business activity" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Tax Relief / Special Law</text>
@@ -277,6 +277,8 @@
   <scroll grow="1" global-key="page-form-1702-rt">
     <column padding="32" gap="24">
       <use template="form-1702-rt-masthead"/>
+
+      <!-- @include-template tax-profile-form-context -->
 
       <use template="form-1702-rt-filing-status"/>
 

@@ -14,11 +14,11 @@
     </column>
     <column gap="4">
       <text foreground="text_muted">6 ATC - only source-proven pairs</text>
-      <input placeholder="Select ATC" />
+      <input text="{formFilerAtc}" placeholder="Select ATC" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">8 Tax Type - only source-proven pairs</text>
-      <input placeholder="Select tax type" />
+      <input text="{formFilerTaxType}" placeholder="Select tax type" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">17 Manner of Payment</text>
@@ -31,23 +31,23 @@
   <grid columns="{columns}" gap="12">
     <column gap="4">
       <text foreground="text_muted">9 TIN</text>
-      <input placeholder="000-000-000-000" />
+      <input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">10 RDO Code</text>
-      <input placeholder="RDO" />
+      <input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">12 Line of Business / Occupation</text>
-      <input placeholder="Business or occupation" />
+      <input text="{formFilerLineOfBusiness}" placeholder="Business or occupation" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">13 Taxpayer Name</text>
-      <input placeholder="Registered taxpayer name" />
+      <input text="{formFilerTaxpayerName}" placeholder="Registered taxpayer name" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">15 Registered Address</text>
-      <input placeholder="Registered address" />
+      <input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">18 Type of Payment</text>
@@ -225,6 +225,8 @@
   <scroll grow="1" global-key="page-form-0605">
     <column padding="32" gap="24">
       <use template="form-0605-masthead"/>
+
+      <!-- @include-template tax-profile-form-context -->
 
       <use template="form-0605-filing-status"/>
 

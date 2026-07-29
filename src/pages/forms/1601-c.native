@@ -2,27 +2,27 @@
   <grid columns="{columns}" gap="12">
     <column gap="4">
       <text foreground="text_muted">TIN</text>
-      <input placeholder="000-000-000-000" />
+      <input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">RDO Code</text>
-      <input placeholder="RDO" />
+      <input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Taxpayer Name</text>
-      <input placeholder="Registered taxpayer name" />
+      <input text="{formFilerTaxpayerName}" placeholder="Registered taxpayer name" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Registered Address</text>
-      <input placeholder="Registered address" />
+      <input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Line of Business</text>
-      <input placeholder="Business activity" />
+      <input text="{formFilerLineOfBusiness}" placeholder="Business activity" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Contact Number</text>
-      <input placeholder="Contact number" />
+      <input text="{formFilerContactNumber}" placeholder="Contact number" disabled="true" />
     </column>
   </grid>
 </template>
@@ -47,7 +47,7 @@
     </column>
     <column gap="4">
       <text foreground="text_muted">ATC</text>
-      <input placeholder="Select ATC" />
+      <input text="{formFilerAtc}" placeholder="Select ATC" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">13 Tax Relief</text>
@@ -271,6 +271,8 @@
   <scroll grow="1" global-key="page-form-1601-c">
     <column padding="32" gap="24">
       <use template="form-1601-c-masthead"/>
+
+      <!-- @include-template tax-profile-form-context -->
 
       <use template="form-1601-c-filing-status"/>
 

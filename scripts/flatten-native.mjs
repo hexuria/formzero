@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDirectory, "..");
 const outputPath = "src/app.native";
+const maxRuntimeWatchedMarkupBytes = 256 * 1024;
 
 // Native markup templates must be defined before their first use. Keep this
 // order explicit and stable: shared components, seven main pages plus the
@@ -67,9 +68,44 @@ const sourceGroups = [
 ];
 
 const sourceFiles = sourceGroups.flatMap((group) => group.files);
+const generatedTemplateIncludes = new Set([
+  "tax-profile-form-context",
+]);
 
 function normalizeFragment(source) {
   return source.replace(/\r\n?/g, "\n").replace(/\n+$/u, "");
+}
+
+// Native SDK's runtime markup watcher reads at most 256 KiB. Keep editable
+// fragments readable, but remove generated-only indentation and blank lines so
+// a hot reload never truncates an otherwise valid document.
+function compactGeneratedMarkup(source) {
+  return source
+    .split("\n")
+    .map((line) => line.trimStart())
+    .filter((line) => line.length > 0)
+    .join("\n");
+}
+
+/**
+ * A `.native` source is also linted as a standalone document. Cross-fragment
+ * `<use>` nodes therefore look undefined even though their shared template is
+ * ordered before them in the generated application. Keep that source
+ * boundary truthful with an explicit comment directive, expanded only while
+ * assembling `app.native`.
+ */
+function expandGeneratedTemplateIncludes(source, relativePath) {
+  return source.replace(
+    /<!--\s*@include-template\s+([A-Za-z][A-Za-z0-9-]*)\s*-->/gu,
+    (_, templateName) => {
+      if (!generatedTemplateIncludes.has(templateName)) {
+        throw new Error(
+          `Unknown generated template include ${templateName} in ${relativePath}`,
+        );
+      }
+      return `<use template="${templateName}"/>`;
+    },
+  );
 }
 
 async function readRequiredFile(relativePath) {
@@ -91,7 +127,8 @@ async function readRequiredFile(relativePath) {
     throw new Error(`Native source is not a regular file: ${relativePath}`);
   }
 
-  return normalizeFragment(await readFile(absolutePath, "utf8"));
+  const source = normalizeFragment(await readFile(absolutePath, "utf8"));
+  return expandGeneratedTemplateIncludes(source, relativePath);
 }
 
 function generatedHeader() {
@@ -118,7 +155,16 @@ async function main() {
     fragments.push(await readRequiredFile(relativePath));
   }
 
-  const generated = `${generatedHeader()}\n\n${fragments.join("\n\n")}\n`;
+  const generated = `${compactGeneratedMarkup(
+    `${generatedHeader()}\n${fragments.join("\n")}`,
+  )}\n`;
+  const generatedBytes = Buffer.byteLength(generated, "utf8");
+  if (generatedBytes >= maxRuntimeWatchedMarkupBytes) {
+    throw new Error(
+      `${outputPath} is ${generatedBytes} bytes; Native runtime hot reload ` +
+        `requires less than ${maxRuntimeWatchedMarkupBytes} bytes`,
+    );
+  }
   const absoluteOutputPath = path.join(projectRoot, outputPath);
 
   let current = null;
@@ -137,7 +183,8 @@ async function main() {
 
   await writeFile(absoluteOutputPath, generated, "utf8");
   process.stdout.write(
-    `Generated ${outputPath} from ${sourceFiles.length} ordered sources.\n`,
+    `Generated ${outputPath} from ${sourceFiles.length} ordered sources ` +
+      `(${generatedBytes} bytes).\n`,
   );
 }
 
