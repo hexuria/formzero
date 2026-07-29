@@ -159,11 +159,11 @@
           <text><span weight="bold">Tax form preparation</span></text>
         </row>
         <text wrap="true" foreground="text_muted">
-          Open the full compliance calendar for compiled rules and sourced
-          changes. This profile view will filter that same resolver after its
-          registered per-year Forms Set is persisted.
+          Open the global calendar catalog for compiled rules and sourced
+          changes. It is not filtered to this taxpayer until the registered
+          per-year Forms Set and filing profile are persisted.
         </text>
-        <button variant="primary" icon="external-link" on-press="show_tax_calendar">Open Full Compliance Calendar</button>
+        <button variant="primary" icon="external-link" on-press="show_tax_calendar">Open Global Calendar Catalog</button>
       </column>
     </card>
   </column>

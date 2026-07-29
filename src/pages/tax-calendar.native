@@ -66,8 +66,9 @@
     <column gap="4">
       <text><span weight="bold">Compiled Calendar Rules</span></text>
       <text wrap="true" foreground="text_muted">
-        The same recurring formulas and canonical form aliases used by the reference
-        eBIRForms calendar subsystem. Event-based forms stay separate from dated deadlines.
+        A global form-deadline catalog derived from the reference eBIRForms
+        subsystem and checked against current BIR guidance. Event-based forms
+        stay separate from dated deadlines.
       </text>
     </column>
 
@@ -88,9 +89,10 @@
       <column padding="20" gap="8">
         <text><span weight="bold">Source boundary</span></text>
         <text wrap="true" foreground="text_muted">
-          The reference implementation does not attach a legal citation to each base
-          compiled rule. Current BIR issuances, the registered Forms Set, eFPS channel
-          rules, fiscal-year facts, and official holiday proclamations remain authoritative.
+          This view is a calendar-year / non-eFPS baseline and includes mutually
+          exclusive or conditional form alternatives. Current BIR issuances, the
+          taxpayer's registered Forms Set, eFPS filer group, fiscal-year facts,
+          and official holiday proclamations remain authoritative.
         </text>
       </column>
     </card>
@@ -188,10 +190,15 @@
             label="Effective from"
             on-input="calendar_override_effective_from_input"/>
           <input
-            text="{overrideExpiresOnValue}"
+            text="{overrideEffectiveUntilValue}"
             placeholder="Optional YYYY-MM-DD"
-            label="Expires on"
-            on-input="calendar_override_expires_on_input"/>
+            label="Effective until"
+            on-input="calendar_override_effective_until_input"/>
+          <input
+            text="{overrideExpiresAtValue}"
+            placeholder="Optional YYYY-MM-DD"
+            label="Expires at"
+            on-input="calendar_override_expires_at_input"/>
         </column>
       </if>
       <else>
@@ -204,10 +211,16 @@
             on-input="calendar_override_effective_from_input"/>
           <input
             grow="1"
-            text="{overrideExpiresOnValue}"
+            text="{overrideEffectiveUntilValue}"
             placeholder="Optional YYYY-MM-DD"
-            label="Expires on"
-            on-input="calendar_override_expires_on_input"/>
+            label="Effective until"
+            on-input="calendar_override_effective_until_input"/>
+          <input
+            grow="1"
+            text="{overrideExpiresAtValue}"
+            placeholder="Optional YYYY-MM-DD"
+            label="Expires at"
+            on-input="calendar_override_expires_at_input"/>
         </row>
       </else>
       <row gap="10">
@@ -287,7 +300,9 @@
       <text wrap="true" foreground="text_muted">
         Matching follows the reference resolver: form code plus original or
         already business-day-adjusted deadline; later matching overrides win.
-        Scope and effective-date metadata are preserved in SQLite.
+        Region- or taxpayer-scoped overrides stay out of this global projection.
+        Effective-range and expiry metadata are preserved separately in SQLite;
+        like the reference resolver, they do not limit global matching yet.
       </text>
     </column>
 
@@ -374,7 +389,7 @@
         <column gap="6">
           <text size="heading">Tax Calendar Explorer</text>
           <text wrap="true" foreground="text_muted">
-            Resolve full recurring schedules, source-cited changes, and calendar handoff.
+            Explore the global calendar-year baseline, source-cited changes, and calendar handoff.
           </text>
         </column>
         <column gap="8">
@@ -388,7 +403,7 @@
         <column grow="1" gap="6">
           <text size="heading">Tax Calendar Explorer</text>
           <text foreground="text_muted">
-            Resolve full recurring schedules, source-cited changes, and calendar handoff.
+            Explore the global calendar-year baseline, source-cited changes, and calendar handoff.
           </text>
         </column>
         <button variant="outline" icon="refresh-cw" on-press="calendar_refresh">Refresh</button>
@@ -410,7 +425,9 @@
               A standards-based ICS file opens in Apple Calendar, Outlook, or
               another registered calendar app. Select an iCloud, Google, or
               Outlook calendar during import to let that account propagate it
-              to mobile. This action is an import handoff, not managed two-way sync.
+              to mobile. This action exports the unfiltered global baseline as
+              a one-time import handoff, not a taxpayer-specific plan or managed
+              two-way sync.
             </text>
           </column>
         </row>

@@ -37,16 +37,13 @@ pub const Event = struct {
     date: Date,
     summary: []const u8,
     description: []const u8,
-    /// Source/version fingerprint. Incrementing it helps calendar clients
-    /// that honor SEQUENCE recognize a newer handoff.
-    sequence: u32 = 0,
     reminders: bool = true,
 };
 
 pub const Options = struct {
     calendar_name: []const u8 = "eBIRForms Tax Deadlines",
     prod_id: []const u8 = "-//Goldcoders//eBIRForms Tax Calendar//EN",
-    uid_domain: []const u8 = "ebirforms.local",
+    uid_domain: []const u8 = "ebirforms.goldcoders.dev",
     /// Deterministic UTC export stamp. Keeping this caller-owned makes the
     /// renderer fully testable and avoids hidden clock access.
     dtstamp_utc: []const u8,
@@ -66,12 +63,15 @@ pub fn generate(
     try appendRawLine(allocator, &out, "VERSION:2.0");
     try appendProperty(allocator, &out, "PRODID", options.prod_id);
     try appendRawLine(allocator, &out, "CALSCALE:GREGORIAN");
-    try appendRawLine(allocator, &out, "METHOD:PUBLISH");
     try appendProperty(allocator, &out, "X-WR-CALNAME", options.calendar_name);
 
+    var seen_obligation_keys = std.StringHashMap(void).init(allocator);
+    defer seen_obligation_keys.deinit();
     for (events) |event| {
         try event.date.validate();
         if (event.obligation_key.len == 0) return error.InvalidEvent;
+        const seen = try seen_obligation_keys.getOrPut(event.obligation_key);
+        if (seen.found_existing) return error.DuplicateObligationKey;
 
         try appendRawLine(allocator, &out, "BEGIN:VEVENT");
         try appendUid(allocator, &out, event.obligation_key, options.uid_domain);
@@ -82,7 +82,6 @@ pub fn generate(
         try appendProperty(allocator, &out, "DESCRIPTION", event.description);
         try appendRawLine(allocator, &out, "STATUS:CONFIRMED");
         try appendRawLine(allocator, &out, "TRANSP:TRANSPARENT");
-        try appendNumberProperty(allocator, &out, "SEQUENCE", event.sequence);
         try appendProperty(allocator, &out, "X-EBIRFORMS-OBLIGATION-KEY", event.obligation_key);
 
         if (event.reminders) {
@@ -142,17 +141,6 @@ fn appendDateProperty(
         @intCast('0' + date.day % 10),
     };
     try appendRawProperty(allocator, out, name, &buffer);
-}
-
-fn appendNumberProperty(
-    allocator: std.mem.Allocator,
-    out: *std.ArrayList(u8),
-    name: []const u8,
-    value: u32,
-) !void {
-    var buffer: [16]u8 = undefined;
-    const rendered = try std.fmt.bufPrint(&buffer, "{d}", .{value});
-    try appendRawProperty(allocator, out, name, rendered);
 }
 
 fn appendProperty(
@@ -251,6 +239,26 @@ fn validateUtcStamp(value: []const u8) !void {
         if (index == 8 or index == 15) continue;
         if (!std.ascii.isDigit(byte)) return error.InvalidTimestamp;
     }
+    const year = parseDecimal(value[0..4]);
+    const month = parseDecimal(value[4..6]);
+    const day = parseDecimal(value[6..8]);
+    const hour = parseDecimal(value[9..11]);
+    const minute = parseDecimal(value[11..13]);
+    const second = parseDecimal(value[13..15]);
+    (Date{
+        .year = @intCast(year),
+        .month = @intCast(month),
+        .day = @intCast(day),
+    }).validate() catch return error.InvalidTimestamp;
+    if (hour > 23 or minute > 59 or second > 59) {
+        return error.InvalidTimestamp;
+    }
+}
+
+fn parseDecimal(value: []const u8) u16 {
+    var result: u16 = 0;
+    for (value) |byte| result = result * 10 + (byte - '0');
+    return result;
 }
 
 fn daysInMonth(year: i32, month: u8) u8 {
@@ -280,13 +288,59 @@ test "calendar export is all-day, escaped, reminded, and stable" {
     defer allocator.free(bytes);
 
     try std.testing.expect(std.mem.startsWith(u8, bytes, "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n"));
-    try std.testing.expect(std.mem.indexOf(u8, bytes, "UID:2026:2551Q:q1@ebirforms.local\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "UID:2026:2551Q:q1@ebirforms.goldcoders.dev\r\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, bytes, "DTSTART;VALUE=DATE:20260427\r\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, bytes, "DTEND;VALUE=DATE:20260428\r\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, bytes, "SUMMARY:[BIR] 2551Q\\, Q1\r\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, bytes, "Original: 2026-04-25\\nFinal: 2026-04-27\\; weekend") != null);
     try std.testing.expectEqual(@as(usize, 2), std.mem.count(u8, bytes, "BEGIN:VALARM"));
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "METHOD:") == null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "SEQUENCE:") == null);
     try std.testing.expect(std.mem.endsWith(u8, bytes, "END:VCALENDAR\r\n"));
+}
+
+test "duplicate obligation keys are rejected before import" {
+    const allocator = std.testing.allocator;
+    const duplicate = Event{
+        .obligation_key = "2026:1604-C:annual",
+        .date = .{ .year = 2026, .month = 1, .day = 31 },
+        .summary = "Duplicate",
+        .description = "Duplicate",
+    };
+    try std.testing.expectError(
+        error.DuplicateObligationKey,
+        generate(
+            allocator,
+            &.{ duplicate, duplicate },
+            .{ .dtstamp_utc = "20260729T010203Z" },
+        ),
+    );
+}
+
+test "UTC stamp validates calendar and clock fields" {
+    const allocator = std.testing.allocator;
+    const event = Event{
+        .obligation_key = "2026:1701:annual",
+        .date = .{ .year = 2026, .month = 4, .day = 15 },
+        .summary = "Annual",
+        .description = "Annual",
+    };
+    try std.testing.expectError(
+        error.InvalidTimestamp,
+        generate(
+            allocator,
+            &.{event},
+            .{ .dtstamp_utc = "20260230T010203Z" },
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidTimestamp,
+        generate(
+            allocator,
+            &.{event},
+            .{ .dtstamp_utc = "20260729T246000Z" },
+        ),
+    );
 }
 
 test "date rollover includes leap years" {

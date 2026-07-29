@@ -23,10 +23,10 @@
         <row gap="10" cross="center">
           <icon name="clock" foreground="accent" width="26" height="26"/>
           <column grow="1" gap="4">
-            <text><span weight="bold">Full {currentCalendarYear} BIR schedule</span></text>
+            <text><span weight="bold">{currentCalendarYear} global deadline catalog</span></text>
             <text wrap="true" foreground="text_muted">
-              The dashboard now points to the same compiled calendar-year
-              projection used by the explorer and ICS export.
+              The dashboard points to the same calendar-year / non-eFPS
+              baseline used by the explorer and ICS export.
             </text>
           </column>
         </row>
@@ -35,7 +35,7 @@
           Saturdays and Sundays adjust automatically. Only source-cited
           SQLite non-working days and deadline overrides change the schedule.
         </text>
-        <button variant="primary" icon="external-link" on-press="show_tax_calendar">Open Compliance Calendar</button>
+        <button variant="primary" icon="external-link" on-press="show_tax_calendar">Open Calendar Catalog</button>
       </column>
     </card>
   </column>

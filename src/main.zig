@@ -9,6 +9,9 @@ const std = @import("std");
 const runner = @import("runner");
 const native_sdk = @import("native_sdk");
 const calendar_ui = @import("calendar/ui_state.zig");
+const c_time = @cImport({
+    @cInclude("time.h");
+});
 
 pub const panic = std.debug.FullPanic(native_sdk.debug.capturePanic);
 
@@ -404,7 +407,7 @@ pub const Model = struct {
     ) []const u8 {
         return std.fmt.allocPrint(
             arena,
-            "{d} dated deadlines",
+            "{d} catalog entries",
             .{self.calendar.deadline_count},
         ) catch "";
     }
@@ -524,8 +527,12 @@ pub const Model = struct {
         return self.calendar.override_effective_from.text();
     }
 
-    pub fn overrideExpiresOnValue(self: *const Model) []const u8 {
-        return self.calendar.override_expires_on.text();
+    pub fn overrideEffectiveUntilValue(self: *const Model) []const u8 {
+        return self.calendar.override_effective_until.text();
+    }
+
+    pub fn overrideExpiresAtValue(self: *const Model) []const u8 {
+        return self.calendar.override_expires_at.text();
     }
 
     pub fn nonWorkingDayEditorTitle(self: *const Model) []const u8 {
@@ -622,7 +629,8 @@ pub const Msg = union(enum) {
     calendar_override_regions_input: canvas.TextInputEvent,
     calendar_override_taxpayer_types_input: canvas.TextInputEvent,
     calendar_override_effective_from_input: canvas.TextInputEvent,
-    calendar_override_expires_on_input: canvas.TextInputEvent,
+    calendar_override_effective_until_input: canvas.TextInputEvent,
+    calendar_override_expires_at_input: canvas.TextInputEvent,
     calendar_save_override,
     calendar_cancel_override,
     calendar_edit_override: i64,
@@ -735,24 +743,70 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .calendar_export => exportCalendar(model, fx),
         .calendar_export_written => |result| calendarExportWritten(model, result, fx),
         .calendar_export_opened => |result| calendarExportOpened(model, result),
-        .calendar_override_title_input => |edit| model.calendar.override_title.apply(edit),
-        .calendar_override_forms_input => |edit| model.calendar.override_forms.apply(edit),
-        .calendar_override_original_input => |edit| model.calendar.override_original.apply(edit),
-        .calendar_override_adjusted_input => |edit| model.calendar.override_adjusted.apply(edit),
-        .calendar_override_source_input => |edit| model.calendar.override_source.apply(edit),
-        .calendar_override_regions_input => |edit| model.calendar.override_regions.apply(edit),
-        .calendar_override_taxpayer_types_input => |edit| model.calendar.override_taxpayer_types.apply(edit),
-        .calendar_override_effective_from_input => |edit| model.calendar.override_effective_from.apply(edit),
-        .calendar_override_expires_on_input => |edit| model.calendar.override_expires_on.apply(edit),
+        .calendar_override_title_input => |edit| {
+            model.calendar.override_title.apply(edit);
+            model.calendar.captureOverrideInputTruncation();
+        },
+        .calendar_override_forms_input => |edit| {
+            model.calendar.override_forms.apply(edit);
+            model.calendar.captureOverrideInputTruncation();
+        },
+        .calendar_override_original_input => |edit| {
+            model.calendar.override_original.apply(edit);
+            model.calendar.captureOverrideInputTruncation();
+        },
+        .calendar_override_adjusted_input => |edit| {
+            model.calendar.override_adjusted.apply(edit);
+            model.calendar.captureOverrideInputTruncation();
+        },
+        .calendar_override_source_input => |edit| {
+            model.calendar.override_source.apply(edit);
+            model.calendar.captureOverrideInputTruncation();
+        },
+        .calendar_override_regions_input => |edit| {
+            model.calendar.override_regions.apply(edit);
+            model.calendar.captureOverrideInputTruncation();
+        },
+        .calendar_override_taxpayer_types_input => |edit| {
+            model.calendar.override_taxpayer_types.apply(edit);
+            model.calendar.captureOverrideInputTruncation();
+        },
+        .calendar_override_effective_from_input => |edit| {
+            model.calendar.override_effective_from.apply(edit);
+            model.calendar.captureOverrideInputTruncation();
+        },
+        .calendar_override_effective_until_input => |edit| {
+            model.calendar.override_effective_until.apply(edit);
+            model.calendar.captureOverrideInputTruncation();
+        },
+        .calendar_override_expires_at_input => |edit| {
+            model.calendar.override_expires_at.apply(edit);
+            model.calendar.captureOverrideInputTruncation();
+        },
         .calendar_save_override => model.calendar.saveOverride(),
         .calendar_cancel_override => model.calendar.clearOverrideEditor(),
         .calendar_edit_override => |id| model.calendar.editOverride(id),
         .calendar_delete_override => |id| model.calendar.deleteOverride(id),
-        .calendar_non_working_date_input => |edit| model.calendar.non_working_date.apply(edit),
-        .calendar_non_working_name_input => |edit| model.calendar.non_working_name.apply(edit),
-        .calendar_non_working_kind_input => |edit| model.calendar.non_working_kind.apply(edit),
-        .calendar_non_working_source_input => |edit| model.calendar.non_working_source.apply(edit),
-        .calendar_non_working_regions_input => |edit| model.calendar.non_working_regions.apply(edit),
+        .calendar_non_working_date_input => |edit| {
+            model.calendar.non_working_date.apply(edit);
+            model.calendar.captureNonWorkingInputTruncation();
+        },
+        .calendar_non_working_name_input => |edit| {
+            model.calendar.non_working_name.apply(edit);
+            model.calendar.captureNonWorkingInputTruncation();
+        },
+        .calendar_non_working_kind_input => |edit| {
+            model.calendar.non_working_kind.apply(edit);
+            model.calendar.captureNonWorkingInputTruncation();
+        },
+        .calendar_non_working_source_input => |edit| {
+            model.calendar.non_working_source.apply(edit);
+            model.calendar.captureNonWorkingInputTruncation();
+        },
+        .calendar_non_working_regions_input => |edit| {
+            model.calendar.non_working_regions.apply(edit);
+            model.calendar.captureNonWorkingInputTruncation();
+        },
         .calendar_save_non_working_day => model.calendar.saveNonWorkingDay(),
         .calendar_cancel_non_working_day => model.calendar.clearNonWorkingDayEditor(),
         .calendar_edit_non_working_day => |id| model.calendar.editNonWorkingDay(id),
@@ -908,9 +962,21 @@ fn exportCalendar(model: *Model, maybe_fx: ?*Effects) void {
         model.calendar.setError(error.NotAttached);
         return;
     };
+    var export_stamp: [16]u8 = undefined;
+    const now: i64 = @intCast(c_time.time(null));
+    if (utcCalendarTimeFromUnixSeconds(now)) |current| {
+        export_stamp = current.stamp;
+    } else {
+        const fallback = model.calendar.exportTimestamp();
+        if (fallback.len != export_stamp.len) {
+            model.calendar.setError(error.InvalidTimestamp);
+            return;
+        }
+        @memcpy(&export_stamp, fallback);
+    }
     const bytes = model.calendar.buildIcs(
         allocator,
-        model.calendar.exportTimestamp(),
+        &export_stamp,
     ) catch |err| {
         model.calendar.setError(err);
         return;
@@ -972,7 +1038,7 @@ fn calendarExportOpened(
     if (result.reason == .exited and result.code == 0) {
         model.calendar.setNotice(
             .success,
-            "Opened the full schedule in the default calendar app. Choose an iCloud, Google, or Outlook calendar during import to propagate it to that account.",
+            "Opened the global calendar catalog in the default calendar app. Choose an iCloud, Google, or Outlook calendar during import to propagate it to that account.",
         );
     } else {
         model.calendar.setNotice(
@@ -1001,14 +1067,37 @@ const BootCalendarTime = struct {
 
 fn bootCalendarTime(io: std.Io) BootCalendarTime {
     const raw_seconds = std.Io.Clock.real.now(io).toSeconds();
-    if (raw_seconds < 0) {
-        return .{
-            .year = 2026,
-            .month = 1,
-            .stamp = "20260101T000000Z".*,
-        };
-    }
+    const utc = utcCalendarTimeFromUnixSeconds(raw_seconds) orelse return .{
+        .year = 2026,
+        .month = 1,
+        .stamp = "20260101T000000Z".*,
+    };
 
+    var local_seconds: c_time.time_t = @intCast(raw_seconds);
+    var local: c_time.struct_tm = undefined;
+    const local_result = c_time.localtime_r(&local_seconds, &local);
+    const local_year: i32 = if (local_result != null)
+        local.tm_year + 1900
+    else
+        utc.year;
+    const local_month: i32 = if (local_result != null)
+        local.tm_mon + 1
+    else
+        utc.month;
+    if (local_year < 1 or local_year > 9999 or
+        local_month < 1 or local_month > 12)
+    {
+        return utc;
+    }
+    return .{
+        .year = local_year,
+        .month = @intCast(local_month),
+        .stamp = utc.stamp,
+    };
+}
+
+fn utcCalendarTimeFromUnixSeconds(raw_seconds: i64) ?BootCalendarTime {
+    if (raw_seconds < 0) return null;
     const epoch_seconds = std.time.epoch.EpochSeconds{
         .secs = @intCast(raw_seconds),
     };
@@ -1016,6 +1105,7 @@ fn bootCalendarTime(io: std.Io) BootCalendarTime {
     const month_day = year_day.calculateMonthDay();
     const day_seconds = epoch_seconds.getDaySeconds();
     const year: u16 = year_day.year;
+    if (year == 0 or year > 9999) return null;
     const month: u8 = @intCast(month_day.month.numeric());
     const day: u8 = @intCast(month_day.day_index + 1);
     const hour: u8 = @intCast(day_seconds.getHoursIntoDay());
@@ -1031,7 +1121,11 @@ fn bootCalendarTime(io: std.Io) BootCalendarTime {
     writeTwoDigits(stamp[11..13], minute);
     writeTwoDigits(stamp[13..15], second);
     stamp[15] = 'Z';
-    return .{ .year = year, .month = month, .stamp = stamp };
+    return .{
+        .year = year,
+        .month = month,
+        .stamp = stamp,
+    };
 }
 
 fn writeFourDigits(output: []u8, value: u16) void {

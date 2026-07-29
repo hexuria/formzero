@@ -11,7 +11,8 @@ const sqlite = @cImport({
     @cInclude("sqlite3.h");
 });
 
-pub const latest_schema_version: u32 = 1;
+pub const latest_schema_version: u32 = 2;
+pub const max_scope_text_bytes: usize = 128;
 
 pub const Error = error{
     Closed,
@@ -33,7 +34,8 @@ pub const OverrideWrite = struct {
     original_deadline: []const u8,
     adjusted_deadline: []const u8,
     effective_from: ?[]const u8 = null,
-    expires_on: ?[]const u8 = null,
+    effective_until: ?[]const u8 = null,
+    expires_at: ?[]const u8 = null,
     affected_form_codes: []const []const u8,
     /// An empty list means the override applies in every region.
     regions: []const []const u8 = &.{},
@@ -48,7 +50,8 @@ pub const OwnedOverride = struct {
     original_deadline: []u8,
     adjusted_deadline: []u8,
     effective_from: ?[]u8,
-    expires_on: ?[]u8,
+    effective_until: ?[]u8,
+    expires_at: ?[]u8,
     affected_form_codes: [][]u8,
     regions: [][]u8,
     taxpayer_types: [][]u8,
@@ -59,7 +62,8 @@ pub const OwnedOverride = struct {
         allocator.free(self.original_deadline);
         allocator.free(self.adjusted_deadline);
         freeOptional(allocator, self.effective_from);
-        freeOptional(allocator, self.expires_on);
+        freeOptional(allocator, self.effective_until);
+        freeOptional(allocator, self.expires_at);
         freeStrings(allocator, self.affected_form_codes);
         freeStrings(allocator, self.regions);
         freeStrings(allocator, self.taxpayer_types);
@@ -276,17 +280,33 @@ pub const Store = struct {
     }
 
     pub fn migrate(self: *Store) !void {
-        const version = try self.schemaVersion();
-        if (version > latest_schema_version) return Error.SchemaTooNew;
-        if (version == latest_schema_version) return;
+        const observed_version = try self.schemaVersion();
+        return self.migrateFromObservedVersion(observed_version);
+    }
+
+    fn migrateFromObservedVersion(
+        self: *Store,
+        observed_version: u32,
+    ) !void {
+        if (observed_version > latest_schema_version) return Error.SchemaTooNew;
+        if (observed_version == latest_schema_version) return;
 
         try self.beginImmediate();
         var committed = false;
         errdefer if (!committed) self.rollbackNoFail();
 
+        // Another process may have completed the migration while this opener
+        // was waiting for the write lock. Never replay non-idempotent DDL from
+        // the stale pre-lock observation.
+        const version = try self.schemaVersion();
+        if (version > latest_schema_version) return Error.SchemaTooNew;
         if (version < 1) {
             try self.exec(schema_v1);
             try self.exec("PRAGMA user_version = 1;");
+        }
+        if (version < 2) {
+            try self.exec(migration_v2);
+            try self.exec("PRAGMA user_version = 2;");
         }
 
         try self.commit();
@@ -304,7 +324,8 @@ pub const Store = struct {
             var update = try self.prepare(
                 \\UPDATE calendar_overrides
                 \\SET title = ?, source = ?, original_deadline = ?,
-                \\    adjusted_deadline = ?, effective_from = ?, expires_on = ?,
+                \\    adjusted_deadline = ?, effective_from = ?,
+                \\    effective_until = ?, expires_at = ?,
                 \\    updated_at = unixepoch()
                 \\WHERE id = ?;
             );
@@ -314,8 +335,9 @@ pub const Store = struct {
             try update.bindText(3, value.original_deadline);
             try update.bindText(4, value.adjusted_deadline);
             try update.bindOptionalText(5, value.effective_from);
-            try update.bindOptionalText(6, value.expires_on);
-            try update.bindInt64(7, existing_id);
+            try update.bindOptionalText(6, value.effective_until);
+            try update.bindOptionalText(7, value.expires_at);
+            try update.bindInt64(8, existing_id);
             try update.expectDone();
             if (sqlite.sqlite3_changes(try self.handle()) == 0) return Error.NotFound;
 
@@ -345,8 +367,8 @@ pub const Store = struct {
             var insert = try self.prepare(
                 \\INSERT INTO calendar_overrides (
                 \\    title, source, original_deadline, adjusted_deadline,
-                \\    effective_from, expires_on
-                \\) VALUES (?, ?, ?, ?, ?, ?);
+                \\    effective_from, effective_until, expires_at
+                \\) VALUES (?, ?, ?, ?, ?, ?, ?);
             );
             defer insert.deinit();
             try insert.bindText(1, value.title);
@@ -354,7 +376,8 @@ pub const Store = struct {
             try insert.bindText(3, value.original_deadline);
             try insert.bindText(4, value.adjusted_deadline);
             try insert.bindOptionalText(5, value.effective_from);
-            try insert.bindOptionalText(6, value.expires_on);
+            try insert.bindOptionalText(6, value.effective_until);
+            try insert.bindOptionalText(7, value.expires_at);
             try insert.expectDone();
             break :blk sqlite.sqlite3_last_insert_rowid(try self.handle());
         };
@@ -408,7 +431,7 @@ pub const Store = struct {
     ) !?OwnedOverride {
         var statement = try self.prepare(
             \\SELECT id, title, source, original_deadline, adjusted_deadline,
-            \\       effective_from, expires_on
+            \\       effective_from, effective_until, expires_at
             \\FROM calendar_overrides
             \\WHERE id = ?;
         );
@@ -426,9 +449,9 @@ pub const Store = struct {
     ) !OverrideList {
         var statement = try self.prepare(
             \\SELECT id, title, source, original_deadline, adjusted_deadline,
-            \\       effective_from, expires_on
+            \\       effective_from, effective_until, expires_at
             \\FROM calendar_overrides
-            \\ORDER BY adjusted_deadline, title COLLATE NOCASE, id;
+            \\ORDER BY id;
         );
         defer statement.deinit();
 
@@ -798,8 +821,10 @@ pub const Store = struct {
         errdefer allocator.free(adjusted_deadline);
         const effective_from = try dupOptionalColumn(allocator, row, 5);
         errdefer freeOptional(allocator, effective_from);
-        const expires_on = try dupOptionalColumn(allocator, row, 6);
-        errdefer freeOptional(allocator, expires_on);
+        const effective_until = try dupOptionalColumn(allocator, row, 6);
+        errdefer freeOptional(allocator, effective_until);
+        const expires_at = try dupOptionalColumn(allocator, row, 7);
+        errdefer freeOptional(allocator, expires_at);
         const forms = try self.loadStrings(
             allocator,
             "SELECT form_code FROM calendar_override_forms WHERE override_id = ? ORDER BY form_code COLLATE NOCASE;",
@@ -826,7 +851,8 @@ pub const Store = struct {
             .original_deadline = original_deadline,
             .adjusted_deadline = adjusted_deadline,
             .effective_from = effective_from,
-            .expires_on = expires_on,
+            .effective_until = effective_until,
+            .expires_at = expires_at,
             .affected_form_codes = forms,
             .regions = regions,
             .taxpayer_types = taxpayer_types,
@@ -1107,9 +1133,19 @@ fn validateOverride(value: OverrideWrite) Error!void {
     try validateDate(value.original_deadline);
     try validateDate(value.adjusted_deadline);
     if (value.effective_from) |date| try validateDate(date);
-    if (value.expires_on) |date| try validateDate(date);
-    if (value.effective_from != null and value.expires_on != null and
-        std.mem.order(u8, value.effective_from.?, value.expires_on.?) == .gt)
+    if (value.effective_until) |date| try validateDate(date);
+    if (value.expires_at) |date| try validateDate(date);
+    if (value.effective_from != null and value.effective_until != null and
+        std.mem.order(
+            u8,
+            value.effective_from.?,
+            value.effective_until.?,
+        ) == .gt)
+    {
+        return Error.InvalidDate;
+    }
+    if (value.effective_from != null and value.expires_at != null and
+        std.mem.order(u8, value.effective_from.?, value.expires_at.?) == .gt)
     {
         return Error.InvalidDate;
     }
@@ -1117,8 +1153,10 @@ fn validateOverride(value: OverrideWrite) Error!void {
         return Error.AffectedFormRequired;
     }
     for (value.affected_form_codes) |form_code| try requireValue(form_code);
-    for (value.regions) |region| try requireValue(region);
-    for (value.taxpayer_types) |taxpayer_type| try requireValue(taxpayer_type);
+    for (value.regions) |region| try requireScopeValue(region);
+    for (value.taxpayer_types) |taxpayer_type| {
+        try requireScopeValue(taxpayer_type);
+    }
 }
 
 fn validateNonWorkingDay(value: NonWorkingDayWrite) Error!void {
@@ -1126,7 +1164,13 @@ fn validateNonWorkingDay(value: NonWorkingDayWrite) Error!void {
     try requireValue(value.name);
     try requireValue(value.kind);
     try requireSource(value.source);
-    for (value.regions) |region| try requireValue(region);
+    if (value.regions.len == 0 and
+        (std.ascii.eqlIgnoreCase(value.kind, "local") or
+            std.ascii.eqlIgnoreCase(value.kind, "local_holiday")))
+    {
+        return Error.InvalidValue;
+    }
+    for (value.regions) |region| try requireScopeValue(region);
 }
 
 fn validateConnection(value: ConnectionWrite) Error!void {
@@ -1154,6 +1198,13 @@ fn requireSource(value: []const u8) Error!void {
 
 fn requireValue(value: []const u8) Error!void {
     if (trimmed(value).len == 0) return Error.InvalidValue;
+}
+
+fn requireScopeValue(value: []const u8) Error!void {
+    try requireValue(value);
+    if (trimmed(value).len > max_scope_text_bytes) {
+        return Error.InvalidValue;
+    }
 }
 
 fn trimmed(value: []const u8) []const u8 {
@@ -1309,6 +1360,32 @@ const schema_v1 =
     \\    ON calendar_event_links(provider, profile_key, fingerprint);
 ;
 
+/// v1 exposed this value to users as "Expires on" and mapped it to the
+/// reference model's expiry field. Preserve that meaning, then add the
+/// previously unrepresentable effective-range end.
+const migration_v2 =
+    \\ALTER TABLE calendar_overrides
+    \\    RENAME COLUMN expires_on TO expires_at;
+    \\ALTER TABLE calendar_overrides
+    \\    ADD COLUMN effective_until TEXT;
+    \\CREATE TRIGGER calendar_overrides_effective_range_insert
+    \\BEFORE INSERT ON calendar_overrides
+    \\WHEN NEW.effective_from IS NOT NULL
+    \\    AND NEW.effective_until IS NOT NULL
+    \\    AND NEW.effective_from > NEW.effective_until
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid override effective range');
+    \\END;
+    \\CREATE TRIGGER calendar_overrides_effective_range_update
+    \\BEFORE UPDATE OF effective_from, effective_until ON calendar_overrides
+    \\WHEN NEW.effective_from IS NOT NULL
+    \\    AND NEW.effective_until IS NOT NULL
+    \\    AND NEW.effective_from > NEW.effective_until
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid override effective range');
+    \\END;
+;
+
 test "migration is idempotent and enables foreign keys" {
     const allocator = std.testing.allocator;
     var store = try Store.openMemory(allocator);
@@ -1318,6 +1395,91 @@ test "migration is idempotent and enables foreign keys" {
     try std.testing.expect(try store.foreignKeysEnabled());
     try store.migrate();
     try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+}
+
+test "stale pre-lock migration observation does not replay DDL" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+    // Models a second process that observed v1, then waited while the first
+    // process completed v2. The locked re-read must turn this into a no-op.
+    try store.migrateFromObservedVersion(1);
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+    try std.testing.expect(try tableHasColumn(&store, "effective_until"));
+    try std.testing.expect(try tableHasColumn(&store, "expires_at"));
+}
+
+test "v2 migration preserves v1 expiry without rebuilding" {
+    const allocator = std.testing.allocator;
+    var raw: ?*sqlite.sqlite3 = null;
+    const flags = sqlite.SQLITE_OPEN_READWRITE |
+        sqlite.SQLITE_OPEN_CREATE |
+        sqlite.SQLITE_OPEN_FULLMUTEX;
+    const rc = sqlite.sqlite3_open_v2(":memory:", &raw, flags, null);
+    if (rc != sqlite.SQLITE_OK or raw == null) {
+        if (raw) |db| _ = sqlite.sqlite3_close_v2(db);
+        return Error.SqliteFailure;
+    }
+
+    var store = Store{ .db = raw.? };
+    defer store.close();
+    try store.exec("PRAGMA foreign_keys = ON;");
+    try store.exec(schema_v1);
+    try store.exec("PRAGMA user_version = 1;");
+    try store.exec(
+        \\INSERT INTO calendar_overrides (
+        \\    id, title, source, original_deadline, adjusted_deadline,
+        \\    effective_from, expires_on
+        \\) VALUES (
+        \\    41, 'Migrated extension', 'RMC migration fixture',
+        \\    '2026-05-15', '2026-05-22', '2026-05-01', '2026-05-31'
+        \\);
+    );
+    try store.exec(
+        \\INSERT INTO calendar_override_forms (override_id, form_code)
+        \\VALUES (41, '1701Q');
+    );
+    try store.exec(
+        \\INSERT INTO calendar_override_regions (override_id, region)
+        \\VALUES (41, 'NCR');
+    );
+    try store.exec(
+        \\INSERT INTO calendar_override_taxpayer_types (
+        \\    override_id, taxpayer_type
+        \\) VALUES (41, 'Individual');
+    );
+
+    try std.testing.expectEqual(@as(u32, 1), try store.schemaVersion());
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+    try std.testing.expect(!try tableHasColumn(&store, "expires_on"));
+    try std.testing.expect(try tableHasColumn(&store, "effective_until"));
+    try std.testing.expect(try tableHasColumn(&store, "expires_at"));
+
+    var migrated = (try store.getOverride(allocator, 41)).?;
+    defer migrated.deinit(allocator);
+    try std.testing.expectEqualStrings("2026-05-01", migrated.effective_from.?);
+    try std.testing.expect(migrated.effective_until == null);
+    try std.testing.expectEqualStrings("2026-05-31", migrated.expires_at.?);
+    try std.testing.expectEqualStrings("1701Q", migrated.affected_form_codes[0]);
+    try std.testing.expectEqualStrings("NCR", migrated.regions[0]);
+    try std.testing.expectEqualStrings("Individual", migrated.taxpayer_types[0]);
+
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\INSERT INTO calendar_overrides (
+            \\    title, source, original_deadline, adjusted_deadline,
+            \\    effective_from, effective_until
+            \\) VALUES (
+            \\    'Invalid range', 'Direct SQL fixture',
+            \\    '2026-05-15', '2026-05-22',
+            \\    '2026-06-01', '2026-05-01'
+            \\);
+        ),
+    );
 }
 
 test "override CRUD preserves ordered scopes and cascades normalized rows" {
@@ -1344,6 +1506,32 @@ test "override CRUD preserves ordered scopes and cascades normalized rows" {
         .adjusted_deadline = "2026-05-20",
         .affected_form_codes = &.{},
     }));
+    try std.testing.expectError(Error.InvalidDate, store.putOverride(.{
+        .title = "Inverted effective range",
+        .source = "RMC 1-2026",
+        .original_deadline = "2026-05-15",
+        .adjusted_deadline = "2026-05-20",
+        .effective_from = "2026-06-01",
+        .effective_until = "2026-05-01",
+        .affected_form_codes = &quarterly,
+    }));
+    try std.testing.expectError(Error.InvalidDate, store.putOverride(.{
+        .title = "Invalid record expiry",
+        .source = "RMC 1-2026",
+        .original_deadline = "2026-05-15",
+        .adjusted_deadline = "2026-05-20",
+        .expires_at = "2027-02-29",
+        .affected_form_codes = &quarterly,
+    }));
+    try std.testing.expectError(Error.InvalidDate, store.putOverride(.{
+        .title = "Expiry predates effectivity",
+        .source = "RMC 1-2026",
+        .original_deadline = "2026-05-15",
+        .adjusted_deadline = "2026-05-20",
+        .effective_from = "2026-06-01",
+        .expires_at = "2026-05-31",
+        .affected_form_codes = &quarterly,
+    }));
 
     const later_id = try store.putOverride(.{
         .title = "Quarterly extension",
@@ -1351,7 +1539,8 @@ test "override CRUD preserves ordered scopes and cascades normalized rows" {
         .original_deadline = "2026-05-15",
         .adjusted_deadline = "2026-05-22",
         .effective_from = "2026-05-01",
-        .expires_on = "2026-05-31",
+        .effective_until = "2026-05-31",
+        .expires_at = "2027-05-31",
         .affected_form_codes = &quarterly,
         .regions = &regions,
         .taxpayer_types = &taxpayer_types,
@@ -1367,17 +1556,24 @@ test "override CRUD preserves ordered scopes and cascades normalized rows" {
     var list = try store.listOverrides(allocator);
     defer list.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 2), list.items.len);
-    try std.testing.expectEqual(earlier_id, list.items[0].id);
-    try std.testing.expectEqualStrings("1701", list.items[0].affected_form_codes[0]);
-    try std.testing.expectEqual(@as(usize, 0), list.items[0].regions.len);
-    try std.testing.expectEqual(@as(usize, 0), list.items[0].taxpayer_types.len);
-    try std.testing.expectEqual(later_id, list.items[1].id);
-    try std.testing.expectEqualStrings("1701Q", list.items[1].affected_form_codes[0]);
-    try std.testing.expectEqualStrings("1702Q", list.items[1].affected_form_codes[1]);
-    try std.testing.expectEqualStrings("CALABARZON", list.items[1].regions[0]);
-    try std.testing.expectEqualStrings("NCR", list.items[1].regions[1]);
-    try std.testing.expectEqualStrings("Corporation", list.items[1].taxpayer_types[0]);
-    try std.testing.expectEqualStrings("Individual", list.items[1].taxpayer_types[1]);
+    // Preserve insertion order because later matching overrides deliberately
+    // win when the calendar resolver applies this list.
+    try std.testing.expectEqual(later_id, list.items[0].id);
+    try std.testing.expectEqualStrings("1701Q", list.items[0].affected_form_codes[0]);
+    try std.testing.expectEqualStrings("1702Q", list.items[0].affected_form_codes[1]);
+    try std.testing.expectEqualStrings("CALABARZON", list.items[0].regions[0]);
+    try std.testing.expectEqualStrings("NCR", list.items[0].regions[1]);
+    try std.testing.expectEqualStrings("Corporation", list.items[0].taxpayer_types[0]);
+    try std.testing.expectEqualStrings("Individual", list.items[0].taxpayer_types[1]);
+    try std.testing.expectEqualStrings(
+        "2026-05-31",
+        list.items[0].effective_until.?,
+    );
+    try std.testing.expectEqualStrings("2027-05-31", list.items[0].expires_at.?);
+    try std.testing.expectEqual(earlier_id, list.items[1].id);
+    try std.testing.expectEqualStrings("1701", list.items[1].affected_form_codes[0]);
+    try std.testing.expectEqual(@as(usize, 0), list.items[1].regions.len);
+    try std.testing.expectEqual(@as(usize, 0), list.items[1].taxpayer_types.len);
 
     const replacement_forms = [_][]const u8{"2550Q"};
     const replacement_regions = [_][]const u8{"NCR"};
@@ -1398,6 +1594,9 @@ test "override CRUD preserves ordered scopes and cascades normalized rows" {
     try std.testing.expectEqual(@as(usize, 1), updated.affected_form_codes.len);
     try std.testing.expectEqualStrings("2550Q", updated.affected_form_codes[0]);
     try std.testing.expectEqualStrings("NCR", updated.regions[0]);
+    try std.testing.expect(updated.effective_from == null);
+    try std.testing.expect(updated.effective_until == null);
+    try std.testing.expect(updated.expires_at == null);
     try std.testing.expectEqualStrings(
         "Non-Individual",
         updated.taxpayer_types[0],
@@ -1437,6 +1636,12 @@ test "non-working-day CRUD preserves ordered regions and cascades" {
         .day = "2026-02-29",
         .name = "Impossible day",
         .kind = "regular",
+        .source = "Official Gazette",
+    }));
+    try std.testing.expectError(Error.InvalidValue, store.putNonWorkingDay(.{
+        .day = "2026-08-21",
+        .name = "Unscoped local holiday",
+        .kind = "local",
         .source = "Official Gazette",
     }));
 
@@ -1556,4 +1761,15 @@ fn scalarCount(store: *Store, sql_text: []const u8, value: i64) !i64 {
     try statement.bindInt64(1, value);
     if (try statement.step() != .row) return Error.SqliteFailure;
     return sqlite.sqlite3_column_int64(statement.raw, 0);
+}
+
+fn tableHasColumn(store: *Store, wanted: []const u8) !bool {
+    var statement = try store.prepare("PRAGMA table_info(calendar_overrides);");
+    defer statement.deinit();
+    while (try statement.step() == .row) {
+        const name = columnText(statement.raw, 1) orelse
+            return Error.SqliteFailure;
+        if (std.mem.eql(u8, name, wanted)) return true;
+    }
+    return false;
 }
