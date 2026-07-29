@@ -133,6 +133,20 @@ pub const ViewportClass = enum {
     desktop,
 };
 
+const ProfileCalendarExportStatus = enum {
+    idle,
+    wrong_context,
+    unavailable,
+    build_failed,
+    writing,
+    opening,
+    opened,
+    write_failed,
+    opener_unavailable,
+    unsupported_platform,
+    open_failed,
+};
+
 pub const Model = struct {
     page: Page = .global_dashboard,
     returnPage: Page = .global_dashboard,
@@ -153,6 +167,9 @@ pub const Model = struct {
     reduceMotion: bool = false,
     highContrast: bool = false,
     calendar: calendar_ui.State = .{},
+    calendarExportProfile: ?TaxpayerProfile = null,
+    profileCalendarExportStatus: ProfileCalendarExportStatus = .idle,
+    profileActionsOpen: bool = false,
 
     // These values drive Zig-owned tokens rather than markup bindings.
     pub const view_unbound = .{
@@ -169,6 +186,9 @@ pub const Model = struct {
         "reduceMotion",
         "highContrast",
         "calendar",
+        "calendarExportProfile",
+        "profileCalendarExportStatus",
+        "selectedTaxpayerCalendarKey",
     };
 
     pub fn brandLogo(_: *const Model) u64 {
@@ -328,6 +348,17 @@ pub const Model = struct {
         };
     }
 
+    /// Temporary opaque identifiers for the reconstructed sample profiles.
+    /// Persisted tax-profile IDs must replace these values when profile
+    /// storage lands; never derive calendar identity from a mutable name/TIN.
+    pub fn selectedTaxpayerCalendarKey(self: *const Model) []const u8 {
+        return switch (self.selectedTaxpayer) {
+            .juan_dela_cruz => "tax-profile-0001",
+            .demo_corporation => "tax-profile-0002",
+            .sample_partnership => "tax-profile-0003",
+        };
+    }
+
     pub fn juanProfileActive(self: *const Model) bool {
         return self.selectedTaxpayer == .juan_dela_cruz;
     }
@@ -407,7 +438,7 @@ pub const Model = struct {
     ) []const u8 {
         return std.fmt.allocPrint(
             arena,
-            "{d} catalog entries",
+            "{d} scheduled deadlines",
             .{self.calendar.deadline_count},
         ) catch "";
     }
@@ -478,6 +509,50 @@ pub const Model = struct {
             .neutral => "secondary",
             .success => "primary",
             .failure => "destructive",
+        };
+    }
+
+    pub fn profileCalendarExportNoticeVisible(self: *const Model) bool {
+        return self.profileCalendarExportStatus != .idle and
+            self.calendarExportProfile == self.selectedTaxpayer;
+    }
+
+    pub fn profileCalendarExportBusy(self: *const Model) bool {
+        return self.profileCalendarExportStatus == .writing or
+            self.profileCalendarExportStatus == .opening;
+    }
+
+    pub fn profileCalendarExportNotice(self: *const Model) []const u8 {
+        return switch (self.profileCalendarExportStatus) {
+            .idle => "",
+            .wrong_context => "Calendar export must be started from the selected tax profile.",
+            .unavailable => "Calendar export is unavailable in this test context.",
+            .build_failed => "Could not prepare this profile's calendar handoff.",
+            .writing => "Preparing this profile's calendar handoff file…",
+            .opening => "Calendar file created. Opening the default calendar app…",
+            .opened => "Opened this profile's calendar handoff. Choose the calendar account that should receive it.",
+            .write_failed => "Could not write this profile's calendar handoff file.",
+            .opener_unavailable => "The default-calendar opener is unavailable in this test context.",
+            .unsupported_platform => "This platform has no configured default-calendar opener.",
+            .open_failed => "The calendar file was created, but the default calendar app could not be opened.",
+        };
+    }
+
+    pub fn profileCalendarExportNoticeTone(self: *const Model) []const u8 {
+        return switch (self.profileCalendarExportStatus) {
+            .opened => "primary",
+            .wrong_context,
+            .unavailable,
+            .build_failed,
+            .write_failed,
+            .opener_unavailable,
+            .unsupported_platform,
+            .open_failed,
+            => "destructive",
+            .idle,
+            .writing,
+            .opening,
+            => "secondary",
         };
     }
 
@@ -610,6 +685,8 @@ pub const Msg = union(enum) {
     show_profile_tax,
     show_profile_certificate,
     show_profile_email,
+    toggle_profile_actions,
+    close_profile_actions,
     show_calendar_deadlines,
     show_calendar_rules,
     show_calendar_overrides,
@@ -618,9 +695,9 @@ pub const Msg = union(enum) {
     calendar_previous_month,
     calendar_next_month,
     calendar_refresh,
-    calendar_export,
-    calendar_export_written: native_sdk.EffectFileResult,
-    calendar_export_opened: native_sdk.EffectExit,
+    profile_calendar_export,
+    profile_calendar_export_written: native_sdk.EffectFileResult,
+    profile_calendar_export_opened: native_sdk.EffectExit,
     calendar_override_title_input: canvas.TextInputEvent,
     calendar_override_forms_input: canvas.TextInputEvent,
     calendar_override_original_input: canvas.TextInputEvent,
@@ -667,8 +744,8 @@ pub const Msg = union(enum) {
         "appearance_changed",
         "viewport_class_changed",
         "hide_sidebar",
-        "calendar_export_written",
-        "calendar_export_opened",
+        "profile_calendar_export_written",
+        "profile_calendar_export_opened",
     };
 };
 
@@ -732,6 +809,8 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .show_profile_tax => model.profileSetupSection = .tax_profile,
         .show_profile_certificate => model.profileSetupSection = .certificate,
         .show_profile_email => model.profileSetupSection = .email,
+        .toggle_profile_actions => model.profileActionsOpen = !model.profileActionsOpen,
+        .close_profile_actions => model.profileActionsOpen = false,
         .show_calendar_deadlines => model.taxCalendarSection = .deadlines,
         .show_calendar_rules => model.taxCalendarSection = .rules,
         .show_calendar_overrides => model.taxCalendarSection = .overrides,
@@ -740,9 +819,9 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .calendar_previous_month => model.calendar.previousMonth(),
         .calendar_next_month => model.calendar.nextMonth(),
         .calendar_refresh => model.calendar.refresh(),
-        .calendar_export => exportCalendar(model, fx),
-        .calendar_export_written => |result| calendarExportWritten(model, result, fx),
-        .calendar_export_opened => |result| calendarExportOpened(model, result),
+        .profile_calendar_export => exportProfileCalendar(model, fx),
+        .profile_calendar_export_written => |result| profileCalendarExportWritten(model, result, fx),
+        .profile_calendar_export_opened => |result| profileCalendarExportOpened(model, result),
         .calendar_override_title_input => |edit| {
             model.calendar.override_title.apply(edit);
             model.calendar.captureOverrideInputTruncation();
@@ -858,6 +937,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .viewport_class_changed => |viewport_class| {
             model.viewportClass = viewport_class;
+            if (viewport_class != .phone) model.profileActionsOpen = false;
             if (viewport_class != .phone and viewport_class != .compact) {
                 model.sidebarOverlayOpen = false;
             }
@@ -873,6 +953,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
 fn navigate(model: *Model, page: Page) void {
     model.page = page;
     model.sidebarOverlayOpen = false;
+    model.profileActionsOpen = false;
 }
 
 fn bumpSidebarActionEpoch(model: *Model) void {
@@ -953,13 +1034,21 @@ const Effects = native_sdk.Effects(Msg);
 const calendar_export_file_key: u64 = 20_260_001;
 const calendar_open_file_key: u64 = 20_260_002;
 
-fn exportCalendar(model: *Model, maybe_fx: ?*Effects) void {
+fn exportProfileCalendar(model: *Model, maybe_fx: ?*Effects) void {
+    if (model.profileCalendarExportBusy()) return;
+    model.profileActionsOpen = false;
+    model.calendarExportProfile = model.selectedTaxpayer;
+    if (model.contentPage() != .taxpayer_dashboard) {
+        model.profileCalendarExportStatus = .wrong_context;
+        return;
+    }
     const fx = maybe_fx orelse {
-        model.calendar.setNotice(.failure, "Calendar export is unavailable in this test context.");
+        model.profileCalendarExportStatus = .unavailable;
         return;
     };
     const allocator = model.calendar.allocator orelse {
         model.calendar.setError(error.NotAttached);
+        model.profileCalendarExportStatus = .build_failed;
         return;
     };
     var export_stamp: [16]u8 = undefined;
@@ -970,81 +1059,79 @@ fn exportCalendar(model: *Model, maybe_fx: ?*Effects) void {
         const fallback = model.calendar.exportTimestamp();
         if (fallback.len != export_stamp.len) {
             model.calendar.setError(error.InvalidTimestamp);
+            model.profileCalendarExportStatus = .build_failed;
             return;
         }
         @memcpy(&export_stamp, fallback);
     }
-    const bytes = model.calendar.buildIcs(
+    const bytes = model.calendar.buildProfileIcs(
         allocator,
         &export_stamp,
+        .{
+            .key = model.selectedTaxpayerCalendarKey(),
+            .name = model.selectedTaxpayerName(),
+            .form_scope = .catalog_fallback,
+        },
     ) catch |err| {
         model.calendar.setError(err);
+        model.profileCalendarExportStatus = .build_failed;
         return;
     };
     defer allocator.free(bytes);
 
-    model.calendar.setNotice(.neutral, "Writing the calendar handoff file…");
+    model.profileCalendarExportStatus = .writing;
     fx.writeFile(.{
         .key = calendar_export_file_key,
         .path = model.calendar.exportPath(),
         .bytes = bytes,
-        .on_result = Effects.fileMsg(.calendar_export_written),
+        .on_result = Effects.fileMsg(.profile_calendar_export_written),
     });
 }
 
-fn calendarExportWritten(
+fn profileCalendarExportWritten(
     model: *Model,
     result: native_sdk.EffectFileResult,
     maybe_fx: ?*Effects,
 ) void {
     if (result.outcome != .ok) {
-        model.calendar.setNotice(.failure, "Could not write the calendar handoff file.");
+        model.profileCalendarExportStatus = .write_failed;
         return;
     }
     const fx = maybe_fx orelse {
-        model.calendar.setNotice(.failure, "Calendar opener is unavailable in this test context.");
+        model.profileCalendarExportStatus = .opener_unavailable;
         return;
     };
 
-    model.calendar.setNotice(.neutral, "Calendar file created. Opening the default calendar app…");
+    model.profileCalendarExportStatus = .opening;
     const path = model.calendar.exportPath();
     switch (native_sdk.app_dirs.currentPlatform()) {
         .macos => fx.spawn(.{
             .key = calendar_open_file_key,
             .argv = &.{ "open", path },
-            .on_exit = Effects.exitMsg(.calendar_export_opened),
+            .on_exit = Effects.exitMsg(.profile_calendar_export_opened),
         }),
         .windows => fx.spawn(.{
             .key = calendar_open_file_key,
             .argv = &.{ "cmd.exe", "/D", "/C", "start", "", path },
-            .on_exit = Effects.exitMsg(.calendar_export_opened),
+            .on_exit = Effects.exitMsg(.profile_calendar_export_opened),
         }),
         .linux => fx.spawn(.{
             .key = calendar_open_file_key,
             .argv = &.{ "xdg-open", path },
-            .on_exit = Effects.exitMsg(.calendar_export_opened),
+            .on_exit = Effects.exitMsg(.profile_calendar_export_opened),
         }),
-        else => model.calendar.setNotice(
-            .failure,
-            "This platform has no configured default-calendar opener.",
-        ),
+        else => model.profileCalendarExportStatus = .unsupported_platform,
     }
 }
 
-fn calendarExportOpened(
+fn profileCalendarExportOpened(
     model: *Model,
     result: native_sdk.EffectExit,
 ) void {
     if (result.reason == .exited and result.code == 0) {
-        model.calendar.setNotice(
-            .success,
-            "Opened the global calendar catalog in the default calendar app. Choose an iCloud, Google, or Outlook calendar during import to propagate it to that account.",
-        );
+        model.profileCalendarExportStatus = .opened;
     } else {
-        model.calendar.setNotice(
-            .failure,
-            "The calendar file was created, but the default calendar app could not be opened.",
-        );
+        model.profileCalendarExportStatus = .open_failed;
     }
 }
 
@@ -1293,6 +1380,81 @@ test "taxpayer selection and local page tabs are model owned" {
 
     update(&model, .show_screen_gallery);
     try std.testing.expect(model.demoProfileActive());
+}
+
+test "calendar export is bound to the selected tax profile context" {
+    var model = Model{};
+    update(&model, .profile_calendar_export);
+    try std.testing.expectEqual(
+        ProfileCalendarExportStatus.wrong_context,
+        model.profileCalendarExportStatus,
+    );
+
+    model.page = .taxpayer_dashboard;
+    model.selectedTaxpayer = .demo_corporation;
+    update(&model, .profile_calendar_export);
+    try std.testing.expectEqual(
+        TaxpayerProfile.demo_corporation,
+        model.calendarExportProfile.?,
+    );
+    try std.testing.expectEqual(
+        ProfileCalendarExportStatus.unavailable,
+        model.profileCalendarExportStatus,
+    );
+    try std.testing.expect(model.profileCalendarExportNoticeVisible());
+
+    model.selectedTaxpayer = .juan_dela_cruz;
+    try std.testing.expect(!model.profileCalendarExportNoticeVisible());
+}
+
+test "sample tax profiles have unique opaque calendar identities" {
+    var model = Model{};
+    const juan_key = model.selectedTaxpayerCalendarKey();
+    model.selectedTaxpayer = .demo_corporation;
+    const corporation_key = model.selectedTaxpayerCalendarKey();
+    model.selectedTaxpayer = .sample_partnership;
+    const partnership_key = model.selectedTaxpayerCalendarKey();
+
+    try std.testing.expect(!std.mem.eql(u8, juan_key, corporation_key));
+    try std.testing.expect(!std.mem.eql(u8, juan_key, partnership_key));
+    try std.testing.expect(!std.mem.eql(u8, corporation_key, partnership_key));
+    try std.testing.expect(std.mem.indexOf(u8, juan_key, "000-000") == null);
+    try std.testing.expect(std.mem.indexOf(u8, corporation_key, "Demo") == null);
+    try std.testing.expect(std.mem.indexOf(u8, partnership_key, "Partnership") == null);
+}
+
+test "calendar handoff markup is exposed only as a profile action" {
+    try std.testing.expectEqual(
+        @as(usize, 3),
+        std.mem.count(u8, app_markup, "on-press=\"profile_calendar_export\""),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        std.mem.count(u8, app_markup, "on-press=\"calendar_export\""),
+    );
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup,
+        "Native/default calendar handoff",
+    ) == null);
+}
+
+test "phone profile actions close after navigation and viewport expansion" {
+    var model = Model{
+        .page = .taxpayer_dashboard,
+        .viewportClass = .phone,
+    };
+    update(&model, .toggle_profile_actions);
+    try std.testing.expect(model.profileActionsOpen);
+
+    update(&model, .show_profile_setup);
+    try std.testing.expect(!model.profileActionsOpen);
+
+    model.page = .taxpayer_dashboard;
+    update(&model, .toggle_profile_actions);
+    try std.testing.expect(model.profileActionsOpen);
+    update(&model, .{ .viewport_class_changed = .desktop });
+    try std.testing.expect(!model.profileActionsOpen);
 }
 
 test "transient pages return to their exact origin" {

@@ -66,7 +66,7 @@
     <column gap="4">
       <text><span weight="bold">Compiled Calendar Rules</span></text>
       <text wrap="true" foreground="text_muted">
-        A global form-deadline catalog derived from the reference eBIRForms
+        Shared form-deadline rules derived from the reference eBIRForms
         subsystem and checked against current BIR guidance. Event-based forms
         stay separate from dated deadlines.
       </text>
@@ -295,12 +295,17 @@
 
 <template name="tax-calendar-overrides-section">
   <column gap="20">
+    <if test="{calendarNoticeVisible}">
+      <badge variant="{calendarNoticeTone}">{calendarNotice}</badge>
+    </if>
+
     <column gap="10">
       <text><span weight="bold">Deadline Overrides</span></text>
       <text wrap="true" foreground="text_muted">
         Matching follows the reference resolver: form code plus original or
         already business-day-adjusted deadline; later matching overrides win.
-        Region- or taxpayer-scoped overrides stay out of this global projection.
+        Region- or taxpayer-scoped overrides remain stored until profile facts
+        are available to resolve them safely.
         Effective-range and expiry metadata are preserved separately in SQLite;
         like the reference resolver, they do not limit global matching yet.
       </text>
@@ -389,11 +394,10 @@
         <column gap="6">
           <text size="heading">Tax Calendar Explorer</text>
           <text wrap="true" foreground="text_muted">
-            Explore the global calendar-year baseline, source-cited changes, and calendar handoff.
+            Review calendar-year rules, source-cited changes, and SQLite overrides.
           </text>
         </column>
         <column gap="8">
-          <button variant="primary" icon="external-link" on-press="calendar_export">Add to default calendar</button>
           <button variant="outline" icon="refresh-cw" on-press="calendar_refresh">Refresh from SQLite</button>
         </column>
       </column>
@@ -403,36 +407,12 @@
         <column grow="1" gap="6">
           <text size="heading">Tax Calendar Explorer</text>
           <text foreground="text_muted">
-            Explore the global calendar-year baseline, source-cited changes, and calendar handoff.
+            Review calendar-year rules, source-cited changes, and SQLite overrides.
           </text>
         </column>
         <button variant="outline" icon="refresh-cw" on-press="calendar_refresh">Refresh</button>
-        <button variant="primary" icon="external-link" on-press="calendar_export">Add to default calendar</button>
       </row>
     </else>
-
-    <if test="{calendarNoticeVisible}">
-      <badge variant="{calendarNoticeTone}">{calendarNotice}</badge>
-    </if>
-
-    <card>
-      <column padding="18" gap="10">
-        <row gap="10" cross="center">
-          <icon name="clock" foreground="accent" width="24" height="24"/>
-          <column grow="1" gap="4">
-            <text><span weight="bold">Native/default calendar handoff</span></text>
-            <text wrap="true" foreground="text_muted">
-              A standards-based ICS file opens in Apple Calendar, Outlook, or
-              another registered calendar app. Select an iCloud, Google, or
-              Outlook calendar during import to let that account propagate it
-              to mobile. This action exports the unfiltered global baseline as
-              a one-time import handoff, not a taxpayer-specific plan or managed
-              two-way sync.
-            </text>
-          </column>
-        </row>
-      </column>
-    </card>
 
     <tabs gap="4" label="Tax calendar sections">
       <button

@@ -23,10 +23,10 @@
         <row gap="10" cross="center">
           <icon name="clock" foreground="accent" width="26" height="26"/>
           <column grow="1" gap="4">
-            <text><span weight="bold">{currentCalendarYear} global deadline catalog</span></text>
+            <text><span weight="bold">{currentCalendarYear} tax deadline rules</span></text>
             <text wrap="true" foreground="text_muted">
-              The dashboard points to the same calendar-year / non-eFPS
-              baseline used by the explorer and ICS export.
+              Shared rules and sourced policy records are used when a taxpayer
+              profile resolves its schedule.
             </text>
           </column>
         </row>
@@ -35,7 +35,7 @@
           Saturdays and Sundays adjust automatically. Only source-cited
           SQLite non-working days and deadline overrides change the schedule.
         </text>
-        <button variant="primary" icon="external-link" on-press="show_tax_calendar">Open Calendar Catalog</button>
+        <button variant="primary" icon="external-link" on-press="show_tax_calendar">Review Calendar Rules</button>
       </column>
     </card>
   </column>

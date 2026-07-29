@@ -344,6 +344,22 @@ pub const NoticeKind = enum {
     failure,
 };
 
+pub const ProfileFormScope = union(enum) {
+    /// Temporary shipping mode while the tax-profile repository has no
+    /// authoritative, per-year registered Forms Set.
+    catalog_fallback,
+    /// Canonical form codes from a persisted profile Forms Set. An empty,
+    /// configured set intentionally exports no deadlines.
+    registered: []const []const u8,
+};
+
+pub const ProfileExport = struct {
+    /// Stable opaque profile identity. This must not be a name or TIN.
+    key: []const u8,
+    name: []const u8,
+    form_scope: ProfileFormScope,
+};
+
 pub const State = struct {
     allocator: ?std.mem.Allocator = null,
     store: ?*persistence.Store = null,
@@ -833,36 +849,50 @@ pub const State = struct {
         self.non_working_input_was_truncated = false;
     }
 
-    pub fn buildIcs(
+    pub fn buildProfileIcs(
         self: *const State,
         allocator: std.mem.Allocator,
         dtstamp_utc: []const u8,
+        profile: ProfileExport,
     ) ![]u8 {
         if (self.override_records_truncated or
             self.non_working_day_records_truncated)
         {
             return error.IncompleteProjection;
         }
+        if (profile.key.len == 0 or profile.name.len == 0) {
+            return error.InvalidProfile;
+        }
         var events: [max_deadlines]ics.Event = undefined;
         var keys: [max_deadlines][80]u8 = undefined;
         var periods: [max_deadlines][64]u8 = undefined;
-        var summaries: [max_deadlines][192]u8 = undefined;
-        var descriptions: [max_deadlines][512]u8 = undefined;
+        var summaries: [max_deadlines][320]u8 = undefined;
+        var descriptions: [max_deadlines][640]u8 = undefined;
+        var calendar_name_buffer: [320]u8 = undefined;
+        const calendar_name = try std.fmt.bufPrint(
+            &calendar_name_buffer,
+            "{s} — eBIRForms Tax Deadlines",
+            .{profile.name},
+        );
 
-        for (self.deadlines[0..self.deadline_count], 0..) |*row, index| {
-            const key = try row.obligationKey(&keys[index]);
-            const period = formatPeriodInto(&periods[index], row.period);
+        var event_count: usize = 0;
+        for (self.deadlines[0..self.deadline_count]) |*row| {
+            if (!profileIncludesForm(profile.form_scope, row.form_code)) continue;
+
+            const key = try row.obligationKey(&keys[event_count]);
+            const period = formatPeriodInto(&periods[event_count], row.period);
             const summary = try std.fmt.bufPrint(
-                &summaries[index],
-                "[BIR] {s} — {s}",
-                .{ row.display_form_no, period },
+                &summaries[event_count],
+                "[BIR] {s} — {s} — {s}",
+                .{ profile.name, row.display_form_no, period },
             );
             var original: [10]u8 = undefined;
             var final: [10]u8 = undefined;
             const description = try std.fmt.bufPrint(
-                &descriptions[index],
-                "{s}\nTaxable period: {s}\nStatutory deadline: {s}\nFinal deadline: {s}\nStatus: {s}{s}{s}",
+                &descriptions[event_count],
+                "Tax profile: {s}\n{s}\nTaxable period: {s}\nStatutory deadline: {s}\nFinal deadline: {s}\nStatus: {s}{s}{s}",
                 .{
+                    profile.name,
                     row.form_name,
                     period,
                     row.original_deadline.writeIso(&original),
@@ -872,7 +902,7 @@ pub const State = struct {
                     row.source.text(),
                 },
             );
-            events[index] = .{
+            events[event_count] = .{
                 .obligation_key = key,
                 .date = .{
                     .year = row.final_deadline.year,
@@ -882,12 +912,21 @@ pub const State = struct {
                 .summary = summary,
                 .description = description,
             };
+            event_count += 1;
         }
 
+        // TODO(tax-profile-forms-set): once profile persistence is available,
+        // callers must pass `.registered` from that profile's per-year Forms
+        // Set. Profile region, taxpayer type, fiscal year, and eFPS group must
+        // also be applied before this can be treated as a filing plan.
         return ics.generate(
             allocator,
-            events[0..self.deadline_count],
-            .{ .dtstamp_utc = dtstamp_utc },
+            events[0..event_count],
+            .{
+                .calendar_name = calendar_name,
+                .uid_namespace = profile.key,
+                .dtstamp_utc = dtstamp_utc,
+            },
         );
     }
 
@@ -1051,6 +1090,15 @@ pub const State = struct {
         return null;
     }
 };
+
+fn profileIncludesForm(scope: ProfileFormScope, form_code: []const u8) bool {
+    return switch (scope) {
+        .catalog_fallback => true,
+        .registered => |registered| for (registered) |candidate| {
+            if (std.mem.eql(u8, candidate, form_code)) break true;
+        } else false,
+    };
+}
 
 pub fn ruleRows(arena: std.mem.Allocator) []const RuleRow {
     const rows = arena.alloc(RuleRow, domain.OFFICIAL_RULES.len) catch return &.{};
@@ -1447,7 +1495,15 @@ test "ICS export contains the complete selected calendar year" {
         2026,
         7,
     );
-    const bytes = try state.buildIcs(allocator, "20260729T010203Z");
+    const bytes = try state.buildProfileIcs(
+        allocator,
+        "20260729T010203Z",
+        .{
+            .key = "profile-alpha",
+            .name = "Alpha Profile",
+            .form_scope = .catalog_fallback,
+        },
+    );
     defer allocator.free(bytes);
 
     try std.testing.expectEqual(
@@ -1457,27 +1513,37 @@ test "ICS export contains the complete selected calendar year" {
     try std.testing.expect(std.mem.indexOf(
         u8,
         bytes,
-        "UID:2026:1701Q:q1@ebirforms.goldcoders.dev",
+        "UID:profile-alpha:2026:1701Q:q1@ebirforms.goldcoders.dev",
     ) != null);
     try std.testing.expect(std.mem.indexOf(
         u8,
         bytes,
-        "UID:2025:1604-C:annual@ebirforms.goldcoders.dev",
+        "UID:profile-alpha:2025:1604-C:annual@ebirforms.goldcoders.dev",
     ) != null);
     try std.testing.expect(std.mem.indexOf(
         u8,
         bytes,
-        "UID:2025:1604-F:annual@ebirforms.goldcoders.dev",
+        "UID:profile-alpha:2025:1604-F:annual@ebirforms.goldcoders.dev",
     ) != null);
     try std.testing.expect(std.mem.indexOf(
         u8,
         bytes,
-        "UID:2025:2316:annual:employee-copy@ebirforms.goldcoders.dev",
+        "UID:profile-alpha:2025:2316:annual:employee-copy@ebirforms.goldcoders.dev",
     ) != null);
     try std.testing.expect(std.mem.indexOf(
         u8,
         bytes,
-        "UID:2025:2316:annual:bir-copy@ebirforms.goldcoders.dev",
+        "UID:profile-alpha:2025:2316:annual:bir-copy@ebirforms.goldcoders.dev",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        bytes,
+        "X-WR-CALNAME:Alpha Profile — eBIRForms Tax Deadlines",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        bytes,
+        "X-EBIRFORMS-OBLIGATION-KEY:2026:1701Q:q1",
     ) != null);
 
     var unique_uids = std.StringHashMap(void).init(allocator);
@@ -1492,6 +1558,53 @@ test "ICS export contains the complete selected calendar year" {
     }
     try std.testing.expectEqual(state.deadline_count, uid_count);
     try std.testing.expectEqual(uid_count, unique_uids.count());
+}
+
+test "profile Forms Set scope is explicit and filters canonical forms" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try state.attach(
+        allocator,
+        &store,
+        "/tmp/ebirforms-tax-calendar.ics",
+        "20260729T010203Z",
+        2026,
+        7,
+    );
+
+    const vat_forms = [_][]const u8{"2550Q"};
+    const vat_bytes = try state.buildProfileIcs(
+        allocator,
+        "20260729T010203Z",
+        .{
+            .key = "profile-vat",
+            .name = "VAT Profile",
+            .form_scope = .{ .registered = &vat_forms },
+        },
+    );
+    defer allocator.free(vat_bytes);
+    try std.testing.expect(std.mem.count(u8, vat_bytes, "BEGIN:VEVENT") > 0);
+    try std.testing.expect(std.mem.indexOf(u8, vat_bytes, ":2550Q:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, vat_bytes, ":1701Q:") == null);
+
+    const no_forms = [_][]const u8{};
+    const empty_bytes = try state.buildProfileIcs(
+        allocator,
+        "20260729T010203Z",
+        .{
+            .key = "profile-empty",
+            .name = "Empty Forms Set",
+            .form_scope = .{ .registered = &no_forms },
+        },
+    );
+    defer allocator.free(empty_bytes);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        std.mem.count(u8, empty_bytes, "BEGIN:VEVENT"),
+    );
 }
 
 test "attach validates and records the selected month" {
@@ -1761,6 +1874,14 @@ test "overflow stays recoverable and blocks incomplete export" {
     try std.testing.expectEqual(NoticeKind.failure, state.notice_kind);
     try std.testing.expectError(
         error.IncompleteProjection,
-        state.buildIcs(allocator, "20260729T010203Z"),
+        state.buildProfileIcs(
+            allocator,
+            "20260729T010203Z",
+            .{
+                .key = "profile-overflow",
+                .name = "Overflow Profile",
+                .form_scope = .catalog_fallback,
+            },
+        ),
     );
 }

@@ -44,6 +44,10 @@ pub const Options = struct {
     calendar_name: []const u8 = "eBIRForms Tax Deadlines",
     prod_id: []const u8 = "-//Goldcoders//eBIRForms Tax Calendar//EN",
     uid_domain: []const u8 = "ebirforms.goldcoders.dev",
+    /// Optional opaque tax-profile identity used only to namespace UIDs.
+    /// The obligation key itself remains profile-independent for provider
+    /// mappings and future Forms Set projections.
+    uid_namespace: ?[]const u8 = null,
     /// Deterministic UTC export stamp. Keeping this caller-owned makes the
     /// renderer fully testable and avoids hidden clock access.
     dtstamp_utc: []const u8,
@@ -74,7 +78,13 @@ pub fn generate(
         if (seen.found_existing) return error.DuplicateObligationKey;
 
         try appendRawLine(allocator, &out, "BEGIN:VEVENT");
-        try appendUid(allocator, &out, event.obligation_key, options.uid_domain);
+        try appendUid(
+            allocator,
+            &out,
+            options.uid_namespace,
+            event.obligation_key,
+            options.uid_domain,
+        );
         try appendRawProperty(allocator, &out, "DTSTAMP", options.dtstamp_utc);
         try appendDateProperty(allocator, &out, "DTSTART;VALUE=DATE", event.date);
         try appendDateProperty(allocator, &out, "DTEND;VALUE=DATE", try event.date.next());
@@ -112,11 +122,17 @@ fn appendAlarm(
 fn appendUid(
     allocator: std.mem.Allocator,
     out: *std.ArrayList(u8),
+    namespace: ?[]const u8,
     obligation_key: []const u8,
     domain: []const u8,
 ) !void {
     var value: std.ArrayList(u8) = .empty;
     defer value.deinit(allocator);
+    if (namespace) |prefix| {
+        if (prefix.len == 0) return error.InvalidEvent;
+        try value.appendSlice(allocator, prefix);
+        try value.append(allocator, ':');
+    }
     try value.appendSlice(allocator, obligation_key);
     try value.append(allocator, '@');
     try value.appendSlice(allocator, domain);
@@ -297,6 +313,50 @@ test "calendar export is all-day, escaped, reminded, and stable" {
     try std.testing.expect(std.mem.indexOf(u8, bytes, "METHOD:") == null);
     try std.testing.expect(std.mem.indexOf(u8, bytes, "SEQUENCE:") == null);
     try std.testing.expect(std.mem.endsWith(u8, bytes, "END:VCALENDAR\r\n"));
+}
+
+test "profile namespace changes UID without changing obligation identity" {
+    const allocator = std.testing.allocator;
+    const event = Event{
+        .obligation_key = "2026:2550Q:q1",
+        .date = .{ .year = 2026, .month = 4, .day = 27 },
+        .summary = "VAT deadline",
+        .description = "Profile-scoped export",
+    };
+    const alpha = try generate(
+        allocator,
+        &.{event},
+        .{
+            .uid_namespace = "profile-alpha",
+            .dtstamp_utc = "20260729T010203Z",
+        },
+    );
+    defer allocator.free(alpha);
+    const beta = try generate(
+        allocator,
+        &.{event},
+        .{
+            .uid_namespace = "profile-beta",
+            .dtstamp_utc = "20260729T010203Z",
+        },
+    );
+    defer allocator.free(beta);
+
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        alpha,
+        "UID:profile-alpha:2026:2550Q:q1@ebirforms.goldcoders.dev",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        beta,
+        "UID:profile-beta:2026:2550Q:q1@ebirforms.goldcoders.dev",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        alpha,
+        "X-EBIRFORMS-OBLIGATION-KEY:2026:2550Q:q1",
+    ) != null);
 }
 
 test "duplicate obligation keys are rejected before import" {

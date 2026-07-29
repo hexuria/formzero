@@ -1677,18 +1677,19 @@ test "non-working-day CRUD preserves ordered regions and cascades" {
 
 test "provider connections and full event metadata upsert and cascade" {
     const allocator = std.testing.allocator;
+    const profile_key = "tax-profile-018f6f2a";
     var store = try Store.openMemory(allocator);
     defer store.close();
 
     const connection_id = try store.putConnection(.{
         .provider = "google",
-        .profile_key = "123-456-789",
+        .profile_key = profile_key,
         .external_calendar_id = "calendar-1",
         .calendar_name = "BIR Deadlines",
     });
     const same_id = try store.putConnection(.{
         .provider = "google",
-        .profile_key = "123-456-789",
+        .profile_key = profile_key,
         .external_calendar_id = "calendar-2",
         .calendar_name = "Updated deadlines",
         .last_error = "temporary",
@@ -1697,7 +1698,7 @@ test "provider connections and full event metadata upsert and cascade" {
 
     try store.putEventLink(.{
         .provider = "google",
-        .profile_key = "123-456-789",
+        .profile_key = profile_key,
         .obligation_key = "2026:1701Q:q1",
         .external_event_id = "event-1",
         .external_ical_uid = "ical-1@example.test",
@@ -1709,7 +1710,7 @@ test "provider connections and full event metadata upsert and cascade" {
     });
     try store.putEventLink(.{
         .provider = "google",
-        .profile_key = "123-456-789",
+        .profile_key = profile_key,
         .obligation_key = "2026:1701Q:q1",
         .external_event_id = "event-1",
         .external_ical_uid = "ical-1@example.test",
@@ -1723,7 +1724,7 @@ test "provider connections and full event metadata upsert and cascade" {
     var connection = (try store.getConnection(
         allocator,
         "google",
-        "123-456-789",
+        profile_key,
     )).?;
     defer connection.deinit(allocator);
     try std.testing.expectEqualStrings("calendar-2", connection.external_calendar_id);
@@ -1731,7 +1732,7 @@ test "provider connections and full event metadata upsert and cascade" {
     var link = (try store.getEventLink(
         allocator,
         "google",
-        "123-456-789",
+        profile_key,
         "2026:1701Q:q1",
     )).?;
     defer link.deinit(allocator);
@@ -1747,7 +1748,7 @@ test "provider connections and full event metadata upsert and cascade" {
         .fingerprint = "sha256-x",
     }));
 
-    try std.testing.expect(try store.deleteConnection("google", "123-456-789"));
+    try std.testing.expect(try store.deleteConnection("google", profile_key));
     try std.testing.expectEqual(@as(i64, 0), try scalarCount(
         &store,
         "SELECT count(*) FROM calendar_event_links WHERE provider = 'google' AND profile_key = '123-456-789' AND ? IS NOT NULL;",

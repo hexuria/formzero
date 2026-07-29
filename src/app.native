@@ -635,10 +635,10 @@
         <row gap="10" cross="center">
           <icon name="clock" foreground="accent" width="26" height="26"/>
           <column grow="1" gap="4">
-            <text><span weight="bold">{currentCalendarYear} global deadline catalog</span></text>
+            <text><span weight="bold">{currentCalendarYear} tax deadline rules</span></text>
             <text wrap="true" foreground="text_muted">
-              The dashboard points to the same calendar-year / non-eFPS
-              baseline used by the explorer and ICS export.
+              Shared rules and sourced policy records are used when a taxpayer
+              profile resolves its schedule.
             </text>
           </column>
         </row>
@@ -647,7 +647,7 @@
           Saturdays and Sundays adjust automatically. Only source-cited
           SQLite non-working days and deadline overrides change the schedule.
         </text>
-        <button variant="primary" icon="external-link" on-press="show_tax_calendar">Open Calendar Catalog</button>
+        <button variant="primary" icon="external-link" on-press="show_tax_calendar">Review Calendar Rules</button>
       </column>
     </card>
   </column>
@@ -861,11 +861,16 @@
       <column grow="1" gap="4">
         <text><span weight="bold">Taxpayer Calendar</span></text>
         <text wrap="true" foreground="text_muted">
-          Profile applicability requires an authoritative per-year Forms Set
+          For now, Add to Calendar includes every supported form. Once this
+          profile has a registered Forms Set, only its forms will be included.
         </text>
       </column>
       <badge variant="secondary">{currentCalendarYear}</badge>
     </row>
+
+    <if test="{profileCalendarExportNoticeVisible}">
+      <badge variant="{profileCalendarExportNoticeTone}">{profileCalendarExportNotice}</badge>
+    </if>
 
     <if test="{constrainedLayout}">
       <column gap="20">
@@ -873,7 +878,7 @@
           template="taxpayer-empty-card"
           title="Upcoming Deadlines"
           icon="clock"
-          body="No authoritative Forms Set is persisted for this reconstructed profile yet. The global calendar remains available."/>
+          body="Profile-specific deadlines will appear when its registered Forms Set is available."/>
         <use
           template="taxpayer-empty-card"
           title="Action Required"
@@ -888,7 +893,7 @@
             template="taxpayer-empty-card"
             title="Upcoming Deadlines"
             icon="clock"
-            body="No authoritative Forms Set is persisted for this reconstructed profile yet. The global calendar remains available."/>
+            body="Profile-specific deadlines will appear when its registered Forms Set is available."/>
         </column>
         <column grow="1">
           <use
@@ -900,20 +905,6 @@
       </row>
     </else>
 
-    <card>
-      <column padding="20" gap="12">
-        <row gap="10" cross="center">
-          <icon name="info" foreground="info" width="22" height="22"/>
-          <text><span weight="bold">Tax form preparation</span></text>
-        </row>
-        <text wrap="true" foreground="text_muted">
-          Open the global calendar catalog for compiled rules and sourced
-          changes. It is not filtered to this taxpayer until the registered
-          per-year Forms Set and filing profile are persisted.
-        </text>
-        <button variant="primary" icon="external-link" on-press="show_tax_calendar">Open Global Calendar Catalog</button>
-      </column>
-    </card>
   </column>
 </template>
 
@@ -942,30 +933,65 @@
 
 <template name="taxpayer-dashboard-content" args="padding">
   <column padding="{padding}" gap="24">
-    <if test="{constrainedLayout}">
-      <column gap="14">
-        <row gap="12" cross="center">
-          <avatar label="{selectedTaxpayerName}">{selectedTaxpayerInitials}</avatar>
-          <column grow="1" gap="5">
-            <text size="heading" wrap="true">{selectedTaxpayerName}</text>
-            <text wrap="true" foreground="text_muted">TIN: {selectedTaxpayerTin}</text>
-            <text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year 2026 - Non-VAT</text>
-          </column>
-        </row>
-        <button variant="outline" icon="settings" on-press="show_profile_setup">Profile Settings</button>
-      </column>
+    <if test="{phoneLayout}">
+      <row gap="12" cross="center">
+        <avatar label="{selectedTaxpayerName}">{selectedTaxpayerInitials}</avatar>
+        <column grow="1" gap="5">
+          <text size="heading" wrap="true">{selectedTaxpayerName}</text>
+          <text wrap="true" foreground="text_muted">TIN: {selectedTaxpayerTin}</text>
+          <text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year 2026 - Non-VAT</text>
+        </column>
+        <stack>
+          <button
+            size="sm"
+            variant="outline"
+            icon="wrench"
+            on-press="toggle_profile_actions">Actions</button>
+          <if test="{profileActionsOpen}">
+            <dropdown-menu
+              anchor="below"
+              anchor-alignment="end"
+              on-dismiss="close_profile_actions">
+              <menu-item
+                icon="clock"
+                disabled="{profileCalendarExportBusy}"
+                on-press="profile_calendar_export">Add to Calendar</menu-item>
+              <menu-item icon="settings" on-press="show_profile_setup">Profile Settings</menu-item>
+            </dropdown-menu>
+          </if>
+        </stack>
+      </row>
     </if>
     <else>
-      <row gap="16" cross="center">
-        <avatar label="{selectedTaxpayerName}">{selectedTaxpayerInitials}</avatar>
-        <column grow="1" gap="6">
-          <text size="heading">{selectedTaxpayerName}</text>
-          <text wrap="true" foreground="text_muted">
-            TIN: {selectedTaxpayerTin} - Type: {selectedTaxpayerKind} - Tax Year 2026 - Non-VAT
-          </text>
+      <if test="{constrainedLayout}">
+        <column gap="14">
+          <row gap="12" cross="center">
+            <avatar label="{selectedTaxpayerName}">{selectedTaxpayerInitials}</avatar>
+            <column grow="1" gap="5">
+              <text size="heading" wrap="true">{selectedTaxpayerName}</text>
+              <text wrap="true" foreground="text_muted">TIN: {selectedTaxpayerTin}</text>
+              <text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year 2026 - Non-VAT</text>
+            </column>
+          </row>
+          <row gap="10">
+            <button variant="primary" icon="clock" disabled="{profileCalendarExportBusy}" on-press="profile_calendar_export">Add to Calendar</button>
+            <button variant="outline" icon="settings" on-press="show_profile_setup">Profile Settings</button>
+          </row>
         </column>
-        <button variant="outline" icon="settings" on-press="show_profile_setup">Profile Settings</button>
-      </row>
+      </if>
+      <else>
+        <row gap="16" cross="center">
+          <avatar label="{selectedTaxpayerName}">{selectedTaxpayerInitials}</avatar>
+          <column grow="1" gap="6">
+            <text size="heading">{selectedTaxpayerName}</text>
+            <text wrap="true" foreground="text_muted">
+              TIN: {selectedTaxpayerTin} - Type: {selectedTaxpayerKind} - Tax Year 2026 - Non-VAT
+            </text>
+          </column>
+          <button variant="primary" icon="clock" disabled="{profileCalendarExportBusy}" on-press="profile_calendar_export">Add to Calendar</button>
+          <button variant="outline" icon="settings" on-press="show_profile_setup">Profile Settings</button>
+        </row>
+      </else>
     </else>
 
     <card>
@@ -1752,7 +1778,7 @@
     <column gap="4">
       <text><span weight="bold">Compiled Calendar Rules</span></text>
       <text wrap="true" foreground="text_muted">
-        A global form-deadline catalog derived from the reference eBIRForms
+        Shared form-deadline rules derived from the reference eBIRForms
         subsystem and checked against current BIR guidance. Event-based forms
         stay separate from dated deadlines.
       </text>
@@ -1981,12 +2007,17 @@
 
 <template name="tax-calendar-overrides-section">
   <column gap="20">
+    <if test="{calendarNoticeVisible}">
+      <badge variant="{calendarNoticeTone}">{calendarNotice}</badge>
+    </if>
+
     <column gap="10">
       <text><span weight="bold">Deadline Overrides</span></text>
       <text wrap="true" foreground="text_muted">
         Matching follows the reference resolver: form code plus original or
         already business-day-adjusted deadline; later matching overrides win.
-        Region- or taxpayer-scoped overrides stay out of this global projection.
+        Region- or taxpayer-scoped overrides remain stored until profile facts
+        are available to resolve them safely.
         Effective-range and expiry metadata are preserved separately in SQLite;
         like the reference resolver, they do not limit global matching yet.
       </text>
@@ -2075,11 +2106,10 @@
         <column gap="6">
           <text size="heading">Tax Calendar Explorer</text>
           <text wrap="true" foreground="text_muted">
-            Explore the global calendar-year baseline, source-cited changes, and calendar handoff.
+            Review calendar-year rules, source-cited changes, and SQLite overrides.
           </text>
         </column>
         <column gap="8">
-          <button variant="primary" icon="external-link" on-press="calendar_export">Add to default calendar</button>
           <button variant="outline" icon="refresh-cw" on-press="calendar_refresh">Refresh from SQLite</button>
         </column>
       </column>
@@ -2089,36 +2119,12 @@
         <column grow="1" gap="6">
           <text size="heading">Tax Calendar Explorer</text>
           <text foreground="text_muted">
-            Explore the global calendar-year baseline, source-cited changes, and calendar handoff.
+            Review calendar-year rules, source-cited changes, and SQLite overrides.
           </text>
         </column>
         <button variant="outline" icon="refresh-cw" on-press="calendar_refresh">Refresh</button>
-        <button variant="primary" icon="external-link" on-press="calendar_export">Add to default calendar</button>
       </row>
     </else>
-
-    <if test="{calendarNoticeVisible}">
-      <badge variant="{calendarNoticeTone}">{calendarNotice}</badge>
-    </if>
-
-    <card>
-      <column padding="18" gap="10">
-        <row gap="10" cross="center">
-          <icon name="clock" foreground="accent" width="24" height="24"/>
-          <column grow="1" gap="4">
-            <text><span weight="bold">Native/default calendar handoff</span></text>
-            <text wrap="true" foreground="text_muted">
-              A standards-based ICS file opens in Apple Calendar, Outlook, or
-              another registered calendar app. Select an iCloud, Google, or
-              Outlook calendar during import to let that account propagate it
-              to mobile. This action exports the unfiltered global baseline as
-              a one-time import handoff, not a taxpayer-specific plan or managed
-              two-way sync.
-            </text>
-          </column>
-        </row>
-      </column>
-    </card>
 
     <tabs gap="4" label="Tax calendar sections">
       <button

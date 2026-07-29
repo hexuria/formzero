@@ -8,7 +8,8 @@ Most form, filing, payment, authentication, import, print, and network
 surfaces remain presentation-only. The tax-calendar milestone is functional:
 it resolves the global calendar-year / non-eFPS baseline, applies business-day
 policy and sourced overrides, persists calendar policy in SQLite, and exports
-the selected calendar year to the user's default calendar application.
+the selected calendar year from the active tax profile to the user's default
+calendar application.
 
 ## Tax calendar
 
@@ -29,17 +30,24 @@ the selected calendar year to the user's default calendar application.
 - The calendar database is stored in the platform application-data directory
   as `calendar.sqlite3`, with versioned migrations, foreign keys, WAL, a busy
   timeout, sourced-policy validation, and confirmed destructive edits.
-- “Add to default calendar” creates a standards-compliant all-day `.ics`
-  calendar with collision-checked stable UIDs and 7-day/1-day alerts, then
-  opens the registered calendar application. Importing into an iCloud, Google,
-  or Outlook calendar can propagate through that account.
+- “Add this profile to default calendar” is available only on the active
+  taxpayer's Calendar tab. It creates a standards-compliant all-day `.ics`
+  calendar with profile-namespaced, collision-checked stable UIDs and
+  7-day/1-day alerts, then opens the registered calendar application.
+  Importing into an iCloud, Google, or Outlook calendar can propagate through
+  that account.
 
 The `.ics` path is a user-confirmed import handoff, not managed two-way sync.
-It exports the unfiltered baseline, not an authoritative taxpayer filing plan.
-Registered Forms Set selection, fiscal-year schedules, eFPS filer-group
-deadlines, region/taxpayer-scoped policy, and effective-date evaluation must be
-resolved from a taxpayer profile before a future profile-aware export can be
-treated as filing-specific.
+The handoff is owned and identified by the selected tax profile, but its
+temporary `catalog_fallback` mode deliberately exports every supported form.
+It is not yet an authoritative taxpayer filing plan.
+
+**Tax-profile Forms Set gate:** when per-year profile registration is
+persisted, the caller must replace `catalog_fallback` with the profile's
+canonical registered form codes. An explicitly configured empty Forms Set
+must export zero events. Fiscal-year schedules, eFPS filer-group deadlines,
+region/taxpayer-scoped policy, and effective-date evaluation must also be
+resolved from that profile before the export can be treated as filing-specific.
 Provider-neutral connection/event mapping tables are ready for later EventKit,
 Google Calendar API, or Microsoft Graph adapters, but direct OAuth sync is not
 configured. The current packaged application target remains macOS.
