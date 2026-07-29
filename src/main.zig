@@ -1,13 +1,14 @@
-//! Static eBIRForms application state and Native SDK wiring.
+//! eBIRForms application state and Native SDK wiring.
 //!
 //! The screens remain declarative `.native` templates. Zig owns the small
-//! amount of real application state required by the prototype: page
-//! selection, appearance preference, and the live system accessibility
-//! settings used to resolve design tokens.
+//! application state: navigation, appearance and accessibility preferences,
+//! plus the tested calendar resolver, SQLite policy store, and native
+//! calendar-handoff effects.
 
 const std = @import("std");
 const runner = @import("runner");
 const native_sdk = @import("native_sdk");
+const calendar_ui = @import("calendar/ui_state.zig");
 
 pub const panic = std.debug.FullPanic(native_sdk.debug.capturePanic);
 
@@ -148,6 +149,7 @@ pub const Model = struct {
     systemColorScheme: native_sdk.ColorScheme = .light,
     reduceMotion: bool = false,
     highContrast: bool = false,
+    calendar: calendar_ui.State = .{},
 
     // These values drive Zig-owned tokens rather than markup bindings.
     pub const view_unbound = .{
@@ -163,6 +165,7 @@ pub const Model = struct {
         "systemColorScheme",
         "reduceMotion",
         "highContrast",
+        "calendar",
     };
 
     pub fn brandLogo(_: *const Model) u64 {
@@ -366,6 +369,199 @@ pub const Model = struct {
         return self.taxCalendarSection == .overrides;
     }
 
+    pub fn currentCalendarYear(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "{d}",
+            .{self.calendar.selected_year},
+        ) catch "";
+    }
+
+    pub fn currentCalendarMonth(self: *const Model) []const u8 {
+        return switch (self.calendar.selected_month) {
+            1 => "January",
+            2 => "February",
+            3 => "March",
+            4 => "April",
+            5 => "May",
+            6 => "June",
+            7 => "July",
+            8 => "August",
+            9 => "September",
+            10 => "October",
+            11 => "November",
+            12 => "December",
+            else => "Unknown month",
+        };
+    }
+
+    pub fn calendarDeadlineCount(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "{d} dated deadlines",
+            .{self.calendar.deadline_count},
+        ) catch "";
+    }
+
+    pub fn calendarVisibleDeadlineCount(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        var count: usize = 0;
+        for (self.calendar.deadlines[0..self.calendar.deadline_count]) |row| {
+            if (row.final_deadline.month == self.calendar.selected_month) {
+                count += 1;
+            }
+        }
+        return std.fmt.allocPrint(arena, "{d} deadlines this month", .{count}) catch "";
+    }
+
+    pub fn calendarDeadlines(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const calendar_ui.DeadlineRow {
+        const all = self.calendar.deadlines[0..self.calendar.deadline_count];
+        const visible = arena.alloc(calendar_ui.DeadlineRow, all.len) catch return &.{};
+        var count: usize = 0;
+        for (all) |row| {
+            if (row.final_deadline.month != self.calendar.selected_month) continue;
+            visible[count] = row;
+            count += 1;
+        }
+        return visible[0..count];
+    }
+
+    pub fn calendarRules(
+        _: *const Model,
+        arena: std.mem.Allocator,
+    ) []const calendar_ui.RuleRow {
+        return calendar_ui.ruleRows(arena);
+    }
+
+    pub fn calendarOverrides(self: *const Model) []const calendar_ui.OverrideRow {
+        return self.calendar.overrides[0..self.calendar.override_count];
+    }
+
+    pub fn calendarOverridesEmpty(self: *const Model) bool {
+        return self.calendar.override_count == 0;
+    }
+
+    pub fn calendarNonWorkingDays(
+        self: *const Model,
+    ) []const calendar_ui.NonWorkingDayRow {
+        return self.calendar.non_working_days[0..self.calendar.non_working_day_count];
+    }
+
+    pub fn calendarNonWorkingDaysEmpty(self: *const Model) bool {
+        return self.calendar.non_working_day_count == 0;
+    }
+
+    pub fn calendarNoticeVisible(self: *const Model) bool {
+        return self.calendar.notice.len != 0;
+    }
+
+    pub fn calendarNotice(self: *const Model) []const u8 {
+        return self.calendar.notice.text();
+    }
+
+    pub fn calendarNoticeTone(self: *const Model) []const u8 {
+        return switch (self.calendar.notice_kind) {
+            .neutral => "secondary",
+            .success => "primary",
+            .failure => "destructive",
+        };
+    }
+
+    pub fn overrideEditorTitle(self: *const Model) []const u8 {
+        return if (self.calendar.editing_override_id == null)
+            "Add deadline override"
+        else
+            "Edit deadline override";
+    }
+
+    pub fn overrideSaveLabel(self: *const Model) []const u8 {
+        return if (self.calendar.editing_override_id == null)
+            "Save override"
+        else
+            "Update override";
+    }
+
+    pub fn overrideTitleValue(self: *const Model) []const u8 {
+        return self.calendar.override_title.text();
+    }
+
+    pub fn overrideFormsValue(self: *const Model) []const u8 {
+        return self.calendar.override_forms.text();
+    }
+
+    pub fn overrideOriginalValue(self: *const Model) []const u8 {
+        return self.calendar.override_original.text();
+    }
+
+    pub fn overrideAdjustedValue(self: *const Model) []const u8 {
+        return self.calendar.override_adjusted.text();
+    }
+
+    pub fn overrideSourceValue(self: *const Model) []const u8 {
+        return self.calendar.override_source.text();
+    }
+
+    pub fn overrideRegionsValue(self: *const Model) []const u8 {
+        return self.calendar.override_regions.text();
+    }
+
+    pub fn overrideTaxpayerTypesValue(self: *const Model) []const u8 {
+        return self.calendar.override_taxpayer_types.text();
+    }
+
+    pub fn overrideEffectiveFromValue(self: *const Model) []const u8 {
+        return self.calendar.override_effective_from.text();
+    }
+
+    pub fn overrideExpiresOnValue(self: *const Model) []const u8 {
+        return self.calendar.override_expires_on.text();
+    }
+
+    pub fn nonWorkingDayEditorTitle(self: *const Model) []const u8 {
+        return if (self.calendar.editing_non_working_day_id == null)
+            "Add non-working day"
+        else
+            "Edit non-working day";
+    }
+
+    pub fn nonWorkingDaySaveLabel(self: *const Model) []const u8 {
+        return if (self.calendar.editing_non_working_day_id == null)
+            "Save non-working day"
+        else
+            "Update non-working day";
+    }
+
+    pub fn nonWorkingDateValue(self: *const Model) []const u8 {
+        return self.calendar.non_working_date.text();
+    }
+
+    pub fn nonWorkingNameValue(self: *const Model) []const u8 {
+        return self.calendar.non_working_name.text();
+    }
+
+    pub fn nonWorkingKindValue(self: *const Model) []const u8 {
+        return self.calendar.non_working_kind.text();
+    }
+
+    pub fn nonWorkingSourceValue(self: *const Model) []const u8 {
+        return self.calendar.non_working_source.text();
+    }
+
+    pub fn nonWorkingRegionsValue(self: *const Model) []const u8 {
+        return self.calendar.non_working_regions.text();
+    }
+
     pub fn backgroundJobsActive(self: *const Model) bool {
         return self.backgroundTasksSection == .jobs;
     }
@@ -410,6 +606,36 @@ pub const Msg = union(enum) {
     show_calendar_deadlines,
     show_calendar_rules,
     show_calendar_overrides,
+    calendar_previous_year,
+    calendar_next_year,
+    calendar_previous_month,
+    calendar_next_month,
+    calendar_refresh,
+    calendar_export,
+    calendar_export_written: native_sdk.EffectFileResult,
+    calendar_export_opened: native_sdk.EffectExit,
+    calendar_override_title_input: canvas.TextInputEvent,
+    calendar_override_forms_input: canvas.TextInputEvent,
+    calendar_override_original_input: canvas.TextInputEvent,
+    calendar_override_adjusted_input: canvas.TextInputEvent,
+    calendar_override_source_input: canvas.TextInputEvent,
+    calendar_override_regions_input: canvas.TextInputEvent,
+    calendar_override_taxpayer_types_input: canvas.TextInputEvent,
+    calendar_override_effective_from_input: canvas.TextInputEvent,
+    calendar_override_expires_on_input: canvas.TextInputEvent,
+    calendar_save_override,
+    calendar_cancel_override,
+    calendar_edit_override: i64,
+    calendar_delete_override: i64,
+    calendar_non_working_date_input: canvas.TextInputEvent,
+    calendar_non_working_name_input: canvas.TextInputEvent,
+    calendar_non_working_kind_input: canvas.TextInputEvent,
+    calendar_non_working_source_input: canvas.TextInputEvent,
+    calendar_non_working_regions_input: canvas.TextInputEvent,
+    calendar_save_non_working_day,
+    calendar_cancel_non_working_day,
+    calendar_edit_non_working_day: i64,
+    calendar_delete_non_working_day: i64,
     show_background_jobs,
     show_background_logs,
     go_back,
@@ -433,10 +659,20 @@ pub const Msg = union(enum) {
         "appearance_changed",
         "viewport_class_changed",
         "hide_sidebar",
+        "calendar_export_written",
+        "calendar_export_opened",
     };
 };
 
 pub fn update(model: *Model, msg: Msg) void {
+    updateCore(model, msg, null);
+}
+
+fn updateWithEffects(model: *Model, msg: Msg, fx: *Effects) void {
+    updateCore(model, msg, fx);
+}
+
+fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
     switch (msg) {
         .show_global_dashboard => navigate(model, .global_dashboard),
         .show_taxpayer_dashboard => navigate(model, .taxpayer_dashboard),
@@ -491,6 +727,36 @@ pub fn update(model: *Model, msg: Msg) void {
         .show_calendar_deadlines => model.taxCalendarSection = .deadlines,
         .show_calendar_rules => model.taxCalendarSection = .rules,
         .show_calendar_overrides => model.taxCalendarSection = .overrides,
+        .calendar_previous_year => model.calendar.previousYear(),
+        .calendar_next_year => model.calendar.nextYear(),
+        .calendar_previous_month => model.calendar.previousMonth(),
+        .calendar_next_month => model.calendar.nextMonth(),
+        .calendar_refresh => model.calendar.refresh(),
+        .calendar_export => exportCalendar(model, fx),
+        .calendar_export_written => |result| calendarExportWritten(model, result, fx),
+        .calendar_export_opened => |result| calendarExportOpened(model, result),
+        .calendar_override_title_input => |edit| model.calendar.override_title.apply(edit),
+        .calendar_override_forms_input => |edit| model.calendar.override_forms.apply(edit),
+        .calendar_override_original_input => |edit| model.calendar.override_original.apply(edit),
+        .calendar_override_adjusted_input => |edit| model.calendar.override_adjusted.apply(edit),
+        .calendar_override_source_input => |edit| model.calendar.override_source.apply(edit),
+        .calendar_override_regions_input => |edit| model.calendar.override_regions.apply(edit),
+        .calendar_override_taxpayer_types_input => |edit| model.calendar.override_taxpayer_types.apply(edit),
+        .calendar_override_effective_from_input => |edit| model.calendar.override_effective_from.apply(edit),
+        .calendar_override_expires_on_input => |edit| model.calendar.override_expires_on.apply(edit),
+        .calendar_save_override => model.calendar.saveOverride(),
+        .calendar_cancel_override => model.calendar.clearOverrideEditor(),
+        .calendar_edit_override => |id| model.calendar.editOverride(id),
+        .calendar_delete_override => |id| model.calendar.deleteOverride(id),
+        .calendar_non_working_date_input => |edit| model.calendar.non_working_date.apply(edit),
+        .calendar_non_working_name_input => |edit| model.calendar.non_working_name.apply(edit),
+        .calendar_non_working_kind_input => |edit| model.calendar.non_working_kind.apply(edit),
+        .calendar_non_working_source_input => |edit| model.calendar.non_working_source.apply(edit),
+        .calendar_non_working_regions_input => |edit| model.calendar.non_working_regions.apply(edit),
+        .calendar_save_non_working_day => model.calendar.saveNonWorkingDay(),
+        .calendar_cancel_non_working_day => model.calendar.clearNonWorkingDayEditor(),
+        .calendar_edit_non_working_day => |id| model.calendar.editNonWorkingDay(id),
+        .calendar_delete_non_working_day => |id| model.calendar.deleteNonWorkingDay(id),
         .show_background_jobs => model.backgroundTasksSection = .jobs,
         .show_background_logs => model.backgroundTasksSection = .logs,
         .go_back => {
@@ -630,6 +896,91 @@ fn viewportClassForWidth(width: f32) ViewportClass {
 }
 
 const Effects = native_sdk.Effects(Msg);
+const calendar_export_file_key: u64 = 20_260_001;
+const calendar_open_file_key: u64 = 20_260_002;
+
+fn exportCalendar(model: *Model, maybe_fx: ?*Effects) void {
+    const fx = maybe_fx orelse {
+        model.calendar.setNotice(.failure, "Calendar export is unavailable in this test context.");
+        return;
+    };
+    const allocator = model.calendar.allocator orelse {
+        model.calendar.setError(error.NotAttached);
+        return;
+    };
+    const bytes = model.calendar.buildIcs(
+        allocator,
+        model.calendar.exportTimestamp(),
+    ) catch |err| {
+        model.calendar.setError(err);
+        return;
+    };
+    defer allocator.free(bytes);
+
+    model.calendar.setNotice(.neutral, "Writing the calendar handoff file…");
+    fx.writeFile(.{
+        .key = calendar_export_file_key,
+        .path = model.calendar.exportPath(),
+        .bytes = bytes,
+        .on_result = Effects.fileMsg(.calendar_export_written),
+    });
+}
+
+fn calendarExportWritten(
+    model: *Model,
+    result: native_sdk.EffectFileResult,
+    maybe_fx: ?*Effects,
+) void {
+    if (result.outcome != .ok) {
+        model.calendar.setNotice(.failure, "Could not write the calendar handoff file.");
+        return;
+    }
+    const fx = maybe_fx orelse {
+        model.calendar.setNotice(.failure, "Calendar opener is unavailable in this test context.");
+        return;
+    };
+
+    model.calendar.setNotice(.neutral, "Calendar file created. Opening the default calendar app…");
+    const path = model.calendar.exportPath();
+    switch (native_sdk.app_dirs.currentPlatform()) {
+        .macos => fx.spawn(.{
+            .key = calendar_open_file_key,
+            .argv = &.{ "open", path },
+            .on_exit = Effects.exitMsg(.calendar_export_opened),
+        }),
+        .windows => fx.spawn(.{
+            .key = calendar_open_file_key,
+            .argv = &.{ "cmd.exe", "/D", "/C", "start", "", path },
+            .on_exit = Effects.exitMsg(.calendar_export_opened),
+        }),
+        .linux => fx.spawn(.{
+            .key = calendar_open_file_key,
+            .argv = &.{ "xdg-open", path },
+            .on_exit = Effects.exitMsg(.calendar_export_opened),
+        }),
+        else => model.calendar.setNotice(
+            .failure,
+            "This platform has no configured default-calendar opener.",
+        ),
+    }
+}
+
+fn calendarExportOpened(
+    model: *Model,
+    result: native_sdk.EffectExit,
+) void {
+    if (result.reason == .exited and result.code == 0) {
+        model.calendar.setNotice(
+            .success,
+            "Opened the full schedule in the default calendar app. Choose an iCloud, Google, or Outlook calendar during import to propagate it to that account.",
+        );
+    } else {
+        model.calendar.setNotice(
+            .failure,
+            "The calendar file was created, but the default calendar app could not be opened.",
+        );
+    }
+}
 
 fn registerBootImages(_: *Model, fx: *Effects) void {
     fx.loadImage(.{ .id = 1, .path = "assets/brand/ebirforms.png" });
@@ -642,12 +993,98 @@ fn registerBootImages(_: *Model, fx: *Effects) void {
 const EbirFormsApp = native_sdk.UiApp(Model, Msg);
 pub const app_markup = @embedFile("app.native");
 
+const BootCalendarTime = struct {
+    year: i32,
+    month: u8,
+    stamp: [16]u8,
+};
+
+fn bootCalendarTime(io: std.Io) BootCalendarTime {
+    const raw_seconds = std.Io.Clock.real.now(io).toSeconds();
+    if (raw_seconds < 0) {
+        return .{
+            .year = 2026,
+            .month = 1,
+            .stamp = "20260101T000000Z".*,
+        };
+    }
+
+    const epoch_seconds = std.time.epoch.EpochSeconds{
+        .secs = @intCast(raw_seconds),
+    };
+    const year_day = epoch_seconds.getEpochDay().calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const day_seconds = epoch_seconds.getDaySeconds();
+    const year: u16 = year_day.year;
+    const month: u8 = @intCast(month_day.month.numeric());
+    const day: u8 = @intCast(month_day.day_index + 1);
+    const hour: u8 = @intCast(day_seconds.getHoursIntoDay());
+    const minute: u8 = @intCast(day_seconds.getMinutesIntoHour());
+    const second: u8 = @intCast(day_seconds.getSecondsIntoMinute());
+
+    var stamp: [16]u8 = undefined;
+    writeFourDigits(stamp[0..4], year);
+    writeTwoDigits(stamp[4..6], month);
+    writeTwoDigits(stamp[6..8], day);
+    stamp[8] = 'T';
+    writeTwoDigits(stamp[9..11], hour);
+    writeTwoDigits(stamp[11..13], minute);
+    writeTwoDigits(stamp[13..15], second);
+    stamp[15] = 'Z';
+    return .{ .year = year, .month = month, .stamp = stamp };
+}
+
+fn writeFourDigits(output: []u8, value: u16) void {
+    output[0] = @intCast('0' + (value / 1000) % 10);
+    output[1] = @intCast('0' + (value / 100) % 10);
+    output[2] = @intCast('0' + (value / 10) % 10);
+    output[3] = @intCast('0' + value % 10);
+}
+
+fn writeTwoDigits(output: []u8, value: u8) void {
+    output[0] = @intCast('0' + (value / 10) % 10);
+    output[1] = @intCast('0' + value % 10);
+}
+
 pub fn main(init: std.process.Init) !void {
+    const app_dirs = native_sdk.app_dirs;
+    const platform = app_dirs.currentPlatform();
+    const environment = native_sdk.debug.envFromMap(init.environ_map);
+    var data_dir_buffer: [1024]u8 = undefined;
+    const data_dir = try app_dirs.resolveOne(
+        .{ .name = "ebirforms-zero" },
+        platform,
+        environment,
+        .data,
+        &data_dir_buffer,
+    );
+    try std.Io.Dir.cwd().createDirPath(init.io, data_dir);
+
+    var database_path_buffer: [1024]u8 = undefined;
+    const database_path = try app_dirs.join(
+        platform,
+        &database_path_buffer,
+        &.{ data_dir, "calendar.sqlite3" },
+    );
+    var export_path_buffer: [1024]u8 = undefined;
+    const export_path = try app_dirs.join(
+        platform,
+        &export_path_buffer,
+        &.{ data_dir, "ebirforms-tax-calendar.ics" },
+    );
+
+    var calendar_store = try calendar_ui.persistence.Store.open(
+        init.gpa,
+        database_path,
+    );
+    defer calendar_store.close();
+    const boot_time = bootCalendarTime(init.io);
+
     const app_state = try EbirFormsApp.create(std.heap.page_allocator, .{
         .name = "ebirforms-zero",
         .scene = shell_scene,
         .canvas_label = canvas_label,
-        .update = update,
+        .update_fx = updateWithEffects,
         .init_fx = registerBootImages,
         .on_appearance = appearanceMessage,
         .on_frame = frameMessage,
@@ -656,11 +1093,19 @@ pub fn main(init: std.process.Init) !void {
     });
     defer app_state.destroy();
     app_state.model = .{};
+    try app_state.model.calendar.attach(
+        init.gpa,
+        &calendar_store,
+        export_path,
+        &boot_time.stamp,
+        boot_time.year,
+        boot_time.month,
+    );
 
     try runner.runWithOptions(app_state.app(), .{
         .app_name = "ebirforms-zero",
         .window_title = "eBIRForms",
-        .bundle_id = "dev.goldcoders.ebirforms.static",
+        .bundle_id = "dev.goldcoders.ebirforms",
         .icon_path = "assets/icon.png",
         .default_frame = geometry.RectF.init(0, 0, window_width, window_height),
         .restore_state = false,

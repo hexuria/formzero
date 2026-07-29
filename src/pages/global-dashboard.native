@@ -1,23 +1,3 @@
-<template name="global-deadline-row" args="date form title detail tone=secondary">
-  <card>
-    <row padding="16" gap="12" cross="center">
-      <column width="48" cross="center" gap="2">
-        <text><span weight="bold">{date}</span></text>
-        <text foreground="text_muted">JUL</text>
-      </column>
-      <separator/>
-      <column grow="1" gap="5">
-        <row cross="center">
-          <badge variant="{tone}">{form}</badge>
-        </row>
-        <text><span weight="bold">{title}</span></text>
-        <text wrap="true" foreground="text_muted">{detail}</text>
-      </column>
-      <slot/>
-    </row>
-  </card>
-</template>
-
 <template name="global-news-item" args="title body meta">
   <card>
     <column padding="16" gap="8">
@@ -28,111 +8,36 @@
   </card>
 </template>
 
-<template name="global-calendar-day" args="day marker=">
-  <column height="58" padding="4" main="center" cross="center" gap="2" background="surface_subtle" radius="sm">
-    <text text-alignment="center">{day}</text>
-    <if test="{marker}">
-      <text text-alignment="center" foreground="accent">{marker}</text>
-    </if>
-  </column>
-</template>
-
 <template name="global-calendar-column">
   <column grow="1" gap="12">
     <row cross="center" gap="12">
       <column grow="1" gap="4">
         <text><span weight="bold">Compliance Calendar</span></text>
-        <text wrap="true" foreground="text_muted">Upcoming filing and payment deadlines</text>
+        <text wrap="true" foreground="text_muted">One resolver for rules, dates, holidays, and extensions</text>
       </column>
-      <button size="sm" variant="outline" disabled="true">3 profiles selected</button>
+      <badge variant="secondary">{calendarDeadlineCount}</badge>
     </row>
 
     <card>
-      <column padding="12" gap="8">
-        <row cross="center" gap="8">
-          <text grow="1"><span weight="bold">July 2026</span></text>
-          <button size="sm" variant="ghost" icon="chevron-left" label="Previous month" disabled="true"></button>
-          <button size="sm" variant="ghost" icon="chevron-right" label="Next month" disabled="true"></button>
+      <column padding="20" gap="12">
+        <row gap="10" cross="center">
+          <icon name="clock" foreground="accent" width="26" height="26"/>
+          <column grow="1" gap="4">
+            <text><span weight="bold">Full {currentCalendarYear} BIR schedule</span></text>
+            <text wrap="true" foreground="text_muted">
+              The dashboard now points to the same compiled calendar-year
+              projection used by the explorer and ICS export.
+            </text>
+          </column>
         </row>
-        <grid columns="7" gap="4">
-          <text text-alignment="center" foreground="text_muted">Sun</text>
-          <text text-alignment="center" foreground="text_muted">Mon</text>
-          <text text-alignment="center" foreground="text_muted">Tue</text>
-          <text text-alignment="center" foreground="text_muted">Wed</text>
-          <text text-alignment="center" foreground="text_muted">Thu</text>
-          <text text-alignment="center" foreground="text_muted">Fri</text>
-          <text text-alignment="center" foreground="text_muted">Sat</text>
-
-          <use template="global-calendar-day" day=""/>
-          <use template="global-calendar-day" day=""/>
-          <use template="global-calendar-day" day=""/>
-          <use template="global-calendar-day" day="1"/>
-          <use template="global-calendar-day" day="2"/>
-          <use template="global-calendar-day" day="3"/>
-          <use template="global-calendar-day" day="4"/>
-
-          <use template="global-calendar-day" day="5"/>
-          <use template="global-calendar-day" day="6"/>
-          <use template="global-calendar-day" day="7"/>
-          <use template="global-calendar-day" day="8"/>
-          <use template="global-calendar-day" day="9"/>
-          <use template="global-calendar-day" day="10" marker="•••• +"/>
-          <use template="global-calendar-day" day="11"/>
-
-          <use template="global-calendar-day" day="12"/>
-          <use template="global-calendar-day" day="13"/>
-          <use template="global-calendar-day" day="14"/>
-          <use template="global-calendar-day" day="15" marker="•"/>
-          <use template="global-calendar-day" day="16"/>
-          <use template="global-calendar-day" day="17"/>
-          <use template="global-calendar-day" day="18"/>
-
-          <use template="global-calendar-day" day="19"/>
-          <use template="global-calendar-day" day="20"/>
-          <use template="global-calendar-day" day="21"/>
-          <use template="global-calendar-day" day="22"/>
-          <use template="global-calendar-day" day="23"/>
-          <use template="global-calendar-day" day="24"/>
-          <use template="global-calendar-day" day="25"/>
-
-          <use template="global-calendar-day" day="26"/>
-          <use template="global-calendar-day" day="27" marker="••"/>
-          <use template="global-calendar-day" day="28"/>
-          <use template="global-calendar-day" day="29"/>
-          <use template="global-calendar-day" day="30"/>
-          <use template="global-calendar-day" day="31" marker="••••"/>
-          <use template="global-calendar-day" day=""/>
-        </grid>
+        <separator/>
+        <text wrap="true" foreground="text_muted">
+          Saturdays and Sundays adjust automatically. Only source-cited
+          SQLite non-working days and deadline overrides change the schedule.
+        </text>
+        <button variant="primary" icon="external-link" on-press="show_tax_calendar">Open Compliance Calendar</button>
       </column>
     </card>
-
-    <text><span weight="bold">Deadlines for July 2026</span></text>
-    <use
-      template="global-deadline-row"
-      date="10"
-      form="0619-E"
-      title="Withholding Tax Remittance"
-      detail="Juan Dela Cruz">
-      <button
-        size="sm"
-        variant="ghost"
-        icon="chevron-right"
-        label="Open BIR Form 0619-E"
-        on-press="show_form_0619_e"></button>
-    </use>
-    <use
-      template="global-deadline-row"
-      date="31"
-      form="2551Q"
-      title="Quarterly Percentage Tax Return"
-      detail="2 taxpayer profiles have this deadline">
-      <button
-        size="sm"
-        variant="ghost"
-        icon="chevron-right"
-        label="Open BIR Form 2551Q"
-        on-press="show_form_2551q"></button>
-    </use>
   </column>
 </template>
 
@@ -149,13 +54,13 @@
     <use
       template="global-news-item"
       title="Stay current with BIR advisories"
-      body="Review official issuances before filing. Tax calendars in this prototype are presented for planning and layout preview."
+      body="Review official issuances before filing. The calendar is computed from compiled rules plus source-cited local policy records."
       meta="Application notice"/>
     <use
       template="global-news-item"
-      title="Quarterly returns are due this month"
+      title="Quarterly returns use typed taxable periods"
       body="Confirm taxpayer classifications and registered tax types before preparing each return."
-      meta="July 2026"/>
+      meta="Calendar guidance"/>
     <use
       template="global-news-item"
       title="Keep profile information complete"
@@ -166,10 +71,11 @@
       <column padding="20" gap="10">
         <row gap="10" cross="center">
           <icon name="info" foreground="info" width="22" height="22"/>
-          <text><span weight="bold">Static Native preview</span></text>
+          <text><span weight="bold">Calendar source of truth</span></text>
         </row>
         <text wrap="true" foreground="text_muted">
-          Calendar browsing and news refresh remain static. Deadline arrows open the matching reconstructed tax forms.
+          Calendar rules, year projection, overrides, non-working days, and
+          export now share one tested resolver. News content remains a static application notice.
         </text>
       </column>
     </card>
@@ -182,7 +88,7 @@
       <column gap="12">
         <column gap="6">
           <text size="heading">Global Dashboard</text>
-          <text wrap="true" foreground="text_muted">Overview of all taxpayer profiles for 2026</text>
+          <text wrap="true" foreground="text_muted">Overview of all taxpayer profiles for {currentCalendarYear}</text>
         </column>
         <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
       </column>
@@ -191,7 +97,7 @@
       <row cross="center" gap="16">
         <column grow="1" gap="6">
           <text size="heading">Global Dashboard</text>
-          <text foreground="text_muted">Overview of all taxpayer profiles for 2026</text>
+          <text foreground="text_muted">Overview of all taxpayer profiles for {currentCalendarYear}</text>
         </column>
         <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
       </row>

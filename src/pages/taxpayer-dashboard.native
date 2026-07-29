@@ -111,10 +111,12 @@
   <column gap="24">
     <row cross="center" gap="12">
       <column grow="1" gap="4">
-        <text><span weight="bold">July Deadlines</span></text>
-        <text wrap="true" foreground="text_muted">Deadlines and filing actions for this taxpayer</text>
+        <text><span weight="bold">Taxpayer Calendar</span></text>
+        <text wrap="true" foreground="text_muted">
+          Profile applicability requires an authoritative per-year Forms Set
+        </text>
       </column>
-      <badge variant="secondary">July 2026</badge>
+      <badge variant="secondary">{currentCalendarYear}</badge>
     </row>
 
     <if test="{constrainedLayout}">
@@ -123,7 +125,7 @@
           template="taxpayer-empty-card"
           title="Upcoming Deadlines"
           icon="clock"
-          body="No upcoming deadlines in the selected period."/>
+          body="No authoritative Forms Set is persisted for this reconstructed profile yet. The global calendar remains available."/>
         <use
           template="taxpayer-empty-card"
           title="Action Required"
@@ -138,7 +140,7 @@
             template="taxpayer-empty-card"
             title="Upcoming Deadlines"
             icon="clock"
-            body="No upcoming deadlines in the selected period."/>
+            body="No authoritative Forms Set is persisted for this reconstructed profile yet. The global calendar remains available."/>
         </column>
         <column grow="1">
           <use
@@ -157,8 +159,11 @@
           <text><span weight="bold">Tax form preparation</span></text>
         </row>
         <text wrap="true" foreground="text_muted">
-          Open Tax Form Library to browse the reconstructed returns. Form data entry and filing remain outside this static layout milestone.
+          Open the full compliance calendar for compiled rules and sourced
+          changes. This profile view will filter that same resolver after its
+          registered per-year Forms Set is persisted.
         </text>
+        <button variant="primary" icon="external-link" on-press="show_tax_calendar">Open Full Compliance Calendar</button>
       </column>
     </card>
   </column>

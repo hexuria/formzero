@@ -160,12 +160,12 @@
             <row gap="14" cross="start">
               <icon name="file-text" foreground="accent" width="30" height="30"/>
               <column grow="1" gap="4">
-                <text><span weight="bold">Google Calendar</span></text>
-                <text wrap="true" foreground="text_muted">Connected as demo@example.com</text>
+                <text><span weight="bold">Calendar Integration</span></text>
+                <text wrap="true" foreground="text_muted">Default calendar handoff is ready</text>
               </column>
             </row>
             <row cross="center">
-              <badge variant="secondary">Connected</badge>
+              <badge variant="primary">Ready</badge>
             </row>
           </column>
         </if>
@@ -173,27 +173,28 @@
           <row gap="14" cross="center">
             <icon name="file-text" foreground="accent" width="30" height="30"/>
             <column grow="1" gap="4">
-              <text><span weight="bold">Google Calendar</span></text>
-              <text foreground="text_muted">Connected as demo@example.com</text>
-            </column>
-            <badge variant="secondary">Connected</badge>
-          </row>
+            <text><span weight="bold">Calendar Integration</span></text>
+            <text foreground="text_muted">Default calendar handoff is ready</text>
+          </column>
+          <badge variant="primary">Ready</badge>
+        </row>
         </else>
         <text wrap="true" foreground="text_muted">
-          Sync taxpayer filing deadlines to a dedicated Google Calendar.
+          Add the resolved schedule to Apple Calendar, Outlook, Google Calendar,
+          or another registered calendar app using an ICS handoff. Choose an
+          iCloud, Google, or Outlook calendar during import to propagate it to
+          mobile. Direct managed Google OAuth sync is optional and not connected.
         </text>
         <if test="{constrainedLayout}">
           <column gap="10">
-            <button variant="primary" icon="refresh-cw" disabled="true">Reconnect Google</button>
-            <button variant="outline" disabled="true">Disconnect</button>
-            <button variant="ghost" icon="external-link" disabled="true">Setup Guide</button>
+            <button variant="primary" icon="external-link" on-press="show_tax_calendar">Open Tax Calendar</button>
+            <button variant="outline" disabled="true">Connect Google Directly</button>
           </column>
         </if>
         <else>
           <row gap="10">
-            <button variant="primary" icon="refresh-cw" disabled="true">Reconnect Google</button>
-            <button variant="outline" disabled="true">Disconnect</button>
-            <button variant="ghost" icon="external-link" disabled="true">Setup Guide</button>
+            <button variant="primary" icon="external-link" on-press="show_tax_calendar">Open Tax Calendar</button>
+            <button variant="outline" disabled="true">Connect Google Directly</button>
           </row>
         </else>
       </column>
