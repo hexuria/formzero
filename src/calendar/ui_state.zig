@@ -18,6 +18,10 @@ pub const max_overrides = 64;
 pub const max_non_working_days = 128;
 pub const max_forms_per_override = 32;
 pub const max_scopes_per_record = 16;
+pub const max_scope_text_bytes = 128;
+const max_joined_forms_bytes = max_forms_per_override * 34;
+const max_joined_scopes_bytes =
+    max_scopes_per_record * (max_scope_text_bytes + 2);
 
 pub const StateError = error{
     NotAttached,
@@ -30,6 +34,7 @@ pub const StateError = error{
     InvalidFormCode,
     InvalidKind,
     InvalidMonth,
+    IncompleteProjection,
 };
 
 fn FixedText(comptime capacity: usize) type {
@@ -58,6 +63,7 @@ fn FixedText(comptime capacity: usize) type {
 const ShortText = FixedText(32);
 const MediumText = FixedText(96);
 const LongText = FixedText(256);
+const ScopeText = FixedText(max_scope_text_bytes);
 
 pub const DeadlineRow = struct {
     id: u64,
@@ -134,22 +140,56 @@ pub const DeadlineRow = struct {
     }
 
     fn obligationKey(self: *const DeadlineRow, output: []u8) ![]const u8 {
+        // Preserve the established human-readable identities for the distinct
+        // 1604-C and 1604-F returns even though storage uses normalized codes.
+        const identity_form_code = if (std.mem.eql(u8, self.display_form_no, "1604-C") or
+            std.mem.eql(u8, self.display_form_no, "1604-F"))
+            self.display_form_no
+        else
+            self.form_code;
         return switch (self.period) {
             .monthly => |period| std.fmt.bufPrint(
                 output,
                 "{d}:{s}:m{d:0>2}",
-                .{ period.taxable_year, self.form_code, period.month },
+                .{ period.taxable_year, identity_form_code, period.month },
             ),
             .quarterly => |period| std.fmt.bufPrint(
                 output,
                 "{d}:{s}:q{d}",
-                .{ period.taxable_year, self.form_code, period.quarter },
+                .{ period.taxable_year, identity_form_code, period.quarter },
             ),
-            .annual => |period| std.fmt.bufPrint(
-                output,
-                "{d}:{s}:annual",
-                .{ period.taxable_year, self.form_code },
-            ),
+            .annual => |period| if (std.mem.eql(u8, self.form_code, "2316"))
+                // Form 2316 has two annual duties with different recipients
+                // and deadlines. Rule identity prevents calendar clients from
+                // collapsing them while remaining stable across date changes.
+                std.fmt.bufPrint(
+                    output,
+                    "{d}:{s}:annual:{s}",
+                    .{
+                        period.taxable_year,
+                        identity_form_code,
+                        if (std.mem.eql(
+                            u8,
+                            self.rule_id,
+                            "2316-employee-furnishing-january-31",
+                        ))
+                            "employee-copy"
+                        else if (std.mem.eql(
+                            u8,
+                            self.rule_id,
+                            "2316-bir-submission-february-28",
+                        ))
+                            "bir-copy"
+                        else
+                            self.rule_id,
+                    },
+                )
+            else
+                std.fmt.bufPrint(
+                    output,
+                    "{d}:{s}:annual",
+                    .{ period.taxable_year, identity_form_code },
+                ),
             .event_based => error.InvalidFormCode,
         };
     }
@@ -174,12 +214,13 @@ pub const OverrideRow = struct {
     original_deadline: domain.Date,
     adjusted_deadline: domain.Date,
     effective_from: ?domain.Date = null,
-    expires_on: ?domain.Date = null,
+    effective_until: ?domain.Date = null,
+    expires_at: ?domain.Date = null,
     form_codes: [max_forms_per_override]ShortText = undefined,
     form_count: usize = 0,
-    regions: [max_scopes_per_record]ShortText = undefined,
+    regions: [max_scopes_per_record]ScopeText = undefined,
     region_count: usize = 0,
-    taxpayer_types: [max_scopes_per_record]ShortText = undefined,
+    taxpayer_types: [max_scopes_per_record]ScopeText = undefined,
     taxpayer_type_count: usize = 0,
 
     pub fn key(self: *const OverrideRow) canvas.UiKey {
@@ -232,18 +273,32 @@ pub const OverrideRow = struct {
     }
 
     pub fn effectiveLabel(self: *const OverrideRow, arena: std.mem.Allocator) []const u8 {
-        if (self.effective_from == null and self.expires_on == null) return "No effective-date limit";
+        if (self.effective_from == null and
+            self.effective_until == null and
+            self.expires_at == null)
+        {
+            return "No effective-date or expiry metadata";
+        }
         var from_buffer: [10]u8 = undefined;
         var until_buffer: [10]u8 = undefined;
+        var expires_buffer: [10]u8 = undefined;
         const from = if (self.effective_from) |date|
             date.writeIso(&from_buffer)
         else
             "open";
-        const until = if (self.expires_on) |date|
+        const until = if (self.effective_until) |date|
             date.writeIso(&until_buffer)
         else
             "open";
-        return std.fmt.allocPrint(arena, "Effective {s} to {s}", .{ from, until }) catch "";
+        const expires = if (self.expires_at) |date|
+            date.writeIso(&expires_buffer)
+        else
+            "none";
+        return std.fmt.allocPrint(
+            arena,
+            "Effective {s} to {s} · expires {s}",
+            .{ from, until, expires },
+        ) catch "";
     }
 };
 
@@ -253,7 +308,7 @@ pub const NonWorkingDayRow = struct {
     name: MediumText = .{},
     kind: ShortText = .{},
     source: LongText = .{},
-    regions: [max_scopes_per_record]ShortText = undefined,
+    regions: [max_scopes_per_record]ScopeText = undefined,
     region_count: usize = 0,
 
     pub fn key(self: *const NonWorkingDayRow) canvas.UiKey {
@@ -301,26 +356,33 @@ pub const State = struct {
     deadline_count: usize = 0,
     overrides: [max_overrides]OverrideRow = undefined,
     override_count: usize = 0,
+    override_records_truncated: bool = false,
     non_working_days: [max_non_working_days]NonWorkingDayRow = undefined,
     non_working_day_count: usize = 0,
+    non_working_day_records_truncated: bool = false,
 
     editing_override_id: ?i64 = null,
+    pending_delete_override_id: ?i64 = null,
+    pending_delete_non_working_day_id: ?i64 = null,
     editing_non_working_day_id: ?i64 = null,
     override_title: canvas.TextBuffer(96) = .{},
-    override_forms: canvas.TextBuffer(256) = .{},
+    override_forms: canvas.TextBuffer(max_joined_forms_bytes) = .{},
     override_original: canvas.TextBuffer(10) = .{},
     override_adjusted: canvas.TextBuffer(10) = .{},
     override_source: canvas.TextBuffer(256) = .{},
-    override_regions: canvas.TextBuffer(192) = .{},
-    override_taxpayer_types: canvas.TextBuffer(192) = .{},
+    override_regions: canvas.TextBuffer(max_joined_scopes_bytes) = .{},
+    override_taxpayer_types: canvas.TextBuffer(max_joined_scopes_bytes) = .{},
     override_effective_from: canvas.TextBuffer(10) = .{},
-    override_expires_on: canvas.TextBuffer(10) = .{},
+    override_effective_until: canvas.TextBuffer(10) = .{},
+    override_expires_at: canvas.TextBuffer(10) = .{},
 
     non_working_date: canvas.TextBuffer(10) = .{},
     non_working_name: canvas.TextBuffer(96) = .{},
     non_working_kind: canvas.TextBuffer(32) = .{},
     non_working_source: canvas.TextBuffer(256) = .{},
-    non_working_regions: canvas.TextBuffer(192) = .{},
+    non_working_regions: canvas.TextBuffer(max_joined_scopes_bytes) = .{},
+    override_input_was_truncated: bool = false,
+    non_working_input_was_truncated: bool = false,
 
     notice: LongText = .{},
     notice_kind: NoticeKind = .neutral,
@@ -344,7 +406,7 @@ pub const State = struct {
         try self.export_path.set(export_path);
         try self.export_timestamp.set(export_timestamp);
         try self.reload();
-        self.setNotice(.success, "Calendar rules and SQLite overrides loaded.");
+        self.setReloadNotice("Calendar rules and SQLite overrides loaded.");
     }
 
     pub fn exportPath(self: *const State) []const u8 {
@@ -361,19 +423,18 @@ pub const State = struct {
 
         var overrides = try store.listOverrides(allocator);
         defer overrides.deinit(allocator);
-        if (overrides.items.len > max_overrides) return error.TooManyOverrides;
+        self.override_records_truncated = overrides.items.len > max_overrides;
         self.override_count = 0;
-        for (overrides.items) |item| {
+        for (overrides.items[0..@min(overrides.items.len, max_overrides)]) |item| {
             try self.copyOverride(item);
         }
 
         var days = try store.listNonWorkingDays(allocator);
         defer days.deinit(allocator);
-        if (days.items.len > max_non_working_days) {
-            return error.TooManyNonWorkingDays;
-        }
+        self.non_working_day_records_truncated =
+            days.items.len > max_non_working_days;
         self.non_working_day_count = 0;
-        for (days.items) |item| {
+        for (days.items[0..@min(days.items.len, max_non_working_days)]) |item| {
             try self.copyNonWorkingDay(item);
         }
 
@@ -386,9 +447,16 @@ pub const State = struct {
         var override_form_slices: [max_overrides][max_forms_per_override][]const u8 = undefined;
         var override_region_slices: [max_overrides][max_scopes_per_record][]const u8 = undefined;
         var override_taxpayer_slices: [max_overrides][max_scopes_per_record][]const u8 = undefined;
+        var override_id_buffers: [max_overrides][24]u8 = undefined;
         var domain_overrides: [max_overrides]domain.DeadlineOverride = undefined;
+        var domain_override_count: usize = 0;
 
-        for (self.overrides[0..self.override_count], 0..) |*row, index| {
+        for (self.overrides[0..self.override_count]) |*row| {
+            // The explorer/export is a global projection with no taxpayer
+            // profile or region. Keep scoped policy visible and editable,
+            // but never leak it into the nationwide schedule.
+            if (row.region_count != 0 or row.taxpayer_type_count != 0) continue;
+            const index = domain_override_count;
             for (row.form_codes[0..row.form_count], 0..) |*code, code_index| {
                 override_form_slices[index][code_index] = code.text();
             }
@@ -401,8 +469,13 @@ pub const State = struct {
             ) |*taxpayer_type, scope_index| {
                 override_taxpayer_slices[index][scope_index] = taxpayer_type.text();
             }
+            const stable_id = try std.fmt.bufPrint(
+                &override_id_buffers[index],
+                "sqlite:{d}",
+                .{row.id},
+            );
             domain_overrides[index] = .{
-                .id = row.title.text(),
+                .id = stable_id,
                 .title = row.title.text(),
                 .source_reference = row.source.text(),
                 .affected_form_codes = override_form_slices[index][0..row.form_count],
@@ -411,17 +484,22 @@ pub const State = struct {
                 .affected_regions = override_region_slices[index][0..row.region_count],
                 .affected_taxpayer_types = override_taxpayer_slices[index][0..row.taxpayer_type_count],
                 .effective_from = row.effective_from,
-                .expires_at = row.expires_on,
+                .effective_until = row.effective_until,
+                .expires_at = row.expires_at,
             };
+            domain_override_count += 1;
         }
 
         var day_region_slices: [max_non_working_days][max_scopes_per_record][]const u8 = undefined;
         var domain_days: [max_non_working_days]domain.NonWorkingDay = undefined;
         var domain_day_count: usize = 0;
         for (self.non_working_days[0..self.non_working_day_count]) |*row| {
+            const kind = try parseNonWorkingKind(row.kind.text());
             // The global explorer has no region context. Only nationwide
-            // closures can adjust its single authoritative projection.
-            if (row.region_count != 0) continue;
+            // closures can adjust its single authoritative projection. A
+            // legacy local-holiday row with no region is invalid and remains
+            // visible for cleanup, but must never become nationwide.
+            if (row.region_count != 0 or kind == .local_holiday) continue;
             const index = domain_day_count;
             for (row.regions[0..row.region_count], 0..) |*region, scope_index| {
                 day_region_slices[index][scope_index] = region.text();
@@ -429,7 +507,7 @@ pub const State = struct {
             domain_days[index] = .{
                 .date = row.date,
                 .name = row.name.text(),
-                .kind = try parseNonWorkingKind(row.kind.text()),
+                .kind = kind,
                 .regions = day_region_slices[index][0..row.region_count],
                 .source_reference = row.source.text(),
             };
@@ -443,7 +521,7 @@ pub const State = struct {
                 .calendar = .{
                     .non_working_days = domain_days[0..domain_day_count],
                 },
-                .overrides = domain_overrides[0..self.override_count],
+                .overrides = domain_overrides[0..domain_override_count],
             },
         );
         defer allocator.free(resolved);
@@ -478,7 +556,7 @@ pub const State = struct {
             self.selected_year += 1;
             return self.setError(err);
         };
-        self.setNotice(.success, "Calendar year updated.");
+        self.setReloadNotice("Calendar year updated.");
     }
 
     pub fn nextYear(self: *State) void {
@@ -488,13 +566,13 @@ pub const State = struct {
             self.selected_year -= 1;
             return self.setError(err);
         };
-        self.setNotice(.success, "Calendar year updated.");
+        self.setReloadNotice("Calendar year updated.");
     }
 
     pub fn previousMonth(self: *State) void {
         if (self.selected_month > 1) {
             self.selected_month -= 1;
-            self.setNotice(.success, "Calendar month updated.");
+            self.setReloadNotice("Calendar month updated.");
             return;
         }
         if (self.selected_year <= 2) return;
@@ -506,13 +584,13 @@ pub const State = struct {
             self.selected_month = 1;
             return self.setError(err);
         };
-        self.setNotice(.success, "Calendar month updated.");
+        self.setReloadNotice("Calendar month updated.");
     }
 
     pub fn nextMonth(self: *State) void {
         if (self.selected_month < 12) {
             self.selected_month += 1;
-            self.setNotice(.success, "Calendar month updated.");
+            self.setReloadNotice("Calendar month updated.");
             return;
         }
         if (self.selected_year >= 9997) return;
@@ -524,16 +602,26 @@ pub const State = struct {
             self.selected_month = 12;
             return self.setError(err);
         };
-        self.setNotice(.success, "Calendar month updated.");
+        self.setReloadNotice("Calendar month updated.");
     }
 
     pub fn refresh(self: *State) void {
         self.reload() catch |err| return self.setError(err);
-        self.setNotice(.success, "Rules, overrides, and non-working days refreshed from SQLite.");
+        self.setReloadNotice(
+            "Rules, overrides, and non-working days refreshed from SQLite.",
+        );
     }
 
     pub fn saveOverride(self: *State) void {
         const store = self.store orelse return self.setError(error.NotAttached);
+        if (self.override_input_was_truncated or self.overrideInputsTruncated()) {
+            return self.setError(error.FieldTooLong);
+        }
+        if (self.editing_override_id == null and
+            self.override_count >= max_overrides)
+        {
+            return self.setError(error.TooManyOverrides);
+        }
 
         var forms: [max_forms_per_override][]const u8 = undefined;
         const form_count = parseCanonicalForms(
@@ -550,11 +638,20 @@ pub const State = struct {
             self.override_taxpayer_types.text(),
             &taxpayer_types,
         ) catch |err| return self.setError(err);
+        ensureEntryLengths(regions[0..region_count], max_scope_text_bytes) catch |err|
+            return self.setError(err);
+        ensureEntryLengths(
+            taxpayer_types[0..taxpayer_type_count],
+            max_scope_text_bytes,
+        ) catch |err| return self.setError(err);
 
         const effective_from = optionalTrimmed(
             self.override_effective_from.text(),
         );
-        const expires_on = optionalTrimmed(self.override_expires_on.text());
+        const effective_until = optionalTrimmed(
+            self.override_effective_until.text(),
+        );
+        const expires_at = optionalTrimmed(self.override_expires_at.text());
 
         _ = store.putOverride(.{
             .id = self.editing_override_id,
@@ -563,7 +660,8 @@ pub const State = struct {
             .original_deadline = trimmed(self.override_original.text()),
             .adjusted_deadline = trimmed(self.override_adjusted.text()),
             .effective_from = effective_from,
-            .expires_on = expires_on,
+            .effective_until = effective_until,
+            .expires_at = expires_at,
             .affected_form_codes = forms[0..form_count],
             .regions = regions[0..region_count],
             .taxpayer_types = taxpayer_types[0..taxpayer_type_count],
@@ -572,8 +670,7 @@ pub const State = struct {
         const was_editing = self.editing_override_id != null;
         self.clearOverrideEditor();
         self.reload() catch |err| return self.setError(err);
-        self.setNotice(
-            .success,
+        self.setReloadNotice(
             if (was_editing) "Deadline override updated." else "Deadline override saved.",
         );
     }
@@ -582,12 +679,17 @@ pub const State = struct {
         const row = self.findOverride(id) orelse
             return self.setError(error.InvalidFormCode);
         self.editing_override_id = id;
-        self.override_title.set(row.title.text());
-        self.override_source.set(row.source.text());
+        self.pending_delete_override_id = null;
+        setEditorBuffer(&self.override_title, row.title.text());
+        setEditorBuffer(&self.override_source, row.source.text());
         setDateBuffer(&self.override_original, row.original_deadline);
         setDateBuffer(&self.override_adjusted, row.adjusted_deadline);
         setOptionalDateBuffer(&self.override_effective_from, row.effective_from);
-        setOptionalDateBuffer(&self.override_expires_on, row.expires_on);
+        setOptionalDateBuffer(
+            &self.override_effective_until,
+            row.effective_until,
+        );
+        setOptionalDateBuffer(&self.override_expires_at, row.expires_at);
         setJoinedBuffer(
             &self.override_forms,
             row.form_codes[0..row.form_count],
@@ -600,40 +702,70 @@ pub const State = struct {
             &self.override_taxpayer_types,
             row.taxpayer_types[0..row.taxpayer_type_count],
         );
+        self.override_input_was_truncated = false;
         self.setNotice(.neutral, "Editing deadline override.");
     }
 
     pub fn deleteOverride(self: *State, id: i64) void {
+        if (self.pending_delete_override_id != id) {
+            self.pending_delete_override_id = id;
+            self.setNotice(
+                .neutral,
+                "Press Delete on this override again to confirm permanent removal.",
+            );
+            return;
+        }
         const store = self.store orelse return self.setError(error.NotAttached);
         const deleted = store.deleteOverride(id) catch |err| return self.setError(err);
         if (!deleted) return self.setError(error.InvalidFormCode);
+        self.pending_delete_override_id = null;
         if (self.editing_override_id == id) self.clearOverrideEditor();
         self.reload() catch |err| return self.setError(err);
-        self.setNotice(.success, "Deadline override deleted.");
+        self.setReloadNotice("Deadline override deleted.");
     }
 
     pub fn clearOverrideEditor(self: *State) void {
         self.editing_override_id = null;
-        self.override_title.clear();
-        self.override_forms.clear();
-        self.override_original.clear();
-        self.override_adjusted.clear();
-        self.override_source.clear();
-        self.override_regions.clear();
-        self.override_taxpayer_types.clear();
-        self.override_effective_from.clear();
-        self.override_expires_on.clear();
+        self.pending_delete_override_id = null;
+        clearEditorBuffer(&self.override_title);
+        clearEditorBuffer(&self.override_forms);
+        clearEditorBuffer(&self.override_original);
+        clearEditorBuffer(&self.override_adjusted);
+        clearEditorBuffer(&self.override_source);
+        clearEditorBuffer(&self.override_regions);
+        clearEditorBuffer(&self.override_taxpayer_types);
+        clearEditorBuffer(&self.override_effective_from);
+        clearEditorBuffer(&self.override_effective_until);
+        clearEditorBuffer(&self.override_expires_at);
+        self.override_input_was_truncated = false;
     }
 
     pub fn saveNonWorkingDay(self: *State) void {
         const store = self.store orelse return self.setError(error.NotAttached);
-        _ = parseNonWorkingKind(trimmed(self.non_working_kind.text())) catch |err|
+        if (self.non_working_input_was_truncated or
+            self.nonWorkingInputsTruncated())
+        {
+            return self.setError(error.FieldTooLong);
+        }
+        if (self.editing_non_working_day_id == null and
+            self.non_working_day_count >= max_non_working_days)
+        {
+            return self.setError(error.TooManyNonWorkingDays);
+        }
+        const parsed_kind = parseNonWorkingKind(
+            trimmed(self.non_working_kind.text()),
+        ) catch |err|
             return self.setError(err);
         var regions: [max_scopes_per_record][]const u8 = undefined;
         const region_count = parseList(
             self.non_working_regions.text(),
             &regions,
         ) catch |err| return self.setError(err);
+        ensureEntryLengths(regions[0..region_count], max_scope_text_bytes) catch |err|
+            return self.setError(err);
+        if (parsed_kind == .local_holiday and region_count == 0) {
+            return self.setError(persistence.Error.InvalidValue);
+        }
 
         _ = store.putNonWorkingDay(.{
             .id = self.editing_non_working_day_id,
@@ -647,8 +779,7 @@ pub const State = struct {
         const was_editing = self.editing_non_working_day_id != null;
         self.clearNonWorkingDayEditor();
         self.reload() catch |err| return self.setError(err);
-        self.setNotice(
-            .success,
+        self.setReloadNotice(
             if (was_editing) "Non-working day updated." else "Non-working day saved.",
         );
     }
@@ -657,36 +788,49 @@ pub const State = struct {
         const row = self.findNonWorkingDay(id) orelse
             return self.setError(error.InvalidKind);
         self.editing_non_working_day_id = id;
+        self.pending_delete_non_working_day_id = null;
         setDateBuffer(&self.non_working_date, row.date);
-        self.non_working_name.set(row.name.text());
-        self.non_working_kind.set(row.kind.text());
-        self.non_working_source.set(row.source.text());
+        setEditorBuffer(&self.non_working_name, row.name.text());
+        setEditorBuffer(&self.non_working_kind, row.kind.text());
+        setEditorBuffer(&self.non_working_source, row.source.text());
         setJoinedBuffer(
             &self.non_working_regions,
             row.regions[0..row.region_count],
         );
+        self.non_working_input_was_truncated = false;
         self.setNotice(.neutral, "Editing non-working day.");
     }
 
     pub fn deleteNonWorkingDay(self: *State, id: i64) void {
+        if (self.pending_delete_non_working_day_id != id) {
+            self.pending_delete_non_working_day_id = id;
+            self.setNotice(
+                .neutral,
+                "Press Delete on this non-working day again to confirm permanent removal.",
+            );
+            return;
+        }
         const store = self.store orelse return self.setError(error.NotAttached);
         const deleted = store.deleteNonWorkingDay(id) catch |err|
             return self.setError(err);
         if (!deleted) return self.setError(error.InvalidKind);
+        self.pending_delete_non_working_day_id = null;
         if (self.editing_non_working_day_id == id) {
             self.clearNonWorkingDayEditor();
         }
         self.reload() catch |err| return self.setError(err);
-        self.setNotice(.success, "Non-working day deleted.");
+        self.setReloadNotice("Non-working day deleted.");
     }
 
     pub fn clearNonWorkingDayEditor(self: *State) void {
         self.editing_non_working_day_id = null;
-        self.non_working_date.clear();
-        self.non_working_name.clear();
-        self.non_working_kind.clear();
-        self.non_working_source.clear();
-        self.non_working_regions.clear();
+        self.pending_delete_non_working_day_id = null;
+        clearEditorBuffer(&self.non_working_date);
+        clearEditorBuffer(&self.non_working_name);
+        clearEditorBuffer(&self.non_working_kind);
+        clearEditorBuffer(&self.non_working_source);
+        clearEditorBuffer(&self.non_working_regions);
+        self.non_working_input_was_truncated = false;
     }
 
     pub fn buildIcs(
@@ -694,6 +838,11 @@ pub const State = struct {
         allocator: std.mem.Allocator,
         dtstamp_utc: []const u8,
     ) ![]u8 {
+        if (self.override_records_truncated or
+            self.non_working_day_records_truncated)
+        {
+            return error.IncompleteProjection;
+        }
         var events: [max_deadlines]ics.Event = undefined;
         var keys: [max_deadlines][80]u8 = undefined;
         var periods: [max_deadlines][64]u8 = undefined;
@@ -732,7 +881,6 @@ pub const State = struct {
                 },
                 .summary = summary,
                 .description = description,
-                .sequence = if (row.status == .extended) 1 else 0,
             };
         }
 
@@ -767,6 +915,51 @@ pub const State = struct {
         self.notice_kind = kind;
     }
 
+    pub fn captureOverrideInputTruncation(self: *State) void {
+        self.override_input_was_truncated =
+            self.override_input_was_truncated or self.overrideInputsTruncated();
+    }
+
+    pub fn captureNonWorkingInputTruncation(self: *State) void {
+        self.non_working_input_was_truncated =
+            self.non_working_input_was_truncated or
+            self.nonWorkingInputsTruncated();
+    }
+
+    fn overrideInputsTruncated(self: *const State) bool {
+        return self.override_title.truncated or
+            self.override_forms.truncated or
+            self.override_original.truncated or
+            self.override_adjusted.truncated or
+            self.override_source.truncated or
+            self.override_regions.truncated or
+            self.override_taxpayer_types.truncated or
+            self.override_effective_from.truncated or
+            self.override_effective_until.truncated or
+            self.override_expires_at.truncated;
+    }
+
+    fn nonWorkingInputsTruncated(self: *const State) bool {
+        return self.non_working_date.truncated or
+            self.non_working_name.truncated or
+            self.non_working_kind.truncated or
+            self.non_working_source.truncated or
+            self.non_working_regions.truncated;
+    }
+
+    fn setReloadNotice(self: *State, success_message: []const u8) void {
+        if (self.override_records_truncated or
+            self.non_working_day_records_truncated)
+        {
+            self.setNotice(
+                .failure,
+                "SQLite exceeds the safe editor page size. The first records are shown; remove records to reveal and recover the remaining rows.",
+            );
+            return;
+        }
+        self.setNotice(.success, success_message);
+    }
+
     fn copyOverride(self: *State, item: persistence.OwnedOverride) !void {
         if (self.override_count >= max_overrides) return error.TooManyOverrides;
         if (item.affected_form_codes.len > max_forms_per_override) {
@@ -786,7 +979,11 @@ pub const State = struct {
                 try domain.Date.parseIso(date)
             else
                 null,
-            .expires_on = if (item.expires_on) |date|
+            .effective_until = if (item.effective_until) |date|
+                try domain.Date.parseIso(date)
+            else
+                null,
+            .expires_at = if (item.expires_at) |date|
                 try domain.Date.parseIso(date)
             else
                 null,
@@ -905,9 +1102,13 @@ fn parseCanonicalForms(
 }
 
 fn parseList(value: []const u8, output: anytype) !usize {
-    var iterator = std.mem.tokenizeAny(u8, value, ",; \t\r\n");
+    // Scope names commonly contain spaces ("Region IV-A", "mixed income
+    // earner"). Only explicit separators split entries.
+    var iterator = std.mem.tokenizeAny(u8, value, ",;\r\n");
     var count: usize = 0;
-    while (iterator.next()) |entry| {
+    while (iterator.next()) |raw_entry| {
+        const entry = trimmed(raw_entry);
+        if (entry.len == 0) continue;
         if (count >= output.len) return error.TooManyScopes;
         if (containsIgnoreCase(output[0..count], entry)) continue;
         output[count] = entry;
@@ -921,6 +1122,12 @@ fn containsIgnoreCase(values: []const []const u8, wanted: []const u8) bool {
         if (std.ascii.eqlIgnoreCase(value, wanted)) return true;
     }
     return false;
+}
+
+fn ensureEntryLengths(values: []const []const u8, max: usize) StateError!void {
+    for (values) |value| {
+        if (value.len > max) return error.FieldTooLong;
+    }
 }
 
 fn optionalTrimmed(value: []const u8) ?[]const u8 {
@@ -1036,7 +1243,7 @@ fn monthAbbreviation(month: u8) []const u8 {
 
 fn joinFixedTexts(
     arena: std.mem.Allocator,
-    values: []const ShortText,
+    values: anytype,
     separator: []const u8,
 ) []const u8 {
     var out: std.ArrayList(u8) = .empty;
@@ -1047,8 +1254,8 @@ fn joinFixedTexts(
     return out.items;
 }
 
-fn setJoinedBuffer(buffer: anytype, values: []const ShortText) void {
-    var scratch: [512]u8 = undefined;
+fn setJoinedBuffer(buffer: anytype, values: anytype) void {
+    var scratch: [max_joined_scopes_bytes]u8 = undefined;
     var length: usize = 0;
     for (values, 0..) |*value, index| {
         if (index != 0) {
@@ -1062,19 +1269,31 @@ fn setJoinedBuffer(buffer: anytype, values: []const ShortText) void {
         @memcpy(scratch[length..][0..text.len], text);
         length += text.len;
     }
-    buffer.set(scratch[0..length]);
+    setEditorBuffer(buffer, scratch[0..length]);
+}
+
+fn setEditorBuffer(buffer: anytype, value: []const u8) void {
+    buffer.set(value);
+    // `TextBuffer.set` is intentionally clamping and does not update this
+    // seam. Capacities above cover every normalized SQLite record.
+    buffer.truncated = value.len > buffer.storage.len;
+}
+
+fn clearEditorBuffer(buffer: anytype) void {
+    buffer.clear();
+    buffer.truncated = false;
 }
 
 fn setDateBuffer(buffer: anytype, date: domain.Date) void {
     var value: [10]u8 = undefined;
-    buffer.set(date.writeIso(&value));
+    setEditorBuffer(buffer, date.writeIso(&value));
 }
 
 fn setOptionalDateBuffer(buffer: anytype, date: ?domain.Date) void {
     if (date) |value| {
         setDateBuffer(buffer, value);
     } else {
-        buffer.clear();
+        clearEditorBuffer(buffer);
     }
 }
 
@@ -1182,6 +1401,38 @@ test "nationwide non-working days adjust while regional days remain scoped" {
     try std.testing.expect(annual_unshifted);
 }
 
+test "legacy unscoped local holiday never becomes nationwide" {
+    var state = State{
+        .allocator = std.testing.allocator,
+        .selected_year = 2026,
+        .selected_month = 5,
+    };
+    var legacy = NonWorkingDayRow{
+        .id = 1,
+        .date = try domain.Date.init(2026, 5, 15),
+    };
+    try legacy.name.set("Legacy local row");
+    try legacy.kind.set("local");
+    try legacy.source.set("Legacy SQLite fixture");
+    state.non_working_days[0] = legacy;
+    state.non_working_day_count = 1;
+
+    try state.recompute();
+    for (state.deadlines[0..state.deadline_count]) |row| {
+        if (std.mem.eql(u8, row.form_code, "1701Q") and
+            domain.Date.compare(
+                row.original_deadline,
+                try domain.Date.init(2026, 5, 15),
+            ) == .eq)
+        {
+            try std.testing.expectEqual(row.original_deadline, row.final_deadline);
+            try std.testing.expectEqual(domain.DeadlineStatus.normal, row.status);
+            return;
+        }
+    }
+    return error.TestExpectedEqual;
+}
+
 test "ICS export contains the complete selected calendar year" {
     const allocator = std.testing.allocator;
     var store = try persistence.Store.openMemory(allocator);
@@ -1206,8 +1457,41 @@ test "ICS export contains the complete selected calendar year" {
     try std.testing.expect(std.mem.indexOf(
         u8,
         bytes,
-        "UID:2026:1701Q:q1@ebirforms.local",
+        "UID:2026:1701Q:q1@ebirforms.goldcoders.dev",
     ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        bytes,
+        "UID:2025:1604-C:annual@ebirforms.goldcoders.dev",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        bytes,
+        "UID:2025:1604-F:annual@ebirforms.goldcoders.dev",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        bytes,
+        "UID:2025:2316:annual:employee-copy@ebirforms.goldcoders.dev",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        bytes,
+        "UID:2025:2316:annual:bir-copy@ebirforms.goldcoders.dev",
+    ) != null);
+
+    var unique_uids = std.StringHashMap(void).init(allocator);
+    defer unique_uids.deinit();
+    var lines = std.mem.splitSequence(u8, bytes, "\r\n");
+    var uid_count: usize = 0;
+    while (lines.next()) |line| {
+        if (!std.mem.startsWith(u8, line, "UID:")) continue;
+        const inserted = try unique_uids.getOrPut(line[4..]);
+        try std.testing.expect(!inserted.found_existing);
+        uid_count += 1;
+    }
+    try std.testing.expectEqual(state.deadline_count, uid_count);
+    try std.testing.expectEqual(uid_count, unique_uids.count());
 }
 
 test "attach validates and records the selected month" {
@@ -1275,4 +1559,208 @@ test "month navigation recomputes only when crossing a year boundary" {
     try std.testing.expectEqual(@as(i32, 2026), state.selected_year);
     try std.testing.expectEqual(@as(u8, 12), state.selected_month);
     try std.testing.expect(state.deadline_count > 100);
+}
+
+test "SQLite insertion order preserves later override precedence" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    const forms = [_][]const u8{"1701Q"};
+    _ = try store.putOverride(.{
+        .title = "First extension",
+        .source = "First official source",
+        .original_deadline = "2026-05-15",
+        .adjusted_deadline = "2026-06-15",
+        .affected_form_codes = &forms,
+    });
+    _ = try store.putOverride(.{
+        .title = "Later correction",
+        .source = "Later official source",
+        .original_deadline = "2026-05-15",
+        .adjusted_deadline = "2026-06-10",
+        .affected_form_codes = &forms,
+    });
+
+    var state = State{};
+    try state.attach(
+        allocator,
+        &store,
+        "/tmp/ebirforms-tax-calendar.ics",
+        "20260729T010203Z",
+        2026,
+        5,
+    );
+
+    for (state.deadlines[0..state.deadline_count]) |row| {
+        if (std.mem.eql(u8, row.form_code, "1701Q") and
+            domain.Date.compare(
+                row.original_deadline,
+                try domain.Date.init(2026, 5, 15),
+            ) == .eq)
+        {
+            try std.testing.expectEqual(
+                try domain.Date.init(2026, 6, 10),
+                row.final_deadline,
+            );
+            try std.testing.expectEqualStrings(
+                "Later official source",
+                row.sourceLabel(),
+            );
+            return;
+        }
+    }
+    return error.TestExpectedEqual;
+}
+
+test "scoped overrides remain stored but do not leak into global projection" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    _ = try store.putOverride(.{
+        .title = "NCR-only extension",
+        .source = "Official regional fixture",
+        .original_deadline = "2026-05-15",
+        .adjusted_deadline = "2026-06-15",
+        .affected_form_codes = &.{"1701Q"},
+        .regions = &.{"NCR"},
+    });
+
+    var state = State{};
+    try state.attach(
+        allocator,
+        &store,
+        "/tmp/ebirforms-tax-calendar.ics",
+        "20260729T010203Z",
+        2026,
+        5,
+    );
+    try std.testing.expectEqual(@as(usize, 1), state.override_count);
+    for (state.deadlines[0..state.deadline_count]) |row| {
+        if (std.mem.eql(u8, row.form_code, "1701Q") and
+            domain.Date.compare(
+                row.original_deadline,
+                try domain.Date.init(2026, 5, 15),
+            ) == .eq)
+        {
+            try std.testing.expectEqual(row.original_deadline, row.final_deadline);
+            try std.testing.expectEqual(domain.DeadlineStatus.normal, row.status);
+            return;
+        }
+    }
+    return error.TestExpectedEqual;
+}
+
+test "override temporal metadata and multi-word scopes round trip" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try state.attach(
+        allocator,
+        &store,
+        "/tmp/ebirforms-tax-calendar.ics",
+        "20260729T010203Z",
+        2026,
+        5,
+    );
+    state.override_title.set("Scoped fixture");
+    state.override_forms.set("1701Q");
+    state.override_original.set("2026-05-15");
+    state.override_adjusted.set("2026-05-22");
+    state.override_source.set("Official fixture");
+    state.override_regions.set("Region IV-A; NCR");
+    state.override_taxpayer_types.set("Mixed income earner");
+    state.override_effective_from.set("2026-05-01");
+    state.override_effective_until.set("2026-05-31");
+    state.override_expires_at.set("2027-05-31");
+    state.saveOverride();
+
+    try std.testing.expectEqual(NoticeKind.success, state.notice_kind);
+    try std.testing.expectEqual(@as(usize, 1), state.override_count);
+    const row = state.overrides[0];
+    try std.testing.expectEqual(@as(usize, 2), row.region_count);
+    try std.testing.expect(
+        std.mem.eql(u8, row.regions[0].text(), "Region IV-A") or
+            std.mem.eql(u8, row.regions[1].text(), "Region IV-A"),
+    );
+    try std.testing.expectEqualStrings(
+        "Mixed income earner",
+        row.taxpayer_types[0].text(),
+    );
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 5, 31),
+        row.effective_until.?,
+    );
+    try std.testing.expectEqual(
+        try domain.Date.init(2027, 5, 31),
+        row.expires_at.?,
+    );
+}
+
+test "delete requires a repeated explicit confirmation" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    const id = try store.putOverride(.{
+        .title = "Delete fixture",
+        .source = "Official fixture",
+        .original_deadline = "2026-05-15",
+        .adjusted_deadline = "2026-05-22",
+        .affected_form_codes = &.{"1701Q"},
+    });
+
+    var state = State{};
+    try state.attach(
+        allocator,
+        &store,
+        "/tmp/ebirforms-tax-calendar.ics",
+        "20260729T010203Z",
+        2026,
+        5,
+    );
+    state.deleteOverride(id);
+    var still_present = try store.getOverride(allocator, id);
+    try std.testing.expect(still_present != null);
+    if (still_present) |*item| item.deinit(allocator);
+
+    state.deleteOverride(id);
+    try std.testing.expect((try store.getOverride(allocator, id)) == null);
+}
+
+test "overflow stays recoverable and blocks incomplete export" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var title: [32]u8 = undefined;
+    for (0..max_overrides + 1) |index| {
+        const rendered = try std.fmt.bufPrint(&title, "Override {d}", .{index});
+        _ = try store.putOverride(.{
+            .title = rendered,
+            .source = "Official fixture",
+            .original_deadline = "2026-05-15",
+            .adjusted_deadline = "2026-05-22",
+            .affected_form_codes = &.{"1701Q"},
+        });
+    }
+
+    var state = State{};
+    try state.attach(
+        allocator,
+        &store,
+        "/tmp/ebirforms-tax-calendar.ics",
+        "20260729T010203Z",
+        2026,
+        5,
+    );
+    try std.testing.expect(state.override_records_truncated);
+    try std.testing.expectEqual(max_overrides, state.override_count);
+    try std.testing.expectEqual(NoticeKind.failure, state.notice_kind);
+    try std.testing.expectError(
+        error.IncompleteProjection,
+        state.buildIcs(allocator, "20260729T010203Z"),
+    );
 }

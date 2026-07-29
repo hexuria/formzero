@@ -452,17 +452,21 @@ pub const Frequency = enum {
 };
 
 const Generation = enum {
+    monthly_following_fifth,
     monthly_following_tenth,
+    monthly_following_twentieth,
+    monthly_first_two_quarter_months_following_tenth,
     monthly_withholding,
     quarterly_following_month_end,
     quarterly_1701q,
     quarterly_1702q,
     quarterly_following_twenty_fifth,
+    quarterly_2550ds,
     quarterly_2200m,
     annual_january_thirty_first,
     annual_march_first,
     annual_april_fifteenth,
-    annual_2316,
+    annual_2316_bir_submission,
     event_based,
 };
 
@@ -476,19 +480,24 @@ pub const OfficialRule = struct {
 };
 
 const monthly_tenth_forms = [_][]const u8{
-    "0620", "1600-VT", "1600-PT", "1606", "2200-C",
+    "1600-VT", "1600-PT", "2200-C",
 };
-const monthly_withholding_forms = [_][]const u8{
-    "0619-E", "0619-F", "1601-C",
-};
+const monthly_fifth_forms = [_][]const u8{"2000"};
+const monthly_0620_forms = [_][]const u8{"0620"};
+const monthly_0619_forms = [_][]const u8{ "0619-E", "0619-F" };
+const monthly_1600wp_forms = [_][]const u8{"1600-WP"};
+const monthly_1606_forms = [_][]const u8{"1606"};
+const monthly_withholding_forms = [_][]const u8{"1601-C"};
+const monthly_2200m_forms = [_][]const u8{"2200-M"};
 const quarterly_withholding_forms = [_][]const u8{
     "1601-EQ", "1601-FQ", "1602Q", "1603Q", "1621",
 };
 const quarterly_1701q_forms = [_][]const u8{"1701Q"};
 const quarterly_1702q_forms = [_][]const u8{"1702Q"};
 const quarterly_indirect_tax_forms = [_][]const u8{
-    "2550-DS", "2550Q", "2551Q",
+    "2550Q", "2551Q",
 };
+const quarterly_2550ds_forms = [_][]const u8{"2550-DS"};
 const quarterly_2200m_forms = [_][]const u8{"2200-M"};
 const annual_1604cf_forms = [_][]const u8{ "1604-C", "1604-F" };
 const annual_1604e_forms = [_][]const u8{"1604-E"};
@@ -497,7 +506,6 @@ const annual_income_tax_forms = [_][]const u8{
     "1701",
     "1701A",
     "1701-MS",
-    "1702",
     "1702-EX",
     "1702-MX",
     "1702-RT",
@@ -506,7 +514,6 @@ const annual_income_tax_forms = [_][]const u8{
 const annual_2316_forms = [_][]const u8{"2316"};
 const event_based_forms = [_][]const u8{
     "2552",
-    "1600-WP",
     "1706",
     "1707",
     "1800",
@@ -518,16 +525,25 @@ const event_based_forms = [_][]const u8{
     "2200-A",
     "2200-AN",
     "2200-M",
-    "2200P",
+    "2200-P",
     "2200-S",
     "2200-T",
     "2553",
-    "2000",
 };
 
-/// Authoritative recurring-rule table. It is immutable and contains no
-/// year-specific holidays or administrative extension guesses.
+/// Compiled global calendar-year rule catalog. Each formula is valid for its
+/// stated filer scope, but callers must still select the taxpayer's applicable
+/// forms, fiscal year, and filing channel before treating it as a filing plan.
+/// It is immutable and contains no year-specific holiday or extension guesses.
 pub const OFFICIAL_RULES = [_]OfficialRule{
+    .{
+        .rule_id = "2000-monthly-following-5",
+        .form_nos = &monthly_fifth_forms,
+        .form_name = "Monthly Documentary Stamp Tax Return",
+        .frequency = .monthly,
+        .description = "Within 5 days after the close of the month",
+        .generation = .monthly_following_fifth,
+    },
     .{
         .rule_id = "monthly-remittance-following-10",
         .form_nos = &monthly_tenth_forms,
@@ -537,12 +553,52 @@ pub const OFFICIAL_RULES = [_]OfficialRule{
         .generation = .monthly_following_tenth,
     },
     .{
-        .rule_id = "monthly-withholding-following-10-december-15",
+        .rule_id = "0620-first-two-quarter-months-following-10",
+        .form_nos = &monthly_0620_forms,
+        .form_name = "Monthly Remittance of Tax Withheld on Decedent Deposits",
+        .frequency = .monthly,
+        .description = "First two months of each quarter; 10th day of the following month",
+        .generation = .monthly_first_two_quarter_months_following_tenth,
+    },
+    .{
+        .rule_id = "0619-first-two-quarter-months-following-10",
+        .form_nos = &monthly_0619_forms,
+        .form_name = "Monthly Withholding Tax Remittance",
+        .frequency = .monthly,
+        .description = "First two months of each quarter; 10th day of following month (Non-eFPS)",
+        .generation = .monthly_first_two_quarter_months_following_tenth,
+    },
+    .{
+        .rule_id = "1600wp-monthly-following-20",
+        .form_nos = &monthly_1600wp_forms,
+        .form_name = "Monthly Remittance Return of Percentage Tax on Winnings and Prizes",
+        .frequency = .monthly,
+        .description = "20th day of the following month",
+        .generation = .monthly_following_twentieth,
+    },
+    .{
+        .rule_id = "1606-conditional-monthly-following-10",
+        .form_nos = &monthly_1606_forms,
+        .form_name = "Withholding Tax Remittance on Real Property Transactions",
+        .frequency = .monthly,
+        .description = "Conditional reminder for months with a real-property transaction or installment; actual filing cardinality is per transaction/installment, due on the 10th day of the following month",
+        .generation = .monthly_following_tenth,
+    },
+    .{
+        .rule_id = "1601c-following-10-december-15",
         .form_nos = &monthly_withholding_forms,
         .form_name = "Withholding Tax Remittance",
         .frequency = .monthly,
         .description = "10th day of the following month (Non-eFPS) / 15th for Dec",
         .generation = .monthly_withholding,
+    },
+    .{
+        .rule_id = "2200m-qualified-monthly-following-10",
+        .form_nos = &monthly_2200m_forms,
+        .form_name = "Monthly Excise Tax Return — Metallic Mineral Collections",
+        .frequency = .monthly,
+        .description = "Only for excise tax collected from payments made to sellers of metallic minerals; 10th day of the following month",
+        .generation = .monthly_following_tenth,
     },
     .{
         .rule_id = "quarterly-withholding-following-month-end",
@@ -557,7 +613,7 @@ pub const OFFICIAL_RULES = [_]OfficialRule{
         .form_nos = &quarterly_1701q_forms,
         .form_name = "Quarterly Income Tax Return (Individual)",
         .frequency = .quarterly,
-        .description = "Q1: May 15, Q2: Aug 15, Q3: Oct 15",
+        .description = "Q1: May 15, Q2: Aug 15, Q3: Nov 15",
         .generation = .quarterly_1701q,
     },
     .{
@@ -575,6 +631,14 @@ pub const OFFICIAL_RULES = [_]OfficialRule{
         .frequency = .quarterly,
         .description = "25th day following the close of taxable quarter",
         .generation = .quarterly_following_twenty_fifth,
+    },
+    .{
+        .rule_id = "2550ds-quarterly-following-25",
+        .form_nos = &quarterly_2550ds_forms,
+        .form_name = "VAT on Digital Services by Nonresident Digital Service Providers",
+        .frequency = .quarterly,
+        .description = "Effective June 2, 2025; 25th day following the close of taxable quarter",
+        .generation = .quarterly_2550ds,
     },
     .{
         .rule_id = "2200m-quarterly-following-15",
@@ -609,12 +673,20 @@ pub const OFFICIAL_RULES = [_]OfficialRule{
         .generation = .annual_april_fifteenth,
     },
     .{
-        .rule_id = "2316-annual-february-end",
+        .rule_id = "2316-employee-furnishing-january-31",
         .form_nos = &annual_2316_forms,
-        .form_name = "Certificate of Compensation Payment",
+        .form_name = "Certificate of Compensation Payment — Employee Copy",
+        .frequency = .annual,
+        .description = "January 31 (furnish the certificate to the employee)",
+        .generation = .annual_january_thirty_first,
+    },
+    .{
+        .rule_id = "2316-bir-submission-february-28",
+        .form_nos = &annual_2316_forms,
+        .form_name = "Certificate of Compensation Payment — BIR Submission",
         .frequency = .annual,
         .description = "February 28 (submission to BIR)",
-        .generation = .annual_2316,
+        .generation = .annual_2316_bir_submission,
     },
     .{
         .rule_id = "event-based-special-obligation",
@@ -743,10 +815,10 @@ const canonical_aliases = [_]CanonicalAlias{
     .{ .display = "1601EQ", .canonical = "1601EQ" },
     .{ .display = "1601-FQ", .canonical = "1601FQ" },
     .{ .display = "1601FQ", .canonical = "1601FQ" },
-    .{ .display = "1604-C", .canonical = "1604CF" },
-    .{ .display = "1604-F", .canonical = "1604CF" },
-    .{ .display = "1604C", .canonical = "1604CF" },
-    .{ .display = "1604F", .canonical = "1604CF" },
+    .{ .display = "1604-C", .canonical = "1604C" },
+    .{ .display = "1604-F", .canonical = "1604F" },
+    .{ .display = "1604C", .canonical = "1604C" },
+    .{ .display = "1604F", .canonical = "1604F" },
     .{ .display = "1604CF", .canonical = "1604CF" },
     .{ .display = "1604-E", .canonical = "1604E" },
     .{ .display = "1604E", .canonical = "1604E" },
@@ -793,7 +865,6 @@ const canonical_aliases = [_]CanonicalAlias{
     .{ .display = "1701", .canonical = "1701" },
     .{ .display = "1701A", .canonical = "1701A" },
     .{ .display = "1701Q", .canonical = "1701Q" },
-    .{ .display = "1702", .canonical = "1702" },
     .{ .display = "1702Q", .canonical = "1702Q" },
     .{ .display = "1706", .canonical = "1706" },
     .{ .display = "1707", .canonical = "1707" },
@@ -801,6 +872,7 @@ const canonical_aliases = [_]CanonicalAlias{
     .{ .display = "1801", .canonical = "1801" },
     .{ .display = "1905", .canonical = "1905" },
     .{ .display = "2000", .canonical = "2000" },
+    .{ .display = "2200-P", .canonical = "2200P" },
     .{ .display = "2200P", .canonical = "2200P" },
     .{ .display = "2316", .canonical = "2316" },
     .{ .display = "2550Q", .canonical = "2550Q" },
@@ -823,10 +895,73 @@ fn generateRule(
     rule: OfficialRule,
 ) !void {
     switch (rule.generation) {
+        .monthly_following_fifth => {
+            for (rule.form_nos) |form_no| {
+                for (1..13) |month_value| {
+                    const month: u8 = @intCast(month_value);
+                    const following = nextMonth(taxable_year, month);
+                    try appendDated(
+                        allocator,
+                        deadlines,
+                        rule,
+                        form_no,
+                        .{ .monthly = .{
+                            .taxable_year = taxable_year,
+                            .month = month,
+                        } },
+                        try Date.init(taxable_year, month, 1),
+                        try lastDayOfMonth(taxable_year, month),
+                        try Date.init(following.year, following.month, 5),
+                    );
+                }
+            }
+        },
         .monthly_following_tenth => {
             for (rule.form_nos) |form_no| {
                 for (1..13) |month_value| {
                     const month: u8 = @intCast(month_value);
+                    const following = nextMonth(taxable_year, month);
+                    try appendDated(
+                        allocator,
+                        deadlines,
+                        rule,
+                        form_no,
+                        .{ .monthly = .{
+                            .taxable_year = taxable_year,
+                            .month = month,
+                        } },
+                        try Date.init(taxable_year, month, 1),
+                        try lastDayOfMonth(taxable_year, month),
+                        try Date.init(following.year, following.month, 10),
+                    );
+                }
+            }
+        },
+        .monthly_following_twentieth => {
+            for (rule.form_nos) |form_no| {
+                for (1..13) |month_value| {
+                    const month: u8 = @intCast(month_value);
+                    const following = nextMonth(taxable_year, month);
+                    try appendDated(
+                        allocator,
+                        deadlines,
+                        rule,
+                        form_no,
+                        .{ .monthly = .{
+                            .taxable_year = taxable_year,
+                            .month = month,
+                        } },
+                        try Date.init(taxable_year, month, 1),
+                        try lastDayOfMonth(taxable_year, month),
+                        try Date.init(following.year, following.month, 20),
+                    );
+                }
+            }
+        },
+        .monthly_first_two_quarter_months_following_tenth => {
+            const filing_months = [_]u8{ 1, 2, 4, 5, 7, 8, 10, 11 };
+            for (rule.form_nos) |form_no| {
+                for (filing_months) |month| {
                     const following = nextMonth(taxable_year, month);
                     try appendDated(
                         allocator,
@@ -869,12 +1004,30 @@ fn generateRule(
         .quarterly_following_month_end,
         .quarterly_1702q,
         .quarterly_following_twenty_fifth,
+        .quarterly_2550ds,
         .quarterly_2200m,
         => {
+            if (rule.generation == .quarterly_2550ds and taxable_year < 2025) {
+                return;
+            }
             for (rule.form_nos) |form_no| {
-                for (1..5) |quarter_value| {
+                const quarter_start: usize =
+                    if (rule.generation == .quarterly_2550ds and
+                    taxable_year == 2025)
+                        2
+                    else
+                        1;
+                const quarter_end: usize =
+                    if (rule.generation == .quarterly_1702q) 4 else 5;
+                for (quarter_start..quarter_end) |quarter_value| {
                     const quarter: u8 = @intCast(quarter_value);
                     const start_month: u8 = (quarter - 1) * 3 + 1;
+                    const period_start =
+                        if (rule.generation == .quarterly_2550ds and
+                        taxable_year == 2025 and quarter == 2)
+                            try Date.init(2025, 6, 2)
+                        else
+                            try Date.init(taxable_year, start_month, 1);
                     const period_end = try lastDayOfMonth(
                         taxable_year,
                         start_month + 2,
@@ -897,6 +1050,11 @@ fn generateRule(
                             following.month,
                             25,
                         ),
+                        .quarterly_2550ds => try Date.init(
+                            following.year,
+                            following.month,
+                            25,
+                        ),
                         .quarterly_2200m => try Date.init(
                             following.year,
                             following.month,
@@ -913,7 +1071,7 @@ fn generateRule(
                             .taxable_year = taxable_year,
                             .quarter = quarter,
                         } },
-                        try Date.init(taxable_year, start_month, 1),
+                        period_start,
                         period_end,
                         due_date,
                     );
@@ -928,7 +1086,7 @@ fn generateRule(
             }{
                 .{ .quarter = 1, .month = 5, .day = 15 },
                 .{ .quarter = 2, .month = 8, .day = 15 },
-                .{ .quarter = 3, .month = 10, .day = 15 },
+                .{ .quarter = 3, .month = 11, .day = 15 },
             };
             for (rule.form_nos) |form_no| {
                 for (due_dates) |due| {
@@ -952,7 +1110,7 @@ fn generateRule(
         .annual_january_thirty_first,
         .annual_march_first,
         .annual_april_fifteenth,
-        .annual_2316,
+        .annual_2316_bir_submission,
         => {
             for (rule.form_nos) |form_no| {
                 const due_date = switch (rule.generation) {
@@ -971,10 +1129,10 @@ fn generateRule(
                         4,
                         15,
                     ),
-                    .annual_2316 => try Date.init(
+                    .annual_2316_bir_submission => try Date.init(
                         taxable_year + 1,
                         2,
-                        if (Date.isLeapYear(taxable_year + 1)) 29 else 28,
+                        28,
                     ),
                     else => unreachable,
                 };
@@ -1137,6 +1295,23 @@ fn findDeadline(
     return null;
 }
 
+fn findDeadlineByRule(
+    deadlines: []const ResolvedDeadline,
+    rule_id: []const u8,
+    form_code: []const u8,
+    period: Period,
+) ?*const ResolvedDeadline {
+    for (deadlines) |*deadline| {
+        if (std.mem.eql(u8, deadline.rule_id, rule_id) and
+            std.mem.eql(u8, deadline.form_code, form_code) and
+            std.meta.eql(deadline.period, period))
+        {
+            return deadline;
+        }
+    }
+    return null;
+}
+
 test "Date validates, formats, parses, and crosses leap boundaries" {
     const leap_day = try Date.init(2024, 2, 29);
     try std.testing.expectEqual(Weekday.thursday, leap_day.weekday());
@@ -1234,6 +1409,65 @@ test "1701Q preserves quarterly metadata and period filtering" {
     try std.testing.expect(q1.matchesDeadlineDateFilter(&.{5}, &.{}));
 }
 
+test "1701Q third quarter is due November 15" {
+    const deadlines = try resolveTaxableYear(
+        std.testing.allocator,
+        2026,
+        .{},
+    );
+    defer std.testing.allocator.free(deadlines);
+
+    const q3 = findDeadline(
+        deadlines,
+        "1701Q",
+        .{ .quarterly = .{ .taxable_year = 2026, .quarter = 3 } },
+    ) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(
+        try Date.init(2026, 11, 15),
+        q3.originalDeadlineDate().?,
+    );
+    try std.testing.expectEqual(
+        try Date.init(2026, 11, 16),
+        q3.finalDeadlineDate().?,
+    );
+    try std.testing.expectEqual(DeadlineStatus.weekend_adjusted, q3.status);
+}
+
+test "2316 has distinct employee furnishing and BIR submission duties" {
+    const deadlines = try resolveTaxableYear(
+        std.testing.allocator,
+        2023,
+        .{},
+    );
+    defer std.testing.allocator.free(deadlines);
+
+    const employee_copy = findDeadlineByRule(
+        deadlines,
+        "2316-employee-furnishing-january-31",
+        "2316",
+        .{ .annual = .{ .taxable_year = 2023 } },
+    ) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(
+        try Date.init(2024, 1, 31),
+        employee_copy.originalDeadlineDate().?,
+    );
+
+    const bir_submission = findDeadlineByRule(
+        deadlines,
+        "2316-bir-submission-february-28",
+        "2316",
+        .{ .annual = .{ .taxable_year = 2023 } },
+    ) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(
+        try Date.init(2024, 2, 28),
+        bir_submission.originalDeadlineDate().?,
+    );
+    try std.testing.expectEqual(
+        try Date.init(2024, 2, 28),
+        bir_submission.finalDeadlineDate().?,
+    );
+}
+
 test "weekend adjustment preserves original deadline" {
     const deadlines = try resolveTaxableYear(
         std.testing.allocator,
@@ -1322,6 +1556,337 @@ test "1702Q is sixty days after quarter end before weekend adjustment" {
         q1.finalDeadlineDate().?,
     );
     try std.testing.expectEqual(DeadlineStatus.weekend_adjusted, q1.status);
+    try std.testing.expect(findDeadline(
+        deadlines,
+        "1702Q",
+        .{ .quarterly = .{ .taxable_year = 2026, .quarter = 4 } },
+    ) == null);
+}
+
+test "0619 forms cover only the first two months of each quarter" {
+    const deadlines = try resolveTaxableYear(
+        std.testing.allocator,
+        2026,
+        .{},
+    );
+    defer std.testing.allocator.free(deadlines);
+
+    const included_months = [_]u8{ 1, 2, 4, 5, 7, 8, 10, 11 };
+    const excluded_months = [_]u8{ 3, 6, 9, 12 };
+    for ([_][]const u8{ "0619E", "0619F" }) |form_code| {
+        for (included_months) |month| {
+            try std.testing.expect(findDeadline(
+                deadlines,
+                form_code,
+                .{ .monthly = .{
+                    .taxable_year = 2026,
+                    .month = month,
+                } },
+            ) != null);
+        }
+        for (excluded_months) |month| {
+            try std.testing.expect(findDeadline(
+                deadlines,
+                form_code,
+                .{ .monthly = .{
+                    .taxable_year = 2026,
+                    .month = month,
+                } },
+            ) == null);
+        }
+    }
+}
+
+test "0620 covers only the first two months of each quarter" {
+    const deadlines = try resolveTaxableYear(
+        std.testing.allocator,
+        2026,
+        .{},
+    );
+    defer std.testing.allocator.free(deadlines);
+
+    const included_months = [_]u8{ 1, 2, 4, 5, 7, 8, 10, 11 };
+    const excluded_months = [_]u8{ 3, 6, 9, 12 };
+    for (included_months) |month| {
+        const deadline = findDeadline(
+            deadlines,
+            "0620",
+            .{ .monthly = .{
+                .taxable_year = 2026,
+                .month = month,
+            } },
+        ) orelse return error.TestExpectedEqual;
+        const following = nextMonth(2026, month);
+        try std.testing.expectEqual(
+            try Date.init(following.year, following.month, 10),
+            deadline.originalDeadlineDate().?,
+        );
+    }
+    for (excluded_months) |month| {
+        try std.testing.expect(findDeadline(
+            deadlines,
+            "0620",
+            .{ .monthly = .{
+                .taxable_year = 2026,
+                .month = month,
+            } },
+        ) == null);
+    }
+}
+
+test "1600-WP is monthly due on the twentieth and not a generic event" {
+    const deadlines = try resolveTaxableYear(
+        std.testing.allocator,
+        2026,
+        .{},
+    );
+    defer std.testing.allocator.free(deadlines);
+
+    for (1..13) |month_value| {
+        const month: u8 = @intCast(month_value);
+        const deadline = findDeadline(
+            deadlines,
+            "1600WP",
+            .{ .monthly = .{
+                .taxable_year = 2026,
+                .month = month,
+            } },
+        ) orelse return error.TestExpectedEqual;
+        const following = nextMonth(2026, month);
+        try std.testing.expectEqual(
+            try Date.init(following.year, following.month, 20),
+            deadline.originalDeadlineDate().?,
+        );
+    }
+
+    const events = try resolveEventBased(std.testing.allocator);
+    defer std.testing.allocator.free(events);
+    for (events) |event| {
+        try std.testing.expect(!std.mem.eql(u8, event.form_code, "1600WP"));
+    }
+}
+
+test "2200-M retains qualified monthly, quarterly, and event obligations" {
+    const deadlines = try resolveTaxableYear(
+        std.testing.allocator,
+        2026,
+        .{},
+    );
+    defer std.testing.allocator.free(deadlines);
+
+    var monthly_count: usize = 0;
+    var quarterly_count: usize = 0;
+    var event_count: usize = 0;
+    for (deadlines) |deadline| {
+        if (!std.mem.eql(u8, deadline.form_code, "2200M")) continue;
+        switch (deadline.period) {
+            .monthly => {
+                monthly_count += 1;
+                try std.testing.expectEqualStrings(
+                    "2200m-qualified-monthly-following-10",
+                    deadline.rule_id,
+                );
+                try std.testing.expect(std.mem.startsWith(
+                    u8,
+                    deadline.description,
+                    "Only for excise tax collected from payments made to sellers of metallic minerals",
+                ));
+            },
+            .quarterly => {
+                quarterly_count += 1;
+                try std.testing.expectEqualStrings(
+                    "2200m-quarterly-following-15",
+                    deadline.rule_id,
+                );
+            },
+            .event_based => event_count += 1,
+            .annual => return error.TestExpectedEqual,
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 12), monthly_count);
+    try std.testing.expectEqual(@as(usize, 4), quarterly_count);
+    try std.testing.expectEqual(@as(usize, 1), event_count);
+
+    const january = findDeadlineByRule(
+        deadlines,
+        "2200m-qualified-monthly-following-10",
+        "2200M",
+        .{ .monthly = .{ .taxable_year = 2026, .month = 1 } },
+    ) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(
+        try Date.init(2026, 2, 10),
+        january.originalDeadlineDate().?,
+    );
+}
+
+test "1606 monthly rows are explicitly conditional transaction reminders" {
+    const deadlines = try resolveTaxableYear(
+        std.testing.allocator,
+        2026,
+        .{},
+    );
+    defer std.testing.allocator.free(deadlines);
+
+    var count: usize = 0;
+    for (deadlines) |deadline| {
+        if (!std.mem.eql(u8, deadline.form_code, "1606")) continue;
+        count += 1;
+        try std.testing.expectEqualStrings(
+            "1606-conditional-monthly-following-10",
+            deadline.rule_id,
+        );
+        try std.testing.expect(std.mem.indexOf(
+            u8,
+            deadline.description,
+            "actual filing cardinality is per transaction/installment",
+        ) != null);
+    }
+    try std.testing.expectEqual(@as(usize, 12), count);
+}
+
+test "2000 is monthly and absent from generic event obligations" {
+    const deadlines = try resolveTaxableYear(
+        std.testing.allocator,
+        2026,
+        .{},
+    );
+    defer std.testing.allocator.free(deadlines);
+
+    for (1..13) |month_value| {
+        const month: u8 = @intCast(month_value);
+        const deadline = findDeadline(
+            deadlines,
+            "2000",
+            .{ .monthly = .{
+                .taxable_year = 2026,
+                .month = month,
+            } },
+        ) orelse return error.TestExpectedEqual;
+        const following = nextMonth(2026, month);
+        try std.testing.expectEqual(
+            try Date.init(following.year, following.month, 5),
+            deadline.originalDeadlineDate().?,
+        );
+    }
+
+    const events = try resolveEventBased(std.testing.allocator);
+    defer std.testing.allocator.free(events);
+    for (events) |event| {
+        try std.testing.expect(!std.mem.eql(u8, event.form_code, "2000"));
+    }
+}
+
+test "2550-DS begins June 2 2025 and has no earlier obligations" {
+    const before_effective = try resolveTaxableYear(
+        std.testing.allocator,
+        2024,
+        .{},
+    );
+    defer std.testing.allocator.free(before_effective);
+    for (before_effective) |deadline| {
+        try std.testing.expect(!std.mem.eql(u8, deadline.form_code, "2550DS"));
+    }
+
+    const first_year = try resolveTaxableYear(
+        std.testing.allocator,
+        2025,
+        .{},
+    );
+    defer std.testing.allocator.free(first_year);
+    try std.testing.expect(findDeadline(
+        first_year,
+        "2550DS",
+        .{ .quarterly = .{ .taxable_year = 2025, .quarter = 1 } },
+    ) == null);
+
+    const q2 = findDeadline(
+        first_year,
+        "2550DS",
+        .{ .quarterly = .{ .taxable_year = 2025, .quarter = 2 } },
+    ) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(try Date.init(2025, 6, 2), q2.period_start.?);
+    try std.testing.expectEqual(try Date.init(2025, 6, 30), q2.period_end.?);
+    try std.testing.expectEqual(
+        try Date.init(2025, 7, 25),
+        q2.originalDeadlineDate().?,
+    );
+    for ([_]u8{ 3, 4 }) |quarter| {
+        try std.testing.expect(findDeadline(
+            first_year,
+            "2550DS",
+            .{ .quarterly = .{
+                .taxable_year = 2025,
+                .quarter = quarter,
+            } },
+        ) != null);
+    }
+
+    const full_year = try resolveTaxableYear(
+        std.testing.allocator,
+        2026,
+        .{},
+    );
+    defer std.testing.allocator.free(full_year);
+    const q1 = findDeadline(
+        full_year,
+        "2550DS",
+        .{ .quarterly = .{ .taxable_year = 2026, .quarter = 1 } },
+    ) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(try Date.init(2026, 1, 1), q1.period_start.?);
+}
+
+test "generic 1702 annual row and alias are absent" {
+    try std.testing.expectEqualStrings(
+        unknown_form_code,
+        canonicalFormCode("1702"),
+    );
+
+    const deadlines = try resolveTaxableYear(
+        std.testing.allocator,
+        2026,
+        .{},
+    );
+    defer std.testing.allocator.free(deadlines);
+    try std.testing.expect(findDeadline(
+        deadlines,
+        "1702",
+        .{ .annual = .{ .taxable_year = 2026 } },
+    ) == null);
+}
+
+test "1604-C and 1604-F have distinct canonical identities" {
+    try std.testing.expectEqualStrings("1604C", canonicalFormCode("1604-C"));
+    try std.testing.expectEqualStrings("1604F", canonicalFormCode("1604-F"));
+
+    const deadlines = try resolveTaxableYear(
+        std.testing.allocator,
+        2026,
+        .{},
+    );
+    defer std.testing.allocator.free(deadlines);
+    try std.testing.expect(findDeadline(
+        deadlines,
+        "1604C",
+        .{ .annual = .{ .taxable_year = 2026 } },
+    ) != null);
+    try std.testing.expect(findDeadline(
+        deadlines,
+        "1604F",
+        .{ .annual = .{ .taxable_year = 2026 } },
+    ) != null);
+}
+
+test "2200-P preserves hyphenated display and canonical identity" {
+    try std.testing.expectEqualStrings("2200P", canonicalFormCode("2200-P"));
+
+    const events = try resolveEventBased(std.testing.allocator);
+    defer std.testing.allocator.free(events);
+    const event = findDeadline(
+        events,
+        "2200P",
+        .event_based,
+    ) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqualStrings("2200-P", event.display_form_no);
 }
 
 test "event based obligations have stable rule and explanatory metadata" {
@@ -1337,7 +1902,7 @@ test "event based obligations have stable rule and explanatory metadata" {
 
     const events = try resolveEventBased(std.testing.allocator);
     defer std.testing.allocator.free(events);
-    try std.testing.expectEqual(@as(usize, 18), events.len);
+    try std.testing.expectEqual(@as(usize, 16), events.len);
 
     var found_1800 = false;
     for (events) |event| {
@@ -1361,11 +1926,16 @@ test "event based obligations have stable rule and explanatory metadata" {
 test "all official rule display codes canonicalize" {
     try std.testing.expectEqualStrings("1601C", canonicalFormCode("1601-C"));
     try std.testing.expectEqualStrings("0619E", canonicalFormCode("0619-E"));
+    try std.testing.expectEqualStrings("1604C", canonicalFormCode("1604-C"));
+    try std.testing.expectEqualStrings("1604F", canonicalFormCode("1604-F"));
     try std.testing.expectEqualStrings("1701MS", canonicalFormCode("1701-MS"));
     try std.testing.expectEqualStrings("1702RT", canonicalFormCode("1702-RT"));
     try std.testing.expectEqualStrings("2000OT", canonicalFormCode("2000-OT"));
+    try std.testing.expectEqualStrings("2200P", canonicalFormCode("2200-P"));
+    try std.testing.expectEqualStrings(unknown_form_code, canonicalFormCode("1702"));
     try std.testing.expectEqualStrings(unknown_form_code, canonicalFormCode("nope"));
 
+    try std.testing.expectEqual(@as(usize, 20), OFFICIAL_RULES.len);
     for (OFFICIAL_RULES, 0..) |rule, index| {
         try std.testing.expect(rule.rule_id.len != 0);
         for (OFFICIAL_RULES[0..index]) |prior| {
@@ -1385,14 +1955,14 @@ test "all official rule display codes canonicalize" {
     }
 }
 
-test "taxable year has full recurring and event-based rule parity" {
+test "taxable year has complete recurring and event-based rule coverage" {
     const deadlines = try resolveTaxableYear(
         std.testing.allocator,
         2026,
         .{},
     );
     defer std.testing.allocator.free(deadlines);
-    try std.testing.expectEqual(@as(usize, 170), deadlines.len);
+    try std.testing.expectEqual(@as(usize, 191), deadlines.len);
 
     var dated_count: usize = 0;
     var event_count: usize = 0;
@@ -1402,8 +1972,8 @@ test "taxable year has full recurring and event-based rule parity" {
         else
             dated_count += 1;
     }
-    try std.testing.expectEqual(@as(usize, 152), dated_count);
-    try std.testing.expectEqual(@as(usize, 18), event_count);
+    try std.testing.expectEqual(@as(usize, 175), dated_count);
+    try std.testing.expectEqual(@as(usize, 16), event_count);
 }
 
 test "sourced override applies after base adjustment and preserves original" {

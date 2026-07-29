@@ -6,28 +6,40 @@ and a compact Zig state core.
 
 Most form, filing, payment, authentication, import, print, and network
 surfaces remain presentation-only. The tax-calendar milestone is functional:
-it resolves recurring deadlines, applies business-day policy and sourced
-overrides, persists calendar policy in SQLite, and exports the selected
-calendar year to the user's default calendar application.
+it resolves the global calendar-year / non-eFPS baseline, applies business-day
+policy and sourced overrides, persists calendar policy in SQLite, and exports
+the selected calendar year to the user's default calendar application.
 
 ## Tax calendar
 
-- 12 compiled rule groups ported from the local Rust reference, covering
-  152 dated obligations per taxable year and 18 event-based obligations.
+- 20 compiled rule groups derived from the local Rust reference and corrected
+  against official BIR filing guidance. A modern full taxable year (2026+)
+  resolves 175 dated catalog entries and 16 event-based entries; the 2550-DS
+  effective-date guard yields 174 dated entries for 2025 and 171 before 2025.
 - Calendar-year projection includes prior-December and prior-taxable-year
   filings whose final due date falls in the selected year.
 - Saturdays and Sundays are automatic. Official holidays and closures are
   explicit, source-cited SQLite records; no guessed holiday data is seeded.
 - Sourced deadline overrides are applied after base business-day adjustment.
-  Regions, taxpayer types, effective dates, and expiry metadata are preserved.
+  The global projection applies only unscoped overrides; region- and
+  taxpayer-scoped records remain stored for a future profile-aware projection.
+  `effective_from`, `effective_until`, and `expires_at` are preserved as
+  distinct fields. As in the reference resolver, those temporal fields are
+  metadata today and do not filter the global schedule.
 - The calendar database is stored in the platform application-data directory
-  as `calendar.sqlite3`, with migrations, foreign keys, WAL, and a busy timeout.
+  as `calendar.sqlite3`, with versioned migrations, foreign keys, WAL, a busy
+  timeout, sourced-policy validation, and confirmed destructive edits.
 - “Add to default calendar” creates a standards-compliant all-day `.ics`
-  calendar with stable UIDs and 7-day/1-day alerts, then opens the registered
-  calendar application. Importing into an iCloud, Google, or Outlook calendar
-  can propagate through that account.
+  calendar with collision-checked stable UIDs and 7-day/1-day alerts, then
+  opens the registered calendar application. Importing into an iCloud, Google,
+  or Outlook calendar can propagate through that account.
 
 The `.ics` path is a user-confirmed import handoff, not managed two-way sync.
+It exports the unfiltered baseline, not an authoritative taxpayer filing plan.
+Registered Forms Set selection, fiscal-year schedules, eFPS filer-group
+deadlines, region/taxpayer-scoped policy, and effective-date evaluation must be
+resolved from a taxpayer profile before a future profile-aware export can be
+treated as filing-specific.
 Provider-neutral connection/event mapping tables are ready for later EventKit,
 Google Calendar API, or Microsoft Graph adapters, but direct OAuth sync is not
 configured. The current packaged application target remains macOS.
