@@ -14,43 +14,43 @@
     </column>
     <column gap="4">
       <text foreground="text_muted">TIN</text>
-      <input placeholder="000-000-000-000" />
+      <input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">RDO Code</text>
-      <input placeholder="RDO" />
+      <input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Taxpayer Name</text>
-      <input placeholder="Registered name" />
+      <input text="{formFilerTaxpayerName}" placeholder="Registered name" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Registered Address</text>
-      <input placeholder="Registered address" />
+      <input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">ZIP Code</text>
-      <input placeholder="ZIP code" />
+      <input text="{formFilerZipCode}" placeholder="ZIP code" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Date of Birth</text>
-      <input placeholder="MM / DD / YYYY" />
+      <input text="{formFilerDateOfBirth}" placeholder="MM / DD / YYYY" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Email Address</text>
-      <input placeholder="name@example.com" />
+      <input text="{formFilerEmailAddress}" placeholder="name@example.com" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Citizenship</text>
-      <input placeholder="Citizenship" />
+      <input text="{formFilerCitizenship}" placeholder="Citizenship" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Foreign Tax Number</text>
-      <input placeholder="Foreign tax number" />
+      <input text="{formFilerForeignTaxNumber}" placeholder="Foreign tax number" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Contact Number</text>
-      <input placeholder="Contact number" />
+      <input text="{formFilerContactNumber}" placeholder="Contact number" disabled="true" />
     </column>
   </grid>
 </template>
@@ -59,15 +59,15 @@
   <grid columns="{columns}" gap="12">
     <column gap="4">
       <text foreground="text_muted">Spouse TIN</text>
-      <input placeholder="000-000-000-000" />
+      <input text="{formSpouseTin}" placeholder="000-000-000-000" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Spouse RDO Code</text>
-      <input placeholder="RDO" />
+      <input text="{formSpouseRdo}" placeholder="RDO" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Spouse Name</text>
-      <input placeholder="Registered spouse name" />
+      <input text="{formSpouseName}" placeholder="Registered spouse name" disabled="true" />
     </column>
   </grid>
 </template>
@@ -486,6 +486,8 @@
   <scroll grow="1" global-key="page-form-1701">
     <column padding="32" gap="24">
       <use template="form-1701-masthead"/>
+
+      <!-- @include-template tax-profile-form-context -->
 
       <use template="form-1701-filing-status"/>
 

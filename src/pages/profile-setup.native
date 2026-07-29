@@ -1,32 +1,16 @@
-<template name="profile-text-field" args="field_label value">
-  <column grow="1" gap="6">
-    <text foreground="text_muted">{field_label}</text>
-    <card>
-      <row padding="11" cross="center">
-        <text grow="1">{value}</text>
-      </row>
-    </card>
-  </column>
-</template>
-
-<template name="profile-select-field" args="field_label value">
-  <column grow="1" gap="6">
-    <text foreground="text_muted">{field_label}</text>
-    <card>
-      <row padding="11" gap="8" cross="center">
-        <text grow="1">{value}</text>
-        <icon name="chevron-down" foreground="text_muted" width="16" height="16"/>
-      </row>
-    </card>
-  </column>
-</template>
-
 <template name="profile-setup-content">
   <column gap="24">
     <column gap="6">
-      <text size="heading">Taxpayer Profile Setup</text>
-      <text wrap="true" foreground="text_muted">Required information is used to pre-fill 2551Q.</text>
+      <text size="heading">{profileEditorTitle}</text>
+      <text wrap="true" foreground="text_muted">
+        Reusable tax facts are versioned once and projected into each qualified
+        form. Existing filing snapshots never change when a profile is revised.
+      </text>
     </column>
+
+    <if test="{profileNoticeVisible}">
+      <badge variant="{profileNoticeTone}">{profileNotice}</badge>
+    </if>
 
     <if test="{constrainedLayout}">
       <column gap="4" label="Profile setup sections">
@@ -76,155 +60,361 @@
     <if test="{profileTaxActive}">
       <column gap="24">
         <card>
-          <column padding="24" gap="20">
-        <column gap="4">
-          <text><span weight="bold">Registration Details</span></text>
-          <text wrap="true" foreground="text_muted">Information from the taxpayer certificate of registration</text>
-        </column>
+          <column padding="24" gap="16">
+            <column gap="4">
+              <text><span weight="bold">Identity and registration</span></text>
+              <text wrap="true" foreground="text_muted">
+                TIN, RDO, legal name, and subject kind identify this immutable
+                profile revision.
+              </text>
+            </column>
 
-        <if test="{constrainedLayout}">
-          <column gap="16">
-            <use
-              template="profile-text-field"
-              field_label="Taxpayer Identification Number (TIN)"
-              value="000-000-000-00000"/>
-            <use
-              template="profile-select-field"
-              field_label="Revenue District Office (RDO)"
-              value="RDO 040 - Cubao"/>
-          </column>
-        </if>
-        <else>
-          <row gap="16" cross="start">
-            <use
-              template="profile-text-field"
-              field_label="Taxpayer Identification Number (TIN)"
-              value="000-000-000-00000"/>
-            <use
-              template="profile-select-field"
-              field_label="Revenue District Office (RDO)"
-              value="RDO 040 - Cubao"/>
-          </row>
-        </else>
+            <if test="{constrainedLayout}">
+              <column gap="12">
+                <input
+                  text="{profileTinValue}"
+                  placeholder="000-000-000-000"
+                  label="Taxpayer Identification Number (TIN)"
+                  on-input="profile_tin_input"/>
+                <input
+                  text="{profileRdoValue}"
+                  placeholder="RDO code"
+                  label="Revenue District Office (RDO) code"
+                  on-input="profile_rdo_input"/>
+              </column>
+            </if>
+            <else>
+              <row gap="12">
+                <input
+                  grow="1"
+                  text="{profileTinValue}"
+                  placeholder="000-000-000-000"
+                  label="Taxpayer Identification Number (TIN)"
+                  on-input="profile_tin_input"/>
+                <input
+                  grow="1"
+                  text="{profileRdoValue}"
+                  placeholder="RDO code"
+                  label="Revenue District Office (RDO) code"
+                  on-input="profile_rdo_input"/>
+              </row>
+            </else>
 
-        <if test="{constrainedLayout}">
-          <column gap="16">
-            <use
-              template="profile-select-field"
-              field_label="Taxpayer Type"
-              value="Individual"/>
-            <use
-              template="profile-select-field"
-              field_label="Tax Classification"
-              value="Non-VAT Registered"/>
-          </column>
-        </if>
-        <else>
-          <row gap="16" cross="start">
-            <use
-              template="profile-select-field"
-              field_label="Taxpayer Type"
-              value="Individual"/>
-            <use
-              template="profile-select-field"
-              field_label="Tax Classification"
-              value="Non-VAT Registered"/>
-          </row>
-        </else>
+            <column gap="8">
+              <text foreground="text_muted">Taxpayer subject kind</text>
+              <if test="{constrainedLayout}">
+                <column gap="8">
+                  <button variant="outline" selected="{profileIndividualSelected}" on-press="profile_subject_individual">Individual</button>
+                  <button variant="outline" selected="{profileSoleProprietorSelected}" on-press="profile_subject_sole_proprietor">Sole proprietor</button>
+                  <button variant="outline" selected="{profileCorporationSelected}" on-press="profile_subject_corporation">Corporation</button>
+                  <button variant="outline" selected="{profilePartnershipSelected}" on-press="profile_subject_partnership">Partnership</button>
+                  <button variant="outline" selected="{profileEstateSelected}" on-press="profile_subject_estate">Estate</button>
+                  <button variant="outline" selected="{profileTrustSelected}" on-press="profile_subject_trust">Trust</button>
+                  <button variant="outline" selected="{profileOtherLegalSelected}" on-press="profile_subject_other_legal">Other legal entity</button>
+                </column>
+              </if>
+              <else>
+                <column gap="8">
+                  <row gap="8">
+                    <button variant="outline" selected="{profileIndividualSelected}" on-press="profile_subject_individual">Individual</button>
+                    <button variant="outline" selected="{profileSoleProprietorSelected}" on-press="profile_subject_sole_proprietor">Sole proprietor</button>
+                    <button variant="outline" selected="{profileCorporationSelected}" on-press="profile_subject_corporation">Corporation</button>
+                    <button variant="outline" selected="{profilePartnershipSelected}" on-press="profile_subject_partnership">Partnership</button>
+                  </row>
+                  <row gap="8">
+                    <button variant="outline" selected="{profileEstateSelected}" on-press="profile_subject_estate">Estate</button>
+                    <button variant="outline" selected="{profileTrustSelected}" on-press="profile_subject_trust">Trust</button>
+                    <button variant="outline" selected="{profileOtherLegalSelected}" on-press="profile_subject_other_legal">Other legal entity</button>
+                  </row>
+                </column>
+              </else>
+            </column>
 
-        <if test="{constrainedLayout}">
-          <column gap="16">
-            <use
-              template="profile-select-field"
-              field_label="EOPT Tier"
-              value="Micro Taxpayer"/>
-            <use
-              template="profile-text-field"
-              field_label="Line of Business"
-              value="Professional Services"/>
-          </column>
-        </if>
-        <else>
-          <row gap="16" cross="start">
-            <use
-              template="profile-select-field"
-              field_label="EOPT Tier"
-              value="Micro Taxpayer"/>
-            <use
-              template="profile-text-field"
-              field_label="Line of Business"
-              value="Professional Services"/>
-          </row>
-        </else>
+            <input
+              text="{profileNameValue}"
+              placeholder="Registered taxpayer name"
+              label="Taxpayer or registered name"
+              on-input="profile_name_input"/>
+            <if test="{profileTradeNameVisible}">
+              <input
+                text="{profileTradeNameValue}"
+                placeholder="Optional DTI or registered trade name"
+                label="Trade name"
+                on-input="profile_trade_name_input"/>
+            </if>
+            <input
+              text="{profileAddressValue}"
+              placeholder="Registered address"
+              label="Registered address"
+              on-input="profile_address_input"/>
+
+            <if test="{constrainedLayout}">
+              <column gap="12">
+                <input
+                  text="{profileZipValue}"
+                  placeholder="ZIP code"
+                  label="ZIP code"
+                  on-input="profile_zip_input"/>
+                <input
+                  text="{profilePhoneValue}"
+                  placeholder="+63 900 000 0000"
+                  label="Contact number"
+                  on-input="profile_phone_input"/>
+              </column>
+            </if>
+            <else>
+              <row gap="12">
+                <input
+                  grow="1"
+                  text="{profileZipValue}"
+                  placeholder="ZIP code"
+                  label="ZIP code"
+                  on-input="profile_zip_input"/>
+                <input
+                  grow="1"
+                  text="{profilePhoneValue}"
+                  placeholder="+63 900 000 0000"
+                  label="Contact number"
+                  on-input="profile_phone_input"/>
+              </row>
+            </else>
+
+            <input
+              text="{profileEmailValue}"
+              placeholder="name@example.com"
+              label="Registered email address"
+              on-input="profile_email_input"/>
           </column>
         </card>
 
         <card>
-          <column padding="24" gap="20">
-        <column gap="4">
-          <text><span weight="bold">Taxpayer Information</span></text>
-          <text wrap="true" foreground="text_muted">Contact and registered address details</text>
-        </column>
-
-        <use
-          template="profile-text-field"
-          field_label="Taxpayer Name"
-          value="Juan Dela Cruz"/>
-
-        <use
-          template="profile-text-field"
-          field_label="Registered Address"
-          value="123 Sample Street, Quezon City"/>
-
-        <if test="{constrainedLayout}">
-          <column gap="16">
-            <use
-              template="profile-text-field"
-              field_label="Zip Code"
-              value="1100"/>
-            <use
-              template="profile-text-field"
-              field_label="Phone Number"
-              value="+63 900 000 0000"/>
+          <column padding="24" gap="16">
+            <column gap="4">
+              <text><span weight="bold">Individual capabilities</span></text>
+              <text wrap="true" foreground="text_muted">
+                Leave fields empty when they do not truthfully apply. Forms
+                requiring a missing capability will reject this profile.
+              </text>
+            </column>
+            <if test="{constrainedLayout}">
+              <column gap="12">
+                <input
+                  text="{profileBirthDateValue}"
+                  placeholder="YYYY-MM-DD"
+                  label="Birth date"
+                  disabled="{profilePersonalFieldsDisabled}"
+                  on-input="profile_birth_date_input"/>
+                <input
+                  text="{profileCitizenshipValue}"
+                  placeholder="Citizenship"
+                  label="Citizenship"
+                  disabled="{profilePersonalFieldsDisabled}"
+                  on-input="profile_citizenship_input"/>
+              </column>
+            </if>
+            <else>
+              <row gap="12">
+                <input
+                  grow="1"
+                  text="{profileBirthDateValue}"
+                  placeholder="YYYY-MM-DD"
+                  label="Birth date"
+                  disabled="{profilePersonalFieldsDisabled}"
+                  on-input="profile_birth_date_input"/>
+                <input
+                  grow="1"
+                  text="{profileCitizenshipValue}"
+                  placeholder="Citizenship"
+                  label="Citizenship"
+                  disabled="{profilePersonalFieldsDisabled}"
+                  on-input="profile_citizenship_input"/>
+              </row>
+            </else>
+            <input
+              text="{profileForeignTaxNumberValue}"
+              placeholder="Optional foreign tax identifier"
+              label="Foreign tax number"
+              disabled="{profilePersonalFieldsDisabled}"
+              on-input="profile_foreign_tax_number_input"/>
           </column>
-        </if>
-        <else>
-          <row gap="16" cross="start">
-            <use
-              template="profile-text-field"
-              field_label="Zip Code"
-              value="1100"/>
-            <use
-              template="profile-text-field"
-              field_label="Phone Number"
-              value="+63 900 000 0000"/>
-          </row>
-        </else>
+        </card>
 
-        <if test="{constrainedLayout}">
-          <column gap="16">
-            <use
-              template="profile-text-field"
-              field_label="Email Address"
-              value="demo@example.com"/>
-            <use
-              template="profile-text-field"
-              field_label="Birth Date"
-              value="January 01, 1990"/>
+        <card>
+          <column padding="24" gap="16">
+            <column gap="4">
+              <text><span weight="bold">Business registration</span></text>
+              <text wrap="true" foreground="text_muted">
+                Line of business and ATC compose one named activity. Tax type,
+                withholding-agent status, and special-rate basis are independent
+                registration facts. Transaction schedules remain on the form.
+              </text>
+            </column>
+            <input
+              text="{profileBusinessLineValue}"
+              placeholder="Line of business"
+              label="Line of business"
+              on-input="profile_business_line_input"/>
+            <if test="{constrainedLayout}">
+              <column gap="12">
+                <input
+                  text="{profileAtcValue}"
+                  placeholder="PT010"
+                  label="Alphanumeric Tax Code (ATC)"
+                  on-input="profile_atc_input"/>
+                <input
+                  text="{profileTaxTypeValue}"
+                  placeholder="Percentage tax"
+                  label="Registered tax type"
+                  on-input="profile_tax_type_input"/>
+              </column>
+            </if>
+            <else>
+              <row gap="12">
+                <input
+                  grow="1"
+                  text="{profileAtcValue}"
+                  placeholder="PT010"
+                  label="Alphanumeric Tax Code (ATC)"
+                  on-input="profile_atc_input"/>
+                <input
+                  grow="1"
+                  text="{profileTaxTypeValue}"
+                  placeholder="Percentage tax"
+                  label="Registered tax type"
+                  on-input="profile_tax_type_input"/>
+                </row>
+              </else>
+            <column gap="8">
+              <text foreground="text_muted">Government withholding agent</text>
+              <row gap="8">
+                <button variant="outline" selected="{profileGwaUnsetSelected}" on-press="profile_gwa_unset">Not recorded</button>
+                <button variant="outline" selected="{profileGwaNoSelected}" on-press="profile_gwa_no">No</button>
+                <button variant="outline" selected="{profileGwaYesSelected}" on-press="profile_gwa_yes">Yes</button>
+              </row>
+            </column>
+            <input
+              text="{profileSpecialRateBasisValue}"
+              placeholder="Treaty article, special law, or registration basis"
+              label="Special-rate basis"
+              on-input="profile_special_rate_basis_input"/>
           </column>
-        </if>
-        <else>
-          <row gap="16" cross="start">
-            <use
-              template="profile-text-field"
-              field_label="Email Address"
-              value="demo@example.com"/>
-            <use
-              template="profile-text-field"
-              field_label="Birth Date"
-              value="January 01, 1990"/>
-          </row>
-        </else>
+        </card>
+
+        <card>
+          <column padding="24" gap="16">
+            <column gap="4">
+              <text><span weight="bold">Revision and registered Forms Set</span></text>
+              <text wrap="true" foreground="text_muted">
+                Form codes are comma-separated and effective for the selected
+                tax year. An explicitly empty Forms Set means no obligations;
+                an unconfigured year uses the catalog fallback.
+              </text>
+            </column>
+            <if test="{constrainedLayout}">
+              <column gap="12">
+                <input
+                  text="{profileEffectiveFromValue}"
+                  placeholder="YYYY-MM-DD"
+                  label="Revision effective from"
+                  on-input="profile_effective_from_input"/>
+                <input
+                  text="{profileEffectiveUntilValue}"
+                  placeholder="YYYY-MM-DD or empty"
+                  label="Revision effective until"
+                  on-input="profile_effective_until_input"/>
+                <input
+                  text="{profileTaxYearValue}"
+                  placeholder="YYYY"
+                  label="Forms Set tax year"
+                  on-input="profile_tax_year_input"/>
+              </column>
+            </if>
+            <else>
+              <row gap="12">
+                <input
+                  grow="1"
+                  text="{profileEffectiveFromValue}"
+                  placeholder="YYYY-MM-DD"
+                  label="Revision effective from"
+                  on-input="profile_effective_from_input"/>
+                <input
+                  grow="1"
+                  text="{profileEffectiveUntilValue}"
+                  placeholder="YYYY-MM-DD or empty"
+                  label="Revision effective until"
+                  on-input="profile_effective_until_input"/>
+                <input
+                  grow="1"
+                  text="{profileTaxYearValue}"
+                  placeholder="YYYY"
+                  label="Forms Set tax year"
+                  on-input="profile_tax_year_input"/>
+              </row>
+            </else>
+            <column gap="8">
+              <text foreground="text_muted">Revision source</text>
+              <if test="{constrainedLayout}">
+                <column gap="8">
+                  <button variant="outline" selected="{profileSourceManualSelected}" on-press="profile_source_manual">Manual entry</button>
+                  <button variant="outline" selected="{profileSourceImportedSelected}" on-press="profile_source_imported">Imported</button>
+                  <button variant="outline" selected="{profileSourceMigratedSelected}" on-press="profile_source_migrated">Migrated</button>
+                </column>
+              </if>
+              <else>
+                <row gap="8">
+                  <button variant="outline" selected="{profileSourceManualSelected}" on-press="profile_source_manual">Manual entry</button>
+                  <button variant="outline" selected="{profileSourceImportedSelected}" on-press="profile_source_imported">Imported</button>
+                  <button variant="outline" selected="{profileSourceMigratedSelected}" on-press="profile_source_migrated">Migrated</button>
+                </row>
+              </else>
+            </column>
+            <input
+              text="{profileSourceReferenceValue}"
+              placeholder="Import batch, COR reference, or migration record"
+              label="Source reference"
+              disabled="{profileSourceReferenceDisabled}"
+              on-input="profile_source_reference_input"/>
+            <column gap="8">
+              <text foreground="text_muted">Forms Set policy</text>
+              <if test="{constrainedLayout}">
+                <column gap="8">
+                  <button
+                    variant="outline"
+                    selected="{profileFormsSetFallbackSelected}"
+                    on-press="profile_forms_set_fallback">
+                    Catalog fallback
+                  </button>
+                  <button
+                    variant="outline"
+                    selected="{profileFormsSetRegisteredSelected}"
+                    on-press="profile_forms_set_registered">
+                    Registered Forms Set
+                  </button>
+                </column>
+              </if>
+              <else>
+                <row gap="8">
+                  <button
+                    variant="outline"
+                    selected="{profileFormsSetFallbackSelected}"
+                    on-press="profile_forms_set_fallback">
+                    Catalog fallback
+                  </button>
+                  <button
+                    variant="outline"
+                    selected="{profileFormsSetRegisteredSelected}"
+                    on-press="profile_forms_set_registered">
+                    Registered Forms Set
+                  </button>
+                </row>
+              </else>
+            </column>
+            <input
+              text="{profileFormsSetValue}"
+              placeholder="2551Q, 1701Q"
+              label="Registered Forms Set"
+              disabled="{profileFormsSetInputDisabled}"
+              on-input="profile_forms_set_input"/>
           </column>
         </card>
       </column>
@@ -232,62 +422,53 @@
 
     <if test="{profileCertificateActive}">
       <card>
-        <column padding="24" gap="20">
-          <column gap="4">
-            <text><span weight="bold">Certificate of Registration</span></text>
-            <text wrap="true" foreground="text_muted">Static COR details associated with this taxpayer profile.</text>
-          </column>
-          <use
-            template="profile-text-field"
-            field_label="Certificate Number"
-            value="OCN-2026-0001842"/>
-          <use
-            template="profile-text-field"
-            field_label="Registration Date"
-            value="January 01, 2020"/>
-          <use
-            template="profile-text-field"
-            field_label="Registered Tax Types"
-            value="Percentage Tax, Income Tax"/>
-          <button variant="outline" icon="folder-open" disabled="true">Replace COR Attachment</button>
+        <column padding="24" gap="12">
+          <text><span weight="bold">Certificate of Registration evidence</span></text>
+          <text wrap="true" foreground="text_muted">
+            COR attachments and extraction evidence are intentionally stored
+            separately from reusable tax facts. This surface will attach
+            evidence without changing a filed form snapshot.
+          </text>
+          <button variant="outline" icon="folder-open" disabled="true">Attach COR evidence</button>
         </column>
       </card>
     </if>
 
     <if test="{profileEmailActive}">
       <card>
-        <column padding="24" gap="20">
-          <column gap="4">
-            <text><span weight="bold">Email Settings</span></text>
-            <text wrap="true" foreground="text_muted">Mailbox details used to monitor filing confirmation receipts.</text>
-          </column>
-          <use
-            template="profile-text-field"
-            field_label="Email Address"
-            value="demo@example.com"/>
-          <use
-            template="profile-text-field"
-            field_label="Incoming Mail Server"
-            value="imap.example.com"/>
-          <use
-            template="profile-select-field"
-            field_label="Confirmation Monitoring"
-            value="Enabled"/>
-          <button variant="outline" icon="send" disabled="true">Send Test Email</button>
+        <column padding="24" gap="12">
+          <text><span weight="bold">Email monitoring credentials</span></text>
+          <text wrap="true" foreground="text_muted">
+            Mailbox credentials are operational secrets, not reusable tax
+            facts. They are not stored in the tax-profile revision tables.
+          </text>
+          <button variant="outline" icon="send" disabled="true">Configure secure mailbox connection</button>
         </column>
       </card>
     </if>
 
     <if test="{constrainedLayout}">
       <column gap="10">
-        <button variant="outline" on-press="go_back">Cancel</button>
-        <button variant="primary" icon="save" disabled="true">Save Profile</button>
+        <button variant="outline" on-press="cancel_profile_edit">Cancel</button>
+        <button
+          variant="primary"
+          icon="save"
+          disabled="{profileSaveDisabled}"
+          on-press="save_profile">
+          {profileSaveLabel}
+        </button>
       </column>
     </if>
     <else>
       <row main="end" gap="12">
-        <button variant="outline" on-press="go_back">Cancel</button>
-        <button variant="primary" icon="save" disabled="true">Save Profile</button>
+        <button variant="outline" on-press="cancel_profile_edit">Cancel</button>
+        <button
+          variant="primary"
+          icon="save"
+          disabled="{profileSaveDisabled}"
+          on-press="save_profile">
+          {profileSaveLabel}
+        </button>
       </row>
     </else>
   </column>

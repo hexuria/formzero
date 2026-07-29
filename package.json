@@ -1,11 +1,17 @@
 {
   "name": "ebirforms-0",
   "private": true,
+  "type": "module",
   "description": "Native eBIRForms reconstruction with a Zig calendar engine and SQLite policy store.",
   "scripts": {
-    "generate": "node scripts/flatten-native.mjs"
+    "generate": "npm run generate:tax-catalog && node scripts/flatten-native.mjs",
+    "generate:tax-catalog": "node scripts/tax-catalog/generate.ts",
+    "check:tax-catalog": "npm run typecheck:tax-catalog && node scripts/tax-catalog/generate.ts --check",
+    "typecheck:tax-catalog": "tsc --noEmit -p tsconfig.tax-catalog.json"
   },
   "devDependencies": {
-    "@native-sdk/cli": "0.6.1"
+    "@native-sdk/cli": "0.6.1",
+    "@types/node": "24.13.3",
+    "typescript": "6.0.3"
   }
 }

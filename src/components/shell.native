@@ -249,7 +249,7 @@
           radius="xl"
           icon="plus"
           label="Add taxpayer profile"
-          on-press="show_profile_setup">
+          on-press="new_taxpayer_profile">
         </button>
       </row>
 
@@ -266,26 +266,25 @@
 
       <scroll grow="1" width="255" overscroll="none" label="Sidebar navigation">
         <column width="255" cross="center" gap="8">
-          <!-- Keep all three profile slots visible at the 768 px reference height. -->
           <spacer height="4"/>
-          <use
-            template="sidebar-profile"
-            name="Juan Dela Cruz"
-            tin="TIN: 000-000-000-00000"
-            profile="juan_dela_cruz"
-            active="{juanProfileActive}"/>
-          <use
-            template="sidebar-profile"
-            name="Demo Corporation"
-            tin="TIN: 111-111-111-00000"
-            profile="demo_corporation"
-            active="{demoProfileActive}"/>
-          <use
-            template="sidebar-profile"
-            name="Sample Partnership"
-            tin="TIN: 222-222-222-00000"
-            profile="sample_partnership"
-            active="{partnershipProfileActive}"/>
+          <if test="{profileRowsEmpty}">
+            <card width="232">
+              <column padding="16" gap="6" cross="center">
+                <text><span weight="bold">No tax profiles yet</span></text>
+                <text wrap="true" text-alignment="center" foreground="text_muted">
+                  Add a profile once, then reuse its qualified fields on recurring forms.
+                </text>
+              </column>
+            </card>
+          </if>
+          <for each="profileRows" key="idLabel" as="profile">
+            <use
+              template="sidebar-profile"
+              name="{profile.nameLabel}"
+              tin="{profile.tinLabel}"
+              profile="{profile.slot}"
+              active="{profile.active}"/>
+          </for>
 
           <row width="232" height="48" cross="center">
             <list-item
@@ -385,7 +384,7 @@
           icon="plus"
           selected="{page == 'profile_setup'}"
           label="Add taxpayer profile"
-          on-press="show_profile_setup">
+          on-press="new_taxpayer_profile">
         </button>
       </row>
 
@@ -411,26 +410,15 @@
         overscroll="none"
         label="Compact sidebar navigation">
         <column width="70" cross="center" gap="8">
-          <!-- Mirrors the expanded profile matrix exactly, with no mode jump. -->
           <spacer height="4"/>
-          <use
-            template="sidebar-avatar"
-            initials="JD"
-            name="Juan Dela Cruz"
-            profile="juan_dela_cruz"
-            active="{juanProfileActive}"/>
-          <use
-            template="sidebar-avatar"
-            initials="DC"
-            name="Demo Corporation"
-            profile="demo_corporation"
-            active="{demoProfileActive}"/>
-          <use
-            template="sidebar-avatar"
-            initials="SP"
-            name="Sample Partnership"
-            profile="sample_partnership"
-            active="{partnershipProfileActive}"/>
+          <for each="profileRows" key="idLabel" as="profile">
+            <use
+              template="sidebar-avatar"
+              initials="{profile.initialsLabel}"
+              name="{profile.nameLabel}"
+              profile="{profile.slot}"
+              active="{profile.active}"/>
+          </for>
 
           <row width="48" height="64" main="center" cross="center">
             <button
@@ -506,6 +494,80 @@
       </column>
     </if>
   </column>
+</template>
+
+<template name="tax-profile-form-context">
+  <card>
+    <column padding="16" gap="12">
+      <column gap="2">
+        <text><span weight="bold">{formProfileContextTitle}</span></text>
+        <text wrap="true" foreground="text_muted">{formProfileStatus}</text>
+      </column>
+
+      <if test="{formProfileNotice}">
+        <row
+          padding="10"
+          gap="8"
+          cross="center"
+          background="surface_subtle"
+          radius="md">
+          <icon name="info" width="18" height="18" foreground="info"/>
+          <text grow="1" wrap="true">{formProfileNotice}</text>
+        </row>
+      </if>
+
+      <if test="{formProfileNeedsActivitySelection}">
+        <column gap="8">
+          <separator/>
+          <text><span weight="bold">Registered activity for this filing</span></text>
+          <text wrap="true" foreground="text_muted">
+            This profile has more than one effective activity. Choose the activity whose reusable facts belong on this form.
+          </text>
+          <for each="formActivityRows" key="idLabel" as="activity">
+            <button
+              size="sm"
+              variant="outline"
+              selected="{activity.selected}"
+              on-press="select_form_activity:{activity.id}">
+              {activity.name}
+            </button>
+          </for>
+          <else>
+            <text foreground="text_muted">No effective registered activities are available.</text>
+          </else>
+        </column>
+      </if>
+
+      <if test="{formProfileHasSpouseRole}">
+        <column gap="8">
+          <separator/>
+          <row gap="8" cross="center">
+            <column grow="1" gap="2">
+              <text><span weight="bold">Optional spouse tax profile</span></text>
+              <text wrap="true" foreground="text_muted">
+                Bind a different qualified individual profile when this return includes spouse information.
+              </text>
+            </column>
+            <if test="{formProfileHasSpouseBinding}">
+              <button size="sm" variant="ghost" on-press="clear_form_spouse">Clear spouse</button>
+            </if>
+          </row>
+          <for each="formSpouseRows" key="idLabel" as="spouse">
+            <button
+              size="sm"
+              variant="outline"
+              selected="{spouse.selected}"
+              on-press="select_form_spouse:{spouse.id}">
+              {spouse.name}
+            </button>
+          </for>
+          <else>
+            <text foreground="text_muted">No other qualified individual profile is available.</text>
+          </else>
+        </column>
+      </if>
+    </column>
+  </card>
 </template>
 
 <template name="app-shell" args="brand_logo app_icon bagong_logo bir_logo goldcoders_logo">

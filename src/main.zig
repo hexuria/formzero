@@ -10,6 +10,17 @@ const runner = @import("runner");
 const native_sdk = @import("native_sdk");
 const multi_select = @import("components/multi_select.zig");
 const calendar_ui = @import("calendar/ui_state.zig");
+const profile_ui = @import("tax_profile/ui_state.zig");
+const profile_store = @import("tax_profile/store.zig");
+const profile_persistence = @import("tax_profile/persistence_adapter.zig");
+const profile_editor = @import("tax_profile/editor.zig");
+const profile_fields = @import("tax_profile/field.zig");
+const profile_model = @import("tax_profile/model.zig");
+const form_ui = @import("forms/ui_state.zig");
+const form_ids = @import("forms/id.zig");
+const form_catalog = @import("forms/generated/catalog.zig");
+const income_tax_ui = @import("forms/income_tax_ui_state.zig");
+const percentage_tax_ui = @import("forms/percentage_tax_ui_state.zig");
 const c_time = @cImport({
     @cInclude("time.h");
 });
@@ -98,12 +109,6 @@ pub const SidebarPreference = enum {
     hidden,
 };
 
-pub const TaxpayerProfile = enum {
-    juan_dela_cruz,
-    demo_corporation,
-    sample_partnership,
-};
-
 pub const DashboardSection = enum {
     calendar,
     forms,
@@ -137,6 +142,7 @@ pub const ViewportClass = enum {
 const ProfileCalendarExportStatus = enum {
     idle,
     wrong_context,
+    no_profile,
     unavailable,
     build_failed,
     writing,
@@ -210,6 +216,17 @@ pub const FormFilterRow = struct {
     id: usize,
     label: []const u8,
     selected: bool,
+};
+
+pub const FormProfileChoiceRow = struct {
+    id: usize,
+    stable_id: []const u8,
+    name: []const u8,
+    selected: bool,
+
+    pub fn idLabel(self: *const FormProfileChoiceRow) []const u8 {
+        return self.stable_id;
+    }
 };
 
 pub const GlobalDeadline = struct {
@@ -356,7 +373,6 @@ const global_deadlines = [_]GlobalDeadline{
 pub const Model = struct {
     page: Page = .global_dashboard,
     returnPage: Page = .global_dashboard,
-    selectedTaxpayer: TaxpayerProfile = .juan_dela_cruz,
     dashboardSection: DashboardSection = .calendar,
     profileSetupSection: ProfileSetupSection = .tax_profile,
     taxCalendarSection: TaxCalendarSection = .deadlines,
@@ -374,7 +390,11 @@ pub const Model = struct {
     reduceMotion: bool = false,
     highContrast: bool = false,
     calendar: calendar_ui.State = .{},
-    calendarExportProfile: ?TaxpayerProfile = null,
+    taxProfiles: profile_ui.State = .{},
+    formProfiles: form_ui.State = .{},
+    incomeTax: income_tax_ui.State = .{},
+    percentageTax: percentage_tax_ui.State = .{},
+    calendarExportProfileRevision: ?profile_ui.RevisionContext = null,
     profileCalendarExportStatus: ProfileCalendarExportStatus = .idle,
     profileActionsOpen: bool = false,
 
@@ -384,7 +404,6 @@ pub const Model = struct {
         "sidebarOverlayOpen",
         "viewportClass",
         "returnPage",
-        "selectedTaxpayer",
         "dashboardSection",
         "profileSetupSection",
         "taxCalendarSection",
@@ -394,9 +413,14 @@ pub const Model = struct {
         "reduceMotion",
         "highContrast",
         "calendar",
-        "calendarExportProfile",
+        "taxProfiles",
+        "formProfiles",
+        "incomeTax",
+        "percentageTax",
+        "calendarExportProfileRevision",
         "profileCalendarExportStatus",
         "selectedTaxpayerCalendarKey",
+        "hasSelectedTaxpayer",
     };
 
     pub fn brandLogo(_: *const Model) u64 {
@@ -524,59 +548,960 @@ pub const Model = struct {
         };
     }
 
+    pub fn profileRows(self: *const Model) []const profile_ui.ProfileRow {
+        return self.taxProfiles.rows();
+    }
+
+    pub fn profileRowsEmpty(self: *const Model) bool {
+        return self.taxProfiles.rowsEmpty();
+    }
+
+    pub fn hasSelectedTaxpayer(self: *const Model) bool {
+        return self.taxProfiles.selectedProfileId() != null;
+    }
+
     pub fn selectedTaxpayerName(self: *const Model) []const u8 {
-        return switch (self.selectedTaxpayer) {
-            .juan_dela_cruz => "Juan Dela Cruz",
-            .demo_corporation => "Demo Corporation",
-            .sample_partnership => "Sample Partnership",
-        };
+        return self.taxProfiles.selectedName();
     }
 
     pub fn selectedTaxpayerTin(self: *const Model) []const u8 {
-        return switch (self.selectedTaxpayer) {
-            .juan_dela_cruz => "000-000-000-00000",
-            .demo_corporation => "111-111-111-00000",
-            .sample_partnership => "222-222-222-00000",
-        };
+        return self.taxProfiles.selectedTin();
     }
 
     pub fn selectedTaxpayerKind(self: *const Model) []const u8 {
-        return switch (self.selectedTaxpayer) {
-            .juan_dela_cruz => "Individual",
-            .demo_corporation => "Corporation",
-            .sample_partnership => "Partnership",
-        };
+        return self.taxProfiles.selectedKindLabel();
     }
 
     pub fn selectedTaxpayerInitials(self: *const Model) []const u8 {
-        return switch (self.selectedTaxpayer) {
-            .juan_dela_cruz => "JD",
-            .demo_corporation => "DC",
-            .sample_partnership => "SP",
-        };
+        return self.taxProfiles.selectedInitials();
     }
 
-    /// Temporary opaque identifiers for the reconstructed sample profiles.
-    /// Persisted tax-profile IDs must replace these values when profile
-    /// storage lands; never derive calendar identity from a mutable name/TIN.
     pub fn selectedTaxpayerCalendarKey(self: *const Model) []const u8 {
-        return switch (self.selectedTaxpayer) {
-            .juan_dela_cruz => "tax-profile-0001",
-            .demo_corporation => "tax-profile-0002",
-            .sample_partnership => "tax-profile-0003",
+        return self.taxProfiles.selectedProfileId() orelse "";
+    }
+
+    fn taxpayerFormDisabled(
+        self: *const Model,
+        form_code: []const u8,
+    ) bool {
+        if (!self.hasSelectedTaxpayer()) return true;
+        return !self.taxProfiles.formAvailable(
+            self.calendar.selected_year,
+            form_code,
+        );
+    }
+
+    pub fn taxpayerForm0605Disabled(self: *const Model) bool {
+        return self.taxpayerFormDisabled("0605");
+    }
+
+    pub fn taxpayerForm0619EDisabled(self: *const Model) bool {
+        return self.taxpayerFormDisabled("0619E");
+    }
+
+    pub fn taxpayerForm0619FDisabled(self: *const Model) bool {
+        return self.taxpayerFormDisabled("0619F");
+    }
+
+    pub fn taxpayerForm1601CDisabled(self: *const Model) bool {
+        return self.taxpayerFormDisabled("1601C");
+    }
+
+    pub fn taxpayerForm1701Disabled(self: *const Model) bool {
+        return self.taxpayerFormDisabled("1701");
+    }
+
+    pub fn taxpayerForm1701QDisabled(self: *const Model) bool {
+        return self.taxpayerFormDisabled("1701Q");
+    }
+
+    pub fn taxpayerForm1702RTDisabled(self: *const Model) bool {
+        return self.taxpayerFormDisabled("1702RT");
+    }
+
+    pub fn taxpayerForm1702MXDisabled(self: *const Model) bool {
+        return self.taxpayerFormDisabled("1702MX");
+    }
+
+    pub fn taxpayerForm2550QDisabled(self: *const Model) bool {
+        return self.taxpayerFormDisabled("2550Q");
+    }
+
+    pub fn taxpayerForm2551QDisabled(self: *const Model) bool {
+        return self.taxpayerFormDisabled("2551Q");
+    }
+
+    pub fn formFilerTin(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return self.renderedFormTin(.filer, arena);
+    }
+
+    pub fn formFilerRdo(self: *const Model) []const u8 {
+        return self.formProfiles.filerText(.rdo_code);
+    }
+
+    pub fn formFilerTaxpayerName(self: *const Model) []const u8 {
+        return self.formProfiles.filerText(.taxpayer_name);
+    }
+
+    pub fn formFilerRegisteredName(self: *const Model) []const u8 {
+        return self.formProfiles.filerText(.registered_name);
+    }
+
+    pub fn formFilerRegisteredAddress(self: *const Model) []const u8 {
+        return self.formProfiles.filerText(.registered_address);
+    }
+
+    pub fn formFilerZipCode(self: *const Model) []const u8 {
+        return self.formProfiles.filerText(.zip_code);
+    }
+
+    pub fn formFilerContactNumber(self: *const Model) []const u8 {
+        return self.formProfiles.filerText(.contact_number);
+    }
+
+    pub fn formFilerEmailAddress(self: *const Model) []const u8 {
+        return self.formProfiles.filerText(.email_address);
+    }
+
+    pub fn formFilerDateOfBirth(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const value = self.formProfiles.reusableValue(
+            .filer,
+            .date_of_birth,
+        ) orelse return "";
+        return switch (value.*) {
+            .date_of_birth => |date| std.fmt.allocPrint(
+                arena,
+                "{d:0>2} / {d:0>2} / {d:0>4}",
+                .{ date.month, date.day, date.year },
+            ) catch "",
+            else => unreachable,
         };
     }
 
-    pub fn juanProfileActive(self: *const Model) bool {
-        return self.selectedTaxpayer == .juan_dela_cruz;
+    pub fn formFilerCitizenship(self: *const Model) []const u8 {
+        return self.formProfiles.filerText(.citizenship);
     }
 
-    pub fn demoProfileActive(self: *const Model) bool {
-        return self.selectedTaxpayer == .demo_corporation;
+    pub fn formFilerForeignTaxNumber(self: *const Model) []const u8 {
+        return self.formProfiles.filerText(.foreign_tax_number);
     }
 
-    pub fn partnershipProfileActive(self: *const Model) bool {
-        return self.selectedTaxpayer == .sample_partnership;
+    pub fn formFilerLineOfBusiness(self: *const Model) []const u8 {
+        return self.formProfiles.filerText(.line_of_business);
+    }
+
+    pub fn formFilerAtc(self: *const Model) []const u8 {
+        return self.formProfiles.filerText(.atc);
+    }
+
+    pub fn formFilerTaxType(self: *const Model) []const u8 {
+        return self.formProfiles.filerText(.tax_type);
+    }
+
+    pub fn formFilerGovernmentWithholdingAgent(
+        self: *const Model,
+    ) []const u8 {
+        return self.formProfiles.filerText(
+            .government_withholding_agent,
+        );
+    }
+
+    pub fn formFilerSpecialRateBasis(self: *const Model) []const u8 {
+        return self.formProfiles.filerText(.special_rate_basis);
+    }
+
+    pub fn formSpouseTin(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return self.renderedFormTin(.spouse, arena);
+    }
+
+    pub fn formSpouseRdo(self: *const Model) []const u8 {
+        return self.formProfiles.spouseText(.rdo_code);
+    }
+
+    pub fn formSpouseName(self: *const Model) []const u8 {
+        return self.formProfiles.spouseText(.taxpayer_name);
+    }
+
+    fn renderedFormTin(
+        self: *const Model,
+        role: form_ids.Role,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const value = self.formProfiles.reusableValue(
+            role,
+            .tin,
+        ) orelse return "";
+        return switch (value.*) {
+            .tin => |tin| blk: {
+                const output = arena.alloc(u8, 24) catch break :blk "";
+                break :blk tin.write(output) catch "";
+            },
+            else => unreachable,
+        };
+    }
+
+    pub fn incomeTaxYear(self: *const Model) []const u8 {
+        return self.incomeTax.value(.tax_year);
+    }
+
+    pub fn incomeTaxQuarter(self: *const Model) []const u8 {
+        return self.incomeTax.quarterValue();
+    }
+
+    pub fn incomeTaxQuarterQ1Selected(self: *const Model) bool {
+        return self.incomeTax.quarterSelected(1);
+    }
+
+    pub fn incomeTaxQuarterQ2Selected(self: *const Model) bool {
+        return self.incomeTax.quarterSelected(2);
+    }
+
+    pub fn incomeTaxQuarterQ3Selected(self: *const Model) bool {
+        return self.incomeTax.quarterSelected(3);
+    }
+
+    pub fn incomeTaxAmendedReturn(self: *const Model) []const u8 {
+        return self.incomeTax.amendedReturnValue();
+    }
+
+    pub fn incomeTaxSheetsAttached(self: *const Model) []const u8 {
+        return self.incomeTax.value(.sheets_attached);
+    }
+
+    pub fn incomeTaxElection(self: *const Model) []const u8 {
+        return self.incomeTax.electionValue();
+    }
+
+    pub fn incomeTaxElectionGraduatedSelected(
+        self: *const Model,
+    ) bool {
+        return self.incomeTax.electionSelected(.graduated);
+    }
+
+    pub fn incomeTaxElectionEightPercentSelected(
+        self: *const Model,
+    ) bool {
+        return self.incomeTax.electionSelected(.eight_percent);
+    }
+
+    pub fn incomeTaxInputsDisabled(self: *const Model) bool {
+        return self.incomeTax.inputsDisabled();
+    }
+
+    pub fn incomeTaxGraduatedSales(self: *const Model) []const u8 {
+        return self.incomeTax.value(
+            .graduated_sales_revenues_receipts,
+        );
+    }
+
+    pub fn incomeTaxGraduatedCost(self: *const Model) []const u8 {
+        return self.incomeTax.value(
+            .graduated_cost_of_sales_or_services,
+        );
+    }
+
+    pub fn incomeTaxGraduatedDeductions(self: *const Model) []const u8 {
+        return self.incomeTax.value(
+            .graduated_allowable_deductions,
+        );
+    }
+
+    pub fn incomeTaxGraduatedTaxableIncome(
+        self: *const Model,
+    ) []const u8 {
+        return self.incomeTax.value(.graduated_taxable_income);
+    }
+
+    pub fn incomeTaxGraduatedTaxDue(self: *const Model) []const u8 {
+        return self.incomeTax.value(.graduated_income_tax_due);
+    }
+
+    pub fn incomeTaxGraduatedInputsDisabled(self: *const Model) bool {
+        return self.incomeTax.graduatedInputsDisabled();
+    }
+
+    pub fn incomeTaxEightGrossSales(self: *const Model) []const u8 {
+        return self.incomeTax.value(
+            .eight_percent_gross_sales_or_receipts,
+        );
+    }
+
+    pub fn incomeTaxEightNonOperatingIncome(
+        self: *const Model,
+    ) []const u8 {
+        return self.incomeTax.value(
+            .eight_percent_non_operating_income,
+        );
+    }
+
+    pub fn incomeTaxEightTaxDue(self: *const Model) []const u8 {
+        return self.incomeTax.value(.eight_percent_tax_due);
+    }
+
+    pub fn incomeTaxEightPercentInputsDisabled(
+        self: *const Model,
+    ) bool {
+        return self.incomeTax.eightPercentInputsDisabled();
+    }
+
+    pub fn incomeTaxPriorQuarterPayments(self: *const Model) []const u8 {
+        return self.incomeTax.value(.prior_quarter_income_tax_payments);
+    }
+
+    pub fn incomeTaxWithheld2307(self: *const Model) []const u8 {
+        return self.incomeTax.value(.creditable_tax_withheld_2307);
+    }
+
+    pub fn incomeTaxOtherCredits(self: *const Model) []const u8 {
+        return self.incomeTax.value(.other_tax_credits_or_payments);
+    }
+
+    pub fn incomeTaxPayableOrOverpayment(
+        self: *const Model,
+    ) []const u8 {
+        return self.incomeTax.value(.tax_payable_or_overpayment);
+    }
+
+    pub fn incomeTaxSurcharge(self: *const Model) []const u8 {
+        return self.incomeTax.value(.surcharge);
+    }
+
+    pub fn incomeTaxInterest(self: *const Model) []const u8 {
+        return self.incomeTax.value(.interest);
+    }
+
+    pub fn incomeTaxCompromise(self: *const Model) []const u8 {
+        return self.incomeTax.value(.compromise);
+    }
+
+    pub fn incomeTaxPaymentRows(
+        self: *const Model,
+    ) []const income_tax_ui.PaymentRow {
+        return self.incomeTax.paymentRows();
+    }
+
+    pub fn incomeTaxPaymentAddDisabled(self: *const Model) bool {
+        return self.incomeTax.paymentAddDisabled();
+    }
+
+    pub fn incomeTaxPaymentRemoveDisabled(self: *const Model) bool {
+        return self.incomeTax.paymentRemoveDisabled();
+    }
+
+    pub fn incomeTaxPaymentEditorVisible(self: *const Model) bool {
+        return self.incomeTax.paymentEditorVisible();
+    }
+
+    pub fn incomeTaxPaymentMethod(self: *const Model) []const u8 {
+        return self.incomeTax.paymentMethodValue();
+    }
+
+    pub fn incomeTaxPaymentMethodCashSelected(
+        self: *const Model,
+    ) bool {
+        return self.incomeTax.paymentMethodSelected(.cash);
+    }
+
+    pub fn incomeTaxPaymentMethodCheckSelected(
+        self: *const Model,
+    ) bool {
+        return self.incomeTax.paymentMethodSelected(.check);
+    }
+
+    pub fn incomeTaxPaymentMethodTaxDebitMemoSelected(
+        self: *const Model,
+    ) bool {
+        return self.incomeTax.paymentMethodSelected(.tax_debit_memo);
+    }
+
+    pub fn incomeTaxPaymentMethodOtherSelected(
+        self: *const Model,
+    ) bool {
+        return self.incomeTax.paymentMethodSelected(.other);
+    }
+
+    pub fn incomeTaxPaymentBankOrAgency(self: *const Model) []const u8 {
+        return self.incomeTax.paymentValue(.bank_or_agency);
+    }
+
+    pub fn incomeTaxPaymentReference(self: *const Model) []const u8 {
+        return self.incomeTax.paymentValue(.reference);
+    }
+
+    pub fn incomeTaxPaymentAmount(self: *const Model) []const u8 {
+        return self.incomeTax.paymentValue(.amount);
+    }
+
+    pub fn incomeTaxNoticeVisible(self: *const Model) bool {
+        return self.incomeTax.noticeVisible();
+    }
+
+    pub fn incomeTaxNotice(self: *const Model) []const u8 {
+        return self.incomeTax.noticeText();
+    }
+
+    pub fn incomeTaxNoticeTone(self: *const Model) []const u8 {
+        return self.incomeTax.noticeTone();
+    }
+
+    pub fn incomeTaxTotalTaxPayable(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return self.incomeTax.totalTaxPayableText(arena);
+    }
+
+    pub fn incomeTaxSaveDisabled(self: *const Model) bool {
+        return self.formProfiles.saveDisabled() or
+            self.incomeTax.saveDisabled();
+    }
+
+    pub fn percentageTaxEditable(self: *const Model) bool {
+        return self.percentageTax.editable;
+    }
+
+    pub fn percentageTaxPeriodBasis(self: *const Model) []const u8 {
+        return self.percentageTax.periodBasisText();
+    }
+
+    pub fn percentageTaxPeriodCalendarSelected(self: *const Model) bool {
+        return self.percentageTax.periodCalendarSelected();
+    }
+
+    pub fn percentageTaxPeriodFiscalSelected(self: *const Model) bool {
+        return self.percentageTax.periodFiscalSelected();
+    }
+
+    pub fn percentageTaxYearEndMonth(self: *const Model) []const u8 {
+        return self.percentageTax.year_end_month.text();
+    }
+
+    pub fn percentageTaxQuarter(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return self.percentageTax.quarterText(arena);
+    }
+
+    pub fn percentageTaxYear(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return self.percentageTax.yearText(arena);
+    }
+
+    pub fn percentageTaxSheetsAttached(self: *const Model) []const u8 {
+        return self.percentageTax.sheets_attached.text();
+    }
+
+    pub fn percentageTaxReturnOption(self: *const Model) []const u8 {
+        return self.percentageTax.returnOptionText();
+    }
+
+    pub fn percentageTaxAmendedReturn(self: *const Model) []const u8 {
+        return self.percentageTax.amendedReturnText();
+    }
+
+    pub fn percentageTaxRelief(self: *const Model) []const u8 {
+        return self.percentageTax.taxReliefText();
+    }
+
+    pub fn percentageTaxReliefNoneSelected(self: *const Model) bool {
+        return self.percentageTax.taxReliefNoneSelected();
+    }
+
+    pub fn percentageTaxReliefSpecifiedSelected(self: *const Model) bool {
+        return self.percentageTax.taxReliefSpecifiedSelected();
+    }
+
+    pub fn percentageTaxReliefReference(self: *const Model) []const u8 {
+        return self.percentageTax.tax_relief_reference.text();
+    }
+
+    pub fn percentageTaxElection(self: *const Model) []const u8 {
+        return self.percentageTax.incomeTaxRateElectionText();
+    }
+
+    pub fn percentageTaxElectionGraduatedSelected(
+        self: *const Model,
+    ) bool {
+        return self.percentageTax.graduatedElectionSelected();
+    }
+
+    pub fn percentageTaxElectionEightPercentSelected(
+        self: *const Model,
+    ) bool {
+        return self.percentageTax.eightPercentElectionSelected();
+    }
+
+    pub fn percentageTaxLine1Atc(self: *const Model) []const u8 {
+        return self.percentageTax.scheduleAtcText(0);
+    }
+
+    pub fn percentageTaxLine1Base(self: *const Model) []const u8 {
+        return self.percentageTax.scheduleTaxBaseText(0);
+    }
+
+    pub fn percentageTaxLine1Rate(self: *const Model) []const u8 {
+        return self.percentageTax.scheduleRateText(0);
+    }
+
+    pub fn percentageTaxLine1Due(self: *const Model) []const u8 {
+        return self.percentageTax.scheduleDueText(0);
+    }
+
+    pub fn percentageTaxLine2Atc(self: *const Model) []const u8 {
+        return self.percentageTax.scheduleAtcText(1);
+    }
+
+    pub fn percentageTaxLine2Base(self: *const Model) []const u8 {
+        return self.percentageTax.scheduleTaxBaseText(1);
+    }
+
+    pub fn percentageTaxLine2Rate(self: *const Model) []const u8 {
+        return self.percentageTax.scheduleRateText(1);
+    }
+
+    pub fn percentageTaxLine2Due(self: *const Model) []const u8 {
+        return self.percentageTax.scheduleDueText(1);
+    }
+
+    pub fn percentageTaxTotalDue(self: *const Model) []const u8 {
+        return self.percentageTax.totalDueText();
+    }
+
+    pub fn percentageTaxCreditableWithheld(
+        self: *const Model,
+    ) []const u8 {
+        return self.percentageTax.creditable_percentage_tax_withheld.text();
+    }
+
+    pub fn percentageTaxPaidPrevious(self: *const Model) []const u8 {
+        return self.percentageTax.paid_in_previous_return.text();
+    }
+
+    pub fn percentageTaxOtherCredit(self: *const Model) []const u8 {
+        return self.percentageTax.other_credit_or_payment.text();
+    }
+
+    pub fn percentageTaxTotalCredits(self: *const Model) []const u8 {
+        return self.percentageTax.totalCreditsText();
+    }
+
+    pub fn percentageTaxNetTax(self: *const Model) []const u8 {
+        return self.percentageTax.netTaxText();
+    }
+
+    pub fn percentageTaxSurcharge(self: *const Model) []const u8 {
+        return self.percentageTax.surcharge.text();
+    }
+
+    pub fn percentageTaxInterest(self: *const Model) []const u8 {
+        return self.percentageTax.interest.text();
+    }
+
+    pub fn percentageTaxCompromise(self: *const Model) []const u8 {
+        return self.percentageTax.compromise.text();
+    }
+
+    pub fn percentageTaxDisposition(self: *const Model) []const u8 {
+        return self.percentageTax.dispositionText();
+    }
+
+    pub fn percentageTaxDispositionNotApplicableSelected(
+        self: *const Model,
+    ) bool {
+        return self.percentageTax.dispositionSelected(.not_applicable);
+    }
+
+    pub fn percentageTaxDispositionRefundSelected(
+        self: *const Model,
+    ) bool {
+        return self.percentageTax.dispositionSelected(.refund);
+    }
+
+    pub fn percentageTaxDispositionTaxCreditSelected(
+        self: *const Model,
+    ) bool {
+        return self.percentageTax.dispositionSelected(
+            .tax_credit_certificate,
+        );
+    }
+
+    pub fn percentageTaxDispositionCarryOverSelected(
+        self: *const Model,
+    ) bool {
+        return self.percentageTax.dispositionSelected(.carry_over);
+    }
+
+    pub fn percentageTaxTotalAmountPayable(
+        self: *const Model,
+    ) []const u8 {
+        return self.percentageTax.totalAmountPayableText();
+    }
+
+    pub fn percentageTaxValidationStatus(self: *const Model) []const u8 {
+        return self.percentageTax.validationText();
+    }
+
+    pub fn formProfileContextTitle(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const revision = self.formProfiles.formRevision() orelse
+            return "Tax profile prefill";
+        return std.fmt.allocPrint(
+            arena,
+            "Tax profile prefill · BIR Form {s}",
+            .{revision.code.asSlice()},
+        ) catch "Tax profile prefill";
+    }
+
+    pub fn formProfileStatus(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (self.formProfiles.draftStatus()) |status| {
+            return std.fmt.allocPrint(
+                arena,
+                "Immutable profile snapshot · draft {s}",
+                .{status.text()},
+            ) catch "Immutable profile snapshot";
+        }
+        const effective_on = self.formProfiles.profileAsOf() orelse
+            return "Select a taxpayer profile to qualify reusable fields.";
+        var date_buffer: [10]u8 = undefined;
+        const date = effective_on.writeIso(&date_buffer);
+        if (self.formProfiles.projectionAccepted()) {
+            return std.fmt.allocPrint(
+                arena,
+                "Qualified reusable fields as of {s}",
+                .{date},
+            ) catch "Reusable fields qualified";
+        }
+        return std.fmt.allocPrint(
+            arena,
+            "Profile qualification needs attention as of {s}",
+            .{date},
+        ) catch "Profile qualification needs attention";
+    }
+
+    pub fn formProfileNotice(self: *const Model) []const u8 {
+        return self.formProfiles.noticeText();
+    }
+
+    pub fn formProfileCanSaveDraft(self: *const Model) bool {
+        if (self.formProfiles.saveDisabled()) return false;
+        const revision = self.formProfiles.formRevision() orelse return false;
+        if (std.mem.eql(u8, revision.code.asSlice(), "2551Q")) {
+            return self.percentageTax.canBuild();
+        }
+        if (std.mem.eql(u8, revision.code.asSlice(), "1701Q")) {
+            return !self.incomeTax.saveDisabled();
+        }
+        return true;
+    }
+
+    pub fn formProfileNeedsActivitySelection(self: *const Model) bool {
+        const revision = self.formProfiles.formRevision() orelse return false;
+        const definition = form_catalog.findForm(
+            revision.code.asSlice(),
+        ) orelse return false;
+        var consumes_activity = false;
+        for (definition.fields) |catalog_field| {
+            if (catalog_field.provenance != .profile) continue;
+            const key = catalog_field.profile_key orelse continue;
+            if (std.mem.eql(u8, key, "atc") or
+                std.mem.eql(u8, key, "line_of_business"))
+            {
+                consumes_activity = true;
+                break;
+            }
+        }
+        if (!consumes_activity) return false;
+        const candidates = self.formProfiles.activityCandidates(.filer);
+        var effective_count: usize = 0;
+        for (candidates) |candidate| {
+            if (!candidate.effective_on_profile_date) continue;
+            effective_count += 1;
+            if (candidate.selected) return false;
+        }
+        return effective_count > 1;
+    }
+
+    pub fn formProfileHasSpouseRole(self: *const Model) bool {
+        const revision = self.formProfiles.formRevision() orelse return false;
+        const definition = form_catalog.findForm(
+            revision.code.asSlice(),
+        ) orelse return false;
+        for (definition.profile_roles) |role| {
+            if (role.role == .spouse) return true;
+        }
+        return false;
+    }
+
+    pub fn formProfileHasSpouseBinding(self: *const Model) bool {
+        for (self.formProfiles.spouseCandidates()) |candidate| {
+            if (candidate.selected) return true;
+        }
+        return self.formProfiles.roleBinding(.spouse) != null;
+    }
+
+    pub fn formActivityRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const FormProfileChoiceRow {
+        const candidates = self.formProfiles.activityCandidates(.filer);
+        const rows = arena.alloc(FormProfileChoiceRow, candidates.len) catch
+            return &.{};
+        var row_count: usize = 0;
+        for (candidates, 0..) |*candidate, index| {
+            if (!candidate.effective_on_profile_date) continue;
+            const atc = if (candidate.atc) |*value|
+                value.asSlice()
+            else
+                "no ATC";
+            rows[row_count] = .{
+                .id = index,
+                .stable_id = candidate.id.asSlice(),
+                .name = std.fmt.allocPrint(
+                    arena,
+                    "{s} · {s}",
+                    .{ candidate.line_of_business.asSlice(), atc },
+                ) catch candidate.line_of_business.asSlice(),
+                .selected = candidate.selected,
+            };
+            row_count += 1;
+        }
+        return rows[0..row_count];
+    }
+
+    pub fn formSpouseRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const FormProfileChoiceRow {
+        const candidates = self.formProfiles.spouseCandidates();
+        const rows = arena.alloc(FormProfileChoiceRow, candidates.len) catch
+            return &.{};
+        for (candidates, 0..) |*candidate, index| {
+            const tin_buffer = arena.alloc(u8, 20) catch return &.{};
+            const tin = candidate.tin.write(tin_buffer) catch
+                candidate.tin.asDigits();
+            rows[index] = .{
+                .id = index,
+                .stable_id = candidate.profile_id.asSlice(),
+                .name = std.fmt.allocPrint(
+                    arena,
+                    "{s} · TIN {s}",
+                    .{ candidate.name.asSlice(), tin },
+                ) catch candidate.name.asSlice(),
+                .selected = candidate.selected,
+            };
+        }
+        return rows;
+    }
+
+    pub fn profileEditorTitle(self: *const Model) []const u8 {
+        return if (self.taxProfiles.editing_new)
+            "Create Taxpayer Profile"
+        else
+            "Revise Taxpayer Profile";
+    }
+
+    pub fn profileSaveLabel(self: *const Model) []const u8 {
+        return if (self.taxProfiles.editing_new)
+            "Create Profile"
+        else
+            "Save New Revision";
+    }
+
+    pub fn profileSaveDisabled(self: *const Model) bool {
+        return self.taxProfiles.saveDisabled();
+    }
+
+    pub fn profileNoticeVisible(self: *const Model) bool {
+        return self.taxProfiles.noticeVisible();
+    }
+
+    pub fn profileNotice(self: *const Model) []const u8 {
+        return self.taxProfiles.noticeText();
+    }
+
+    pub fn profileNoticeTone(self: *const Model) []const u8 {
+        return self.taxProfiles.noticeTone();
+    }
+
+    pub fn profileIndividualSelected(self: *const Model) bool {
+        return self.taxProfiles.subject_kind == .individual;
+    }
+
+    pub fn profileSoleProprietorSelected(self: *const Model) bool {
+        return self.taxProfiles.subject_kind == .sole_proprietor;
+    }
+
+    pub fn profileCorporationSelected(self: *const Model) bool {
+        return self.taxProfiles.subject_kind == .corporation;
+    }
+
+    pub fn profilePartnershipSelected(self: *const Model) bool {
+        return self.taxProfiles.subject_kind == .partnership;
+    }
+
+    pub fn profileEstateSelected(self: *const Model) bool {
+        return self.taxProfiles.subject_kind == .estate;
+    }
+
+    pub fn profileTrustSelected(self: *const Model) bool {
+        return self.taxProfiles.subject_kind == .trust;
+    }
+
+    pub fn profileOtherLegalSelected(self: *const Model) bool {
+        return self.taxProfiles.subject_kind == .other_legal_entity;
+    }
+
+    pub fn profileTradeNameVisible(self: *const Model) bool {
+        return self.taxProfiles.subject_kind == .sole_proprietor;
+    }
+
+    pub fn profilePersonalFieldsDisabled(self: *const Model) bool {
+        return switch (self.taxProfiles.subject_kind) {
+            .individual, .sole_proprietor => false,
+            .corporation,
+            .partnership,
+            .estate,
+            .trust,
+            .other_legal_entity,
+            => true,
+        };
+    }
+
+    pub fn profileSourceManualSelected(self: *const Model) bool {
+        return self.taxProfiles.source_kind == .manual_entry;
+    }
+
+    pub fn profileSourceImportedSelected(self: *const Model) bool {
+        return self.taxProfiles.source_kind == .imported;
+    }
+
+    pub fn profileSourceMigratedSelected(self: *const Model) bool {
+        return self.taxProfiles.source_kind == .migrated;
+    }
+
+    pub fn profileSourceReferenceDisabled(self: *const Model) bool {
+        return self.taxProfiles.source_kind == .manual_entry;
+    }
+
+    pub fn profileGwaUnsetSelected(self: *const Model) bool {
+        return self.taxProfiles.government_withholding_agent == .unset;
+    }
+
+    pub fn profileGwaNoSelected(self: *const Model) bool {
+        return self.taxProfiles.government_withholding_agent == .no;
+    }
+
+    pub fn profileGwaYesSelected(self: *const Model) bool {
+        return self.taxProfiles.government_withholding_agent == .yes;
+    }
+
+    pub fn profileFormsSetFallbackSelected(self: *const Model) bool {
+        return !self.taxProfiles.forms_set_configured;
+    }
+
+    pub fn profileFormsSetRegisteredSelected(self: *const Model) bool {
+        return self.taxProfiles.forms_set_configured;
+    }
+
+    pub fn profileFormsSetInputDisabled(self: *const Model) bool {
+        return !self.taxProfiles.forms_set_configured;
+    }
+
+    pub fn profileTinValue(self: *const Model) []const u8 {
+        return self.taxProfiles.tin.text();
+    }
+
+    pub fn profileRdoValue(self: *const Model) []const u8 {
+        return self.taxProfiles.rdo.text();
+    }
+
+    pub fn profileNameValue(self: *const Model) []const u8 {
+        return self.taxProfiles.display_name.text();
+    }
+
+    pub fn profileTradeNameValue(self: *const Model) []const u8 {
+        return self.taxProfiles.trade_name.text();
+    }
+
+    pub fn profileAddressValue(self: *const Model) []const u8 {
+        return self.taxProfiles.registered_address.text();
+    }
+
+    pub fn profileZipValue(self: *const Model) []const u8 {
+        return self.taxProfiles.zip_code.text();
+    }
+
+    pub fn profilePhoneValue(self: *const Model) []const u8 {
+        return self.taxProfiles.phone.text();
+    }
+
+    pub fn profileEmailValue(self: *const Model) []const u8 {
+        return self.taxProfiles.email.text();
+    }
+
+    pub fn profileBirthDateValue(self: *const Model) []const u8 {
+        return self.taxProfiles.birth_date.text();
+    }
+
+    pub fn profileCitizenshipValue(self: *const Model) []const u8 {
+        return self.taxProfiles.citizenship.text();
+    }
+
+    pub fn profileForeignTaxNumberValue(self: *const Model) []const u8 {
+        return self.taxProfiles.foreign_tax_number.text();
+    }
+
+    pub fn profileBusinessLineValue(self: *const Model) []const u8 {
+        return self.taxProfiles.business_line.text();
+    }
+
+    pub fn profileAtcValue(self: *const Model) []const u8 {
+        return self.taxProfiles.atc.text();
+    }
+
+    pub fn profileTaxTypeValue(self: *const Model) []const u8 {
+        return self.taxProfiles.tax_type.text();
+    }
+
+    pub fn profileSpecialRateBasisValue(self: *const Model) []const u8 {
+        return self.taxProfiles.special_rate_basis.text();
+    }
+
+    pub fn profileEffectiveFromValue(self: *const Model) []const u8 {
+        return self.taxProfiles.effective_from.text();
+    }
+
+    pub fn profileEffectiveUntilValue(self: *const Model) []const u8 {
+        return self.taxProfiles.effective_until.text();
+    }
+
+    pub fn profileSourceReferenceValue(self: *const Model) []const u8 {
+        return self.taxProfiles.source_reference.text();
+    }
+
+    pub fn profileTaxYearValue(self: *const Model) []const u8 {
+        return self.taxProfiles.tax_year.text();
+    }
+
+    pub fn profileFormsSetValue(self: *const Model) []const u8 {
+        return self.taxProfiles.forms_set.text();
     }
 
     pub fn dashboardCalendarActive(self: *const Model) bool {
@@ -721,8 +1646,12 @@ pub const Model = struct {
     }
 
     pub fn profileCalendarExportNoticeVisible(self: *const Model) bool {
-        return self.profileCalendarExportStatus != .idle and
-            self.calendarExportProfile == self.selectedTaxpayer;
+        if (self.profileCalendarExportStatus == .idle) return false;
+        const exported = self.calendarExportProfileRevision orelse
+            return false;
+        const selected = self.taxProfiles.selectedRevisionContext() orelse
+            return false;
+        return exported.eql(&selected);
     }
 
     pub fn profileCalendarExportBusy(self: *const Model) bool {
@@ -734,6 +1663,7 @@ pub const Model = struct {
         return switch (self.profileCalendarExportStatus) {
             .idle => "",
             .wrong_context => "Calendar export must be started from the selected tax profile.",
+            .no_profile => "Create or select a tax profile before exporting its calendar.",
             .unavailable => "Calendar export is unavailable in this test context.",
             .build_failed => "Could not prepare this profile's calendar handoff.",
             .writing => "Preparing this profile's calendar handoff file…",
@@ -750,6 +1680,7 @@ pub const Model = struct {
         return switch (self.profileCalendarExportStatus) {
             .opened => "primary",
             .wrong_context,
+            .no_profile,
             .unavailable,
             .build_failed,
             .write_failed,
@@ -990,6 +1921,7 @@ pub const Msg = union(enum) {
     show_global_dashboard,
     show_taxpayer_dashboard,
     show_profile_setup,
+    new_taxpayer_profile,
     show_import_data,
     show_background_tasks,
     show_tax_calendar,
@@ -1005,6 +1937,66 @@ pub const Msg = union(enum) {
     show_form_1702_mx,
     show_form_2550q,
     show_form_2551q,
+    select_form_activity: usize,
+    select_form_spouse: usize,
+    clear_form_spouse,
+    save_recurring_form_draft,
+    income_tax_quarter_q1,
+    income_tax_quarter_q2,
+    income_tax_quarter_q3,
+    income_tax_sheets_attached_input: canvas.TextInputEvent,
+    income_tax_election_graduated,
+    income_tax_election_eight_percent,
+    income_tax_graduated_sales_input: canvas.TextInputEvent,
+    income_tax_graduated_cost_input: canvas.TextInputEvent,
+    income_tax_graduated_deductions_input: canvas.TextInputEvent,
+    income_tax_graduated_taxable_income_input: canvas.TextInputEvent,
+    income_tax_graduated_tax_due_input: canvas.TextInputEvent,
+    income_tax_eight_gross_sales_input: canvas.TextInputEvent,
+    income_tax_eight_non_operating_input: canvas.TextInputEvent,
+    income_tax_eight_tax_due_input: canvas.TextInputEvent,
+    income_tax_prior_payments_input: canvas.TextInputEvent,
+    income_tax_withheld_2307_input: canvas.TextInputEvent,
+    income_tax_other_credits_input: canvas.TextInputEvent,
+    income_tax_payable_input: canvas.TextInputEvent,
+    income_tax_surcharge_input: canvas.TextInputEvent,
+    income_tax_interest_input: canvas.TextInputEvent,
+    income_tax_compromise_input: canvas.TextInputEvent,
+    income_tax_add_payment,
+    income_tax_select_payment: usize,
+    income_tax_remove_selected_payment,
+    income_tax_payment_method_cash,
+    income_tax_payment_method_check,
+    income_tax_payment_method_tax_debit_memo,
+    income_tax_payment_method_other,
+    income_tax_payment_bank_input: canvas.TextInputEvent,
+    income_tax_payment_reference_input: canvas.TextInputEvent,
+    income_tax_payment_amount_input: canvas.TextInputEvent,
+    percentage_tax_period_calendar,
+    percentage_tax_period_fiscal,
+    percentage_tax_year_end_month_input: canvas.TextInputEvent,
+    percentage_tax_sheets_attached_input: canvas.TextInputEvent,
+    percentage_tax_relief_none,
+    percentage_tax_relief_specified,
+    percentage_tax_relief_reference_input: canvas.TextInputEvent,
+    percentage_tax_election_graduated,
+    percentage_tax_election_eight_percent,
+    percentage_tax_line_1_atc_input: canvas.TextInputEvent,
+    percentage_tax_line_1_base_input: canvas.TextInputEvent,
+    percentage_tax_line_1_rate_input: canvas.TextInputEvent,
+    percentage_tax_line_2_atc_input: canvas.TextInputEvent,
+    percentage_tax_line_2_base_input: canvas.TextInputEvent,
+    percentage_tax_line_2_rate_input: canvas.TextInputEvent,
+    percentage_tax_creditable_withheld_input: canvas.TextInputEvent,
+    percentage_tax_paid_previous_input: canvas.TextInputEvent,
+    percentage_tax_other_credit_input: canvas.TextInputEvent,
+    percentage_tax_surcharge_input: canvas.TextInputEvent,
+    percentage_tax_interest_input: canvas.TextInputEvent,
+    percentage_tax_compromise_input: canvas.TextInputEvent,
+    percentage_tax_disposition_not_applicable,
+    percentage_tax_disposition_refund,
+    percentage_tax_disposition_tax_credit,
+    percentage_tax_disposition_carry_over,
     show_aux_lock_screen,
     show_aux_profile_auth_overlay,
     show_aux_admin_auth_overlay,
@@ -1012,12 +2004,49 @@ pub const Msg = union(enum) {
     show_aux_html_print_preview,
     show_aux_email_confirmation,
     show_aux_background_task_debug_log,
-    select_taxpayer: TaxpayerProfile,
+    select_taxpayer: usize,
     show_dashboard_calendar,
     show_dashboard_forms,
     show_profile_tax,
     show_profile_certificate,
     show_profile_email,
+    profile_subject_individual,
+    profile_subject_sole_proprietor,
+    profile_subject_corporation,
+    profile_subject_partnership,
+    profile_subject_estate,
+    profile_subject_trust,
+    profile_subject_other_legal,
+    profile_source_manual,
+    profile_source_imported,
+    profile_source_migrated,
+    profile_gwa_unset,
+    profile_gwa_no,
+    profile_gwa_yes,
+    profile_forms_set_fallback,
+    profile_forms_set_registered,
+    profile_tin_input: canvas.TextInputEvent,
+    profile_rdo_input: canvas.TextInputEvent,
+    profile_name_input: canvas.TextInputEvent,
+    profile_trade_name_input: canvas.TextInputEvent,
+    profile_address_input: canvas.TextInputEvent,
+    profile_zip_input: canvas.TextInputEvent,
+    profile_phone_input: canvas.TextInputEvent,
+    profile_email_input: canvas.TextInputEvent,
+    profile_birth_date_input: canvas.TextInputEvent,
+    profile_citizenship_input: canvas.TextInputEvent,
+    profile_foreign_tax_number_input: canvas.TextInputEvent,
+    profile_business_line_input: canvas.TextInputEvent,
+    profile_atc_input: canvas.TextInputEvent,
+    profile_tax_type_input: canvas.TextInputEvent,
+    profile_special_rate_basis_input: canvas.TextInputEvent,
+    profile_effective_from_input: canvas.TextInputEvent,
+    profile_effective_until_input: canvas.TextInputEvent,
+    profile_source_reference_input: canvas.TextInputEvent,
+    profile_tax_year_input: canvas.TextInputEvent,
+    profile_forms_set_input: canvas.TextInputEvent,
+    save_profile,
+    cancel_profile_edit,
     toggle_profile_actions,
     close_profile_actions,
     show_calendar_deadlines,
@@ -1099,8 +2128,18 @@ fn updateWithEffects(model: *Model, msg: Msg, fx: *Effects) void {
 fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
     switch (msg) {
         .show_global_dashboard => navigate(model, .global_dashboard),
-        .show_taxpayer_dashboard => navigate(model, .taxpayer_dashboard),
-        .show_profile_setup => openReturnablePage(model, .profile_setup),
+        .show_taxpayer_dashboard => {
+            refreshSelectedProfileFormSet(model);
+            navigate(model, .taxpayer_dashboard);
+        },
+        .show_profile_setup => {
+            model.taxProfiles.editSelected();
+            openReturnablePage(model, .profile_setup);
+        },
+        .new_taxpayer_profile => {
+            model.taxProfiles.startNew();
+            openReturnablePage(model, .profile_setup);
+        },
         .show_import_data => {
             bumpSidebarActionEpoch(model);
             navigate(model, .import_data);
@@ -1121,16 +2160,229 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             bumpSidebarActionEpoch(model);
             navigate(model, .screen_gallery);
         },
-        .show_form_0605 => navigate(model, .form_0605),
-        .show_form_0619_e => navigate(model, .form_0619_e),
-        .show_form_0619_f => navigate(model, .form_0619_f),
-        .show_form_1601_c => navigate(model, .form_1601_c),
-        .show_form_1701 => navigate(model, .form_1701),
-        .show_form_1701q => navigate(model, .form_1701q),
-        .show_form_1702_rt => navigate(model, .form_1702_rt),
-        .show_form_1702_mx => navigate(model, .form_1702_mx),
-        .show_form_2550q => navigate(model, .form_2550q),
-        .show_form_2551q => navigate(model, .form_2551q),
+        .show_form_0605 => openProfileBoundForm(model, .form_0605, "0605"),
+        .show_form_0619_e => openProfileBoundForm(model, .form_0619_e, "0619E"),
+        .show_form_0619_f => openProfileBoundForm(model, .form_0619_f, "0619F"),
+        .show_form_1601_c => openProfileBoundForm(model, .form_1601_c, "1601C"),
+        .show_form_1701 => openProfileBoundForm(model, .form_1701, "1701"),
+        .show_form_1701q => openProfileBoundForm(model, .form_1701q, "1701Q"),
+        .show_form_1702_rt => openProfileBoundForm(model, .form_1702_rt, "1702RT"),
+        .show_form_1702_mx => openProfileBoundForm(model, .form_1702_mx, "1702MX"),
+        .show_form_2550q => openProfileBoundForm(model, .form_2550q, "2550Q"),
+        .show_form_2551q => openProfileBoundForm(model, .form_2551q, "2551Q"),
+        .select_form_activity => |slot| {
+            const candidates = model.formProfiles.activityCandidates(.filer);
+            if (slot < candidates.len) {
+                model.formProfiles.setBusinessActivity(
+                    .filer,
+                    candidates[slot].id,
+                ) catch {};
+            }
+        },
+        .select_form_spouse => |slot| {
+            const candidates = model.formProfiles.spouseCandidates();
+            if (slot < candidates.len) {
+                model.formProfiles.setSpouseProfile(
+                    candidates[slot].profile_id,
+                ) catch {};
+            }
+        },
+        .clear_form_spouse => {
+            model.formProfiles.clearSpouseProfile() catch {};
+        },
+        .save_recurring_form_draft => saveRecurringFormDraft(model),
+        .income_tax_quarter_q1 => reopenIncomeTaxQuarter(model, 1),
+        .income_tax_quarter_q2 => reopenIncomeTaxQuarter(model, 2),
+        .income_tax_quarter_q3 => reopenIncomeTaxQuarter(model, 3),
+        .income_tax_sheets_attached_input => |edit| {
+            model.incomeTax.applyInput(.sheets_attached, edit);
+        },
+        .income_tax_election_graduated => {
+            model.incomeTax.setElection(.graduated) catch {};
+        },
+        .income_tax_election_eight_percent => {
+            model.incomeTax.setElection(.eight_percent) catch {};
+        },
+        .income_tax_graduated_sales_input => |edit| {
+            model.incomeTax.applyInput(
+                .graduated_sales_revenues_receipts,
+                edit,
+            );
+        },
+        .income_tax_graduated_cost_input => |edit| {
+            model.incomeTax.applyInput(
+                .graduated_cost_of_sales_or_services,
+                edit,
+            );
+        },
+        .income_tax_graduated_deductions_input => |edit| {
+            model.incomeTax.applyInput(
+                .graduated_allowable_deductions,
+                edit,
+            );
+        },
+        .income_tax_graduated_taxable_income_input => |edit| {
+            model.incomeTax.applyInput(.graduated_taxable_income, edit);
+        },
+        .income_tax_graduated_tax_due_input => |edit| {
+            model.incomeTax.applyInput(.graduated_income_tax_due, edit);
+        },
+        .income_tax_eight_gross_sales_input => |edit| {
+            model.incomeTax.applyInput(
+                .eight_percent_gross_sales_or_receipts,
+                edit,
+            );
+        },
+        .income_tax_eight_non_operating_input => |edit| {
+            model.incomeTax.applyInput(
+                .eight_percent_non_operating_income,
+                edit,
+            );
+        },
+        .income_tax_eight_tax_due_input => |edit| {
+            model.incomeTax.applyInput(.eight_percent_tax_due, edit);
+        },
+        .income_tax_prior_payments_input => |edit| {
+            model.incomeTax.applyInput(
+                .prior_quarter_income_tax_payments,
+                edit,
+            );
+        },
+        .income_tax_withheld_2307_input => |edit| {
+            model.incomeTax.applyInput(
+                .creditable_tax_withheld_2307,
+                edit,
+            );
+        },
+        .income_tax_other_credits_input => |edit| {
+            model.incomeTax.applyInput(
+                .other_tax_credits_or_payments,
+                edit,
+            );
+        },
+        .income_tax_payable_input => |edit| {
+            model.incomeTax.applyInput(.tax_payable_or_overpayment, edit);
+        },
+        .income_tax_surcharge_input => |edit| {
+            model.incomeTax.applyInput(.surcharge, edit);
+        },
+        .income_tax_interest_input => |edit| {
+            model.incomeTax.applyInput(.interest, edit);
+        },
+        .income_tax_compromise_input => |edit| {
+            model.incomeTax.applyInput(.compromise, edit);
+        },
+        .income_tax_add_payment => {
+            _ = model.incomeTax.addPaymentRow() catch {};
+        },
+        .income_tax_select_payment => |slot| {
+            model.incomeTax.selectPaymentRow(slot) catch {};
+        },
+        .income_tax_remove_selected_payment => {
+            for (model.incomeTax.paymentRows()) |*row| {
+                if (!row.selected()) continue;
+                model.incomeTax.removePaymentRow(row.id()) catch {};
+                break;
+            }
+        },
+        .income_tax_payment_method_cash => {
+            model.incomeTax.setSelectedPaymentMethod(.cash) catch {};
+        },
+        .income_tax_payment_method_check => {
+            model.incomeTax.setSelectedPaymentMethod(.check) catch {};
+        },
+        .income_tax_payment_method_tax_debit_memo => {
+            model.incomeTax.setSelectedPaymentMethod(
+                .tax_debit_memo,
+            ) catch {};
+        },
+        .income_tax_payment_method_other => {
+            model.incomeTax.setSelectedPaymentMethod(.other) catch {};
+        },
+        .income_tax_payment_bank_input => |edit| {
+            model.incomeTax.applyPaymentInput(.bank_or_agency, edit);
+        },
+        .income_tax_payment_reference_input => |edit| {
+            model.incomeTax.applyPaymentInput(.reference, edit);
+        },
+        .income_tax_payment_amount_input => |edit| {
+            model.incomeTax.applyPaymentInput(.amount, edit);
+        },
+        .percentage_tax_period_calendar => {
+            model.percentageTax.setPeriodBasis(.calendar);
+        },
+        .percentage_tax_period_fiscal => {},
+        .percentage_tax_year_end_month_input => |edit| {
+            model.percentageTax.editYearEndMonth(edit);
+        },
+        .percentage_tax_sheets_attached_input => |edit| {
+            model.percentageTax.editSheetsAttached(edit);
+        },
+        .percentage_tax_relief_none => {
+            model.percentageTax.setTaxRelief(.none);
+        },
+        .percentage_tax_relief_specified => {
+            model.percentageTax.setTaxRelief(.specified);
+        },
+        .percentage_tax_relief_reference_input => |edit| {
+            model.percentageTax.editTaxReliefReference(edit);
+        },
+        .percentage_tax_election_graduated => {
+            model.percentageTax.setIncomeTaxRateElection(.graduated);
+        },
+        .percentage_tax_election_eight_percent => {
+            model.percentageTax.setIncomeTaxRateElection(.eight_percent);
+        },
+        .percentage_tax_line_1_atc_input => |edit| {
+            model.percentageTax.editScheduleAtc(0, edit);
+        },
+        .percentage_tax_line_1_base_input => |edit| {
+            model.percentageTax.editScheduleTaxBase(0, edit);
+        },
+        .percentage_tax_line_1_rate_input => |edit| {
+            model.percentageTax.editScheduleRate(0, edit);
+        },
+        .percentage_tax_line_2_atc_input => |edit| {
+            model.percentageTax.editScheduleAtc(1, edit);
+        },
+        .percentage_tax_line_2_base_input => |edit| {
+            model.percentageTax.editScheduleTaxBase(1, edit);
+        },
+        .percentage_tax_line_2_rate_input => |edit| {
+            model.percentageTax.editScheduleRate(1, edit);
+        },
+        .percentage_tax_creditable_withheld_input => |edit| {
+            model.percentageTax.editCreditableWithheld(edit);
+        },
+        .percentage_tax_paid_previous_input => |edit| {
+            model.percentageTax.editPaidInPreviousReturn(edit);
+        },
+        .percentage_tax_other_credit_input => |edit| {
+            model.percentageTax.editOtherCredit(edit);
+        },
+        .percentage_tax_surcharge_input => |edit| {
+            model.percentageTax.editSurcharge(edit);
+        },
+        .percentage_tax_interest_input => |edit| {
+            model.percentageTax.editInterest(edit);
+        },
+        .percentage_tax_compromise_input => |edit| {
+            model.percentageTax.editCompromise(edit);
+        },
+        .percentage_tax_disposition_not_applicable => {
+            model.percentageTax.setOverpaymentDisposition(.not_applicable);
+        },
+        .percentage_tax_disposition_refund => {
+            model.percentageTax.setOverpaymentDisposition(.refund);
+        },
+        .percentage_tax_disposition_tax_credit => {
+            model.percentageTax.setOverpaymentDisposition(
+                .tax_credit_certificate,
+            );
+        },
+        .percentage_tax_disposition_carry_over => {
+            model.percentageTax.setOverpaymentDisposition(.carry_over);
+        },
         .show_aux_lock_screen => openTransient(model, .aux_lock_screen),
         .show_aux_profile_auth_overlay => openTransient(model, .aux_profile_auth),
         .show_aux_admin_auth_overlay => openTransient(model, .aux_admin_auth),
@@ -1138,8 +2390,9 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .show_aux_html_print_preview => openTransient(model, .aux_html_preview),
         .show_aux_email_confirmation => openTransient(model, .aux_email_confirmation),
         .show_aux_background_task_debug_log => openTransient(model, .aux_debug_log),
-        .select_taxpayer => |profile| {
-            model.selectedTaxpayer = profile;
+        .select_taxpayer => |slot| {
+            model.taxProfiles.select(slot);
+            refreshSelectedProfileFormSet(model);
             model.dashboardSection = .calendar;
             navigate(model, .taxpayer_dashboard);
         },
@@ -1148,16 +2401,161 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .show_profile_tax => model.profileSetupSection = .tax_profile,
         .show_profile_certificate => model.profileSetupSection = .certificate,
         .show_profile_email => model.profileSetupSection = .email,
+        .profile_subject_individual => {
+            model.taxProfiles.setSubjectKind(.individual);
+        },
+        .profile_subject_sole_proprietor => {
+            model.taxProfiles.setSubjectKind(.sole_proprietor);
+        },
+        .profile_subject_corporation => {
+            model.taxProfiles.setSubjectKind(.corporation);
+        },
+        .profile_subject_partnership => {
+            model.taxProfiles.setSubjectKind(.partnership);
+        },
+        .profile_subject_estate => {
+            model.taxProfiles.setSubjectKind(.estate);
+        },
+        .profile_subject_trust => {
+            model.taxProfiles.setSubjectKind(.trust);
+        },
+        .profile_subject_other_legal => {
+            model.taxProfiles.setSubjectKind(.other_legal_entity);
+        },
+        .profile_source_manual => {
+            model.taxProfiles.setSourceKind(.manual_entry);
+        },
+        .profile_source_imported => {
+            model.taxProfiles.setSourceKind(.imported);
+        },
+        .profile_source_migrated => {
+            model.taxProfiles.setSourceKind(.migrated);
+        },
+        .profile_gwa_unset => {
+            model.taxProfiles.setGovernmentWithholdingAgent(.unset);
+        },
+        .profile_gwa_no => {
+            model.taxProfiles.setGovernmentWithholdingAgent(.no);
+        },
+        .profile_gwa_yes => {
+            model.taxProfiles.setGovernmentWithholdingAgent(.yes);
+        },
+        .profile_forms_set_fallback => {
+            model.taxProfiles.setFormsSetConfigured(false);
+        },
+        .profile_forms_set_registered => {
+            model.taxProfiles.setFormsSetConfigured(true);
+        },
+        .profile_tin_input => |edit| {
+            model.taxProfiles.tin.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .profile_rdo_input => |edit| {
+            model.taxProfiles.rdo.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .profile_name_input => |edit| {
+            model.taxProfiles.display_name.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .profile_trade_name_input => |edit| {
+            model.taxProfiles.trade_name.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .profile_address_input => |edit| {
+            model.taxProfiles.registered_address.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .profile_zip_input => |edit| {
+            model.taxProfiles.zip_code.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .profile_phone_input => |edit| {
+            model.taxProfiles.phone.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .profile_email_input => |edit| {
+            model.taxProfiles.email.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .profile_birth_date_input => |edit| {
+            model.taxProfiles.birth_date.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .profile_citizenship_input => |edit| {
+            model.taxProfiles.citizenship.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .profile_foreign_tax_number_input => |edit| {
+            model.taxProfiles.foreign_tax_number.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .profile_business_line_input => |edit| {
+            model.taxProfiles.business_line.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .profile_atc_input => |edit| {
+            model.taxProfiles.atc.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .profile_tax_type_input => |edit| {
+            model.taxProfiles.tax_type.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .profile_special_rate_basis_input => |edit| {
+            model.taxProfiles.special_rate_basis.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .profile_effective_from_input => |edit| {
+            model.taxProfiles.effective_from.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .profile_effective_until_input => |edit| {
+            model.taxProfiles.effective_until.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .profile_source_reference_input => |edit| {
+            model.taxProfiles.source_reference.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .profile_tax_year_input => |edit| {
+            model.taxProfiles.tax_year.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+            model.taxProfiles.taxYearInputChanged();
+        },
+        .profile_forms_set_input => |edit| {
+            model.taxProfiles.forms_set.apply(edit);
+            model.taxProfiles.captureInputTruncation();
+        },
+        .save_profile => {
+            model.taxProfiles.save();
+            refreshSelectedProfileFormSet(model);
+        },
+        .cancel_profile_edit => {
+            model.taxProfiles.cancelEdit();
+            const destination = model.returnPage;
+            model.returnPage = .global_dashboard;
+            navigate(model, destination);
+        },
         .toggle_profile_actions => model.profileActionsOpen = !model.profileActionsOpen,
         .close_profile_actions => model.profileActionsOpen = false,
         .show_calendar_deadlines => model.taxCalendarSection = .deadlines,
         .show_calendar_rules => model.taxCalendarSection = .rules,
         .show_calendar_overrides => model.taxCalendarSection = .overrides,
-        .calendar_previous_year => model.calendar.previousYear(),
-        .calendar_next_year => model.calendar.nextYear(),
+        .calendar_previous_year => {
+            model.calendar.previousYear();
+            refreshSelectedProfileFormSet(model);
+        },
+        .calendar_next_year => {
+            model.calendar.nextYear();
+            refreshSelectedProfileFormSet(model);
+        },
         .calendar_previous_month => model.calendar.previousMonth(),
         .calendar_next_month => model.calendar.nextMonth(),
-        .calendar_refresh => model.calendar.refresh(),
+        .calendar_refresh => {
+            model.calendar.refresh();
+            refreshSelectedProfileFormSet(model);
+        },
         .profile_calendar_export => exportProfileCalendar(model, fx),
         .profile_calendar_export_written => |result| profileCalendarExportWritten(model, result, fx),
         .profile_calendar_export_opened => |result| profileCalendarExportOpened(model, result),
@@ -1299,6 +2697,192 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
     }
 }
 
+fn refreshSelectedProfileFormSet(model: *Model) void {
+    model.taxProfiles.refreshCalendarFormSet(
+        model.calendar.selected_year,
+    ) catch |err| model.calendar.setError(err);
+}
+
+fn saveRecurringFormDraft(model: *Model) void {
+    const revision = model.formProfiles.formRevision() orelse return;
+    if (std.mem.eql(u8, revision.code.asSlice(), "2551Q")) {
+        var values: percentage_tax_ui.DraftValueSet = .{};
+        const writes = model.percentageTax.draftValueWrites(&values) catch
+            return;
+        _ = model.formProfiles.saveRecurringDraftWithValues(writes) catch {};
+        return;
+    }
+    if (std.mem.eql(u8, revision.code.asSlice(), "1701Q")) {
+        const writes = model.incomeTax.draftValueWrites() catch return;
+        _ = model.formProfiles.saveRecurringDraftWithValues(writes) catch {};
+        return;
+    }
+    _ = model.formProfiles.saveRecurringDraft() catch {};
+}
+
+fn editorRevision(form_code: []const u8) ?form_ids.FormRevision {
+    for (form_ui.editor_revisions) |revision| {
+        if (std.mem.eql(u8, revision.code.asSlice(), form_code)) {
+            return revision;
+        }
+    }
+    return null;
+}
+
+fn selectedCalendarQuarter(model: *const Model) u8 {
+    const month = std.math.clamp(model.calendar.selected_month, 1, 12);
+    return @intCast((month - 1) / 3 + 1);
+}
+
+fn monthEndDate(year: u16, month: u8) profile_model.Date {
+    const day: u8 = switch (month) {
+        1, 3, 5, 7, 8, 10, 12 => 31,
+        4, 6, 9, 11 => 30,
+        2 => if (year % 4 == 0 and
+            (year % 100 != 0 or year % 400 == 0))
+            29
+        else
+            28,
+        else => unreachable,
+    };
+    return profile_model.Date.init(year, month, day) catch unreachable;
+}
+
+fn profileAsOfForForm(
+    model: *const Model,
+    form_code: []const u8,
+    year: u16,
+    quarter: u8,
+) profile_model.Date {
+    if (std.mem.eql(u8, form_code, "1701") or
+        std.mem.eql(u8, form_code, "1702RT") or
+        std.mem.eql(u8, form_code, "1702MX"))
+    {
+        return profile_model.Date.init(year, 12, 31) catch unreachable;
+    }
+    if (std.mem.eql(u8, form_code, "1701Q") or
+        std.mem.eql(u8, form_code, "2550Q") or
+        std.mem.eql(u8, form_code, "2551Q"))
+    {
+        return monthEndDate(year, quarter * 3);
+    }
+    return monthEndDate(year, model.calendar.selected_month);
+}
+
+fn openProfileBoundForm(
+    model: *Model,
+    page: Page,
+    form_code: []const u8,
+) void {
+    _ = openProfileBoundFormForQuarter(
+        model,
+        page,
+        form_code,
+        selectedCalendarQuarter(model),
+        null,
+    );
+}
+
+fn openProfileBoundFormForQuarter(
+    model: *Model,
+    page: Page,
+    form_code: []const u8,
+    quarter: u8,
+    spouse_profile_id: ?profile_model.ProfileId,
+) bool {
+    const filer_id = model.taxProfiles.selectedProfileDomainId() orelse
+        return false;
+    if (model.taxpayerFormDisabled(form_code)) return false;
+    const year_value = model.calendar.selected_year;
+    if (year_value < 1 or year_value > 9999) return false;
+    const year: u16 = @intCast(year_value);
+    const revision = editorRevision(form_code) orelse return false;
+    const profile_as_of = profileAsOfForForm(
+        model,
+        form_code,
+        year,
+        quarter,
+    );
+    model.formProfiles.open(.{
+        .form = revision,
+        .filer_profile_id = filer_id,
+        .spouse_profile_id = spouse_profile_id,
+        .tax_year = year,
+        .quarter = quarter,
+        .profile_as_of = profile_as_of,
+    }) catch |err| {
+        model.percentageTax = .{};
+        model.incomeTax = .{};
+        if (std.mem.eql(u8, form_code, "1701Q")) {
+            model.incomeTax.blockForLoadFailure(err);
+        }
+        navigate(model, page);
+        return false;
+    };
+    if (std.mem.eql(u8, form_code, "2551Q")) {
+        model.incomeTax = .{};
+        model.percentageTax.reset(year, quarter) catch {
+            model.percentageTax = .{};
+        };
+        const loaded_draft = model.formProfiles.loadPersistedDraft() catch |err| {
+            model.percentageTax.blockForLoadFailure(err);
+            navigate(model, page);
+            return true;
+        };
+        if (loaded_draft) |loaded| {
+            var draft = loaded;
+            defer model.formProfiles.deinitLoadedDraft(&draft);
+            model.percentageTax.loadFromDraft(&draft) catch |err| {
+                model.percentageTax.blockForLoadFailure(err);
+            };
+        }
+    } else if (std.mem.eql(u8, form_code, "1701Q")) {
+        model.percentageTax = .{};
+        model.incomeTax.reset(year, quarter) catch |err| {
+            model.incomeTax = .{};
+            model.incomeTax.blockForLoadFailure(err);
+        };
+        const loaded_draft = model.formProfiles.loadPersistedDraft() catch |err| {
+            model.incomeTax.blockForLoadFailure(err);
+            navigate(model, page);
+            return true;
+        };
+        if (loaded_draft) |loaded| {
+            var draft = loaded;
+            defer model.formProfiles.deinitLoadedDraft(&draft);
+            model.incomeTax.loadFromDraft(&draft) catch |err| {
+                model.incomeTax.blockForLoadFailure(err);
+            };
+        }
+    } else {
+        model.percentageTax = .{};
+        model.incomeTax = .{};
+    }
+    navigate(model, page);
+    return true;
+}
+
+fn reopenIncomeTaxQuarter(model: *Model, quarter: u8) void {
+    if (quarter < 1 or quarter > 3) return;
+    var spouse_profile_id: ?profile_model.ProfileId = null;
+    if (model.formProfiles.formRevision()) |revision| {
+        if (std.mem.eql(u8, revision.code.asSlice(), "1701Q")) {
+            if (model.formProfiles.roleBinding(.spouse)) |binding| {
+                spouse_profile_id = binding.profile_id;
+            }
+        }
+    }
+    if (openProfileBoundFormForQuarter(
+        model,
+        .form_1701q,
+        "1701Q",
+        quarter,
+        spouse_profile_id,
+    )) {
+        model.calendar.selected_month = quarter * 3;
+    }
+}
+
 fn navigate(model: *Model, page: Page) void {
     model.page = page;
     model.sidebarOverlayOpen = false;
@@ -1386,9 +2970,14 @@ const calendar_open_file_key: u64 = 20_260_002;
 fn exportProfileCalendar(model: *Model, maybe_fx: ?*Effects) void {
     if (model.profileCalendarExportBusy()) return;
     model.profileActionsOpen = false;
-    model.calendarExportProfile = model.selectedTaxpayer;
+    model.calendarExportProfileRevision =
+        model.taxProfiles.selectedRevisionContext();
     if (model.contentPage() != .taxpayer_dashboard) {
         model.profileCalendarExportStatus = .wrong_context;
+        return;
+    }
+    if (!model.hasSelectedTaxpayer()) {
+        model.profileCalendarExportStatus = .no_profile;
         return;
     }
     const fx = maybe_fx orelse {
@@ -1413,13 +3002,33 @@ fn exportProfileCalendar(model: *Model, maybe_fx: ?*Effects) void {
         }
         @memcpy(&export_stamp, fallback);
     }
+    model.taxProfiles.refreshCalendarFormSet(
+        model.calendar.selected_year,
+    ) catch |err| {
+        model.calendar.setError(err);
+        model.profileCalendarExportStatus = .build_failed;
+        return;
+    };
+    var form_scope_arena = std.heap.ArenaAllocator.init(allocator);
+    defer form_scope_arena.deinit();
+    const form_scope = if (model.taxProfiles.calendarFormSetConfigured(
+        model.calendar.selected_year,
+    ))
+        calendar_ui.ProfileFormScope{
+            .registered = model.taxProfiles.calendarFormCodes(
+                form_scope_arena.allocator(),
+                model.calendar.selected_year,
+            ),
+        }
+    else
+        calendar_ui.ProfileFormScope.catalog_fallback;
     const bytes = model.calendar.buildProfileIcs(
         allocator,
         &export_stamp,
         .{
             .key = model.selectedTaxpayerCalendarKey(),
             .name = model.selectedTaxpayerName(),
-            .form_scope = .catalog_fallback,
+            .form_scope = form_scope,
         },
     ) catch |err| {
         model.calendar.setError(err);
@@ -1627,7 +3236,18 @@ pub fn main(init: std.process.Init) !void {
         database_path,
     );
     defer calendar_store.close();
+    var tax_profile_store = try profile_store.Store.open(
+        init.gpa,
+        database_path,
+    );
+    defer tax_profile_store.close();
     const boot_time = bootCalendarTime(init.io);
+    var boot_date: [10]u8 = undefined;
+    @memcpy(boot_date[0..4], boot_time.stamp[0..4]);
+    boot_date[4] = '-';
+    @memcpy(boot_date[5..7], boot_time.stamp[4..6]);
+    boot_date[7] = '-';
+    @memcpy(boot_date[8..10], boot_time.stamp[6..8]);
 
     const app_state = try EbirFormsApp.create(std.heap.page_allocator, .{
         .name = "ebirforms-zero",
@@ -1650,6 +3270,17 @@ pub fn main(init: std.process.Init) !void {
         boot_time.year,
         boot_time.month,
     );
+    try app_state.model.taxProfiles.attach(
+        init.gpa,
+        &tax_profile_store,
+        &boot_date,
+        boot_time.year,
+    );
+    app_state.model.formProfiles.attach(
+        init.gpa,
+        &tax_profile_store,
+    );
+    defer app_state.model.formProfiles.deinit();
 
     try runner.runWithOptions(app_state.app(), .{
         .app_name = "ebirforms-zero",
@@ -1664,6 +3295,140 @@ pub fn main(init: std.process.Init) !void {
             .navigation = .{ .allowed_origins = &.{ "zero://inline", "zero://app" } },
         },
     }, init);
+}
+
+fn addTestProfile(
+    store: *profile_store.Store,
+    id: []const u8,
+    name: []const u8,
+    tin: []const u8,
+    subject_kind: profile_model.SubjectKind,
+) !void {
+    var revision_id_buffer: [64]u8 = undefined;
+    const revision_id = try std.fmt.bufPrint(
+        &revision_id_buffer,
+        "rev-{s}",
+        .{id},
+    );
+    const base: profile_editor.Base = .{
+        .profile_id = try profile_model.ProfileId.parse(id),
+        .revision_id = try profile_model.RevisionId.parse(revision_id),
+        .sequence = 1,
+        .effective = try profile_model.EffectivePeriod.init(
+            try profile_model.Date.parseIso("2026-01-01"),
+            null,
+        ),
+        .source = .manual_entry,
+        .identity = .{
+            .tin = try profile_fields.Tin.parse(tin),
+            .rdo_code = try profile_fields.RdoCode.parse("040"),
+        },
+        .contact = .{
+            .address = try profile_fields.RegisteredAddress.parse(
+                "Quezon City",
+            ),
+            .zip_code = try profile_fields.ZipCode.parse("1100"),
+            .contact_number = try profile_fields.ContactNumber.parse(
+                "09171234567",
+            ),
+            .email_address = try profile_fields.EmailAddress.parse(
+                "fixture@example.ph",
+            ),
+        },
+    };
+    const ready = switch (subject_kind) {
+        .individual => profile_editor.begin(base).individual(.{
+            .name = try profile_fields.TaxpayerName.parse(name),
+            .date_of_birth = try profile_model.Date.parseIso("1990-01-01"),
+            .citizenship = try profile_fields.Citizenship.parse("Filipino"),
+        }),
+        .sole_proprietor => profile_editor.begin(base).soleProprietor(.{
+            .person = .{
+                .name = try profile_fields.TaxpayerName.parse(name),
+                .date_of_birth = try profile_model.Date.parseIso("1990-01-01"),
+                .citizenship = try profile_fields.Citizenship.parse(
+                    "Filipino",
+                ),
+            },
+        }),
+        .corporation,
+        .partnership,
+        .estate,
+        .trust,
+        .other_legal_entity,
+        => profile_editor.begin(base).legalEntity(.{
+            .registered_name = try profile_fields.RegisteredName.parse(name),
+            .kind = switch (subject_kind) {
+                .corporation => .corporation,
+                .partnership => .partnership,
+                .estate => .estate,
+                .trust => .trust,
+                .other_legal_entity => .other,
+                .individual, .sole_proprietor => unreachable,
+            },
+        }),
+    };
+    const revision = try ready.build();
+    try profile_persistence.createProfileWithRevision(
+        store,
+        std.testing.allocator,
+        .active,
+        &revision,
+    );
+}
+
+fn addThreeTestProfiles(store: *profile_store.Store) !void {
+    try addTestProfile(
+        store,
+        "11111111111111111111111111111111",
+        "Juan Dela Cruz",
+        "000-000-000-000",
+        .individual,
+    );
+    try addTestProfile(
+        store,
+        "22222222222222222222222222222222",
+        "Demo Corporation",
+        "111-111-111-000",
+        .corporation,
+    );
+    try addTestProfile(
+        store,
+        "33333333333333333333333333333333",
+        "Sample Partnership",
+        "222-222-222-000",
+        .partnership,
+    );
+}
+
+fn profileSlotNamed(model: *const Model, name: []const u8) ?usize {
+    for (model.profileRows()) |row| {
+        if (std.mem.eql(u8, row.nameLabel(), name)) return row.slot;
+    }
+    return null;
+}
+
+test "tax-profile domain modules remain in the repository test root" {
+    _ = @import("domain/date.zig");
+    _ = @import("domain/money.zig");
+    _ = @import("tax_profile/field.zig");
+    _ = @import("tax_profile/model.zig");
+    _ = @import("tax_profile/capability.zig");
+    _ = @import("tax_profile/projection.zig");
+    _ = @import("tax_profile/editor.zig");
+    _ = @import("tax_profile/persistence_adapter.zig");
+    _ = @import("forms/id.zig");
+    _ = @import("forms/spec.zig");
+    _ = @import("forms/compose.zig");
+    _ = @import("forms/lifecycle.zig");
+    _ = @import("forms/form_2551q.zig");
+    _ = @import("forms/form_1701q.zig");
+    _ = @import("forms/runtime.zig");
+    _ = @import("forms/catalog_projection.zig");
+    _ = @import("forms/persistence_adapter.zig");
+    _ = @import("forms/ui_state.zig");
+    _ = @import("forms/income_tax_ui_state.zig");
+    _ = @import("forms/percentage_tax_ui_state.zig");
 }
 
 test "theme preference overrides and restores the system scheme" {
@@ -1724,18 +3489,26 @@ test "sidebar can be collapsed hidden and restored without losing its route" {
 }
 
 test "taxpayer selection and local page tabs are model owned" {
-    var model = Model{};
-    try std.testing.expect(model.juanProfileActive());
-    try std.testing.expect(!model.demoProfileActive());
-    try std.testing.expect(!model.partnershipProfileActive());
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addThreeTestProfiles(&store);
 
-    update(&model, .{ .select_taxpayer = .demo_corporation });
+    var model = Model{};
+    try model.taxProfiles.attach(allocator, &store, "2026-07-29", 2026);
+    try std.testing.expectEqual(@as(usize, 3), model.profileRows().len);
+
+    const partnership_slot = profileSlotNamed(
+        &model,
+        "Sample Partnership",
+    ).?;
+    update(&model, .{ .select_taxpayer = partnership_slot });
     try std.testing.expectEqual(Page.taxpayer_dashboard, model.page);
-    try std.testing.expectEqual(TaxpayerProfile.demo_corporation, model.selectedTaxpayer);
-    try std.testing.expectEqualStrings("Demo Corporation", model.selectedTaxpayerName());
-    try std.testing.expect(!model.juanProfileActive());
-    try std.testing.expect(model.demoProfileActive());
-    try std.testing.expect(!model.partnershipProfileActive());
+    try std.testing.expectEqualStrings(
+        "Sample Partnership",
+        model.selectedTaxpayerName(),
+    );
+    try std.testing.expect(model.profileRows()[partnership_slot].active);
 
     update(&model, .show_dashboard_forms);
     try std.testing.expect(model.dashboardFormsActive());
@@ -1743,15 +3516,25 @@ test "taxpayer selection and local page tabs are model owned" {
     try std.testing.expect(model.dashboardCalendarActive());
 
     update(&model, .show_profile_setup);
+    try std.testing.expect(!model.taxProfiles.editing_new);
     update(&model, .show_profile_email);
     try std.testing.expect(model.profileEmailActive());
 
     update(&model, .show_screen_gallery);
-    try std.testing.expect(model.demoProfileActive());
+    try std.testing.expectEqualStrings(
+        "Sample Partnership",
+        model.selectedTaxpayerName(),
+    );
 }
 
 test "calendar export is bound to the selected tax profile context" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addThreeTestProfiles(&store);
+
     var model = Model{};
+    try model.taxProfiles.attach(allocator, &store, "2026-07-29", 2026);
     update(&model, .profile_calendar_export);
     try std.testing.expectEqual(
         ProfileCalendarExportStatus.wrong_context,
@@ -1759,11 +3542,10 @@ test "calendar export is bound to the selected tax profile context" {
     );
 
     model.page = .taxpayer_dashboard;
-    model.selectedTaxpayer = .demo_corporation;
+    const exported_revision = model.taxProfiles.selectedRevisionContext().?;
     update(&model, .profile_calendar_export);
-    try std.testing.expectEqual(
-        TaxpayerProfile.demo_corporation,
-        model.calendarExportProfile.?,
+    try std.testing.expect(
+        exported_revision.eql(&model.calendarExportProfileRevision.?),
     );
     try std.testing.expectEqual(
         ProfileCalendarExportStatus.unavailable,
@@ -1771,17 +3553,22 @@ test "calendar export is bound to the selected tax profile context" {
     );
     try std.testing.expect(model.profileCalendarExportNoticeVisible());
 
-    model.selectedTaxpayer = .juan_dela_cruz;
+    model.taxProfiles.select(profileSlotNamed(&model, "Juan Dela Cruz").?);
     try std.testing.expect(!model.profileCalendarExportNoticeVisible());
 }
 
-test "sample tax profiles have unique opaque calendar identities" {
+test "persisted tax profiles have unique opaque calendar identities" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addThreeTestProfiles(&store);
+
     var model = Model{};
-    const juan_key = model.selectedTaxpayerCalendarKey();
-    model.selectedTaxpayer = .demo_corporation;
-    const corporation_key = model.selectedTaxpayerCalendarKey();
-    model.selectedTaxpayer = .sample_partnership;
-    const partnership_key = model.selectedTaxpayerCalendarKey();
+    try model.taxProfiles.attach(allocator, &store, "2026-07-29", 2026);
+    const rows = model.profileRows();
+    const corporation_key = rows[0].idLabel();
+    const juan_key = rows[1].idLabel();
+    const partnership_key = rows[2].idLabel();
 
     try std.testing.expect(!std.mem.eql(u8, juan_key, corporation_key));
     try std.testing.expect(!std.mem.eql(u8, juan_key, partnership_key));
@@ -1789,6 +3576,340 @@ test "sample tax profiles have unique opaque calendar identities" {
     try std.testing.expect(std.mem.indexOf(u8, juan_key, "000-000") == null);
     try std.testing.expect(std.mem.indexOf(u8, corporation_key, "Demo") == null);
     try std.testing.expect(std.mem.indexOf(u8, partnership_key, "Partnership") == null);
+}
+
+test "Forms Set explicit empty disables editors while fallback enables them" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addTestProfile(
+        &store,
+        "11111111111111111111111111111111",
+        "Juan Dela Cruz",
+        "123-456-789-000",
+        .individual,
+    );
+
+    var model = Model{};
+    model.calendar.selected_year = 2026;
+    try model.taxProfiles.attach(allocator, &store, "2026-07-29", 2026);
+    const profile_id = model.taxProfiles.selectedProfileId().?;
+
+    try store.replaceFormSet(profile_id, 2026, &.{});
+    refreshSelectedProfileFormSet(&model);
+    try std.testing.expect(model.taxpayerForm0605Disabled());
+    try std.testing.expect(model.taxpayerForm1701QDisabled());
+    try std.testing.expect(model.taxpayerForm2551QDisabled());
+
+    model.calendar.selected_year = 2027;
+    refreshSelectedProfileFormSet(&model);
+    try std.testing.expect(!model.taxpayerForm0605Disabled());
+    try std.testing.expect(!model.taxpayerForm1701QDisabled());
+    try std.testing.expect(!model.taxpayerForm2551QDisabled());
+
+    try store.replaceFormSet(profile_id, 2027, &.{
+        .{
+            .form_code = "2551Q",
+            .form_revision = "2018-01-ENCS",
+        },
+    });
+    refreshSelectedProfileFormSet(&model);
+    try std.testing.expect(model.taxpayerForm0605Disabled());
+    try std.testing.expect(model.taxpayerForm1701QDisabled());
+    try std.testing.expect(!model.taxpayerForm2551QDisabled());
+}
+
+test "2551Q app wiring saves and resumes exact profile and transaction data" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addTestProfile(
+        &store,
+        "11111111111111111111111111111111",
+        "Juan Dela Cruz",
+        "123-456-789-000",
+        .individual,
+    );
+
+    var model = Model{};
+    model.calendar.selected_year = 2026;
+    model.calendar.selected_month = 3;
+    try model.taxProfiles.attach(allocator, &store, "2026-07-29", 2026);
+    model.formProfiles.attach(allocator, &store);
+    defer model.formProfiles.deinit();
+
+    update(&model, .show_form_2551q);
+    try std.testing.expectEqual(Page.form_2551q, model.page);
+    try std.testing.expect(model.formProfiles.projectionAccepted());
+    try std.testing.expectEqual(
+        @as(usize, 7),
+        model.formProfiles.snapshot().?.slice().len,
+    );
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    try std.testing.expectEqualStrings(
+        "123-456-789-000",
+        model.formFilerTin(arena_state.allocator()),
+    );
+
+    update(&model, .percentage_tax_period_fiscal);
+    try std.testing.expectEqualStrings(
+        "",
+        model.percentageTaxPeriodBasis(),
+    );
+    update(&model, .percentage_tax_period_calendar);
+    update(&model, .{
+        .percentage_tax_year_end_month_input = .{
+            .insert_text = "12",
+        },
+    });
+    update(&model, .percentage_tax_election_graduated);
+    update(&model, .{
+        .percentage_tax_line_1_atc_input = .{ .insert_text = "PT010" },
+    });
+    update(&model, .{
+        .percentage_tax_line_1_base_input = .{
+            .insert_text = "1000.00",
+        },
+    });
+    update(&model, .{
+        .percentage_tax_line_1_rate_input = .{ .insert_text = "3.00" },
+    });
+    update(&model, .{
+        .percentage_tax_line_2_atc_input = .{ .insert_text = "PT020" },
+    });
+    update(&model, .{
+        .percentage_tax_line_2_base_input = .{
+            .insert_text = "2000.00",
+        },
+    });
+    update(&model, .{
+        .percentage_tax_line_2_rate_input = .{ .insert_text = "1.00" },
+    });
+    try std.testing.expect(model.formProfileCanSaveDraft());
+    try std.testing.expectEqualStrings(
+        "50.00",
+        model.percentageTaxTotalDue(),
+    );
+
+    update(&model, .save_recurring_form_draft);
+    const saved_id = model.formProfiles.draftId().?;
+    var draft = (try store.getDraft(
+        allocator,
+        saved_id.asSlice(),
+    )).?;
+    defer draft.deinit(allocator);
+    try std.testing.expectEqual(
+        @as(usize, percentage_tax_ui.max_draft_values),
+        draft.values.len,
+    );
+    var found_external_rate = false;
+    var found_derived_total = false;
+    for (draft.values) |*value| {
+        if (std.mem.eql(
+            u8,
+            value.field_id,
+            "2551Q.2018-01-ENCS.schedule.line-1.rate",
+        )) {
+            found_external_rate = true;
+            try std.testing.expectEqualStrings(
+                "external_policy",
+                value.provenance,
+            );
+        }
+        if (std.mem.eql(
+            u8,
+            value.field_id,
+            percentage_tax_ui.PersistedField
+                .total_percentage_tax_due.id(),
+        )) {
+            found_derived_total = true;
+            try std.testing.expectEqualStrings("50.00", value.value_text);
+            try std.testing.expectEqualStrings(
+                "derived",
+                value.provenance,
+            );
+        }
+    }
+    try std.testing.expect(found_external_rate);
+    try std.testing.expect(found_derived_total);
+
+    model.percentageTax = .{};
+    update(&model, .show_form_2551q);
+    try std.testing.expectEqualStrings(
+        "PT010",
+        model.percentageTaxLine1Atc(),
+    );
+    try std.testing.expectEqualStrings(
+        "PT020",
+        model.percentageTaxLine2Atc(),
+    );
+    try std.testing.expectEqualStrings(
+        "50.00",
+        model.percentageTaxTotalDue(),
+    );
+    try std.testing.expectEqualStrings(
+        saved_id.asSlice(),
+        model.formProfiles.draftId().?.asSlice(),
+    );
+}
+
+test "1701Q quarter reopening keeps profile period and transaction aligned" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addTestProfile(
+        &store,
+        "11111111111111111111111111111111",
+        "Juan Dela Cruz",
+        "123-456-789-000",
+        .individual,
+    );
+    try addTestProfile(
+        &store,
+        "22222222222222222222222222222222",
+        "Maria Dela Cruz",
+        "987-654-321-000",
+        .individual,
+    );
+
+    var model = Model{};
+    model.calendar.selected_year = 2026;
+    model.calendar.selected_month = 12;
+    try model.taxProfiles.attach(allocator, &store, "2026-07-29", 2026);
+    model.taxProfiles.select(profileSlotNamed(&model, "Juan Dela Cruz").?);
+    model.formProfiles.attach(allocator, &store);
+    defer model.formProfiles.deinit();
+
+    update(&model, .show_form_1701q);
+    try std.testing.expectEqual(Page.form_1701q, model.page);
+    try std.testing.expect(model.incomeTaxSaveDisabled());
+    try std.testing.expect(model.formProfiles.formRevision() == null);
+
+    update(&model, .income_tax_quarter_q2);
+    try std.testing.expectEqual(@as(u8, 6), model.calendar.selected_month);
+    try std.testing.expectEqual(@as(u8, 2), model.formProfiles.quarter());
+    try std.testing.expectEqual(@as(?u8, 2), model.incomeTax.quarter());
+    try std.testing.expect(model.formProfiles.projectionAccepted());
+
+    const filer_id = model.taxProfiles.selectedProfileDomainId().?;
+    var spouse_slot: ?usize = null;
+    for (model.formProfiles.spouseCandidates(), 0..) |*candidate, index| {
+        if (!candidate.profile_id.eql(&filer_id)) {
+            spouse_slot = index;
+            break;
+        }
+    }
+    update(&model, .{ .select_form_spouse = spouse_slot.? });
+    try std.testing.expectEqualStrings(
+        "Maria Dela Cruz",
+        model.formSpouseName(),
+    );
+
+    update(&model, .{
+        .income_tax_sheets_attached_input = .{ .insert_text = "0" },
+    });
+    update(&model, .income_tax_election_graduated);
+    update(&model, .{
+        .income_tax_graduated_sales_input = .{
+            .insert_text = "100000.00",
+        },
+    });
+    update(&model, .{
+        .income_tax_graduated_cost_input = .{
+            .insert_text = "20000.00",
+        },
+    });
+    update(&model, .{
+        .income_tax_graduated_deductions_input = .{
+            .insert_text = "10000.00",
+        },
+    });
+    update(&model, .{
+        .income_tax_graduated_taxable_income_input = .{
+            .insert_text = "70000.00",
+        },
+    });
+    update(&model, .{
+        .income_tax_graduated_tax_due_input = .{
+            .insert_text = "5000.00",
+        },
+    });
+    update(&model, .{
+        .income_tax_prior_payments_input = .{
+            .insert_text = "1000.00",
+        },
+    });
+    update(&model, .{
+        .income_tax_withheld_2307_input = .{
+            .insert_text = "500.00",
+        },
+    });
+    update(&model, .{
+        .income_tax_other_credits_input = .{
+            .insert_text = "100.00",
+        },
+    });
+    update(&model, .{
+        .income_tax_payable_input = .{ .insert_text = "3400.00" },
+    });
+    update(&model, .{
+        .income_tax_surcharge_input = .{ .insert_text = "50.00" },
+    });
+    update(&model, .{
+        .income_tax_interest_input = .{ .insert_text = "25.00" },
+    });
+    update(&model, .{
+        .income_tax_compromise_input = .{ .insert_text = "0.00" },
+    });
+    update(&model, .income_tax_add_payment);
+    update(&model, .income_tax_payment_method_check);
+    update(&model, .{
+        .income_tax_payment_bank_input = .{ .insert_text = "DBP" },
+    });
+    update(&model, .{
+        .income_tax_payment_reference_input = .{
+            .insert_text = "CHK-2026-Q2",
+        },
+    });
+    update(&model, .{
+        .income_tax_payment_amount_input = .{
+            .insert_text = "3475.00",
+        },
+    });
+    try std.testing.expect(!model.incomeTaxSaveDisabled());
+
+    update(&model, .save_recurring_form_draft);
+    const q2_draft_id = model.formProfiles.draftId().?;
+    try std.testing.expectEqual(@as(usize, 10), model.formProfiles
+        .snapshot().?.slice().len);
+
+    update(&model, .income_tax_quarter_q1);
+    try std.testing.expectEqual(@as(u8, 1), model.formProfiles.quarter());
+    try std.testing.expectEqual(
+        income_tax_ui.Election.none,
+        model.incomeTax.selectedElection(),
+    );
+    try std.testing.expect(model.formProfiles.draftId() == null);
+    try std.testing.expectEqualStrings(
+        "Maria Dela Cruz",
+        model.formSpouseName(),
+    );
+
+    update(&model, .income_tax_quarter_q2);
+    try std.testing.expectEqualStrings(
+        q2_draft_id.asSlice(),
+        model.formProfiles.draftId().?.asSlice(),
+    );
+    try std.testing.expectEqualStrings(
+        "100000.00",
+        model.incomeTaxGraduatedSales(),
+    );
+    try std.testing.expectEqualStrings(
+        "CHK-2026-Q2",
+        model.incomeTaxPaymentReference(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), model.incomeTaxPaymentRows().len);
 }
 
 test "calendar handoff markup is exposed only as a profile action" {

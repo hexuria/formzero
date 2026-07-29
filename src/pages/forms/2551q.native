@@ -2,43 +2,103 @@
   <grid columns="{columns}" gap="12">
     <column gap="4">
       <text foreground="text_muted">1 Taxable-period basis</text>
-      <input placeholder="Calendar / Fiscal" />
+      <input text="{percentageTaxPeriodBasis}" placeholder="Calendar / Fiscal" disabled="true" />
+      <row gap="8">
+        <button
+          variant="outline"
+          selected="{percentageTaxPeriodCalendarSelected}"
+          disabled="{not percentageTaxEditable}"
+          on-press="percentage_tax_period_calendar">
+          Calendar
+        </button>
+        <button
+          variant="outline"
+          selected="{percentageTaxPeriodFiscalSelected}"
+          disabled="true"
+          on-press="percentage_tax_period_fiscal">
+          Fiscal (not yet supported)
+        </button>
+      </row>
     </column>
     <column gap="4">
       <text foreground="text_muted">2 Year-end month</text>
-      <input placeholder="Month" />
+      <input
+        text="{percentageTaxYearEndMonth}"
+        placeholder="Month"
+        disabled="{not percentageTaxEditable}"
+        on-input="percentage_tax_year_end_month_input"/>
     </column>
     <column gap="4">
       <text foreground="text_muted">Taxable Quarter</text>
-      <input placeholder="Quarter" />
+      <input text="{percentageTaxQuarter}" placeholder="Quarter" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Taxable Year</text>
-      <input placeholder="YYYY" />
+      <input text="{percentageTaxYear}" placeholder="YYYY" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">5 Number of Sheets Attached</text>
-      <input placeholder="Enter number" />
+      <input
+        text="{percentageTaxSheetsAttached}"
+        placeholder="Enter number"
+        disabled="{not percentageTaxEditable}"
+        on-input="percentage_tax_sheets_attached_input"/>
     </column>
     <column gap="4">
       <text foreground="text_muted">Return Options</text>
-      <input placeholder="Original / Amended" />
+      <input text="{percentageTaxReturnOption}" placeholder="Original / Amended" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Amended Return?</text>
-      <input placeholder="No" />
+      <input text="{percentageTaxAmendedReturn}" placeholder="No" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Tax Relief?</text>
-      <input placeholder="No / Specify" />
+      <input text="{percentageTaxRelief}" placeholder="No / Specify" disabled="true" />
+      <row gap="8">
+        <button
+          variant="outline"
+          selected="{percentageTaxReliefNoneSelected}"
+          disabled="{not percentageTaxEditable}"
+          on-press="percentage_tax_relief_none">
+          No
+        </button>
+        <button
+          variant="outline"
+          selected="{percentageTaxReliefSpecifiedSelected}"
+          disabled="{not percentageTaxEditable}"
+          on-press="percentage_tax_relief_specified">
+          Specify
+        </button>
+      </row>
     </column>
     <column gap="4">
       <text foreground="text_muted">12A Tax Relief Specification</text>
-      <input placeholder="Relief code or basis" />
+      <input
+        text="{percentageTaxReliefReference}"
+        placeholder="Relief code or basis"
+        disabled="{not percentageTaxEditable}"
+        on-input="percentage_tax_relief_reference_input"/>
     </column>
     <column gap="4">
       <text foreground="text_muted">13 Income-tax-rate election</text>
-      <input placeholder="Graduated / 8 percent" />
+      <input text="{percentageTaxElection}" placeholder="Graduated / 8 percent" disabled="true" />
+      <row gap="8">
+        <button
+          variant="outline"
+          selected="{percentageTaxElectionGraduatedSelected}"
+          disabled="{not percentageTaxEditable}"
+          on-press="percentage_tax_election_graduated">
+          Graduated
+        </button>
+        <button
+          variant="outline"
+          selected="{percentageTaxElectionEightPercentSelected}"
+          disabled="{not percentageTaxEditable}"
+          on-press="percentage_tax_election_eight_percent">
+          8 percent
+        </button>
+      </row>
     </column>
   </grid>
 </template>
@@ -47,76 +107,196 @@
   <grid columns="{columns}" gap="12">
     <column gap="4">
       <text foreground="text_muted">TIN</text>
-      <input placeholder="000-000-000-000" />
+      <input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">RDO Code</text>
-      <input placeholder="RDO" />
+      <input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Taxpayer's Name</text>
-      <input placeholder="Registered taxpayer name" />
+      <input text="{formFilerTaxpayerName}" placeholder="Registered taxpayer name" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Registered Address</text>
-      <input placeholder="Registered address" />
+      <input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">ZIP Code</text>
-      <input placeholder="ZIP code" />
+      <input text="{formFilerZipCode}" placeholder="ZIP code" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Contact Number</text>
-      <input placeholder="Contact number" />
+      <input text="{formFilerContactNumber}" placeholder="Contact number" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Email Address</text>
-      <input placeholder="name@example.com" />
+      <input text="{formFilerEmailAddress}" placeholder="name@example.com" disabled="true" />
     </column>
   </grid>
+</template>
+
+<template name="form-2551q-schedule-editor" args="columns">
+  <column gap="16">
+    <text foreground="text_muted">
+      Enter the externally supplied rate for each active row. No tax rate is assumed by the application.
+    </text>
+    <grid columns="{columns}" gap="12">
+      <column gap="4">
+        <text foreground="text_muted">Schedule 1 Line 1 Percentage-tax Code</text>
+        <input
+          text="{percentageTaxLine1Atc}"
+          placeholder="ATC code"
+          disabled="{not percentageTaxEditable}"
+          on-input="percentage_tax_line_1_atc_input"/>
+      </column>
+      <column gap="4">
+        <text foreground="text_muted">Schedule 1 Line 1 Tax Base / Taxable Amount</text>
+        <input
+          text="{percentageTaxLine1Base}"
+          placeholder="Enter amount"
+          disabled="{not percentageTaxEditable}"
+          on-input="percentage_tax_line_1_base_input"/>
+      </column>
+      <column gap="4">
+        <text foreground="text_muted">Schedule 1 Line 1 Policy-supplied Tax Rate</text>
+        <input
+          text="{percentageTaxLine1Rate}"
+          placeholder="Rate"
+          disabled="{not percentageTaxEditable}"
+          on-input="percentage_tax_line_1_rate_input"/>
+      </column>
+      <column gap="4">
+        <text foreground="text_muted">Schedule 1 Line 1 Percentage Tax Due</text>
+        <input text="{percentageTaxLine1Due}" placeholder="Enter amount" disabled="true" />
+      </column>
+      <column gap="4">
+        <text foreground="text_muted">Schedule 1 Line 2 Percentage-tax Code</text>
+        <input
+          text="{percentageTaxLine2Atc}"
+          placeholder="ATC code"
+          disabled="{not percentageTaxEditable}"
+          on-input="percentage_tax_line_2_atc_input"/>
+      </column>
+      <column gap="4">
+        <text foreground="text_muted">Schedule 1 Line 2 Tax Base / Taxable Amount</text>
+        <input
+          text="{percentageTaxLine2Base}"
+          placeholder="Enter amount"
+          disabled="{not percentageTaxEditable}"
+          on-input="percentage_tax_line_2_base_input"/>
+      </column>
+      <column gap="4">
+        <text foreground="text_muted">Schedule 1 Line 2 Policy-supplied Tax Rate</text>
+        <input
+          text="{percentageTaxLine2Rate}"
+          placeholder="Rate"
+          disabled="{not percentageTaxEditable}"
+          on-input="percentage_tax_line_2_rate_input"/>
+      </column>
+      <column gap="4">
+        <text foreground="text_muted">Schedule 1 Line 2 Percentage Tax Due</text>
+        <input text="{percentageTaxLine2Due}" placeholder="Enter amount" disabled="true" />
+      </column>
+    </grid>
+  </column>
 </template>
 
 <template name="form-2551q-grid-3" args="columns">
   <grid columns="{columns}" gap="12">
     <column gap="4">
       <text foreground="text_muted">14 Total Percentage Tax Due</text>
-      <input placeholder="Enter amount" />
+      <input text="{percentageTaxTotalDue}" placeholder="Enter amount" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">15 Creditable Percentage Tax Withheld</text>
-      <input placeholder="Enter amount" />
+      <input
+        text="{percentageTaxCreditableWithheld}"
+        placeholder="Enter amount"
+        disabled="{not percentageTaxEditable}"
+        on-input="percentage_tax_creditable_withheld_input"/>
     </column>
     <column gap="4">
       <text foreground="text_muted">16 Tax Paid in Previous Return</text>
-      <input placeholder="Enter amount" />
+      <input
+        text="{percentageTaxPaidPrevious}"
+        placeholder="Enter amount"
+        disabled="{not percentageTaxEditable}"
+        on-input="percentage_tax_paid_previous_input"/>
     </column>
     <column gap="4">
       <text foreground="text_muted">17 Other Tax Credit / Payment</text>
-      <input placeholder="Enter amount" />
+      <input
+        text="{percentageTaxOtherCredit}"
+        placeholder="Enter amount"
+        disabled="{not percentageTaxEditable}"
+        on-input="percentage_tax_other_credit_input"/>
     </column>
     <column gap="4">
       <text foreground="text_muted">18 Total Tax Credits / Payments</text>
-      <input placeholder="Enter amount" />
+      <input text="{percentageTaxTotalCredits}" placeholder="Enter amount" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">19 Tax Payable / (Overpayment)</text>
-      <input placeholder="Enter amount" />
+      <input text="{percentageTaxNetTax}" placeholder="Enter amount" disabled="true" />
     </column>
     <column gap="4">
-      <text foreground="text_muted">20 Surcharge</text>
-      <input placeholder="Enter amount" />
+      <text foreground="text_muted">20 Surcharge (manual)</text>
+      <input
+        text="{percentageTaxSurcharge}"
+        placeholder="Enter amount"
+        disabled="{not percentageTaxEditable}"
+        on-input="percentage_tax_surcharge_input"/>
     </column>
     <column gap="4">
-      <text foreground="text_muted">21 Interest</text>
-      <input placeholder="Enter amount" />
+      <text foreground="text_muted">21 Interest (manual)</text>
+      <input
+        text="{percentageTaxInterest}"
+        placeholder="Enter amount"
+        disabled="{not percentageTaxEditable}"
+        on-input="percentage_tax_interest_input"/>
     </column>
     <column gap="4">
-      <text foreground="text_muted">22 Compromise</text>
-      <input placeholder="Enter amount" />
+      <text foreground="text_muted">22 Compromise (manual)</text>
+      <input
+        text="{percentageTaxCompromise}"
+        placeholder="Enter amount"
+        disabled="{not percentageTaxEditable}"
+        on-input="percentage_tax_compromise_input"/>
     </column>
     <column gap="4">
       <text foreground="text_muted">24 Overpayment Disposition</text>
-      <input placeholder="Refund / Tax Credit / Carry Over" />
+      <input text="{percentageTaxDisposition}" placeholder="Refund / Tax Credit / Carry Over" disabled="true" />
+      <row gap="8">
+        <button
+          variant="outline"
+          selected="{percentageTaxDispositionNotApplicableSelected}"
+          disabled="{not percentageTaxEditable}"
+          on-press="percentage_tax_disposition_not_applicable">
+          N/A
+        </button>
+        <button
+          variant="outline"
+          selected="{percentageTaxDispositionRefundSelected}"
+          disabled="{not percentageTaxEditable}"
+          on-press="percentage_tax_disposition_refund">
+          Refund
+        </button>
+        <button
+          variant="outline"
+          selected="{percentageTaxDispositionTaxCreditSelected}"
+          disabled="{not percentageTaxEditable}"
+          on-press="percentage_tax_disposition_tax_credit">
+          Tax credit
+        </button>
+        <button
+          variant="outline"
+          selected="{percentageTaxDispositionCarryOverSelected}"
+          disabled="{not percentageTaxEditable}"
+          on-press="percentage_tax_disposition_carry_over">
+          Carry over
+        </button>
+      </row>
     </column>
   </grid>
 </template>
@@ -125,66 +305,66 @@
   <column>
     <if test="{constrainedLayout or tabletLayout}">
       <column gap="12">
-      <column gap="8">
-        <column gap="2">
-          <text foreground="text_muted">ATC</text>
-          <text>ATC line 1</text>
+        <column gap="8">
+          <column gap="2">
+            <text foreground="text_muted">ATC</text>
+            <text>{percentageTaxLine1Atc}</text>
+          </column>
+          <column gap="2">
+            <text foreground="text_muted">Tax Base / Taxable Amount</text>
+            <text>{percentageTaxLine1Base}</text>
+          </column>
+          <column gap="2">
+            <text foreground="text_muted">Tax Rate</text>
+            <text>{percentageTaxLine1Rate}</text>
+          </column>
+          <column gap="2">
+            <text foreground="text_muted">Percentage Tax Due</text>
+            <text>{percentageTaxLine1Due}</text>
+          </column>
         </column>
-        <column gap="2">
-          <text foreground="text_muted">Tax Base / Taxable Amount</text>
-          <text>0.00</text>
+        <separator/>
+        <column gap="8">
+          <column gap="2">
+            <text foreground="text_muted">ATC</text>
+            <text>{percentageTaxLine2Atc}</text>
+          </column>
+          <column gap="2">
+            <text foreground="text_muted">Tax Base / Taxable Amount</text>
+            <text>{percentageTaxLine2Base}</text>
+          </column>
+          <column gap="2">
+            <text foreground="text_muted">Tax Rate</text>
+            <text>{percentageTaxLine2Rate}</text>
+          </column>
+          <column gap="2">
+            <text foreground="text_muted">Percentage Tax Due</text>
+            <text>{percentageTaxLine2Due}</text>
+          </column>
         </column>
-        <column gap="2">
-          <text foreground="text_muted">Tax Rate</text>
-          <text>0.00%</text>
-        </column>
-        <column gap="2">
-          <text foreground="text_muted">Percentage Tax Due</text>
-          <text>0.00</text>
-        </column>
-      </column>
-      <separator/>
-      <column gap="8">
-        <column gap="2">
-          <text foreground="text_muted">ATC</text>
-          <text>ATC line 2</text>
-        </column>
-        <column gap="2">
-          <text foreground="text_muted">Tax Base / Taxable Amount</text>
-          <text>0.00</text>
-        </column>
-        <column gap="2">
-          <text foreground="text_muted">Tax Rate</text>
-          <text>0.00%</text>
-        </column>
-        <column gap="2">
-          <text foreground="text_muted">Percentage Tax Due</text>
-          <text>0.00</text>
-        </column>
-      </column>
       </column>
     </if>
     <else>
       <table gap="4">
-                  <table-row gap="8">
-                    <table-cell>ATC</table-cell>
-                    <table-cell>Tax Base / Taxable Amount</table-cell>
-                    <table-cell>Tax Rate</table-cell>
-                    <table-cell>Percentage Tax Due</table-cell>
-                  </table-row>
-                  <table-row gap="8">
-                    <table-cell>ATC line 1</table-cell>
-                    <table-cell>0.00</table-cell>
-                    <table-cell>0.00%</table-cell>
-                    <table-cell>0.00</table-cell>
-                  </table-row>
-                  <table-row gap="8">
-                    <table-cell>ATC line 2</table-cell>
-                    <table-cell>0.00</table-cell>
-                    <table-cell>0.00%</table-cell>
-                    <table-cell>0.00</table-cell>
-                  </table-row>
-                </table>
+        <table-row gap="8">
+          <table-cell>ATC</table-cell>
+          <table-cell>Tax Base / Taxable Amount</table-cell>
+          <table-cell>Tax Rate</table-cell>
+          <table-cell>Percentage Tax Due</table-cell>
+        </table-row>
+        <table-row gap="8">
+          <table-cell>{percentageTaxLine1Atc}</table-cell>
+          <table-cell>{percentageTaxLine1Base}</table-cell>
+          <table-cell>{percentageTaxLine1Rate}</table-cell>
+          <table-cell>{percentageTaxLine1Due}</table-cell>
+        </table-row>
+        <table-row gap="8">
+          <table-cell>{percentageTaxLine2Atc}</table-cell>
+          <table-cell>{percentageTaxLine2Base}</table-cell>
+          <table-cell>{percentageTaxLine2Rate}</table-cell>
+          <table-cell>{percentageTaxLine2Due}</table-cell>
+        </table-row>
+      </table>
     </else>
   </column>
 </template>
@@ -193,20 +373,25 @@
   <column>
     <if test="{constrainedLayout}">
       <column gap="16">
-      <column gap="6">
-        <text size="heading">BIR Form No. 2551Q</text>
-        <text>Quarterly Percentage Tax Return</text>
-        <row gap="8" cross="center">
-          <text foreground="text_muted" grow="1">January 2018 (ENCS)</text>
-          <badge>Draft</badge>
-        </row>
-      </column>
+        <column gap="6">
+          <text size="heading">BIR Form No. 2551Q</text>
+          <text>Quarterly Percentage Tax Return</text>
+          <row gap="8" cross="center">
+            <text foreground="text_muted" grow="1">January 2018 (ENCS)</text>
+            <badge>Draft</badge>
+          </row>
+        </column>
         <column gap="8">
-        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
-        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
-        <separator/>
-        <button variant="secondary" disabled="true">Save</button>
-        <button variant="primary" disabled="true">Submit</button>
+          <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+          <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
+          <separator/>
+          <button
+            variant="secondary"
+            disabled="{not formProfileCanSaveDraft}"
+            on-press="save_recurring_form_draft">
+            Save
+          </button>
+          <button variant="primary" disabled="true">Submit</button>
         </column>
       </column>
     </if>
@@ -221,11 +406,16 @@
           <badge>Draft</badge>
         </row>
         <row gap="8">
-        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
-        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
-        <spacer/>
-        <button variant="secondary" disabled="true">Save</button>
-        <button variant="primary" disabled="true">Submit</button>
+          <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+          <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
+          <spacer/>
+          <button
+            variant="secondary"
+            disabled="{not formProfileCanSaveDraft}"
+            on-press="save_recurring_form_draft">
+            Save
+          </button>
+          <button variant="primary" disabled="true">Submit</button>
         </row>
       </column>
     </else>
@@ -270,6 +460,8 @@
     <column padding="32" gap="24">
       <use template="form-2551q-masthead"/>
 
+      <!-- @include-template tax-profile-form-context -->
+
       <use template="form-2551q-filing-status"/>
 
       <card>
@@ -305,6 +497,16 @@
       <card>
         <column padding="20" gap="12">
           <text size="heading">SCHEDULE 1 — COMPUTATION OF TAX</text>
+          <if test="{constrainedLayout}">
+            <use template="form-2551q-schedule-editor" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-2551q-schedule-editor" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-2551q-schedule-editor" columns="4"/>
+          </if>
+          <separator/>
           <use template="form-2551q-table-1"/>
         </column>
       </card>
@@ -326,16 +528,17 @@
             <column gap="8">
               <text>Total Amount Payable</text>
               <row cross="center">
-                <badge>PHP 0.00</badge>
+                <badge>PHP {percentageTaxTotalAmountPayable}</badge>
               </row>
             </column>
           </if>
           <else>
             <row gap="8">
               <text grow="1">Total Amount Payable</text>
-              <badge>PHP 0.00</badge>
+              <badge>PHP {percentageTaxTotalAmountPayable}</badge>
             </row>
           </else>
+          <text foreground="text_muted">{percentageTaxValidationStatus}</text>
         </column>
       </card>
 
