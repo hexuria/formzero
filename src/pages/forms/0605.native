@@ -1,0 +1,305 @@
+<template name="form-0605-grid-1" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">2 Year Ended month (independent)</text>
+      <input placeholder="MM / YYYY" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">4 Due Date (MM/DD/YYYY)</text>
+      <input placeholder="MM / DD / YYYY" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">5 Number of Sheets Attached</text>
+      <input placeholder="Enter number" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">6 ATC - only source-proven pairs</text>
+      <input placeholder="Select ATC" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">8 Tax Type - only source-proven pairs</text>
+      <input placeholder="Select tax type" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">17 Manner of Payment</text>
+      <input placeholder="Select manner" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-0605-grid-2" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">9 TIN</text>
+      <input placeholder="000-000-000-000" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">10 RDO Code</text>
+      <input placeholder="RDO" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">12 Line of Business / Occupation</text>
+      <input placeholder="Business or occupation" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">13 Taxpayer Name</text>
+      <input placeholder="Registered taxpayer name" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">15 Registered Address</text>
+      <input placeholder="Registered address" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">18 Type of Payment</text>
+      <input placeholder="Select payment type" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-0605-grid-3" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">19 Basic Tax / Deposit / Advance Payment</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">20A Surcharge (manual)</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">20B Interest (manual)</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">20C Compromise (manual)</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-0605-table-1">
+  <column>
+    <if test="{constrainedLayout or tabletLayout}">
+      <column gap="12">
+      <column gap="8">
+        <column gap="2">
+          <text foreground="text_muted">Payment method</text>
+          <text>Cash / Bank Debit</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Drawee bank / agency</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Reference number</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Amount</text>
+          <text>0.00</text>
+        </column>
+      </column>
+      <separator/>
+      <column gap="8">
+        <column gap="2">
+          <text foreground="text_muted">Payment method</text>
+          <text>Check / Tax Debit Memo / Other</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Drawee bank / agency</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Reference number</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Amount</text>
+          <text>0.00</text>
+        </column>
+      </column>
+      </column>
+    </if>
+    <else>
+      <table gap="4">
+                <table-row gap="8">
+                  <table-cell>Payment method</table-cell>
+                  <table-cell>Drawee bank / agency</table-cell>
+                  <table-cell>Reference number</table-cell>
+                  <table-cell>Amount</table-cell>
+                </table-row>
+                <table-row gap="8">
+                  <table-cell>Cash / Bank Debit</table-cell>
+                  <table-cell>-</table-cell>
+                  <table-cell>-</table-cell>
+                  <table-cell>0.00</table-cell>
+                </table-row>
+                <table-row gap="8">
+                  <table-cell>Check / Tax Debit Memo / Other</table-cell>
+                  <table-cell>-</table-cell>
+                  <table-cell>-</table-cell>
+                  <table-cell>0.00</table-cell>
+                </table-row>
+      </table>
+    </else>
+  </column>
+</template>
+
+<template name="form-0605-masthead">
+  <column>
+    <if test="{constrainedLayout}">
+      <column gap="16">
+      <column gap="6">
+        <text size="heading">BIR Form No. 0605</text>
+        <text>Payment Form</text>
+        <row gap="8" cross="center">
+          <text foreground="text_muted" grow="1">July 1999 (ENCS)</text>
+          <badge>Draft</badge>
+        </row>
+      </column>
+      <column gap="8">
+        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
+        <separator/>
+        <button variant="secondary" disabled="true">Save Draft</button>
+        <button variant="primary" disabled="true">Manual / External Filing</button>
+      </column>
+      </column>
+    </if>
+    <else>
+      <column gap="16">
+      <row gap="16" cross="center">
+        <column gap="4" grow="1">
+          <text size="heading">BIR Form No. 0605</text>
+          <text>Payment Form</text>
+          <text foreground="text_muted">July 1999 (ENCS)</text>
+        </column>
+        <badge>Draft</badge>
+      </row>
+      <row gap="8">
+        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
+        <spacer/>
+        <button variant="secondary" disabled="true">Save Draft</button>
+        <button variant="primary" disabled="true">Manual / External Filing</button>
+      </row>
+      </column>
+    </else>
+  </column>
+</template>
+
+<template name="form-0605-filing-status">
+  <card>
+    <column padding="20" gap="12">
+      <text size="heading">Filing status</text>
+      <if test="{constrainedLayout}">
+        <if test="{phoneLayout}">
+          <column gap="8">
+            <badge>Draft</badge>
+            <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
+          </column>
+        </if>
+        <else>
+          <row gap="12" cross="center">
+            <badge>Draft</badge>
+            <text foreground="text_muted" grow="1">Next: Queued, Submitted, Confirmed, and Paid</text>
+          </row>
+        </else>
+      </if>
+      <else>
+        <stepper active="0">
+          <step>Draft</step>
+          <step>Queued</step>
+          <step>Submitted</step>
+          <step>Confirmed</step>
+          <step>Paid</step>
+        </stepper>
+      </else>
+    </column>
+  </card>
+</template>
+
+<template name="form-0605">
+  <scroll grow="1" global-key="page-form-0605">
+    <column padding="32" gap="24">
+      <use template="form-0605-masthead"/>
+
+      <use template="form-0605-filing-status"/>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">ITEMS 1-8 - FILING AND PAYMENT IDENTITY</text>
+          <if test="{constrainedLayout}">
+            <use template="form-0605-grid-1" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-0605-grid-1" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-0605-grid-1" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART I - BACKGROUND INFORMATION</text>
+          <if test="{constrainedLayout}">
+            <use template="form-0605-grid-2" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-0605-grid-2" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-0605-grid-2" columns="2"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART II - COMPUTATION OF TAX</text>
+          <if test="{constrainedLayout}">
+            <use template="form-0605-grid-3" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-0605-grid-3" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-0605-grid-3" columns="2"/>
+          </if>
+          <separator />
+          <if test="{constrainedLayout}">
+            <column gap="8">
+              <text>21 Total Amount Payable (19 + 20D)</text>
+              <badge>PHP 0.00</badge>
+            </column>
+          </if>
+          <else>
+            <row gap="8">
+              <text grow="1">21 Total Amount Payable (19 + 20D)</text>
+              <badge>PHP 0.00</badge>
+            </row>
+          </else>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">ITEM 22 - SIGNATURE DETAILS</text>
+          <column gap="4">
+            <text foreground="text_muted">22A Taxpayer / Authorized Representative</text>
+            <input placeholder="Name and capacity" />
+          </column>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART III - DETAILS OF PAYMENT</text>
+          <use template="form-0605-table-1"/>
+        </column>
+      </card>
+    </column>
+  </scroll>
+</template>

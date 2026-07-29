@@ -1,0 +1,86 @@
+<template name="command-palette-card">
+  <card radius="lg" background="background">
+    <column>
+      <row padding="16" gap="12" cross="center">
+        <icon name="search" width="20" height="20" foreground="text_muted"/>
+        <input
+          grow="1"
+          size="lg"
+          placeholder="Search profiles..."
+          label="Search tax profiles"
+        />
+        <button
+          size="icon"
+          variant="ghost"
+          icon="x"
+          label="Close command palette"
+          on-press="go_back"
+        />
+      </row>
+
+      <separator/>
+
+      <scroll height="350" overscroll="none">
+        <column padding="8" gap="4">
+          <text size="sm" foreground="text_muted">ACTIVE PROFILES</text>
+          <list-item
+            selected="true"
+            label="Juan Dela Cruz, TIN 123-456-789-000"
+          >
+            <row padding="12" gap="16" cross="center">
+              <avatar label="Juan Dela Cruz">JD</avatar>
+              <column grow="1" gap="2">
+                <text wrap="true" size="heading">Juan Dela Cruz</text>
+                <text wrap="true" foreground="text_muted">TIN: 123-456-789-000</text>
+              </column>
+            </row>
+          </list-item>
+          <list-item label="Maria Santos, TIN 987-654-321-000">
+            <row padding="12" gap="16" cross="center">
+              <avatar label="Maria Santos">MS</avatar>
+              <column grow="1" gap="2">
+                <text wrap="true" size="heading">Maria Santos</text>
+                <text wrap="true" foreground="text_muted">TIN: 987-654-321-000</text>
+              </column>
+            </row>
+          </list-item>
+
+          <separator/>
+
+          <text size="sm" foreground="text_muted">ARCHIVED PROFILES</text>
+          <list-item label="Archived profile, TIN 555-555-555-000">
+            <row padding="12" gap="16" cross="center">
+              <avatar label="Archived profile">AP</avatar>
+              <column grow="1" gap="2">
+                <text wrap="true" foreground="text_muted">Archived Profile</text>
+                <text wrap="true" foreground="text_muted">TIN: 555-555-555-000</text>
+              </column>
+            </row>
+          </list-item>
+        </column>
+      </scroll>
+    </column>
+  </card>
+</template>
+
+<template name="command-palette-overlay">
+  <column grow="1" padding="16" background="shadow">
+    <if test="{constrainedLayout}">
+      <spacer height="16"/>
+    </if>
+    <else>
+      <spacer height="72"/>
+    </else>
+
+    <if test="{constrainedLayout}">
+      <use template="command-palette-card"/>
+    </if>
+    <else>
+      <row main="center">
+        <column width="600">
+          <use template="command-palette-card"/>
+        </column>
+      </row>
+    </else>
+  </column>
+</template>

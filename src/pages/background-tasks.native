@@ -1,0 +1,244 @@
+<template name="background-job-card" args="title description source cadence next_run">
+  <card>
+    <column padding="20" gap="14">
+      <if test="{constrainedLayout}">
+        <column gap="12">
+          <row gap="12" cross="start">
+            <icon name="clock" foreground="warning" width="22" height="22"/>
+            <column grow="1" gap="4">
+              <text><span weight="bold">{title}</span></text>
+              <text wrap="true" foreground="text_muted">{description}</text>
+            </column>
+          </row>
+          <badge variant="secondary">Queued</badge>
+        </column>
+      </if>
+      <else>
+        <row gap="12" cross="center">
+          <icon name="clock" foreground="warning" width="22" height="22"/>
+          <column grow="1" gap="4">
+            <text><span weight="bold">{title}</span></text>
+            <text wrap="true" foreground="text_muted">{description}</text>
+          </column>
+          <badge variant="secondary">Queued</badge>
+        </row>
+      </else>
+
+      <separator/>
+
+      <if test="{constrainedLayout}">
+        <column gap="14">
+          <column gap="5">
+            <text foreground="text_muted">Source</text>
+            <text>{source}</text>
+          </column>
+          <column gap="5">
+            <text foreground="text_muted">Schedule</text>
+            <text>{cadence}</text>
+          </column>
+          <column gap="5">
+            <text foreground="text_muted">Next run</text>
+            <text>{next_run}</text>
+          </column>
+        </column>
+      </if>
+      <else>
+        <row gap="24" cross="start">
+          <column grow="1" gap="5">
+            <text foreground="text_muted">Source</text>
+            <text>{source}</text>
+          </column>
+          <column grow="1" gap="5">
+            <text foreground="text_muted">Schedule</text>
+            <text>{cadence}</text>
+          </column>
+          <column grow="1" gap="5">
+            <text foreground="text_muted">Next run</text>
+            <text>{next_run}</text>
+          </column>
+        </row>
+      </else>
+
+      <text wrap="true" foreground="text_muted">Status: Queued - Retries: 0</text>
+
+      <if test="{constrainedLayout}">
+        <column gap="8">
+          <button
+            size="sm"
+            variant="ghost"
+            icon="eye"
+            on-press="show_aux_background_task_debug_log">
+            View Job
+          </button>
+          <button size="sm" variant="outline" icon="play" disabled="true">Run Now</button>
+          <button size="sm" variant="outline" icon="archive" disabled="true">Archive</button>
+          <button size="sm" variant="destructive" icon="trash" disabled="true">Delete</button>
+        </column>
+      </if>
+      <else>
+        <row main="end" gap="8">
+          <button
+            size="sm"
+            variant="ghost"
+            icon="eye"
+            on-press="show_aux_background_task_debug_log">
+            View Job
+          </button>
+          <button size="sm" variant="outline" icon="play" disabled="true">Run Now</button>
+          <button size="sm" variant="outline" icon="archive" disabled="true">Archive</button>
+          <button size="sm" variant="destructive" icon="trash" disabled="true">Delete</button>
+        </row>
+      </else>
+    </column>
+  </card>
+</template>
+
+<template name="background-jobs-content">
+  <column gap="24">
+    <card>
+      <column padding="16" gap="12">
+        <if test="{constrainedLayout}">
+          <column gap="10">
+            <select text="Queued" label="Job status"/>
+            <search-field placeholder="Search jobs" label="Search background jobs"/>
+            <select text="Archive Days: 30" label="Archive retention"/>
+            <button variant="outline" icon="archive" disabled="true">Purge Archives</button>
+          </column>
+        </if>
+        <else>
+          <row gap="12" cross="center">
+            <select text="Queued" label="Job status"/>
+            <search-field grow="1" placeholder="Search jobs" label="Search background jobs"/>
+            <select text="Archive Days: 30" label="Archive retention"/>
+            <button variant="outline" icon="archive" disabled="true">Purge Archives</button>
+          </row>
+        </else>
+        <row gap="8" cross="center">
+          <badge variant="secondary">2 queued</badge>
+          <text wrap="true" foreground="text_muted">Last checked moments ago</text>
+        </row>
+      </column>
+    </card>
+
+    <use
+      template="background-job-card"
+      title="Waiting for 2551Q confirmation email"
+      description="Checks demo@example.com for the filing confirmation message."
+      source="System"
+      cadence="Every minute"
+      next_run="Past due"/>
+
+    <use
+      template="background-job-card"
+      title="Synchronize tax calendar"
+      description="Refreshes the local filing calendar for Juan Dela Cruz."
+      source="System"
+      cadence="Every 15 minutes"
+      next_run="In 8 minutes"/>
+  </column>
+</template>
+
+<template name="background-logs-content">
+  <card>
+    <column padding="20" gap="14">
+      <row gap="10" cross="center">
+        <icon name="terminal" foreground="accent" width="22" height="22"/>
+        <column grow="1" gap="4">
+          <text><span weight="bold">Recent task logs</span></text>
+          <text wrap="true" foreground="text_muted">Static diagnostic entries from the desktop application.</text>
+        </column>
+      </row>
+      <separator/>
+      <button
+        variant="ghost"
+        icon="eye"
+        on-press="show_aux_background_task_debug_log">
+        Open Poll eFPS Email Confirmations Log
+      </button>
+      <text wrap="true" foreground="text_muted">No other task logs are available in this static build.</text>
+    </column>
+  </card>
+</template>
+
+<template name="background-tasks-content">
+  <column gap="24">
+    <column gap="6">
+      <text size="heading">Background Tasks</text>
+      <text wrap="true" foreground="text_muted">Monitor scheduled jobs, email checks, and maintenance activity.</text>
+    </column>
+
+    <if test="{constrainedLayout}">
+      <column gap="4" label="Background task sections">
+        <button
+          variant="ghost"
+          selected="{backgroundJobsActive}"
+          on-press="show_background_jobs">
+          Jobs
+        </button>
+        <button
+          variant="ghost"
+          selected="{backgroundLogsActive}"
+          on-press="show_background_logs">
+          Logs
+        </button>
+      </column>
+    </if>
+    <else>
+      <tabs gap="4" label="Background task sections">
+        <button
+          variant="ghost"
+          selected="{backgroundJobsActive}"
+          on-press="show_background_jobs">
+          Jobs
+        </button>
+        <button
+          variant="ghost"
+          selected="{backgroundLogsActive}"
+          on-press="show_background_logs">
+          Logs
+        </button>
+      </tabs>
+    </else>
+
+    <if test="{backgroundJobsActive}">
+      <use template="background-jobs-content"/>
+    </if>
+    <if test="{backgroundLogsActive}">
+      <use template="background-logs-content"/>
+    </if>
+
+    <card>
+      <column padding="18" gap="10">
+        <row gap="10" cross="center">
+          <icon name="info" foreground="info" width="20" height="20"/>
+          <text><span weight="bold">Prototype task monitor</span></text>
+        </row>
+        <text wrap="true" foreground="text_muted">
+          Job controls are presented to match the desktop application. This static milestone does not execute or modify background work.
+        </text>
+      </column>
+    </card>
+  </column>
+</template>
+
+<template name="background-tasks-page">
+  <scroll grow="1" global-key="page-background-tasks" label="Background tasks content">
+    <if test="{phoneLayout}">
+      <column padding="16">
+        <use template="background-tasks-content"/>
+      </column>
+    </if>
+    <else>
+      <if test="{constrainedLayout}">
+        <column padding="20">
+          <use template="background-tasks-content"/>
+        </column>
+      </if>
+      <else>
+        <column padding="32">
+          <use template="background-tasks-content"/>
+        </column>
+      </else>
+    </else>
+  </scroll>
+</template>

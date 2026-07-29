@@ -1,0 +1,40 @@
+<template name="profile-auth-content">
+  <column gap="24" cross="center">
+    <column gap="4" cross="center">
+      <badge variant="outline">BIR</badge>
+      <text size="display">e-BIRForms</text>
+    </column>
+
+    <column gap="6" cross="center">
+      <text wrap="true" text-alignment="center" size="heading">Enter PIN to unlock Tax Profile</text>
+      <text wrap="true" text-alignment="center" foreground="text_muted">Profile: 123-456-789-000</text>
+    </column>
+
+    <input
+      width="300"
+      size="lg"
+      placeholder="Enter 4-digit PIN"
+      label="Tax profile PIN"
+    />
+
+    <column width="300" gap="8">
+      <button width="300" variant="outline" disabled="true">Admin Override</button>
+      <button width="300" variant="ghost" on-press="go_back">Cancel</button>
+    </column>
+  </column>
+</template>
+
+<template name="profile-auth-overlay">
+  <column grow="1" padding="16" main="center" cross="center" background="background">
+    <if test="{phoneLayout}">
+      <column gap="24" cross="center">
+        <use template="profile-auth-content"/>
+      </column>
+    </if>
+    <else>
+      <column width="440" gap="24" cross="center">
+        <use template="profile-auth-content"/>
+      </column>
+    </else>
+  </column>
+</template>

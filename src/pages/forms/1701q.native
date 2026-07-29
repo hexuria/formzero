@@ -1,0 +1,412 @@
+<template name="form-1701q-grid-1" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">1 Taxable Year</text>
+      <input placeholder="YYYY" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">2 Quarter</text>
+      <input placeholder="1st / 2nd / 3rd" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">3 Amended Return?</text>
+      <input placeholder="No" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">4 Number of Sheets Attached</text>
+      <input placeholder="Enter number" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701q-grid-2" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">5 TIN</text>
+      <input placeholder="000-000-000-000" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">6 RDO Code</text>
+      <input placeholder="RDO" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">7 Taxpayer / Filer Name</text>
+      <input placeholder="Registered name" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Registered Address</text>
+      <input placeholder="Registered address" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Date of Birth</text>
+      <input placeholder="MM / DD / YYYY" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Email Address</text>
+      <input placeholder="name@example.com" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Citizenship</text>
+      <input placeholder="Citizenship" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Foreign Tax Number</text>
+      <input placeholder="Foreign tax number" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Income-tax-rate election</text>
+      <input placeholder="Graduated / 8 percent" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701q-grid-3" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Spouse TIN</text>
+      <input placeholder="000-000-000-000" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Spouse RDO Code</text>
+      <input placeholder="RDO" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Spouse Name</text>
+      <input placeholder="Registered spouse name" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701q-grid-4" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Sales / Revenues / Receipts</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Cost of Sales / Services</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Allowable Deductions</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Taxable Income</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Income Tax Due</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701q-grid-5" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Gross Sales / Receipts</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Less: Non-Operating Income</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Tax Due at 8 percent</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701q-grid-6" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Prior-quarter income tax payments</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Creditable tax withheld (BIR Form 2307)</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Other Tax Credits / Payments</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701q-grid-7" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">63 Tax Payable / (Overpayment)</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">64 Surcharge</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">65 Interest</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">66 Compromise</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701q-table-1">
+  <column>
+    <if test="{constrainedLayout or tabletLayout}">
+      <column gap="12">
+      <column gap="8">
+        <column gap="2">
+          <text foreground="text_muted">Method</text>
+          <text>Cash / Check / Tax Debit Memo / Other</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Bank / Agency</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Reference</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Amount</text>
+          <text>0.00</text>
+        </column>
+      </column>
+      </column>
+    </if>
+    <else>
+      <table gap="4">
+                  <table-row gap="8">
+                    <table-cell>Method</table-cell>
+                    <table-cell>Bank / Agency</table-cell>
+                    <table-cell>Reference</table-cell>
+                    <table-cell>Amount</table-cell>
+                  </table-row>
+                  <table-row gap="8">
+                    <table-cell>Cash / Check / Tax Debit Memo / Other</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>0.00</table-cell>
+                  </table-row>
+                </table>
+    </else>
+  </column>
+</template>
+
+<template name="form-1701q-masthead">
+  <column>
+    <if test="{constrainedLayout}">
+      <column gap="16">
+      <column gap="6">
+        <text size="heading">BIR Form No. 1701Q</text>
+        <text>Quarterly Income Tax Return for Individuals, Estates and Trusts</text>
+        <row gap="8" cross="center">
+          <text foreground="text_muted" grow="1">January 2018 (ENCS)</text>
+          <badge>Draft</badge>
+        </row>
+      </column>
+        <column gap="8">
+        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
+        <button variant="secondary" on-press="show_aux_html_print_preview">HTML Preview</button>
+        <separator/>
+        <button variant="secondary" disabled="true">Save Draft</button>
+        <button variant="primary" disabled="true">Manual / External Filing</button>
+        </column>
+      </column>
+    </if>
+    <else>
+      <column gap="16">
+        <row gap="16" cross="center">
+          <column gap="4" grow="1">
+            <text size="heading">BIR Form No. 1701Q</text>
+            <text>Quarterly Income Tax Return for Individuals, Estates and Trusts</text>
+            <text foreground="text_muted">January 2018 (ENCS)</text>
+          </column>
+          <badge>Draft</badge>
+        </row>
+        <row gap="8">
+        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
+        <button variant="secondary" on-press="show_aux_html_print_preview">HTML Preview</button>
+        <spacer/>
+        <button variant="secondary" disabled="true">Save Draft</button>
+        <button variant="primary" disabled="true">Manual / External Filing</button>
+        </row>
+      </column>
+    </else>
+  </column>
+</template>
+
+<template name="form-1701q-filing-status">
+  <card>
+    <column padding="20" gap="12">
+      <text size="heading">Filing status</text>
+      <if test="{constrainedLayout}">
+        <if test="{phoneLayout}">
+          <column gap="8">
+            <badge>Draft</badge>
+            <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
+          </column>
+        </if>
+        <else>
+          <row gap="12" cross="center">
+            <badge>Draft</badge>
+            <text foreground="text_muted" grow="1">Next: Queued, Submitted, Confirmed, and Paid</text>
+          </row>
+        </else>
+      </if>
+      <else>
+        <stepper active="0">
+          <step>Draft</step>
+          <step>Queued</step>
+          <step>Submitted</step>
+          <step>Confirmed</step>
+          <step>Paid</step>
+        </stepper>
+      </else>
+    </column>
+  </card>
+</template>
+
+<template name="form-1701q">
+  <scroll grow="1" global-key="page-form-1701q">
+    <column padding="32" gap="24">
+      <use template="form-1701q-masthead"/>
+
+      <use template="form-1701q-filing-status"/>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">ITEMS 1-4 - FILING PERIOD</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701q-grid-1" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701q-grid-1" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701q-grid-1" columns="4"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART I - ITEMS 5-16A</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701q-grid-2" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701q-grid-2" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701q-grid-2" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART II - ITEMS 17-25A (SPOUSE)</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701q-grid-3" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701q-grid-3" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701q-grid-3" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART V - SCHEDULE I: GRADUATED IT RATE</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701q-grid-4" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701q-grid-4" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701q-grid-4" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART V - SCHEDULE II: 8% IT RATE</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701q-grid-5" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701q-grid-5" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701q-grid-5" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART V - SCHEDULE III: TAX CREDITS/PAYMENTS</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701q-grid-6" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701q-grid-6" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701q-grid-6" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART V - ITEMS 63-68</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701q-grid-7" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701q-grid-7" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701q-grid-7" columns="3"/>
+          </if>
+          <separator />
+          <if test="{constrainedLayout}">
+            <column gap="8">
+              <text>PART III - TOTAL TAX PAYABLE</text>
+              <badge>PHP 0.00</badge>
+            </column>
+          </if>
+          <else>
+            <row gap="8">
+              <text grow="1">PART III - TOTAL TAX PAYABLE</text>
+              <badge>PHP 0.00</badge>
+            </row>
+          </else>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART IV - DETAILS OF PAYMENT</text>
+          <use template="form-1701q-table-1"/>
+        </column>
+      </card>
+    </column>
+  </scroll>
+</template>

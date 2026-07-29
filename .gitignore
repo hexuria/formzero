@@ -1,0 +1,30 @@
+# Native SDK and Zig generated state
+.native/
+.zig-cache/
+zig-cache/
+zig-out/
+
+# JavaScript dependencies and generated reports
+node_modules/
+coverage/
+test-results/
+*.log
+
+# Local configuration and signing credentials
+.env
+.env.*
+!.env.example
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.provisionprofile
+
+# Local operating-system and editor files
+.DS_Store
+.idea/
+*.swp
+*.swo
+
+# Private captures from the source application
+reference/

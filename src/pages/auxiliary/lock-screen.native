@@ -1,0 +1,43 @@
+<template name="lock-screen-content">
+  <column gap="24" cross="center">
+    <column gap="4" cross="center">
+      <badge variant="outline">BIR</badge>
+      <text size="display">e-BIRForms</text>
+    </column>
+
+    <column gap="8" cross="center">
+      <text wrap="true" text-alignment="center" size="heading">Enter PIN to unlock e-BIRForms</text>
+      <text wrap="true" text-alignment="center" foreground="text_muted">
+        Your tax records remain protected while this session is locked.
+      </text>
+    </column>
+
+    <input
+      width="300"
+      size="lg"
+      placeholder="Enter 4-digit PIN"
+      label="App lock PIN"
+    />
+
+    <column width="300" gap="8">
+      <button width="300" size="lg" variant="primary" disabled="true">Unlock</button>
+      <button width="300" variant="ghost" disabled="true">Use Biometric or Password Instead</button>
+      <button width="300" variant="outline" icon="chevron-left" on-press="go_back">Back to Screen Gallery</button>
+    </column>
+  </column>
+</template>
+
+<template name="lock-screen-page">
+  <column grow="1" padding="16" main="center" cross="center" background="background">
+    <if test="{phoneLayout}">
+      <column gap="24" cross="center">
+        <use template="lock-screen-content"/>
+      </column>
+    </if>
+    <else>
+      <column width="420" gap="24" cross="center">
+        <use template="lock-screen-content"/>
+      </column>
+    </else>
+  </column>
+</template>

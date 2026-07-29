@@ -1,0 +1,556 @@
+<template name="sidebar-profile" args="name tin profile active=false">
+  <list-item
+    width="255"
+    height="64"
+    padding="8"
+    radius="md"
+    selected="{active}"
+    label="{name}"
+    on-press="select_taxpayer:{profile}">
+    <column grow="1" gap="2">
+      <text><span weight="bold">{name}</span></text>
+      <text foreground="text_muted">{tin}</text>
+    </column>
+  </list-item>
+</template>
+
+<template name="sidebar-dock-full">
+  <column width="232" gap="8">
+    <row width="232" height="48" cross="center">
+      <list-item
+        key="{sidebarActionEpoch}"
+        width="232"
+        height="40"
+        padding="12"
+        radius="md"
+        icon="download"
+        selected="false"
+        on-press="show_import_data">
+        Import Data
+      </list-item>
+    </row>
+
+    <row width="232" height="48" cross="center">
+      <if test="{darkThemeActive}">
+        <list-item
+          key="{sidebarActionEpoch}"
+          width="232"
+          height="40"
+          padding="12"
+          radius="md"
+          icon="sun"
+          selected="false"
+          label="Switch to light mode"
+          on-press="toggle_theme">
+          Light Mode
+        </list-item>
+      </if>
+      <if test="{lightThemeActive}">
+        <list-item
+          key="{sidebarActionEpoch}"
+          width="232"
+          height="40"
+          padding="12"
+          radius="md"
+          icon="moon"
+          selected="false"
+          label="Switch to dark mode"
+          on-press="toggle_theme">
+          Dark Mode
+        </list-item>
+      </if>
+    </row>
+
+    <row width="232" height="48" cross="center">
+      <list-item
+        key="{sidebarActionEpoch}"
+        width="232"
+        height="40"
+        padding="12"
+        radius="md"
+        icon="clock"
+        selected="false"
+        on-press="show_background_tasks">
+        Background Tasks
+      </list-item>
+    </row>
+
+    <row width="232" height="48" cross="center">
+      <list-item
+        key="{sidebarActionEpoch}"
+        width="232"
+        height="40"
+        padding="12"
+        radius="md"
+        icon="file-text"
+        selected="false"
+        on-press="show_tax_calendar">
+        Tax Calendars
+      </list-item>
+    </row>
+
+    <row width="232" height="48" cross="center">
+      <list-item
+        key="{sidebarActionEpoch}"
+        width="232"
+        height="40"
+        padding="12"
+        radius="md"
+        icon="settings"
+        selected="false"
+        on-press="show_settings">
+        Settings
+      </list-item>
+    </row>
+  </column>
+</template>
+
+<template name="sidebar-dock-rail">
+  <column width="48" gap="8" cross="center">
+    <button
+      width="48"
+      height="48"
+      size="icon"
+      variant="ghost"
+      radius="xl"
+      icon="download"
+      label="Import Data"
+      on-press="show_import_data">
+    </button>
+
+    <if test="{darkThemeActive}">
+      <button
+        width="48"
+        height="48"
+        size="icon"
+        variant="ghost"
+        radius="xl"
+        icon="sun"
+        label="Switch to light mode"
+        on-press="toggle_theme">
+      </button>
+    </if>
+    <if test="{lightThemeActive}">
+      <button
+        width="48"
+        height="48"
+        size="icon"
+        variant="ghost"
+        radius="xl"
+        icon="moon"
+        label="Switch to dark mode"
+        on-press="toggle_theme">
+      </button>
+    </if>
+
+    <button
+      width="48"
+      height="48"
+      size="icon"
+      variant="ghost"
+      radius="xl"
+      icon="clock"
+      label="Background Tasks"
+      on-press="show_background_tasks">
+    </button>
+
+    <button
+      width="48"
+      height="48"
+      size="icon"
+      variant="ghost"
+      radius="xl"
+      icon="file-text"
+      label="Tax Calendars"
+      on-press="show_tax_calendar">
+    </button>
+
+    <button
+      width="48"
+      height="48"
+      size="icon"
+      variant="ghost"
+      radius="xl"
+      icon="settings"
+      label="Settings"
+      on-press="show_settings">
+    </button>
+  </column>
+</template>
+
+<!--
+  Expanded and compact sidebars intentionally use the same vertical slot
+  matrix. Switching modes swaps only the content inside each slot, so the
+  chevron, brand, profile controls, profile rows, and dock never jump.
+-->
+<template name="app-sidebar-full" args="brand_logo overlay=false">
+  <!--
+    Native 0.6.1 does not paint backgrounds on layout-only rows. The empty
+    status bar is a square, full-frame paint leaf beneath the unchanged
+    sidebar flow, keeping the phone drawer opaque without adding chrome.
+  -->
+  <stack width="280">
+    <status-bar background="surface" border-color="surface"></status-bar>
+    <row width="280">
+      <column width="279" grow="1" cross="center">
+      <spacer height="12"/>
+
+      <row width="255" height="40" main="end" cross="center">
+        <if test="{overlay}">
+          <list-item
+            width="40"
+            height="40"
+            padding="0"
+            main="center"
+            cross="center"
+            radius="xl"
+            selected="false"
+            label="Close navigation"
+            on-press="close_sidebar_overlay">
+            <icon name="x" width="24" height="24"/>
+          </list-item>
+        </if>
+        <else>
+          <list-item
+            width="40"
+            height="40"
+            padding="0"
+            main="center"
+            cross="center"
+            radius="xl"
+            selected="false"
+            label="Use compact sidebar"
+            on-press="collapse_sidebar">
+            <icon name="chevron-left" width="28" height="28"/>
+          </list-item>
+        </else>
+      </row>
+
+      <row
+        width="255"
+        height="64"
+        main="center"
+        cross="center"
+        role="button"
+        label="Open Global Dashboard"
+        on-press="show_global_dashboard">
+        <image image="{brand_logo}" width="216" height="54" label="eBIRForms"/>
+      </row>
+
+      <row width="232" height="56" cross="center" gap="8">
+        <text grow="1" foreground="text_muted">
+          <span weight="bold">TAXPAYER PROFILES</span>
+        </text>
+        <button
+          width="40"
+          height="40"
+          size="icon"
+          variant="ghost"
+          radius="xl"
+          icon="plus"
+          label="Add taxpayer profile"
+          on-press="show_profile_setup">
+        </button>
+      </row>
+
+      <row width="232" height="64" main="center" cross="center">
+        <search-field
+          width="232"
+          placeholder="Search profiles"
+          label="Search taxpayer profiles"
+          autofocus="{overlay}"/>
+      </row>
+
+      <spacer height="16"/>
+      <separator/>
+
+      <scroll grow="1" width="255" overscroll="none" label="Sidebar navigation">
+        <column width="255" cross="center" gap="8">
+          <!-- Keep all three profile slots visible at the 768 px reference height. -->
+          <spacer height="4"/>
+          <use
+            template="sidebar-profile"
+            name="Juan Dela Cruz"
+            tin="TIN: 000-000-000-00000"
+            profile="juan_dela_cruz"
+            active="{juanProfileActive}"/>
+          <use
+            template="sidebar-profile"
+            name="Demo Corporation"
+            tin="TIN: 111-111-111-00000"
+            profile="demo_corporation"
+            active="{demoProfileActive}"/>
+          <use
+            template="sidebar-profile"
+            name="Sample Partnership"
+            tin="TIN: 222-222-222-00000"
+            profile="sample_partnership"
+            active="{partnershipProfileActive}"/>
+
+          <row width="232" height="48" cross="center">
+            <list-item
+              key="{sidebarActionEpoch}"
+              width="232"
+              height="40"
+              padding="12"
+              radius="md"
+              icon="folder-open"
+              selected="false"
+              on-press="show_screen_gallery">
+              Screen Gallery
+            </list-item>
+          </row>
+        </column>
+      </scroll>
+
+      <separator/>
+      <spacer height="8"/>
+      <use template="sidebar-dock-full"/>
+      <spacer height="12"/>
+      </column>
+      <separator/>
+    </row>
+  </stack>
+</template>
+
+<template name="sidebar-avatar" args="initials name profile active=false">
+  <row width="48" height="64" main="center" cross="center">
+    <button
+      width="48"
+      height="48"
+      size="icon"
+      variant="secondary"
+      radius="xl"
+      selected="{active}"
+      label="{name}"
+      on-press="select_taxpayer:{profile}">
+      {initials}
+    </button>
+  </row>
+</template>
+
+<template name="app-sidebar-rail" args="app_icon">
+  <row width="72" background="background">
+    <column width="71" grow="1" cross="center">
+      <spacer height="12"/>
+
+      <row width="48" height="40" main="center" cross="center">
+        <list-item
+          width="40"
+          height="40"
+          padding="0"
+          main="center"
+          cross="center"
+          radius="xl"
+          selected="false"
+          label="Expand sidebar"
+          on-press="expand_sidebar">
+          <icon name="chevron-right" width="28" height="28"/>
+        </list-item>
+      </row>
+
+      <row
+        width="48"
+        height="64"
+        main="center"
+        cross="center"
+        role="button"
+        label="Open Global Dashboard"
+        on-press="show_global_dashboard">
+        <image image="{app_icon}" width="48" height="48" label="eBIRForms"/>
+      </row>
+
+      <row width="48" height="56" main="center" cross="center">
+        <button
+          width="40"
+          height="40"
+          size="icon"
+          variant="ghost"
+          radius="xl"
+          icon="plus"
+          selected="{page == 'profile_setup'}"
+          label="Add taxpayer profile"
+          on-press="show_profile_setup">
+        </button>
+      </row>
+
+      <row width="48" height="64" main="center" cross="center">
+        <button
+          width="48"
+          height="48"
+          size="icon"
+          variant="secondary"
+          radius="xl"
+          icon="search"
+          label="Search taxpayer profiles"
+          on-press="open_sidebar_overlay">
+        </button>
+      </row>
+
+      <spacer height="16"/>
+      <separator/>
+
+      <scroll
+        grow="1"
+        width="70"
+        overscroll="none"
+        label="Compact sidebar navigation">
+        <column width="70" cross="center" gap="8">
+          <!-- Mirrors the expanded profile matrix exactly, with no mode jump. -->
+          <spacer height="4"/>
+          <use
+            template="sidebar-avatar"
+            initials="JD"
+            name="Juan Dela Cruz"
+            profile="juan_dela_cruz"
+            active="{juanProfileActive}"/>
+          <use
+            template="sidebar-avatar"
+            initials="DC"
+            name="Demo Corporation"
+            profile="demo_corporation"
+            active="{demoProfileActive}"/>
+          <use
+            template="sidebar-avatar"
+            initials="SP"
+            name="Sample Partnership"
+            profile="sample_partnership"
+            active="{partnershipProfileActive}"/>
+
+          <row width="48" height="64" main="center" cross="center">
+            <button
+              width="48"
+              height="48"
+              size="icon"
+              variant="ghost"
+              radius="xl"
+              icon="folder-open"
+              label="Screen Gallery"
+              on-press="show_screen_gallery">
+            </button>
+          </row>
+        </column>
+      </scroll>
+
+      <separator/>
+      <spacer height="8"/>
+      <use template="sidebar-dock-rail"/>
+      <spacer height="12"/>
+    </column>
+    <separator/>
+  </row>
+</template>
+
+<template name="app-mobile-header" args="app_icon">
+  <column>
+    <row height="56" padding="8" gap="10" cross="center" background="background">
+      <button
+        width="40"
+        height="40"
+        size="icon"
+        variant="ghost"
+        radius="xl"
+        icon="menu"
+        label="Open navigation"
+        on-press="toggle_navigation">
+      </button>
+      <image image="{app_icon}" width="38" height="38" label="eBIRForms"/>
+      <text grow="1"><span weight="bold">{currentPageTitle}</span></text>
+    </row>
+    <separator/>
+  </column>
+</template>
+
+<template name="app-footer" args="bagong_logo bir_logo goldcoders_logo">
+  <column>
+    <if test="{regularFooter}">
+      <column>
+        <separator/>
+        <row height="71" padding="12" cross="center" gap="12" background="background">
+          <image image="{bagong_logo}" width="48" height="48" label="Bagong Pilipinas"/>
+          <image image="{bir_logo}" width="48" height="48" label="Bureau of Internal Revenue"/>
+          <spacer grow="1"/>
+          <if test="{footerCopyrightVisible}">
+            <text foreground="text_muted">© 2026 Goldcoders Corp. · goldcoders.dev</text>
+          </if>
+          <image image="{goldcoders_logo}" width="44" height="44" label="Goldcoders"/>
+        </row>
+      </column>
+    </if>
+
+    <if test="{compactFooter}">
+      <column>
+        <separator/>
+        <row height="57" padding="8" cross="center" gap="8" background="background">
+          <image image="{bagong_logo}" width="38" height="38" label="Bagong Pilipinas"/>
+          <image image="{bir_logo}" width="38" height="38" label="Bureau of Internal Revenue"/>
+          <spacer grow="1"/>
+          <text foreground="text_muted">© 2026</text>
+          <image image="{goldcoders_logo}" width="36" height="36" label="Goldcoders"/>
+        </row>
+      </column>
+    </if>
+  </column>
+</template>
+
+<template name="app-shell" args="brand_logo app_icon bagong_logo bir_logo goldcoders_logo">
+  <stack grow="1">
+    <!--
+      Theme changes alter the canvas clear color. Native 0.6.1 otherwise
+      invalidates only the bounds of commands whose colors changed, leaving
+      untouched regions on the previous theme until macOS exposes the
+      window. This full-frame paint leaf changes with the background token,
+      so every theme switch damages the entire surface immediately.
+    -->
+    <status-bar background="background" border-color="background"></status-bar>
+
+    <column grow="1">
+      <row grow="1">
+        <if test="{sidebarExpandedVisible}">
+          <use template="app-sidebar-full" brand_logo="{brand_logo}"/>
+        </if>
+        <if test="{sidebarRailVisible}">
+          <use template="app-sidebar-rail" app_icon="{app_icon}"/>
+        </if>
+
+        <column grow="1" min-width="0">
+          <column grow="1" min-width="0">
+            <if test="{sidebarLauncherVisible}">
+              <use template="app-mobile-header" app_icon="{app_icon}"/>
+            </if>
+            <slot/>
+          </column>
+
+          <use
+            template="app-footer"
+            bagong_logo="{bagong_logo}"
+            bir_logo="{bir_logo}"
+            goldcoders_logo="{goldcoders_logo}"/>
+        </column>
+      </row>
+    </column>
+
+    <!--
+      Native has a bottom drawer and a right sheet, but no left sheet. A root
+      stack gives this full-height sidebar the correct left edge and a real
+      click-away scrim without changing the page's flow geometry.
+    -->
+    <if test="{sidebarOverlayVisible}">
+      <column grow="1">
+        <row grow="1">
+          <use
+            template="app-sidebar-full"
+            brand_logo="{brand_logo}"
+            overlay="true"/>
+          <status-bar
+            grow="1"
+            background="shadow"
+            border-color="shadow"
+            on-press="close_sidebar_overlay"
+            label="Close navigation">
+          </status-bar>
+        </row>
+      </column>
+    </if>
+  </stack>
+</template>

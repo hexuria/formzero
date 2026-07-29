@@ -1,0 +1,51 @@
+<template name="background-task-debug-log-window">
+  <column grow="1" background="background">
+    <if test="{constrainedLayout}">
+      <column padding="12" gap="10">
+        <row gap="10" cross="start">
+          <column grow="1" gap="2">
+            <text wrap="true" size="heading">Debug Log: Poll eFPS email confirmations</text>
+            <text wrap="true" size="sm" foreground="text_muted">Background Tasks and Job Queue</text>
+          </column>
+          <button
+            size="icon"
+            variant="ghost"
+            icon="x"
+            label="Close debug log"
+            on-press="go_back">
+          </button>
+        </row>
+        <badge variant="outline">Completed</badge>
+      </column>
+    </if>
+    <else>
+      <row padding="12" gap="12" cross="center">
+        <column grow="1" gap="2">
+          <text size="heading">Debug Log: Poll eFPS email confirmations</text>
+          <text size="sm" foreground="text_muted">Background Tasks and Job Queue</text>
+        </column>
+        <badge variant="outline">Completed</badge>
+        <button
+          size="icon"
+          variant="ghost"
+          icon="x"
+          label="Close debug log"
+          on-press="go_back">
+        </button>
+      </row>
+    </else>
+
+    <separator/>
+
+    <scroll grow="1" overscroll="none">
+      <column padding="16" gap="8">
+        <text><span mono="true">[2026-07-29 10:41:59] job started</span></text>
+        <text><span mono="true">[2026-07-29 10:42:00] opening configured mailbox</span></text>
+        <text><span mono="true">[2026-07-29 10:42:01] checking for eFPS confirmations</span></text>
+        <text><span mono="true">[2026-07-29 10:42:02] matched confirmation for Form 2551Q</span></text>
+        <text><span mono="true">[2026-07-29 10:42:02] receipt saved to local records</span></text>
+        <text foreground="success"><span mono="true">[2026-07-29 10:42:03] job completed successfully</span></text>
+      </column>
+    </scroll>
+  </column>
+</template>

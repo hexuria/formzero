@@ -1,0 +1,312 @@
+<template name="settings-action-row" args="icon title body action">
+  <column>
+    <if test="{constrainedLayout}">
+      <column gap="12">
+        <row gap="14" cross="start">
+          <icon name="{icon}" foreground="text_muted" width="22" height="22"/>
+          <column grow="1" gap="4">
+            <text><span weight="bold">{title}</span></text>
+            <text wrap="true" foreground="text_muted">{body}</text>
+          </column>
+        </row>
+        <button variant="outline" disabled="true">{action}</button>
+      </column>
+    </if>
+    <else>
+      <row gap="14" cross="center">
+        <icon name="{icon}" foreground="text_muted" width="22" height="22"/>
+        <column grow="1" gap="4">
+          <text><span weight="bold">{title}</span></text>
+          <text wrap="true" foreground="text_muted">{body}</text>
+        </column>
+        <button variant="outline" disabled="true">{action}</button>
+      </row>
+    </else>
+  </column>
+</template>
+
+<template name="settings-switch-row" args="icon title body enabled=false">
+  <column>
+    <if test="{constrainedLayout}">
+      <column gap="12">
+        <row gap="14" cross="start">
+          <icon name="{icon}" foreground="text_muted" width="22" height="22"/>
+          <column grow="1" gap="4">
+            <text><span weight="bold">{title}</span></text>
+            <text wrap="true" foreground="text_muted">{body}</text>
+          </column>
+        </row>
+        <switch checked="{enabled}" disabled="true" label="{title}"></switch>
+      </column>
+    </if>
+    <else>
+      <row gap="14" cross="center">
+        <icon name="{icon}" foreground="text_muted" width="22" height="22"/>
+        <column grow="1" gap="4">
+          <text><span weight="bold">{title}</span></text>
+          <text wrap="true" foreground="text_muted">{body}</text>
+        </column>
+        <switch checked="{enabled}" disabled="true" label="{title}"></switch>
+      </row>
+    </else>
+  </column>
+</template>
+
+<template name="settings-danger-row" args="icon title body action">
+  <column>
+    <if test="{constrainedLayout}">
+      <column gap="12">
+        <row gap="14" cross="start">
+          <icon name="{icon}" foreground="destructive" width="22" height="22"/>
+          <column grow="1" gap="4">
+            <text><span weight="bold">{title}</span></text>
+            <text wrap="true" foreground="text_muted">{body}</text>
+          </column>
+        </row>
+        <button variant="destructive" disabled="true">{action}</button>
+      </column>
+    </if>
+    <else>
+      <row gap="14" cross="center">
+        <icon name="{icon}" foreground="destructive" width="22" height="22"/>
+        <column grow="1" gap="4">
+          <text><span weight="bold">{title}</span></text>
+          <text wrap="true" foreground="text_muted">{body}</text>
+        </column>
+        <button variant="destructive" disabled="true">{action}</button>
+      </row>
+    </else>
+  </column>
+</template>
+
+<template name="settings-content">
+  <column gap="24">
+    <column gap="6">
+      <text size="heading">Settings</text>
+      <text wrap="true" foreground="text_muted">Configure security, privacy, and global application preferences.</text>
+    </column>
+
+    <card>
+      <if test="{constrainedLayout}">
+        <column padding="22" gap="16">
+          <row gap="14" cross="start">
+            <icon name="sun" foreground="accent" width="30" height="30"/>
+            <column grow="1" gap="4">
+              <text><span weight="bold">Appearance</span></text>
+              <text wrap="true" foreground="text_muted">
+                Follow the system appearance or keep eBIRForms in a specific theme.
+              </text>
+            </column>
+          </row>
+          <toggle-group gap="2" label="Application appearance">
+            <toggle-button
+              size="sm"
+              selected="{themePreference == 'system'}"
+              on-toggle="set_theme_system">
+              System
+            </toggle-button>
+            <toggle-button
+              size="sm"
+              selected="{themePreference == 'light'}"
+              on-toggle="set_theme_light">
+              Light
+            </toggle-button>
+            <toggle-button
+              size="sm"
+              selected="{themePreference == 'dark'}"
+              on-toggle="set_theme_dark">
+              Dark
+            </toggle-button>
+          </toggle-group>
+        </column>
+      </if>
+      <else>
+        <row padding="22" gap="18" cross="center">
+          <icon name="sun" foreground="accent" width="30" height="30"/>
+          <column grow="1" gap="4">
+            <text><span weight="bold">Appearance</span></text>
+            <text wrap="true" foreground="text_muted">
+              Follow the system appearance or keep eBIRForms in a specific theme.
+            </text>
+          </column>
+          <toggle-group gap="2" label="Application appearance">
+            <toggle-button
+              size="sm"
+              selected="{themePreference == 'system'}"
+              on-toggle="set_theme_system">
+              System
+            </toggle-button>
+            <toggle-button
+              size="sm"
+              selected="{themePreference == 'light'}"
+              on-toggle="set_theme_light">
+              Light
+            </toggle-button>
+            <toggle-button
+              size="sm"
+              selected="{themePreference == 'dark'}"
+              on-toggle="set_theme_dark">
+              Dark
+            </toggle-button>
+          </toggle-group>
+        </row>
+      </else>
+    </card>
+
+    <card>
+      <column padding="22" gap="18">
+        <if test="{constrainedLayout}">
+          <column gap="12">
+            <row gap="14" cross="start">
+              <icon name="file-text" foreground="accent" width="30" height="30"/>
+              <column grow="1" gap="4">
+                <text><span weight="bold">Google Calendar</span></text>
+                <text wrap="true" foreground="text_muted">Connected as demo@example.com</text>
+              </column>
+            </row>
+            <badge variant="secondary">Connected</badge>
+          </column>
+        </if>
+        <else>
+          <row gap="14" cross="center">
+            <icon name="file-text" foreground="accent" width="30" height="30"/>
+            <column grow="1" gap="4">
+              <text><span weight="bold">Google Calendar</span></text>
+              <text foreground="text_muted">Connected as demo@example.com</text>
+            </column>
+            <badge variant="secondary">Connected</badge>
+          </row>
+        </else>
+        <text wrap="true" foreground="text_muted">
+          Sync taxpayer filing deadlines to a dedicated Google Calendar.
+        </text>
+        <if test="{constrainedLayout}">
+          <column gap="10">
+            <button variant="primary" icon="refresh-cw" disabled="true">Reconnect Google</button>
+            <button variant="outline" disabled="true">Disconnect</button>
+            <button variant="ghost" icon="external-link" disabled="true">Setup Guide</button>
+          </column>
+        </if>
+        <else>
+          <row gap="10">
+            <button variant="primary" icon="refresh-cw" disabled="true">Reconnect Google</button>
+            <button variant="outline" disabled="true">Disconnect</button>
+            <button variant="ghost" icon="external-link" disabled="true">Setup Guide</button>
+          </row>
+        </else>
+      </column>
+    </card>
+
+    <card>
+      <column padding="22" gap="18">
+        <column gap="4">
+          <text><span weight="bold">Security</span></text>
+          <text wrap="true" foreground="text_muted">Protect application access and individual taxpayer profiles.</text>
+        </column>
+        <separator/>
+        <use
+          template="settings-action-row"
+          icon="settings"
+          title="Master PIN"
+          body="Require a master PIN when opening protected areas."
+          action="Configure"/>
+        <separator/>
+        <use
+          template="settings-action-row"
+          icon="circle-dot"
+          title="Master Authenticator App"
+          body="Use a one-time code from an authenticator application."
+          action="Set Up"/>
+        <separator/>
+        <use
+          template="settings-switch-row"
+          icon="check-circle"
+          title="Enable Profile PINs"
+          body="Allow separate access PINs for taxpayer profiles."/>
+      </column>
+    </card>
+
+    <card>
+      <column padding="22" gap="18">
+        <column gap="4">
+          <text><span weight="bold">Privacy and Display</span></text>
+          <text wrap="true" foreground="text_muted">Choose how taxpayer profiles appear in the application shell.</text>
+        </column>
+        <separator/>
+        <use
+          template="settings-switch-row"
+          icon="eye"
+          title="Hide Tax Profiles from Sidebar"
+          body="Keep profile names and TINs hidden until the list is opened."/>
+        <separator/>
+        <use
+          template="settings-action-row"
+          icon="terminal"
+          title="Global Toggle Hotkey"
+          body="Configure a keyboard shortcut for hiding and showing profiles."
+          action="Set Shortcut"/>
+      </column>
+    </card>
+
+    <card>
+      <column padding="22" gap="18">
+        <column gap="4">
+          <text><span weight="bold">Data</span></text>
+          <text wrap="true" foreground="text_muted">Create a portable archive of application data.</text>
+        </column>
+        <separator/>
+        <use
+          template="settings-action-row"
+          icon="download"
+          title="Export Data"
+          body="Export taxpayer profiles and application records to a backup archive."
+          action="Export"/>
+      </column>
+    </card>
+
+    <card>
+      <column padding="22" gap="18">
+        <column gap="4">
+          <text foreground="destructive"><span weight="bold">Danger Zone</span></text>
+          <text wrap="true" foreground="text_muted">Destructive options are displayed for layout parity only.</text>
+        </column>
+        <separator/>
+        <use
+          template="settings-danger-row"
+          icon="alert"
+          title="Factory Reset"
+          body="Restore global preferences to their defaults."
+          action="Factory Reset"/>
+        <separator/>
+        <use
+          template="settings-danger-row"
+          icon="trash"
+          title="Zero Out Everything"
+          body="Remove all local taxpayer and application data."
+          action="Zero Out Everything"/>
+      </column>
+    </card>
+  </column>
+</template>
+
+<template name="settings-page">
+  <scroll grow="1" global-key="page-settings" label="Settings content">
+    <if test="{phoneLayout}">
+      <column padding="16">
+        <use template="settings-content"/>
+      </column>
+    </if>
+    <else>
+      <if test="{constrainedLayout}">
+        <column padding="20">
+          <use template="settings-content"/>
+        </column>
+      </if>
+      <else>
+        <column padding="32">
+          <use template="settings-content"/>
+        </column>
+      </else>
+    </else>
+  </scroll>
+</template>

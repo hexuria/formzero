@@ -1,0 +1,426 @@
+<template name="form-1702-mx-grid-1" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Taxable Year</text>
+      <input placeholder="YYYY" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Amended Return?</text>
+      <input placeholder="No" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Number of Sheets Attached</text>
+      <input placeholder="Enter number" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">TIN</text>
+      <input placeholder="000-000-000-000" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">RDO Code</text>
+      <input placeholder="RDO" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Registered Name</text>
+      <input placeholder="Corporation name" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Registered Address</text>
+      <input placeholder="Registered address" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Line of Business</text>
+      <input placeholder="Business activity" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Special / Preferential Rate Basis</text>
+      <input placeholder="Legal basis or registration" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1702-mx-grid-2" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Gross Income Subject to Regular Rate</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Gross Income Subject to Special Rate</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Special / Preferential Tax Rate</text>
+      <input placeholder="Rate" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Schedule 2 Regular-Rate Tax Due</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Schedule 2 Special-Rate Tax Due</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Schedule 3 Total Tax Credits</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1702-mx-grid-3" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Income Tax at Regular Rate</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Income Tax at Special Rate</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Total Income Tax Due</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Total Tax Credits / Payments</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Net Tax Payable / (Overpayment)</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1702-mx-grid-4" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Surcharge</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Interest</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Compromise</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Total Amount Payable</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1702-mx-grid-5" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Refund</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Tax Credit Certificate</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Carry Over to Next Period</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1702-mx-grid-6" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Attachment Description</text>
+      <input placeholder="Supporting schedule" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Attachment Reference</text>
+      <input placeholder="Filename or reference" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1702-mx-table-1">
+  <column>
+    <if test="{constrainedLayout or tabletLayout}">
+      <column gap="12">
+      <column gap="8">
+        <column gap="2">
+          <text foreground="text_muted">Schedule</text>
+          <text>Schedule 5</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Description</text>
+          <text>Deductions / Adjustments</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Legal Basis</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Regular Rate</text>
+          <text>0.00</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Special Rate</text>
+          <text>0.00</text>
+        </column>
+      </column>
+      <separator/>
+      <column gap="8">
+        <column gap="2">
+          <text foreground="text_muted">Schedule</text>
+          <text>Schedule 6</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Description</text>
+          <text>Special-rate income item</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Legal Basis</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Regular Rate</text>
+          <text>0.00</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Special Rate</text>
+          <text>0.00</text>
+        </column>
+      </column>
+      </column>
+    </if>
+    <else>
+      <table gap="4">
+                  <table-row gap="8">
+                    <table-cell>Schedule</table-cell>
+                    <table-cell>Description</table-cell>
+                    <table-cell>Legal Basis</table-cell>
+                    <table-cell>Regular Rate</table-cell>
+                    <table-cell>Special Rate</table-cell>
+                  </table-row>
+                  <table-row gap="8">
+                    <table-cell>Schedule 5</table-cell>
+                    <table-cell>Deductions / Adjustments</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>0.00</table-cell>
+                    <table-cell>0.00</table-cell>
+                  </table-row>
+                  <table-row gap="8">
+                    <table-cell>Schedule 6</table-cell>
+                    <table-cell>Special-rate income item</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>0.00</table-cell>
+                    <table-cell>0.00</table-cell>
+                  </table-row>
+                </table>
+    </else>
+  </column>
+</template>
+
+<template name="form-1702-mx-masthead">
+  <column>
+    <if test="{constrainedLayout}">
+      <column gap="16">
+      <column gap="6">
+        <text size="heading">BIR Form No. 1702-MX</text>
+        <text>Annual ITR — Mixed Income / Multiple or Special Tax Rates</text>
+        <row gap="8" cross="center">
+          <text foreground="text_muted" grow="1">January 2018 (ENCS)</text>
+          <badge>Draft</badge>
+        </row>
+      </column>
+        <column gap="8">
+        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
+        <separator/>
+        <button variant="secondary" disabled="true">Save Local Draft</button>
+        <button variant="primary" disabled="true">XML save only</button>
+        </column>
+      </column>
+    </if>
+    <else>
+      <column gap="16">
+        <row gap="16" cross="center">
+          <column gap="4" grow="1">
+            <text size="heading">BIR Form No. 1702-MX</text>
+            <text>Annual ITR — Mixed Income / Multiple or Special Tax Rates</text>
+            <text foreground="text_muted">January 2018 (ENCS)</text>
+          </column>
+          <badge>Draft</badge>
+        </row>
+        <row gap="8">
+        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
+        <spacer/>
+        <button variant="secondary" disabled="true">Save Local Draft</button>
+        <button variant="primary" disabled="true">XML save only</button>
+        </row>
+      </column>
+    </else>
+  </column>
+</template>
+
+<template name="form-1702-mx-filing-status">
+  <card>
+    <column padding="20" gap="12">
+      <text size="heading">Filing status</text>
+      <if test="{constrainedLayout}">
+        <if test="{phoneLayout}">
+          <column gap="8">
+            <badge>Draft</badge>
+            <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
+          </column>
+        </if>
+        <else>
+          <row gap="12" cross="center">
+            <badge>Draft</badge>
+            <text foreground="text_muted" grow="1">Next: Queued, Submitted, Confirmed, and Paid</text>
+          </row>
+        </else>
+      </if>
+      <else>
+        <stepper active="0">
+          <step>Draft</step>
+          <step>Queued</step>
+          <step>Submitted</step>
+          <step>Confirmed</step>
+          <step>Paid</step>
+        </stepper>
+      </else>
+    </column>
+  </card>
+</template>
+
+<template name="form-1702-mx">
+  <scroll grow="1" global-key="page-form-1702-mx">
+    <column padding="32" gap="24">
+      <use template="form-1702-mx-masthead"/>
+
+      <use template="form-1702-mx-filing-status"/>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Part I — Background Information</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1702-mx-grid-1" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1702-mx-grid-1" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1702-mx-grid-1" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Part IV — Basis and Tax Credits</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1702-mx-grid-2" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1702-mx-grid-2" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1702-mx-grid-2" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Part IV — Computed Summary</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1702-mx-grid-3" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1702-mx-grid-3" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1702-mx-grid-3" columns="4"/>
+          </if>
+          <separator />
+          <if test="{constrainedLayout}">
+            <column gap="8">
+              <text>Computed amount</text>
+              <badge>PHP 0.00</badge>
+            </column>
+          </if>
+          <else>
+            <row gap="8">
+              <text grow="1">Computed amount</text>
+              <badge>PHP 0.00</badge>
+            </row>
+          </else>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Part II — Penalties</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1702-mx-grid-4" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1702-mx-grid-4" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1702-mx-grid-4" columns="4"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Overpayment Disposition</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1702-mx-grid-5" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1702-mx-grid-5" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1702-mx-grid-5" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Schedules 5 and 6 — Fixed Description Rows</text>
+          <use template="form-1702-mx-table-1"/>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Part IV Instruction and Separate Attachment</text>
+          <text foreground="text_muted">Enter each mixed-income basis in its official fixed row. Use a separate attachment when the official schedule capacity is exceeded.</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1702-mx-grid-6" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1702-mx-grid-6" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1702-mx-grid-6" columns="2"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Official Fixed Schedule Capacity</text>
+          <text foreground="text_muted">The visible rows mirror the official desktop form and do not grow dynamically in this static replica.</text>
+        </column>
+      </card>
+    </column>
+  </scroll>
+</template>

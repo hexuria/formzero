@@ -1,0 +1,692 @@
+<template name="form-1701-grid-1" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Taxable Year</text>
+      <input placeholder="YYYY" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Amended Return?</text>
+      <input placeholder="No" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Number of Sheets Attached</text>
+      <input placeholder="Enter number" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">TIN</text>
+      <input placeholder="000-000-000-000" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">RDO Code</text>
+      <input placeholder="RDO" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Taxpayer Name</text>
+      <input placeholder="Registered name" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Registered Address</text>
+      <input placeholder="Registered address" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">ZIP Code</text>
+      <input placeholder="ZIP code" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Date of Birth</text>
+      <input placeholder="MM / DD / YYYY" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Email Address</text>
+      <input placeholder="name@example.com" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Citizenship</text>
+      <input placeholder="Citizenship" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Foreign Tax Number</text>
+      <input placeholder="Foreign tax number" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Contact Number</text>
+      <input placeholder="Contact number" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701-grid-2" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Spouse TIN</text>
+      <input placeholder="000-000-000-000" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Spouse RDO Code</text>
+      <input placeholder="RDO" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Spouse Name</text>
+      <input placeholder="Registered spouse name" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701-grid-3" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Taxable Compensation Income</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Income Tax Due</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Tax Withheld on Compensation</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701-grid-4" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Sales / Revenues / Receipts / Fees</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Returns, Allowances and Discounts</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Cost of Sales / Services</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Gross Income</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Allowable Deductions</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Net Taxable Income</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701-grid-5" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Other Taxable Income Description</text>
+      <input placeholder="Specify source" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Other Taxable Income Amount</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701-grid-6" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Salaries, Wages and Benefits</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Rent, Repairs and Utilities</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Other Ordinary Deductions</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701-grid-7" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Tax on Compensation Income</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Tax on Business / Profession Income</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Total Income Tax Due</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701-grid-8" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Quarterly Income Tax Payments</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Creditable Tax Withheld (BIR Form 2307)</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Tax Withheld on Compensation</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701-grid-9" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Other Tax Credit Description</text>
+      <input placeholder="Specify credit" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Other Tax Credit Amount</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701-grid-10" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Tax Relief / Special Rate</text>
+      <input placeholder="Relief code or basis" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Tax Relief Amount</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701-grid-11" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Net Income per Books</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Add: Non-Deductible Expenses</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Less: Non-Taxable Income</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Taxable Net Income</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701-grid-12" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Tax Due</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Less: Total Tax Credits / Payments</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Penalties</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701-grid-13" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">32 Overpayment Disposition</text>
+      <input placeholder="Refund / Tax Credit / Carry Over" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">33 Required Attachments</text>
+      <input placeholder="Attachment summary" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1701-table-1">
+  <column>
+    <if test="{constrainedLayout or tabletLayout}">
+      <column gap="12">
+      <column gap="8">
+        <column gap="2">
+          <text foreground="text_muted">Employer Name</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Employer TIN</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Gross Compensation</text>
+          <text>0.00</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Non-Taxable</text>
+          <text>0.00</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Taxable</text>
+          <text>0.00</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Tax Withheld</text>
+          <text>0.00</text>
+        </column>
+      </column>
+      </column>
+    </if>
+    <else>
+      <table gap="4">
+                  <table-row gap="8">
+                    <table-cell>Employer Name</table-cell>
+                    <table-cell>Employer TIN</table-cell>
+                    <table-cell>Gross Compensation</table-cell>
+                    <table-cell>Non-Taxable</table-cell>
+                    <table-cell>Taxable</table-cell>
+                    <table-cell>Tax Withheld</table-cell>
+                  </table-row>
+                  <table-row gap="8">
+                    <table-cell>-</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>0.00</table-cell>
+                    <table-cell>0.00</table-cell>
+                    <table-cell>0.00</table-cell>
+                    <table-cell>0.00</table-cell>
+                  </table-row>
+                </table>
+    </else>
+  </column>
+</template>
+
+<template name="form-1701-table-2">
+  <column>
+    <if test="{constrainedLayout or tabletLayout}">
+      <column gap="12">
+      <column gap="8">
+        <column gap="2">
+          <text foreground="text_muted">Year Incurred</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Original NOLCO</text>
+          <text>0.00</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Applied Previously</text>
+          <text>0.00</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Applied This Year</text>
+          <text>0.00</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Balance</text>
+          <text>0.00</text>
+        </column>
+      </column>
+      </column>
+    </if>
+    <else>
+      <table gap="4">
+                  <table-row gap="8">
+                    <table-cell>Year Incurred</table-cell>
+                    <table-cell>Original NOLCO</table-cell>
+                    <table-cell>Applied Previously</table-cell>
+                    <table-cell>Applied This Year</table-cell>
+                    <table-cell>Balance</table-cell>
+                  </table-row>
+                  <table-row gap="8">
+                    <table-cell>-</table-cell>
+                    <table-cell>0.00</table-cell>
+                    <table-cell>0.00</table-cell>
+                    <table-cell>0.00</table-cell>
+                    <table-cell>0.00</table-cell>
+                  </table-row>
+                </table>
+    </else>
+  </column>
+</template>
+
+<template name="form-1701-table-3">
+  <column>
+    <if test="{constrainedLayout or tabletLayout}">
+      <column gap="12">
+      <column gap="8">
+        <column gap="2">
+          <text foreground="text_muted">Method</text>
+          <text>Cash / Check / Tax Debit Memo / Other</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Bank / Agency</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Reference</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Amount</text>
+          <text>0.00</text>
+        </column>
+      </column>
+      </column>
+    </if>
+    <else>
+      <table gap="4">
+                  <table-row gap="8">
+                    <table-cell>Method</table-cell>
+                    <table-cell>Bank / Agency</table-cell>
+                    <table-cell>Reference</table-cell>
+                    <table-cell>Amount</table-cell>
+                  </table-row>
+                  <table-row gap="8">
+                    <table-cell>Cash / Check / Tax Debit Memo / Other</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>0.00</table-cell>
+                  </table-row>
+                </table>
+    </else>
+  </column>
+</template>
+
+<template name="form-1701-masthead">
+  <column>
+    <if test="{constrainedLayout}">
+      <column gap="16">
+      <column gap="6">
+        <text size="heading">BIR Form No. 1701</text>
+        <text>Annual Income Tax Return for Individuals, Estates and Trusts</text>
+        <row gap="8" cross="center">
+          <text foreground="text_muted" grow="1">January 2018 (ENCS)</text>
+          <badge>Draft</badge>
+        </row>
+      </column>
+        <column gap="8">
+        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
+        <separator/>
+        <button variant="secondary" disabled="true">Save Draft</button>
+        <button variant="primary" disabled="true">Manual / External Filing</button>
+        </column>
+      </column>
+    </if>
+    <else>
+      <column gap="16">
+        <row gap="16" cross="center">
+          <column gap="4" grow="1">
+            <text size="heading">BIR Form No. 1701</text>
+            <text>Annual Income Tax Return for Individuals, Estates and Trusts</text>
+            <text foreground="text_muted">January 2018 (ENCS)</text>
+          </column>
+          <badge>Draft</badge>
+        </row>
+        <row gap="8">
+        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
+        <spacer/>
+        <button variant="secondary" disabled="true">Save Draft</button>
+        <button variant="primary" disabled="true">Manual / External Filing</button>
+        </row>
+      </column>
+    </else>
+  </column>
+</template>
+
+<template name="form-1701-filing-status">
+  <card>
+    <column padding="20" gap="12">
+      <text size="heading">Filing status</text>
+      <if test="{constrainedLayout}">
+        <if test="{phoneLayout}">
+          <column gap="8">
+            <badge>Draft</badge>
+            <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
+          </column>
+        </if>
+        <else>
+          <row gap="12" cross="center">
+            <badge>Draft</badge>
+            <text foreground="text_muted" grow="1">Next: Queued, Submitted, Confirmed, and Paid</text>
+          </row>
+        </else>
+      </if>
+      <else>
+        <stepper active="0">
+          <step>Draft</step>
+          <step>Queued</step>
+          <step>Submitted</step>
+          <step>Confirmed</step>
+          <step>Paid</step>
+        </stepper>
+      </else>
+    </column>
+  </card>
+</template>
+
+<template name="form-1701">
+  <scroll grow="1" global-key="page-form-1701">
+    <column padding="32" gap="24">
+      <use template="form-1701-masthead"/>
+
+      <use template="form-1701-filing-status"/>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">ITEMS 1-21 - FILING AND BACKGROUND INFORMATION</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701-grid-1" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701-grid-1" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701-grid-1" columns="3"/>
+          </if>
+          <separator />
+          <text size="heading">SPOUSE BACKGROUND INFORMATION</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701-grid-2" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701-grid-2" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701-grid-2" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">SCHEDULE 1 - COMPENSATION INCOME</text>
+          <use template="form-1701-table-1"/>
+          <separator />
+          <text size="heading">SCHEDULE 2 - TAX ON COMPENSATION INCOME</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701-grid-3" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701-grid-3" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701-grid-3" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">SCHEDULE 3 - BUSINESS/PROFESSION INCOME</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701-grid-4" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701-grid-4" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701-grid-4" columns="3"/>
+          </if>
+          <separator />
+          <text size="heading">SCHEDULE 3 - SPECIFY LINES</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701-grid-5" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701-grid-5" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701-grid-5" columns="2"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">SCHEDULE 4 - ORDINARY ALLOWABLE ITEMIZED DEDUCTIONS</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701-grid-6" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701-grid-6" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701-grid-6" columns="3"/>
+          </if>
+          <separator />
+          <text size="heading">SCHEDULE 6 - NOLCO SUMMARY</text>
+          <use template="form-1701-table-2"/>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART VI - TAX DUE</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701-grid-7" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701-grid-7" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701-grid-7" columns="3"/>
+          </if>
+          <separator />
+          <text size="heading">PART VII - TAX CREDITS/PAYMENTS</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701-grid-8" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701-grid-8" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701-grid-8" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART VII - OTHER CREDIT</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701-grid-9" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701-grid-9" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701-grid-9" columns="2"/>
+          </if>
+          <separator />
+          <text size="heading">PART VIII - TAX RELIEF</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701-grid-10" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701-grid-10" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701-grid-10" columns="2"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART IX - RECONCILIATION OF NET INCOME</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701-grid-11" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701-grid-11" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701-grid-11" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART II - TOTAL TAX PAYABLE/(OVERPAYMENT)</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701-grid-12" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701-grid-12" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701-grid-12" columns="3"/>
+          </if>
+          <separator />
+          <if test="{constrainedLayout}">
+            <column gap="8">
+              <text>Total Tax Payable / (Overpayment)</text>
+              <badge>PHP 0.00</badge>
+            </column>
+          </if>
+          <else>
+            <row gap="8">
+              <text grow="1">Total Tax Payable / (Overpayment)</text>
+              <badge>PHP 0.00</badge>
+            </row>
+          </else>
+          <separator />
+          <text size="heading">ITEMS 32-33 - OVERPAYMENT AND ATTACHMENTS</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1701-grid-13" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1701-grid-13" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1701-grid-13" columns="2"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART III - DETAILS OF PAYMENT</text>
+          <use template="form-1701-table-3"/>
+        </column>
+      </card>
+    </column>
+  </scroll>
+</template>

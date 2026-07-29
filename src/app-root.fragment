@@ -1,0 +1,94 @@
+<!--
+  Editable application root.
+  scripts/flatten-native.mjs appends this fragment after every template.
+-->
+<stack grow="1">
+  <if test="{shellVisible}">
+    <use
+      template="app-shell"
+      brand_logo="{brandLogo}"
+      app_icon="{appIcon}"
+      bagong_logo="{bagongPilipinasLogo}"
+      bir_logo="{birLogo}"
+      goldcoders_logo="{goldcodersLogo}">
+      <column grow="1">
+    <if test="{contentPage == 'global_dashboard'}">
+      <use template="global-dashboard-page"/>
+    </if>
+    <if test="{contentPage == 'taxpayer_dashboard'}">
+      <use template="taxpayer-dashboard-page"/>
+    </if>
+    <if test="{contentPage == 'profile_setup'}">
+      <use template="profile-setup-page"/>
+    </if>
+    <if test="{contentPage == 'import_data'}">
+      <use template="import-data-page"/>
+    </if>
+    <if test="{contentPage == 'background_tasks'}">
+      <use template="background-tasks-page"/>
+    </if>
+    <if test="{contentPage == 'tax_calendar'}">
+      <use template="tax-calendar-page"/>
+    </if>
+    <if test="{contentPage == 'settings'}">
+      <use template="settings-page"/>
+    </if>
+    <if test="{contentPage == 'screen_gallery'}">
+      <use template="screen-gallery-page"/>
+    </if>
+    <if test="{contentPage == 'form_0605'}">
+      <use template="form-0605"/>
+    </if>
+    <if test="{contentPage == 'form_0619_e'}">
+      <use template="form-0619-e"/>
+    </if>
+    <if test="{contentPage == 'form_0619_f'}">
+      <use template="form-0619-f"/>
+    </if>
+    <if test="{contentPage == 'form_1601_c'}">
+      <use template="form-1601-c"/>
+    </if>
+    <if test="{contentPage == 'form_1701'}">
+      <use template="form-1701"/>
+    </if>
+    <if test="{contentPage == 'form_1701q'}">
+      <use template="form-1701q"/>
+    </if>
+    <if test="{contentPage == 'form_1702_rt'}">
+      <use template="form-1702-rt"/>
+    </if>
+    <if test="{contentPage == 'form_1702_mx'}">
+      <use template="form-1702-mx"/>
+    </if>
+    <if test="{contentPage == 'form_2550q'}">
+      <use template="form-2550q"/>
+    </if>
+    <if test="{contentPage == 'form_2551q'}">
+      <use template="form-2551q"/>
+    </if>
+      </column>
+    </use>
+  </if>
+
+    <if test="{page == 'aux_lock_screen'}">
+      <use template="lock-screen-page"/>
+    </if>
+    <if test="{page == 'aux_profile_auth'}">
+      <use template="profile-auth-overlay"/>
+    </if>
+    <if test="{page == 'aux_admin_auth'}">
+      <use template="admin-auth-overlay"/>
+    </if>
+    <if test="{page == 'aux_command_palette'}">
+      <use template="command-palette-overlay"/>
+    </if>
+    <if test="{page == 'aux_html_preview'}">
+      <use template="html-print-preview-shell"/>
+    </if>
+    <if test="{page == 'aux_email_confirmation'}">
+      <use template="form-2551q-email-confirmation-window"/>
+    </if>
+    <if test="{page == 'aux_debug_log'}">
+      <use template="background-task-debug-log-window"/>
+    </if>
+</stack>

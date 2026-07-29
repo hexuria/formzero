@@ -1,0 +1,357 @@
+<template name="form-1601-c-grid-1" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">TIN</text>
+      <input placeholder="000-000-000-000" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">RDO Code</text>
+      <input placeholder="RDO" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Taxpayer Name</text>
+      <input placeholder="Registered taxpayer name" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Registered Address</text>
+      <input placeholder="Registered address" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Line of Business</text>
+      <input placeholder="Business activity" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Contact Number</text>
+      <input placeholder="Contact number" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1601-c-grid-2" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">For the Month of</text>
+      <input placeholder="MM / YYYY" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Amended Return?</text>
+      <input placeholder="No" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Any Taxes Withheld?</text>
+      <input placeholder="Yes / No" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Number of Sheets Attached</text>
+      <input placeholder="Enter number" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">ATC</text>
+      <input placeholder="Select ATC" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">13 Tax Relief</text>
+      <input placeholder="Relief code or details" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1601-c-grid-3" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">14 Total Amount of Compensation</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">15 Statutory Minimum Wage</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">16 Holiday, Overtime and Night Shift Pay</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">17 13th Month Pay and Other Benefits</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">18 De Minimis Benefits</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">19 SSS, GSIS, PHIC and Pag-IBIG Contributions</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">20 Other Non-Taxable Compensation</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">21 Total Non-Taxable / Exempt Compensation</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">22 Total Taxable Compensation</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">25 Tax Required to be Withheld</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">26 Schedule Adjustment</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">31 Tax Still Due</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1601-c-grid-4" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">32 Surcharge</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">33 Interest</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">34 Compromise</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">35 Total Penalties</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1601-c-table-1">
+  <column>
+    <if test="{constrainedLayout or tabletLayout}">
+      <column gap="12">
+      <column gap="8">
+        <column gap="2">
+          <text foreground="text_muted">Previous month</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Date paid</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Agency</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Payment reference</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Tax paid</text>
+          <text>0.00</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Tax due</text>
+          <text>0.00</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Adjustment</text>
+          <text>0.00</text>
+        </column>
+      </column>
+      </column>
+    </if>
+    <else>
+      <table gap="4">
+                  <table-row gap="8">
+                    <table-cell>Previous month</table-cell>
+                    <table-cell>Date paid</table-cell>
+                    <table-cell>Agency</table-cell>
+                    <table-cell>Payment reference</table-cell>
+                    <table-cell>Tax paid</table-cell>
+                    <table-cell>Tax due</table-cell>
+                    <table-cell>Adjustment</table-cell>
+                  </table-row>
+                  <table-row gap="8">
+                    <table-cell>-</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>0.00</table-cell>
+                    <table-cell>0.00</table-cell>
+                    <table-cell>0.00</table-cell>
+                  </table-row>
+                </table>
+    </else>
+  </column>
+</template>
+
+<template name="form-1601-c-masthead">
+  <column>
+    <if test="{constrainedLayout}">
+      <column gap="16">
+      <column gap="6">
+        <text size="heading">BIR Form No. 1601C</text>
+        <text>Monthly Remittance Return of Income Taxes Withheld on Compensation</text>
+        <row gap="8" cross="center">
+          <text foreground="text_muted" grow="1">January 2018 (ENCS)</text>
+          <badge>Draft</badge>
+        </row>
+      </column>
+        <column gap="8">
+        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
+        <separator/>
+        <button variant="secondary" disabled="true">Save Draft</button>
+        <button variant="primary" disabled="true">Generate XML &amp; Submit</button>
+        </column>
+      </column>
+    </if>
+    <else>
+      <column gap="16">
+        <row gap="16" cross="center">
+          <column gap="4" grow="1">
+            <text size="heading">BIR Form No. 1601C</text>
+            <text>Monthly Remittance Return of Income Taxes Withheld on Compensation</text>
+            <text foreground="text_muted">January 2018 (ENCS)</text>
+          </column>
+          <badge>Draft</badge>
+        </row>
+        <row gap="8">
+        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
+        <spacer/>
+        <button variant="secondary" disabled="true">Save Draft</button>
+        <button variant="primary" disabled="true">Generate XML &amp; Submit</button>
+        </row>
+      </column>
+    </else>
+  </column>
+</template>
+
+<template name="form-1601-c-filing-status">
+  <card>
+    <column padding="20" gap="12">
+      <text size="heading">Filing status</text>
+      <if test="{constrainedLayout}">
+        <if test="{phoneLayout}">
+          <column gap="8">
+            <badge>Draft</badge>
+            <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
+          </column>
+        </if>
+        <else>
+          <row gap="12" cross="center">
+            <badge>Draft</badge>
+            <text foreground="text_muted" grow="1">Next: Queued, Submitted, Confirmed, and Paid</text>
+          </row>
+        </else>
+      </if>
+      <else>
+        <stepper active="0">
+          <step>Draft</step>
+          <step>Queued</step>
+          <step>Submitted</step>
+          <step>Confirmed</step>
+          <step>Paid</step>
+        </stepper>
+      </else>
+    </column>
+  </card>
+</template>
+
+<template name="form-1601-c">
+  <scroll grow="1" global-key="page-form-1601-c">
+    <column padding="32" gap="24">
+      <use template="form-1601-c-masthead"/>
+
+      <use template="form-1601-c-filing-status"/>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">TAXPAYER PROFILE</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1601-c-grid-1" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1601-c-grid-1" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1601-c-grid-1" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Part I - Background Information</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1601-c-grid-2" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1601-c-grid-2" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1601-c-grid-2" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Part II - Computation of Tax</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1601-c-grid-3" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1601-c-grid-3" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1601-c-grid-3" columns="2"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Add: Penalties</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1601-c-grid-4" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1601-c-grid-4" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1601-c-grid-4" columns="4"/>
+          </if>
+          <separator />
+          <if test="{constrainedLayout}">
+            <column gap="8">
+              <text>36 Total Amount Payable</text>
+              <badge>PHP 0.00</badge>
+            </column>
+          </if>
+          <else>
+            <row gap="8">
+              <text grow="1">36 Total Amount Payable</text>
+              <badge>PHP 0.00</badge>
+            </row>
+          </else>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Part IV - Schedule I</text>
+          <text foreground="text_muted">Remittance paid in a previous month</text>
+          <use template="form-1601-c-table-1"/>
+        </column>
+      </card>
+    </column>
+  </scroll>
+</template>

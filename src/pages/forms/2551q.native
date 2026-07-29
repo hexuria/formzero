@@ -1,0 +1,346 @@
+<template name="form-2551q-grid-1" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">1 Taxable-period basis</text>
+      <input placeholder="Calendar / Fiscal" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">2 Year-end month</text>
+      <input placeholder="Month" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Taxable Quarter</text>
+      <input placeholder="Quarter" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Taxable Year</text>
+      <input placeholder="YYYY" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">5 Number of Sheets Attached</text>
+      <input placeholder="Enter number" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Return Options</text>
+      <input placeholder="Original / Amended" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Amended Return?</text>
+      <input placeholder="No" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Tax Relief?</text>
+      <input placeholder="No / Specify" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">12A Tax Relief Specification</text>
+      <input placeholder="Relief code or basis" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">13 Income-tax-rate election</text>
+      <input placeholder="Graduated / 8 percent" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-2551q-grid-2" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">TIN</text>
+      <input placeholder="000-000-000-000" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">RDO Code</text>
+      <input placeholder="RDO" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Taxpayer's Name</text>
+      <input placeholder="Registered taxpayer name" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Registered Address</text>
+      <input placeholder="Registered address" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">ZIP Code</text>
+      <input placeholder="ZIP code" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Contact Number</text>
+      <input placeholder="Contact number" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Email Address</text>
+      <input placeholder="name@example.com" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-2551q-grid-3" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">14 Total Percentage Tax Due</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">15 Creditable Percentage Tax Withheld</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">16 Tax Paid in Previous Return</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">17 Other Tax Credit / Payment</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">18 Total Tax Credits / Payments</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">19 Tax Payable / (Overpayment)</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">20 Surcharge</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">21 Interest</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">22 Compromise</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">24 Overpayment Disposition</text>
+      <input placeholder="Refund / Tax Credit / Carry Over" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-2551q-table-1">
+  <column>
+    <if test="{constrainedLayout or tabletLayout}">
+      <column gap="12">
+      <column gap="8">
+        <column gap="2">
+          <text foreground="text_muted">ATC</text>
+          <text>ATC line 1</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Tax Base / Taxable Amount</text>
+          <text>0.00</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Tax Rate</text>
+          <text>0.00%</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Percentage Tax Due</text>
+          <text>0.00</text>
+        </column>
+      </column>
+      <separator/>
+      <column gap="8">
+        <column gap="2">
+          <text foreground="text_muted">ATC</text>
+          <text>ATC line 2</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Tax Base / Taxable Amount</text>
+          <text>0.00</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Tax Rate</text>
+          <text>0.00%</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Percentage Tax Due</text>
+          <text>0.00</text>
+        </column>
+      </column>
+      </column>
+    </if>
+    <else>
+      <table gap="4">
+                  <table-row gap="8">
+                    <table-cell>ATC</table-cell>
+                    <table-cell>Tax Base / Taxable Amount</table-cell>
+                    <table-cell>Tax Rate</table-cell>
+                    <table-cell>Percentage Tax Due</table-cell>
+                  </table-row>
+                  <table-row gap="8">
+                    <table-cell>ATC line 1</table-cell>
+                    <table-cell>0.00</table-cell>
+                    <table-cell>0.00%</table-cell>
+                    <table-cell>0.00</table-cell>
+                  </table-row>
+                  <table-row gap="8">
+                    <table-cell>ATC line 2</table-cell>
+                    <table-cell>0.00</table-cell>
+                    <table-cell>0.00%</table-cell>
+                    <table-cell>0.00</table-cell>
+                  </table-row>
+                </table>
+    </else>
+  </column>
+</template>
+
+<template name="form-2551q-masthead">
+  <column>
+    <if test="{constrainedLayout}">
+      <column gap="16">
+      <column gap="6">
+        <text size="heading">BIR Form No. 2551Q</text>
+        <text>Quarterly Percentage Tax Return</text>
+        <row gap="8" cross="center">
+          <text foreground="text_muted" grow="1">January 2018 (ENCS)</text>
+          <badge>Draft</badge>
+        </row>
+      </column>
+        <column gap="8">
+        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
+        <separator/>
+        <button variant="secondary" disabled="true">Save</button>
+        <button variant="primary" disabled="true">Submit</button>
+        </column>
+      </column>
+    </if>
+    <else>
+      <column gap="16">
+        <row gap="16" cross="center">
+          <column gap="4" grow="1">
+            <text size="heading">BIR Form No. 2551Q</text>
+            <text>Quarterly Percentage Tax Return</text>
+            <text foreground="text_muted">January 2018 (ENCS)</text>
+          </column>
+          <badge>Draft</badge>
+        </row>
+        <row gap="8">
+        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
+        <spacer/>
+        <button variant="secondary" disabled="true">Save</button>
+        <button variant="primary" disabled="true">Submit</button>
+        </row>
+      </column>
+    </else>
+  </column>
+</template>
+
+<template name="form-2551q-filing-status">
+  <card>
+    <column padding="20" gap="12">
+      <text size="heading">Filing status</text>
+      <if test="{constrainedLayout}">
+        <if test="{phoneLayout}">
+          <column gap="8">
+            <badge>Draft</badge>
+            <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
+          </column>
+        </if>
+        <else>
+          <row gap="12" cross="center">
+            <badge>Draft</badge>
+            <text foreground="text_muted" grow="1">Next: Queued, Submitted, Confirmed, and Paid</text>
+          </row>
+        </else>
+      </if>
+      <else>
+        <stepper active="0">
+          <step>Draft</step>
+          <step>Queued</step>
+          <step>Submitted</step>
+          <step>Confirmed</step>
+          <step>Paid</step>
+        </stepper>
+      </else>
+    </column>
+  </card>
+</template>
+
+<template name="form-2551q">
+  <scroll grow="1" global-key="page-form-2551q">
+    <column padding="32" gap="24">
+      <use template="form-2551q-masthead"/>
+
+      <use template="form-2551q-filing-status"/>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">FILING PERIOD</text>
+          <if test="{constrainedLayout}">
+            <use template="form-2551q-grid-1" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-2551q-grid-1" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-2551q-grid-1" columns="4"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART I — BACKGROUND INFORMATION (pre-filled from profile)</text>
+          <if test="{constrainedLayout}">
+            <use template="form-2551q-grid-2" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-2551q-grid-2" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-2551q-grid-2" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">SCHEDULE 1 — COMPUTATION OF TAX</text>
+          <use template="form-2551q-table-1"/>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART II — COMPUTATION OF TAX</text>
+          <if test="{constrainedLayout}">
+            <use template="form-2551q-grid-3" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-2551q-grid-3" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-2551q-grid-3" columns="3"/>
+          </if>
+          <separator />
+          <if test="{constrainedLayout}">
+            <column gap="8">
+              <text>Total Amount Payable</text>
+              <badge>PHP 0.00</badge>
+            </column>
+          </if>
+          <else>
+            <row gap="8">
+              <text grow="1">Total Amount Payable</text>
+              <badge>PHP 0.00</badge>
+            </row>
+          </else>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Submission controls by status</text>
+          <text foreground="text_muted">Draft: Save and Submit. Queued: Cancel Submission Queue. Submitted: Revert Draft and Check Confirmation or Mark as Confirmed Manually. Confirmed: Revert Draft and Mark as Paid. A receipt action appears when available.</text>
+        </column>
+      </card>
+    </column>
+  </scroll>
+</template>

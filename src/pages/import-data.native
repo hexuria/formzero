@@ -1,0 +1,100 @@
+<template name="import-data-content">
+  <column gap="24">
+    <column gap="6">
+      <text size="heading">Import Data</text>
+      <text wrap="true" foreground="text_muted">Import a profile or database backup from a .zip file.</text>
+    </column>
+
+    <card>
+      <column padding="24" gap="20">
+        <if test="{constrainedLayout}">
+          <column gap="14">
+            <row gap="14" cross="center">
+              <icon name="download" foreground="accent" width="36" height="36"/>
+              <column grow="1" gap="5">
+                <text><span weight="bold">Smart Import</span></text>
+                <text wrap="true" foreground="text_muted">Restore compatible eBIRForms data from one archive</text>
+              </column>
+            </row>
+            <badge variant="secondary">Recommended</badge>
+          </column>
+        </if>
+        <else>
+          <row gap="16" cross="center">
+            <icon name="download" foreground="accent" width="36" height="36"/>
+            <column grow="1" gap="5">
+              <text><span weight="bold">Smart Import</span></text>
+              <text wrap="true" foreground="text_muted">Restore compatible eBIRForms data from one archive</text>
+            </column>
+            <badge variant="secondary">Recommended</badge>
+          </row>
+        </else>
+
+        <separator/>
+
+        <text wrap="true">
+          Smart Import inspects the selected .zip file and determines whether it contains a taxpayer profile or a complete database backup.
+        </text>
+
+        <card>
+          <column padding="24" gap="14" cross="center">
+            <icon name="archive" foreground="text_muted" width="42" height="42"/>
+            <text text-alignment="center"><span weight="bold">Choose an eBIRForms archive</span></text>
+            <text foreground="text_muted">Supported file type: .zip</text>
+            <button variant="primary" icon="folder-open" disabled="true">Smart Import</button>
+          </column>
+        </card>
+
+        <row gap="12" cross="start">
+          <icon name="info" foreground="info" width="20" height="20"/>
+          <column grow="1" gap="5">
+            <text><span weight="bold">Before importing</span></text>
+            <text wrap="true" foreground="text_muted">
+              Keep a current backup of your existing profiles. Imported data should come from a trusted eBIRForms export.
+            </text>
+          </column>
+        </row>
+      </column>
+    </card>
+
+    <card>
+      <column padding="20" gap="12">
+        <text><span weight="bold">What Smart Import can recognize</span></text>
+        <row gap="12" cross="start">
+          <icon name="check-circle" foreground="success" width="18" height="18"/>
+          <text wrap="true" grow="1">Single taxpayer profile exports</text>
+        </row>
+        <row gap="12" cross="start">
+          <icon name="check-circle" foreground="success" width="18" height="18"/>
+          <text wrap="true" grow="1">Full database backup archives</text>
+        </row>
+        <row gap="12" cross="start">
+          <icon name="check-circle" foreground="success" width="18" height="18"/>
+          <text wrap="true" grow="1">Compatible static form and calendar data</text>
+        </row>
+      </column>
+    </card>
+  </column>
+</template>
+
+<template name="import-data-page">
+  <scroll grow="1" global-key="page-import-data" label="Import data content">
+    <if test="{phoneLayout}">
+      <column padding="16">
+        <use template="import-data-content"/>
+      </column>
+    </if>
+    <else>
+      <if test="{constrainedLayout}">
+        <column padding="20">
+          <use template="import-data-content"/>
+        </column>
+      </if>
+      <else>
+        <column padding="32">
+          <use template="import-data-content"/>
+        </column>
+      </else>
+    </else>
+  </scroll>
+</template>

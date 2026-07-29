@@ -1,0 +1,316 @@
+<template name="profile-text-field" args="field_label value">
+  <column grow="1" gap="6">
+    <text foreground="text_muted">{field_label}</text>
+    <card>
+      <row padding="11" cross="center">
+        <text grow="1">{value}</text>
+      </row>
+    </card>
+  </column>
+</template>
+
+<template name="profile-select-field" args="field_label value">
+  <column grow="1" gap="6">
+    <text foreground="text_muted">{field_label}</text>
+    <card>
+      <row padding="11" gap="8" cross="center">
+        <text grow="1">{value}</text>
+        <icon name="chevron-down" foreground="text_muted" width="16" height="16"/>
+      </row>
+    </card>
+  </column>
+</template>
+
+<template name="profile-setup-content">
+  <column gap="24">
+    <column gap="6">
+      <text size="heading">Taxpayer Profile Setup</text>
+      <text wrap="true" foreground="text_muted">Required information is used to pre-fill 2551Q.</text>
+    </column>
+
+    <if test="{constrainedLayout}">
+      <column gap="4" label="Profile setup sections">
+        <button
+          variant="ghost"
+          selected="{profileTaxActive}"
+          on-press="show_profile_tax">
+          Tax Profile
+        </button>
+        <button
+          variant="ghost"
+          selected="{profileCertificateActive}"
+          on-press="show_profile_certificate">
+          COR
+        </button>
+        <button
+          variant="ghost"
+          selected="{profileEmailActive}"
+          on-press="show_profile_email">
+          Email Settings
+        </button>
+      </column>
+    </if>
+    <else>
+      <tabs gap="4" label="Profile setup sections">
+        <button
+          variant="ghost"
+          selected="{profileTaxActive}"
+          on-press="show_profile_tax">
+          Tax Profile
+        </button>
+        <button
+          variant="ghost"
+          selected="{profileCertificateActive}"
+          on-press="show_profile_certificate">
+          COR
+        </button>
+        <button
+          variant="ghost"
+          selected="{profileEmailActive}"
+          on-press="show_profile_email">
+          Email Settings
+        </button>
+      </tabs>
+    </else>
+
+    <if test="{profileTaxActive}">
+      <column gap="24">
+        <card>
+          <column padding="24" gap="20">
+        <column gap="4">
+          <text><span weight="bold">Registration Details</span></text>
+          <text wrap="true" foreground="text_muted">Information from the taxpayer certificate of registration</text>
+        </column>
+
+        <if test="{constrainedLayout}">
+          <column gap="16">
+            <use
+              template="profile-text-field"
+              field_label="Taxpayer Identification Number (TIN)"
+              value="000-000-000-00000"/>
+            <use
+              template="profile-select-field"
+              field_label="Revenue District Office (RDO)"
+              value="RDO 040 - Cubao"/>
+          </column>
+        </if>
+        <else>
+          <row gap="16" cross="start">
+            <use
+              template="profile-text-field"
+              field_label="Taxpayer Identification Number (TIN)"
+              value="000-000-000-00000"/>
+            <use
+              template="profile-select-field"
+              field_label="Revenue District Office (RDO)"
+              value="RDO 040 - Cubao"/>
+          </row>
+        </else>
+
+        <if test="{constrainedLayout}">
+          <column gap="16">
+            <use
+              template="profile-select-field"
+              field_label="Taxpayer Type"
+              value="Individual"/>
+            <use
+              template="profile-select-field"
+              field_label="Tax Classification"
+              value="Non-VAT Registered"/>
+          </column>
+        </if>
+        <else>
+          <row gap="16" cross="start">
+            <use
+              template="profile-select-field"
+              field_label="Taxpayer Type"
+              value="Individual"/>
+            <use
+              template="profile-select-field"
+              field_label="Tax Classification"
+              value="Non-VAT Registered"/>
+          </row>
+        </else>
+
+        <if test="{constrainedLayout}">
+          <column gap="16">
+            <use
+              template="profile-select-field"
+              field_label="EOPT Tier"
+              value="Micro Taxpayer"/>
+            <use
+              template="profile-text-field"
+              field_label="Line of Business"
+              value="Professional Services"/>
+          </column>
+        </if>
+        <else>
+          <row gap="16" cross="start">
+            <use
+              template="profile-select-field"
+              field_label="EOPT Tier"
+              value="Micro Taxpayer"/>
+            <use
+              template="profile-text-field"
+              field_label="Line of Business"
+              value="Professional Services"/>
+          </row>
+        </else>
+          </column>
+        </card>
+
+        <card>
+          <column padding="24" gap="20">
+        <column gap="4">
+          <text><span weight="bold">Taxpayer Information</span></text>
+          <text wrap="true" foreground="text_muted">Contact and registered address details</text>
+        </column>
+
+        <use
+          template="profile-text-field"
+          field_label="Taxpayer Name"
+          value="Juan Dela Cruz"/>
+
+        <use
+          template="profile-text-field"
+          field_label="Registered Address"
+          value="123 Sample Street, Quezon City"/>
+
+        <if test="{constrainedLayout}">
+          <column gap="16">
+            <use
+              template="profile-text-field"
+              field_label="Zip Code"
+              value="1100"/>
+            <use
+              template="profile-text-field"
+              field_label="Phone Number"
+              value="+63 900 000 0000"/>
+          </column>
+        </if>
+        <else>
+          <row gap="16" cross="start">
+            <use
+              template="profile-text-field"
+              field_label="Zip Code"
+              value="1100"/>
+            <use
+              template="profile-text-field"
+              field_label="Phone Number"
+              value="+63 900 000 0000"/>
+          </row>
+        </else>
+
+        <if test="{constrainedLayout}">
+          <column gap="16">
+            <use
+              template="profile-text-field"
+              field_label="Email Address"
+              value="demo@example.com"/>
+            <use
+              template="profile-text-field"
+              field_label="Birth Date"
+              value="January 01, 1990"/>
+          </column>
+        </if>
+        <else>
+          <row gap="16" cross="start">
+            <use
+              template="profile-text-field"
+              field_label="Email Address"
+              value="demo@example.com"/>
+            <use
+              template="profile-text-field"
+              field_label="Birth Date"
+              value="January 01, 1990"/>
+          </row>
+        </else>
+          </column>
+        </card>
+      </column>
+    </if>
+
+    <if test="{profileCertificateActive}">
+      <card>
+        <column padding="24" gap="20">
+          <column gap="4">
+            <text><span weight="bold">Certificate of Registration</span></text>
+            <text wrap="true" foreground="text_muted">Static COR details associated with this taxpayer profile.</text>
+          </column>
+          <use
+            template="profile-text-field"
+            field_label="Certificate Number"
+            value="OCN-2026-0001842"/>
+          <use
+            template="profile-text-field"
+            field_label="Registration Date"
+            value="January 01, 2020"/>
+          <use
+            template="profile-text-field"
+            field_label="Registered Tax Types"
+            value="Percentage Tax, Income Tax"/>
+          <button variant="outline" icon="folder-open" disabled="true">Replace COR Attachment</button>
+        </column>
+      </card>
+    </if>
+
+    <if test="{profileEmailActive}">
+      <card>
+        <column padding="24" gap="20">
+          <column gap="4">
+            <text><span weight="bold">Email Settings</span></text>
+            <text wrap="true" foreground="text_muted">Mailbox details used to monitor filing confirmation receipts.</text>
+          </column>
+          <use
+            template="profile-text-field"
+            field_label="Email Address"
+            value="demo@example.com"/>
+          <use
+            template="profile-text-field"
+            field_label="Incoming Mail Server"
+            value="imap.example.com"/>
+          <use
+            template="profile-select-field"
+            field_label="Confirmation Monitoring"
+            value="Enabled"/>
+          <button variant="outline" icon="send" disabled="true">Send Test Email</button>
+        </column>
+      </card>
+    </if>
+
+    <if test="{constrainedLayout}">
+      <column gap="10">
+        <button variant="outline" on-press="go_back">Cancel</button>
+        <button variant="primary" icon="save" disabled="true">Save Profile</button>
+      </column>
+    </if>
+    <else>
+      <row main="end" gap="12">
+        <button variant="outline" on-press="go_back">Cancel</button>
+        <button variant="primary" icon="save" disabled="true">Save Profile</button>
+      </row>
+    </else>
+  </column>
+</template>
+
+<template name="profile-setup-page">
+  <scroll grow="1" global-key="page-profile-setup" label="Taxpayer profile setup content">
+    <if test="{phoneLayout}">
+      <column padding="16">
+        <use template="profile-setup-content"/>
+      </column>
+    </if>
+    <else>
+      <if test="{constrainedLayout}">
+        <column padding="20">
+          <use template="profile-setup-content"/>
+        </column>
+      </if>
+      <else>
+        <column padding="32">
+          <use template="profile-setup-content"/>
+        </column>
+      </else>
+    </else>
+  </scroll>
+</template>

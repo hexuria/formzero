@@ -1,0 +1,270 @@
+<template name="taxpayer-empty-card" args="title icon body">
+  <card>
+    <column padding="20" gap="16">
+      <row gap="10" cross="center">
+        <icon name="{icon}" foreground="text_muted" width="22" height="22"/>
+        <text><span weight="bold">{title}</span></text>
+      </row>
+      <column height="154" main="center" cross="center" gap="10">
+        <icon name="check-circle" foreground="success" width="34" height="34"/>
+        <text><span weight="bold">Nothing here</span></text>
+        <text wrap="true" text-alignment="center" foreground="text_muted">{body}</text>
+      </column>
+    </column>
+  </card>
+</template>
+
+<template name="taxpayer-form-launcher" args="code title body">
+  <card>
+    <column padding="16" gap="10">
+      <badge variant="secondary">{code}</badge>
+      <text><span weight="bold">{title}</span></text>
+      <text wrap="true" foreground="text_muted">{body}</text>
+      <slot/>
+    </column>
+  </card>
+</template>
+
+<template name="taxpayer-form-library-column-a">
+  <column grow="1" gap="12">
+    <use
+      template="taxpayer-form-launcher"
+      code="0605"
+      title="Payment Form"
+      body="Prepare a payment reference for taxes and fees without a dedicated return.">
+      <button variant="secondary" icon="file-text" on-press="show_form_0605">Open Form 0605</button>
+    </use>
+    <use
+      template="taxpayer-form-launcher"
+      code="0619-E"
+      title="Creditable Income Taxes Withheld"
+      body="Monthly remittance form for expanded withholding tax.">
+      <button variant="secondary" icon="file-text" on-press="show_form_0619_e">Open Form 0619-E</button>
+    </use>
+    <use
+      template="taxpayer-form-launcher"
+      code="0619-F"
+      title="Final Income Taxes Withheld"
+      body="Monthly remittance form for final withholding tax.">
+      <button variant="secondary" icon="file-text" on-press="show_form_0619_f">Open Form 0619-F</button>
+    </use>
+    <use
+      template="taxpayer-form-launcher"
+      code="1601-C"
+      title="Compensation Withholding"
+      body="Monthly remittance return for taxes withheld on compensation.">
+      <button variant="secondary" icon="file-text" on-press="show_form_1601_c">Open Form 1601-C</button>
+    </use>
+    <use
+      template="taxpayer-form-launcher"
+      code="1701"
+      title="Annual Individual Income Tax Return"
+      body="Annual return for individuals, estates, and trusts.">
+      <button variant="secondary" icon="file-text" on-press="show_form_1701">Open Form 1701</button>
+    </use>
+  </column>
+</template>
+
+<template name="taxpayer-form-library-column-b">
+  <column grow="1" gap="12">
+    <use
+      template="taxpayer-form-launcher"
+      code="1701Q"
+      title="Quarterly Individual Income Tax Return"
+      body="Quarterly return for self-employed individuals and professionals.">
+      <button variant="secondary" icon="file-text" on-press="show_form_1701q">Open Form 1701Q</button>
+    </use>
+    <use
+      template="taxpayer-form-launcher"
+      code="1702-RT"
+      title="Regular-Rate Corporation Income Tax Return"
+      body="Annual corporate return for taxpayers subject only to the regular rate.">
+      <button variant="secondary" icon="file-text" on-press="show_form_1702_rt">Open Form 1702-RT</button>
+    </use>
+    <use
+      template="taxpayer-form-launcher"
+      code="1702-MX"
+      title="Mixed-Income Corporation Income Tax Return"
+      body="Annual corporate return for mixed or special tax regimes.">
+      <button variant="secondary" icon="file-text" on-press="show_form_1702_mx">Open Form 1702-MX</button>
+    </use>
+    <use
+      template="taxpayer-form-launcher"
+      code="2550Q"
+      title="Quarterly VAT Return"
+      body="Quarterly value-added tax return for VAT-registered taxpayers.">
+      <button variant="secondary" icon="file-text" on-press="show_form_2550q">Open Form 2550Q</button>
+    </use>
+    <use
+      template="taxpayer-form-launcher"
+      code="2551Q"
+      title="Quarterly Percentage Tax Return"
+      body="Quarterly return for taxpayers subject to percentage tax.">
+      <button variant="secondary" icon="file-text" on-press="show_form_2551q">Open Form 2551Q</button>
+    </use>
+  </column>
+</template>
+
+<template name="taxpayer-calendar-section">
+  <column gap="24">
+    <row cross="center" gap="12">
+      <column grow="1" gap="4">
+        <text><span weight="bold">July Deadlines</span></text>
+        <text wrap="true" foreground="text_muted">Deadlines and filing actions for this taxpayer</text>
+      </column>
+      <badge variant="secondary">July 2026</badge>
+    </row>
+
+    <if test="{constrainedLayout}">
+      <column gap="20">
+        <use
+          template="taxpayer-empty-card"
+          title="Upcoming Deadlines"
+          icon="clock"
+          body="No upcoming deadlines in the selected period."/>
+        <use
+          template="taxpayer-empty-card"
+          title="Action Required"
+          icon="alert"
+          body="No forms currently require your attention."/>
+      </column>
+    </if>
+    <else>
+      <row gap="20" cross="start">
+        <column grow="1">
+          <use
+            template="taxpayer-empty-card"
+            title="Upcoming Deadlines"
+            icon="clock"
+            body="No upcoming deadlines in the selected period."/>
+        </column>
+        <column grow="1">
+          <use
+            template="taxpayer-empty-card"
+            title="Action Required"
+            icon="alert"
+            body="No forms currently require your attention."/>
+        </column>
+      </row>
+    </else>
+
+    <card>
+      <column padding="20" gap="12">
+        <row gap="10" cross="center">
+          <icon name="info" foreground="info" width="22" height="22"/>
+          <text><span weight="bold">Tax form preparation</span></text>
+        </row>
+        <text wrap="true" foreground="text_muted">
+          Open Tax Form Library to browse the reconstructed returns. Form data entry and filing remain outside this static layout milestone.
+        </text>
+      </column>
+    </card>
+  </column>
+</template>
+
+<template name="taxpayer-form-library-section">
+  <column gap="16">
+    <column gap="4">
+      <text><span weight="bold">Tax Form Library</span></text>
+      <text wrap="true" foreground="text_muted">
+        Choose a reconstructed return to review its static Native layout.
+      </text>
+    </column>
+    <if test="{constrainedLayout}">
+      <column gap="12">
+        <use template="taxpayer-form-library-column-a"/>
+        <use template="taxpayer-form-library-column-b"/>
+      </column>
+    </if>
+    <else>
+      <row gap="20" cross="start">
+        <use template="taxpayer-form-library-column-a"/>
+        <use template="taxpayer-form-library-column-b"/>
+      </row>
+    </else>
+  </column>
+</template>
+
+<template name="taxpayer-dashboard-content" args="padding">
+  <column padding="{padding}" gap="24">
+    <if test="{constrainedLayout}">
+      <column gap="14">
+        <row gap="12" cross="center">
+          <avatar label="{selectedTaxpayerName}">{selectedTaxpayerInitials}</avatar>
+          <column grow="1" gap="5">
+            <text size="heading" wrap="true">{selectedTaxpayerName}</text>
+            <text wrap="true" foreground="text_muted">TIN: {selectedTaxpayerTin}</text>
+            <text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year 2026 - Non-VAT</text>
+          </column>
+        </row>
+        <button variant="outline" icon="settings" on-press="show_profile_setup">Profile Settings</button>
+      </column>
+    </if>
+    <else>
+      <row gap="16" cross="center">
+        <avatar label="{selectedTaxpayerName}">{selectedTaxpayerInitials}</avatar>
+        <column grow="1" gap="6">
+          <text size="heading">{selectedTaxpayerName}</text>
+          <text wrap="true" foreground="text_muted">
+            TIN: {selectedTaxpayerTin} - Type: {selectedTaxpayerKind} - Tax Year 2026 - Non-VAT
+          </text>
+        </column>
+        <button variant="outline" icon="settings" on-press="show_profile_setup">Profile Settings</button>
+      </row>
+    </else>
+
+    <card>
+      <column padding="16" gap="12">
+        <if test="{constrainedLayout}">
+          <column gap="12">
+            <search-field disabled="true" placeholder="Search tax forms" label="Search tax forms"/>
+            <select disabled="true" text="Tax Year 2026" label="Tax year"/>
+            <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
+          </column>
+        </if>
+        <else>
+          <row gap="12" cross="center">
+            <search-field grow="1" disabled="true" placeholder="Search tax forms" label="Search tax forms"/>
+            <select disabled="true" text="Tax Year 2026" label="Tax year"/>
+            <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
+          </row>
+        </else>
+        <tabs gap="4" label="Dashboard view">
+          <button
+            variant="ghost"
+            icon="file-text"
+            selected="{dashboardCalendarActive}"
+            on-press="show_dashboard_calendar">Calendar</button>
+          <button
+            variant="ghost"
+            icon="folder-open"
+            selected="{dashboardFormsActive}"
+            on-press="show_dashboard_forms">Tax Form Library</button>
+        </tabs>
+      </column>
+    </card>
+
+    <if test="{dashboardCalendarActive}">
+      <use template="taxpayer-calendar-section"/>
+    </if>
+    <if test="{dashboardFormsActive}">
+      <use template="taxpayer-form-library-section"/>
+    </if>
+  </column>
+</template>
+
+<template name="taxpayer-dashboard-page">
+  <scroll grow="1" global-key="page-taxpayer-dashboard" label="Taxpayer dashboard content">
+    <if test="{phoneLayout}">
+      <use template="taxpayer-dashboard-content" padding="16"/>
+    </if>
+    <else>
+      <if test="{desktopLayout}">
+        <use template="taxpayer-dashboard-content" padding="32"/>
+      </if>
+      <else>
+        <use template="taxpayer-dashboard-content" padding="24"/>
+      </else>
+    </else>
+  </scroll>
+</template>

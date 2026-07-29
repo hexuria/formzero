@@ -1,0 +1,8 @@
+{
+  "name": "ebirforms-0",
+  "private": true,
+  "description": "Static eBIRForms desktop reconstruction using Native SDK markup and a Zig state core.",
+  "scripts": {
+    "generate": "node scripts/flatten-native.mjs"
+  }
+}

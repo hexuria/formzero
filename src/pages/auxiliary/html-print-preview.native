@@ -1,0 +1,191 @@
+<template name="html-preview-page-one">
+  <column grow="1" padding="28" gap="16">
+    <if test="{constrainedLayout}">
+      <column gap="10">
+        <column gap="2">
+          <text wrap="true" size="heading">BIR Form No. 2551Q</text>
+          <text wrap="true" foreground="text_muted">Quarterly Percentage Tax Return</text>
+        </column>
+        <badge variant="outline">Page 1 of 2</badge>
+      </column>
+    </if>
+    <else>
+      <row cross="center">
+        <column grow="1" gap="2">
+          <text size="heading">BIR Form No. 2551Q</text>
+          <text foreground="text_muted">Quarterly Percentage Tax Return</text>
+        </column>
+        <badge variant="outline">Page 1 of 2</badge>
+      </row>
+    </else>
+
+    <separator/>
+
+    <if test="{constrainedLayout}">
+      <column gap="12">
+        <card background="surface_subtle">
+          <column padding="12" gap="6">
+            <text wrap="true" size="sm" foreground="text_muted">Taxpayer Identification Number</text>
+            <text>123-456-789-000</text>
+          </column>
+        </card>
+        <card background="surface_subtle">
+          <column padding="12" gap="6">
+            <text size="sm" foreground="text_muted">Taxable Quarter</text>
+            <text>3rd Quarter 2026</text>
+          </column>
+        </card>
+      </column>
+    </if>
+    <else>
+      <row gap="12">
+        <card grow="1" background="surface_subtle">
+          <column padding="12" gap="6">
+            <text size="sm" foreground="text_muted">Taxpayer Identification Number</text>
+            <text>123-456-789-000</text>
+          </column>
+        </card>
+        <card grow="1" background="surface_subtle">
+          <column padding="12" gap="6">
+            <text size="sm" foreground="text_muted">Taxable Quarter</text>
+            <text>3rd Quarter 2026</text>
+          </column>
+        </card>
+      </row>
+    </else>
+
+    <card background="surface_subtle">
+      <column padding="16" gap="12">
+        <text size="heading">Background Information</text>
+        <separator/>
+        <text wrap="true">Registered Name: Juan Dela Cruz</text>
+        <text wrap="true">Registered Address: Manila, Philippines</text>
+        <text wrap="true">Tax Type: Percentage Tax</text>
+      </column>
+    </card>
+
+    <card grow="1" background="surface_subtle">
+      <column padding="16" gap="12">
+        <text size="heading">Tax Details</text>
+        <separator/>
+        <row main="space_between" gap="12">
+          <text wrap="true" grow="1">Taxable sales or receipts</text>
+          <text>0.00</text>
+        </row>
+        <row main="space_between" gap="12">
+          <text grow="1">Tax rate</text>
+          <text>3.00%</text>
+        </row>
+        <row main="space_between" gap="12">
+          <text grow="1">Tax due</text>
+          <text>0.00</text>
+        </row>
+      </column>
+    </card>
+
+    <text size="sm" foreground="text_muted" text-alignment="center">
+      HTML-rendered filing preview
+    </text>
+  </column>
+</template>
+
+<template name="html-preview-page-two">
+  <column grow="1" padding="28" gap="16">
+    <if test="{constrainedLayout}">
+      <column gap="10">
+        <text wrap="true" size="heading">BIR Form No. 2551Q</text>
+        <badge variant="outline">Page 2 of 2</badge>
+      </column>
+    </if>
+    <else>
+      <row cross="center">
+        <text size="heading" grow="1">BIR Form No. 2551Q</text>
+        <badge variant="outline">Page 2 of 2</badge>
+      </row>
+    </else>
+    <separator/>
+    <card grow="1" background="surface_subtle">
+      <column padding="16" gap="12">
+        <text wrap="true" size="heading">Schedule and Payment Details</text>
+        <separator/>
+        <text wrap="true" foreground="text_muted">The rendered form page appears in this area.</text>
+      </column>
+    </card>
+  </column>
+</template>
+
+<template name="html-print-preview-shell">
+  <column grow="1" background="background">
+    <if test="{constrainedLayout}">
+      <column padding="12" gap="10" background="surface_subtle">
+        <row gap="10" cross="center">
+          <column grow="1" gap="2">
+            <text wrap="true">2551Q HTML Form Preview</text>
+            <text size="sm" foreground="text_muted">Preview only</text>
+          </column>
+          <button
+            size="icon"
+            variant="ghost"
+            icon="x"
+            label="Close HTML form preview"
+            on-press="go_back">
+          </button>
+        </row>
+        <column gap="8">
+          <button variant="primary" disabled="true">Export PDF</button>
+          <button variant="primary" disabled="true">Print</button>
+          <button variant="outline" icon="refresh-cw" disabled="true">Refresh Preview</button>
+        </column>
+      </column>
+    </if>
+    <else>
+      <row height="48" padding="12" gap="8" cross="center" background="surface_subtle">
+        <column grow="1" gap="2">
+          <text>2551Q HTML Form Preview</text>
+          <text size="sm" foreground="text_muted">Preview only</text>
+        </column>
+        <button variant="primary" disabled="true">Export PDF</button>
+        <button variant="primary" disabled="true">Print</button>
+        <button
+          size="icon"
+          variant="outline"
+          icon="refresh-cw"
+          label="Refresh preview"
+          disabled="true"
+        />
+        <button
+          size="icon"
+          variant="ghost"
+          icon="x"
+          label="Close HTML form preview"
+          on-press="go_back">
+        </button>
+      </row>
+    </else>
+
+    <separator/>
+
+    <scroll grow="1" overscroll="none" background="surface_subtle">
+      <if test="{constrainedLayout}">
+        <column padding="16" gap="24">
+          <card height="980" radius="sm" background="background">
+            <use template="html-preview-page-one"/>
+          </card>
+          <card height="980" radius="sm" background="background">
+            <use template="html-preview-page-two"/>
+          </card>
+        </column>
+      </if>
+      <else>
+        <column padding="24" gap="24" cross="center">
+          <card width="760" height="980" radius="sm" background="background">
+            <use template="html-preview-page-one"/>
+          </card>
+          <card width="760" height="980" radius="sm" background="background">
+            <use template="html-preview-page-two"/>
+          </card>
+        </column>
+      </else>
+    </scroll>
+  </column>
+</template>

@@ -1,0 +1,588 @@
+<template name="form-2550q-grid-1" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Year-end month</text>
+      <input placeholder="Month" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Taxable year (raw)</text>
+      <input placeholder="YYYY" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Return Period From</text>
+      <input placeholder="MM / DD / YYYY" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Return Period To</text>
+      <input placeholder="MM / DD / YYYY" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Amended Return?</text>
+      <input placeholder="No" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Tax Relief?</text>
+      <input placeholder="No / Specify" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">TIN</text>
+      <input placeholder="000-000-000-000" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">RDO Code</text>
+      <input placeholder="RDO" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Taxpayer Name</text>
+      <input placeholder="Registered taxpayer name" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-2550q-grid-2" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">31A Vatable Sales / Receipts</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">31B Output Tax Due</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">32A Zero-Rated Sales / Receipts</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">33A Exempt Sales / Receipts</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Output VAT Adjustments</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Total Output Tax Due</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-2550q-grid-3" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">44 Domestic Purchases / Input Tax</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">45 Services Rendered by Non-Residents</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">46 Importation of Goods</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">47 Other Purchases</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">48 Domestic Purchases Without Input Tax</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">49 Exempt Importations</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-2550q-grid-4" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Input Tax Directly Attributable to Exempt Sales</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Input Tax Not Directly Attributable</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Ratable Input Tax to Exempt Sales</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-2550q-grid-5" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Prior Return Payment</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Other Tax Credit / Payment</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Net VAT Payable / (Overpayment)</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Surcharge</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Interest</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Compromise</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-2550q-grid-6" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Taxpayer / Authorized Representative</text>
+      <input placeholder="Name and capacity" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Payment Method</text>
+      <input placeholder="Cash / Check / Tax Debit Memo" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Payment Reference</text>
+      <input placeholder="Reference number" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-2550q-table-1">
+  <column>
+    <if test="{constrainedLayout or tabletLayout}">
+      <column gap="12">
+      <column gap="8">
+        <column gap="2">
+          <text foreground="text_muted">Description</text>
+          <text>Capital good 1</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Date Acquired</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Useful Life</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Acquisition Cost</text>
+          <text>0.00</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Allowable Input Tax</text>
+          <text>0.00</text>
+        </column>
+      </column>
+      <separator/>
+      <column gap="8">
+        <column gap="2">
+          <text foreground="text_muted">Description</text>
+          <text>Capital good 2</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Date Acquired</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Useful Life</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Acquisition Cost</text>
+          <text>0.00</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Allowable Input Tax</text>
+          <text>0.00</text>
+        </column>
+      </column>
+      </column>
+    </if>
+    <else>
+      <table gap="4">
+                  <table-row gap="8">
+                    <table-cell>Description</table-cell>
+                    <table-cell>Date Acquired</table-cell>
+                    <table-cell>Useful Life</table-cell>
+                    <table-cell>Acquisition Cost</table-cell>
+                    <table-cell>Allowable Input Tax</table-cell>
+                  </table-row>
+                  <table-row gap="8">
+                    <table-cell>Capital good 1</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>0.00</table-cell>
+                    <table-cell>0.00</table-cell>
+                  </table-row>
+                  <table-row gap="8">
+                    <table-cell>Capital good 2</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>0.00</table-cell>
+                    <table-cell>0.00</table-cell>
+                  </table-row>
+                </table>
+    </else>
+  </column>
+</template>
+
+<template name="form-2550q-table-2">
+  <column>
+    <if test="{constrainedLayout or tabletLayout}">
+      <column gap="12">
+      <column gap="8">
+        <column gap="2">
+          <text foreground="text_muted">Withholding Agent</text>
+          <text>Certificate 1</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">TIN</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Period</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Creditable VAT Withheld</text>
+          <text>0.00</text>
+        </column>
+      </column>
+      <separator/>
+      <column gap="8">
+        <column gap="2">
+          <text foreground="text_muted">Withholding Agent</text>
+          <text>Certificate 2</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">TIN</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Period</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Creditable VAT Withheld</text>
+          <text>0.00</text>
+        </column>
+      </column>
+      </column>
+    </if>
+    <else>
+      <table gap="4">
+                  <table-row gap="8">
+                    <table-cell>Withholding Agent</table-cell>
+                    <table-cell>TIN</table-cell>
+                    <table-cell>Period</table-cell>
+                    <table-cell>Creditable VAT Withheld</table-cell>
+                  </table-row>
+                  <table-row gap="8">
+                    <table-cell>Certificate 1</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>0.00</table-cell>
+                  </table-row>
+                  <table-row gap="8">
+                    <table-cell>Certificate 2</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>0.00</table-cell>
+                  </table-row>
+                </table>
+    </else>
+  </column>
+</template>
+
+<template name="form-2550q-table-3">
+  <column>
+    <if test="{constrainedLayout or tabletLayout}">
+      <column gap="12">
+      <column gap="8">
+        <column gap="2">
+          <text foreground="text_muted">Payment Date</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Reference Number</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Taxable Base</text>
+          <text>0.00</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Advance VAT Paid</text>
+          <text>0.00</text>
+        </column>
+      </column>
+      <separator/>
+      <column gap="8">
+        <column gap="2">
+          <text foreground="text_muted">Payment Date</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Reference Number</text>
+          <text>-</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Taxable Base</text>
+          <text>0.00</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Advance VAT Paid</text>
+          <text>0.00</text>
+        </column>
+      </column>
+      </column>
+    </if>
+    <else>
+      <table gap="4">
+                  <table-row gap="8">
+                    <table-cell>Payment Date</table-cell>
+                    <table-cell>Reference Number</table-cell>
+                    <table-cell>Taxable Base</table-cell>
+                    <table-cell>Advance VAT Paid</table-cell>
+                  </table-row>
+                  <table-row gap="8">
+                    <table-cell>-</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>0.00</table-cell>
+                    <table-cell>0.00</table-cell>
+                  </table-row>
+                  <table-row gap="8">
+                    <table-cell>-</table-cell>
+                    <table-cell>-</table-cell>
+                    <table-cell>0.00</table-cell>
+                    <table-cell>0.00</table-cell>
+                  </table-row>
+                </table>
+    </else>
+  </column>
+</template>
+
+<template name="form-2550q-masthead">
+  <column>
+    <if test="{constrainedLayout}">
+      <column gap="16">
+      <column gap="6">
+        <text size="heading">BIR Form No. 2550Q</text>
+        <text>Quarterly Value-Added Tax Return</text>
+        <row gap="8" cross="center">
+          <text foreground="text_muted" grow="1">April 2024 (ENCS)</text>
+          <badge>Draft</badge>
+        </row>
+      </column>
+        <column gap="8">
+        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
+        <button variant="secondary" disabled="true">Validate</button>
+        <separator/>
+        <button variant="secondary" disabled="true">Save Draft</button>
+        <button variant="secondary" disabled="true">Revert to Draft</button>
+        <button variant="primary" disabled="true">Manual / External Filing</button>
+        </column>
+      </column>
+    </if>
+    <else>
+      <column gap="16">
+        <row gap="16" cross="center">
+          <column gap="4" grow="1">
+            <text size="heading">BIR Form No. 2550Q</text>
+            <text>Quarterly Value-Added Tax Return</text>
+            <text foreground="text_muted">April 2024 (ENCS)</text>
+          </column>
+          <badge>Draft</badge>
+        </row>
+        <row gap="8">
+        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
+        <button variant="secondary" disabled="true">Validate</button>
+        <spacer/>
+        <button variant="secondary" disabled="true">Save Draft</button>
+        <button variant="secondary" disabled="true">Revert to Draft</button>
+        <button variant="primary" disabled="true">Manual / External Filing</button>
+        </row>
+      </column>
+    </else>
+  </column>
+</template>
+
+<template name="form-2550q-filing-status">
+  <card>
+    <column padding="20" gap="12">
+      <text size="heading">Filing status</text>
+      <if test="{constrainedLayout}">
+        <if test="{phoneLayout}">
+          <column gap="8">
+            <badge>Draft</badge>
+            <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
+          </column>
+        </if>
+        <else>
+          <row gap="12" cross="center">
+            <badge>Draft</badge>
+            <text foreground="text_muted" grow="1">Next: Queued, Submitted, Confirmed, and Paid</text>
+          </row>
+        </else>
+      </if>
+      <else>
+        <stepper active="0">
+          <step>Draft</step>
+          <step>Queued</step>
+          <step>Submitted</step>
+          <step>Confirmed</step>
+          <step>Paid</step>
+        </stepper>
+      </else>
+    </column>
+  </card>
+</template>
+
+<template name="form-2550q">
+  <scroll grow="1" global-key="page-form-2550q">
+    <column padding="32" gap="24">
+      <use template="form-2550q-masthead"/>
+
+      <use template="form-2550q-filing-status"/>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">FILING PERIOD AND BACKGROUND INFORMATION</text>
+          <if test="{constrainedLayout}">
+            <use template="form-2550q-grid-1" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-2550q-grid-1" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-2550q-grid-1" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART IV — SALES AND OUTPUT TAX</text>
+          <if test="{constrainedLayout}">
+            <use template="form-2550q-grid-2" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-2550q-grid-2" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-2550q-grid-2" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART IV — CURRENT PURCHASES AND ADJUSTMENTS</text>
+          <if test="{constrainedLayout}">
+            <use template="form-2550q-grid-3" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-2550q-grid-3" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-2550q-grid-3" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">SCHEDULE 1 — CAPITAL GOODS (2 reviewed rows)</text>
+          <use template="form-2550q-table-1"/>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">SCHEDULE 2 — INPUT TAX ATTRIBUTABLE TO EXEMPT SALES</text>
+          <if test="{constrainedLayout}">
+            <use template="form-2550q-grid-4" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-2550q-grid-4" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-2550q-grid-4" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">SCHEDULE 3 — CREDITABLE VAT WITHHELD (2 reviewed rows)</text>
+          <use template="form-2550q-table-2"/>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">SCHEDULE 4 — ADVANCE VAT PAYMENTS (2 reviewed rows)</text>
+          <use template="form-2550q-table-3"/>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART II — TOTAL TAX PAYABLE</text>
+          <if test="{constrainedLayout}">
+            <use template="form-2550q-grid-5" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-2550q-grid-5" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-2550q-grid-5" columns="3"/>
+          </if>
+          <separator />
+          <if test="{constrainedLayout}">
+            <column gap="8">
+              <text>Total Amount Payable</text>
+              <badge>PHP 0.00</badge>
+            </column>
+          </if>
+          <else>
+            <row gap="8">
+              <text grow="1">Total Amount Payable</text>
+              <badge>PHP 0.00</badge>
+            </row>
+          </else>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">SIGNATURE AND LOCAL PAYMENT DETAILS</text>
+          <if test="{constrainedLayout}">
+            <use template="form-2550q-grid-6" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-2550q-grid-6" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-2550q-grid-6" columns="3"/>
+          </if>
+        </column>
+      </card>
+    </column>
+  </scroll>
+</template>

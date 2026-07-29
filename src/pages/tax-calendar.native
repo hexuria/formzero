@@ -1,0 +1,250 @@
+<template name="calendar-deadline-row" args="date form period description status tone=secondary">
+  <card>
+    <row padding="16" gap="12" cross="center">
+      <column width="58" gap="3" cross="center">
+        <text text-alignment="center"><span weight="bold">{date}</span></text>
+        <text text-alignment="center" foreground="text_muted">2026</text>
+      </column>
+      <separator/>
+      <column grow="1" gap="6">
+        <row gap="8" cross="center">
+          <badge variant="{tone}">{form}</badge>
+          <badge variant="{tone}">{status}</badge>
+        </row>
+        <text><span weight="bold">{description}</span></text>
+        <text wrap="true" foreground="text_muted">Taxable period: {period}</text>
+      </column>
+      <slot/>
+    </row>
+  </card>
+</template>
+
+<template name="tax-calendar-deadlines-section">
+  <column gap="12">
+    <row cross="center" gap="12">
+      <column grow="1" gap="4">
+        <text><span weight="bold">2026 Calendar-Year Deadlines</span></text>
+        <text wrap="true" foreground="text_muted">Quarterly filing dates commonly used by taxpayer profiles</text>
+      </column>
+      <badge variant="secondary">6 deadlines</badge>
+    </row>
+
+    <use
+      template="calendar-deadline-row"
+      date="APR 25"
+      form="2551Q"
+      period="January to March"
+      description="Quarterly Percentage Tax Return"
+      status="Past">
+      <button
+        size="sm"
+        variant="ghost"
+        icon="chevron-right"
+        label="Open April BIR Form 2551Q deadline"
+        on-press="show_form_2551q"></button>
+    </use>
+    <use
+      template="calendar-deadline-row"
+      date="MAY 15"
+      form="1701Q"
+      period="January to March"
+      description="Quarterly Income Tax Return"
+      status="Past">
+      <button
+        size="sm"
+        variant="ghost"
+        icon="chevron-right"
+        label="Open May BIR Form 1701Q deadline"
+        on-press="show_form_1701q"></button>
+    </use>
+    <use
+      template="calendar-deadline-row"
+      date="JUL 31"
+      form="2551Q"
+      period="April to June"
+      description="Quarterly Percentage Tax Return"
+      status="Upcoming"
+      tone="primary">
+      <button
+        size="sm"
+        variant="ghost"
+        icon="chevron-right"
+        label="Open July BIR Form 2551Q deadline"
+        on-press="show_form_2551q"></button>
+    </use>
+    <use
+      template="calendar-deadline-row"
+      date="AUG 15"
+      form="1701Q"
+      period="April to June"
+      description="Quarterly Income Tax Return"
+      status="Upcoming"
+      tone="primary">
+      <button
+        size="sm"
+        variant="ghost"
+        icon="chevron-right"
+        label="Open August BIR Form 1701Q deadline"
+        on-press="show_form_1701q"></button>
+    </use>
+    <use
+      template="calendar-deadline-row"
+      date="OCT 25"
+      form="2551Q"
+      period="July to September"
+      description="Quarterly Percentage Tax Return"
+      status="Scheduled">
+      <button
+        size="sm"
+        variant="ghost"
+        icon="chevron-right"
+        label="Open October BIR Form 2551Q deadline"
+        on-press="show_form_2551q"></button>
+    </use>
+    <use
+      template="calendar-deadline-row"
+      date="NOV 15"
+      form="1701Q"
+      period="July to September"
+      description="Quarterly Income Tax Return"
+      status="Scheduled">
+      <button
+        size="sm"
+        variant="ghost"
+        icon="chevron-right"
+        label="Open November BIR Form 1701Q deadline"
+        on-press="show_form_1701q"></button>
+    </use>
+  </column>
+</template>
+
+<template name="tax-calendar-rules-section">
+  <column gap="12">
+    <column gap="4">
+      <text><span weight="bold">Calendar Rules</span></text>
+      <text wrap="true" foreground="text_muted">
+        Static reference notes used to explain how the calendar preview is organized.
+      </text>
+    </column>
+    <card>
+      <column padding="20" gap="10">
+        <text><span weight="bold">Quarterly percentage tax</span></text>
+        <text wrap="true" foreground="text_muted">
+          Form 2551Q is represented on the 25th day after the close of each taxable quarter in this preview.
+        </text>
+      </column>
+    </card>
+    <card>
+      <column padding="20" gap="10">
+        <text><span weight="bold">Quarterly individual income tax</span></text>
+        <text wrap="true" foreground="text_muted">
+          Form 1701Q is represented on the 15th day of the second month after each quarter in this preview.
+        </text>
+      </column>
+    </card>
+    <card>
+      <column padding="20" gap="10">
+        <text><span weight="bold">Official sources remain authoritative</span></text>
+        <text wrap="true" foreground="text_muted">
+          Confirm current BIR issuances, holidays, and taxpayer-specific registration details before filing.
+        </text>
+      </column>
+    </card>
+  </column>
+</template>
+
+<template name="tax-calendar-overrides-section">
+  <card>
+    <column padding="24" gap="12" cross="center">
+      <icon name="clock" foreground="text_muted" width="34" height="34"/>
+      <text><span weight="bold">No calendar overrides</span></text>
+      <text wrap="true" text-alignment="center" foreground="text_muted">
+        This static reconstruction does not define profile-specific deadline changes.
+      </text>
+    </column>
+  </card>
+</template>
+
+<template name="tax-calendar-content" args="padding">
+  <column padding="{padding}" gap="24">
+    <if test="{constrainedLayout}">
+      <column gap="12">
+        <column gap="6">
+          <text size="heading">Tax Calendar Explorer</text>
+          <text wrap="true" foreground="text_muted">Browse official filing rules and calendar-year deadlines.</text>
+        </column>
+        <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
+      </column>
+    </if>
+    <else>
+      <row gap="16" cross="center">
+        <column grow="1" gap="6">
+          <text size="heading">Tax Calendar Explorer</text>
+          <text foreground="text_muted">Browse official filing rules and calendar-year deadlines.</text>
+        </column>
+        <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
+      </row>
+    </else>
+
+    <tabs gap="4" label="Tax calendar sections">
+      <button
+        variant="ghost"
+        selected="{calendarDeadlinesActive}"
+        on-press="show_calendar_deadlines">Deadlines</button>
+      <button
+        variant="ghost"
+        selected="{calendarRulesActive}"
+        on-press="show_calendar_rules">Rules</button>
+      <button
+        variant="ghost"
+        selected="{calendarOverridesActive}"
+        on-press="show_calendar_overrides">Overrides</button>
+    </tabs>
+
+    <card>
+      <column padding="16" gap="12">
+        <if test="{constrainedLayout}">
+          <column gap="12">
+            <select disabled="true" text="Calendar Year 2026" label="Calendar year"/>
+            <select disabled="true" text="All Forms" label="Form filter"/>
+            <search-field disabled="true" placeholder="Search forms or deadlines" label="Search tax calendar"/>
+          </column>
+        </if>
+        <else>
+          <row gap="12" cross="center">
+            <select disabled="true" text="Calendar Year 2026" label="Calendar year"/>
+            <select disabled="true" text="All Forms" label="Form filter"/>
+            <search-field grow="1" disabled="true" placeholder="Search forms or deadlines" label="Search tax calendar"/>
+          </row>
+        </else>
+        <text wrap="true" foreground="text_muted">Dates shown below are a static planning preview.</text>
+      </column>
+    </card>
+
+    <if test="{calendarDeadlinesActive}">
+      <use template="tax-calendar-deadlines-section"/>
+    </if>
+    <if test="{calendarRulesActive}">
+      <use template="tax-calendar-rules-section"/>
+    </if>
+    <if test="{calendarOverridesActive}">
+      <use template="tax-calendar-overrides-section"/>
+    </if>
+  </column>
+</template>
+
+<template name="tax-calendar-page">
+  <scroll grow="1" global-key="page-tax-calendar" label="Tax calendar explorer content">
+    <if test="{phoneLayout}">
+      <use template="tax-calendar-content" padding="16"/>
+    </if>
+    <else>
+      <if test="{desktopLayout}">
+        <use template="tax-calendar-content" padding="32"/>
+      </if>
+      <else>
+        <use template="tax-calendar-content" padding="24"/>
+      </else>
+    </else>
+  </scroll>
+</template>

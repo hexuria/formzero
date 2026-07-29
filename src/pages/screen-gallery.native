@@ -1,0 +1,156 @@
+<template name="gallery-main-grid" args="grid_columns">
+  <grid columns="{grid_columns}" gap="12">
+    <button variant="secondary" on-press="show_taxpayer_dashboard">Taxpayer Dashboard</button>
+    <button variant="secondary" on-press="show_global_dashboard">Global Dashboard</button>
+    <button variant="secondary" on-press="show_profile_setup">Taxpayer Profile Setup</button>
+    <button variant="secondary" on-press="show_background_tasks">Background Tasks</button>
+    <button variant="secondary" on-press="show_import_data">Import Data</button>
+    <button variant="secondary" on-press="show_tax_calendar">Tax Calendar Explorer</button>
+    <button variant="secondary" on-press="show_settings">Settings</button>
+  </grid>
+</template>
+
+<template name="gallery-forms-grid" args="grid_columns">
+  <grid columns="{grid_columns}" gap="12">
+    <button variant="secondary" on-press="show_form_0605">0605 - Payment Form</button>
+    <button variant="secondary" on-press="show_form_0619_e">0619-E - Creditable Income Taxes Withheld</button>
+    <button variant="secondary" on-press="show_form_0619_f">0619-F - Final Income Taxes Withheld</button>
+    <button variant="secondary" on-press="show_form_1601_c">1601C - Compensation Withholding</button>
+    <button variant="secondary" on-press="show_form_1701">1701 - Annual Individual ITR</button>
+    <button variant="secondary" on-press="show_form_1701q">1701Q - Quarterly Individual ITR</button>
+    <button variant="secondary" on-press="show_form_1702_rt">1702-RT - Regular-Rate Corporation ITR</button>
+    <button variant="secondary" on-press="show_form_1702_mx">1702-MX - Mixed-Income Corporation ITR</button>
+    <button variant="secondary" on-press="show_form_2550q">2550Q - Quarterly VAT Return</button>
+    <button variant="secondary" on-press="show_form_2551q">2551Q - Quarterly Percentage Tax</button>
+  </grid>
+</template>
+
+<template name="gallery-auxiliary-grid" args="grid_columns">
+  <grid columns="{grid_columns}" gap="12">
+    <button variant="secondary" on-press="show_aux_admin_auth_overlay">Admin Authentication Overlay</button>
+    <button variant="secondary" on-press="show_aux_background_task_debug_log">Background Task Debug Log</button>
+    <button variant="secondary" on-press="show_aux_command_palette">Command Palette</button>
+    <button variant="secondary" on-press="show_aux_email_confirmation">Email Confirmation</button>
+    <button variant="secondary" on-press="show_aux_html_print_preview">HTML Print Preview</button>
+    <button variant="secondary" on-press="show_aux_lock_screen">Lock Screen</button>
+    <button variant="secondary" on-press="show_aux_profile_auth_overlay">Profile Authentication Overlay</button>
+  </grid>
+</template>
+
+<template name="screen-gallery-content">
+  <column gap="24">
+    <if test="{constrainedLayout}">
+      <column gap="8">
+        <badge variant="outline">Developer Tools</badge>
+        <column gap="4">
+          <text size="heading">Screen Gallery</text>
+          <text wrap="true" foreground="text_muted">
+            Reviewer-only index for every reconstructed eBIRForms surface. This page is not part of the taxpayer workflow.
+          </text>
+        </column>
+      </column>
+    </if>
+    <else>
+      <row gap="14" cross="start">
+        <column grow="1" gap="4">
+          <text size="heading">Screen Gallery</text>
+          <text wrap="true" foreground="text_muted">
+            Reviewer-only index for every reconstructed eBIRForms surface. This page is not part of the taxpayer workflow.
+          </text>
+        </column>
+        <badge variant="outline">Developer Tools</badge>
+      </row>
+    </else>
+
+    <card>
+      <column padding="20" gap="12">
+        <column gap="4">
+          <text><span weight="bold">Main Screens</span></text>
+          <text wrap="true" foreground="text_muted">Primary application pages and taxpayer workflows.</text>
+        </column>
+        <column>
+          <if test="{phoneLayout}">
+            <use template="gallery-main-grid" grid_columns="1"/>
+          </if>
+          <if test="{constrainedLayout and phoneLayout == false}">
+            <use template="gallery-main-grid" grid_columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="gallery-main-grid" grid_columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="gallery-main-grid" grid_columns="3"/>
+          </if>
+        </column>
+      </column>
+    </card>
+
+    <card>
+      <column padding="20" gap="12">
+        <column gap="4">
+          <text><span weight="bold">BIR Form Editors</span></text>
+          <text wrap="true" foreground="text_muted">Static form-editor replicas with audited filing sections and status pipelines.</text>
+        </column>
+        <column>
+          <if test="{phoneLayout}">
+            <use template="gallery-forms-grid" grid_columns="1"/>
+          </if>
+          <if test="{constrainedLayout and phoneLayout == false}">
+            <use template="gallery-forms-grid" grid_columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="gallery-forms-grid" grid_columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="gallery-forms-grid" grid_columns="3"/>
+          </if>
+        </column>
+      </column>
+    </card>
+
+    <card>
+      <column padding="20" gap="12">
+        <column gap="4">
+          <text><span weight="bold">Auxiliary Surfaces</span></text>
+          <text wrap="true" foreground="text_muted">Overlays, confirmation windows, previews, and supporting diagnostic views.</text>
+        </column>
+        <column>
+          <if test="{phoneLayout}">
+            <use template="gallery-auxiliary-grid" grid_columns="1"/>
+          </if>
+          <if test="{constrainedLayout and phoneLayout == false}">
+            <use template="gallery-auxiliary-grid" grid_columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="gallery-auxiliary-grid" grid_columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="gallery-auxiliary-grid" grid_columns="3"/>
+          </if>
+        </column>
+      </column>
+    </card>
+  </column>
+</template>
+
+<template name="screen-gallery-page">
+  <scroll grow="1" global-key="page-screen-gallery" label="Developer screen gallery">
+    <if test="{phoneLayout}">
+      <column padding="16">
+        <use template="screen-gallery-content"/>
+      </column>
+    </if>
+    <else>
+      <if test="{constrainedLayout}">
+        <column padding="20">
+          <use template="screen-gallery-content"/>
+        </column>
+      </if>
+      <else>
+        <column padding="32">
+          <use template="screen-gallery-content"/>
+        </column>
+      </else>
+    </else>
+  </scroll>
+</template>

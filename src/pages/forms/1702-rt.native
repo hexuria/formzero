@@ -1,0 +1,393 @@
+<template name="form-1702-rt-grid-1" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Taxable Year</text>
+      <input placeholder="YYYY" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Amended Return?</text>
+      <input placeholder="No" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Number of Sheets Attached</text>
+      <input placeholder="Enter number" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">TIN</text>
+      <input placeholder="000-000-000-000" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">RDO Code</text>
+      <input placeholder="RDO" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Registered Name</text>
+      <input placeholder="Corporation name" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Registered Address</text>
+      <input placeholder="Registered address" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Line of Business</text>
+      <input placeholder="Business activity" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Tax Relief / Special Law</text>
+      <input placeholder="Relief details" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1702-rt-grid-2" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">27 Sales / Receipts / Revenues / Fees</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">28 Returns / Allowances / Discounts</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">30 Cost of Sales / Services</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">32 Other Taxable Income</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Itemized / Optional Standard Deduction</text>
+      <input placeholder="Select deduction method" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">40 Regular Income Tax Rate</text>
+      <input placeholder="Rate" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1702-rt-grid-3" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Net Sales / Receipts</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Gross Income</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Total Taxable Income</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Normal Income Tax</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Minimum Corporate Income Tax</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Income Tax Due</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1702-rt-grid-4" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">44 Prior-Year Excess Credits</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">45 Quarterly Income Tax Payments</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">46 Creditable Tax Withheld</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">47 Foreign Tax Credits</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">48-53 Other Credits / Payments</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">54 Total Tax Credits / Payments</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1702-rt-grid-5" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Tax Payable / (Overpayment)</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Add: Surcharge, Interest and Compromise</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Total Amount Payable</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1702-rt-grid-6" args="columns">
+  <grid columns="{columns}" gap="12">
+    <column gap="4">
+      <text foreground="text_muted">Refund</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Tax Credit Certificate</text>
+      <input placeholder="Enter amount" />
+    </column>
+    <column gap="4">
+      <text foreground="text_muted">Carry Over to Next Period</text>
+      <input placeholder="Enter amount" />
+    </column>
+  </grid>
+</template>
+
+<template name="form-1702-rt-table-1">
+  <column>
+    <if test="{constrainedLayout or tabletLayout}">
+      <column gap="12">
+      <column gap="8">
+        <column gap="2">
+          <text foreground="text_muted">Schedule</text>
+          <text>Deductions and credits</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Official rows</text>
+          <text>Fixed capacity</text>
+        </column>
+        <column gap="2">
+          <text foreground="text_muted">Attachment status</text>
+          <text>No attachment selected</text>
+        </column>
+      </column>
+      </column>
+    </if>
+    <else>
+      <table gap="4">
+                  <table-row gap="8">
+                    <table-cell>Schedule</table-cell>
+                    <table-cell>Official rows</table-cell>
+                    <table-cell>Attachment status</table-cell>
+                  </table-row>
+                  <table-row gap="8">
+                    <table-cell>Deductions and credits</table-cell>
+                    <table-cell>Fixed capacity</table-cell>
+                    <table-cell>No attachment selected</table-cell>
+                  </table-row>
+                </table>
+    </else>
+  </column>
+</template>
+
+<template name="form-1702-rt-masthead">
+  <column>
+    <if test="{constrainedLayout}">
+      <column gap="16">
+      <column gap="6">
+        <text size="heading">BIR Form No. 1702-RT</text>
+        <text>Annual ITR — Corporation Subject Only to Regular Income Tax Rate</text>
+        <row gap="8" cross="center">
+          <text foreground="text_muted" grow="1">January 2018 (ENCS)</text>
+          <badge>Draft</badge>
+        </row>
+      </column>
+        <column gap="8">
+        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
+        <separator/>
+        <button variant="secondary" disabled="true">Save Draft</button>
+        <button variant="primary" disabled="true">XML save only</button>
+        </column>
+      </column>
+    </if>
+    <else>
+      <column gap="16">
+        <row gap="16" cross="center">
+          <column gap="4" grow="1">
+            <text size="heading">BIR Form No. 1702-RT</text>
+            <text>Annual ITR — Corporation Subject Only to Regular Income Tax Rate</text>
+            <text foreground="text_muted">January 2018 (ENCS)</text>
+          </column>
+          <badge>Draft</badge>
+        </row>
+        <row gap="8">
+        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
+        <spacer/>
+        <button variant="secondary" disabled="true">Save Draft</button>
+        <button variant="primary" disabled="true">XML save only</button>
+        </row>
+      </column>
+    </else>
+  </column>
+</template>
+
+<template name="form-1702-rt-filing-status">
+  <card>
+    <column padding="20" gap="12">
+      <text size="heading">Filing status</text>
+      <if test="{constrainedLayout}">
+        <if test="{phoneLayout}">
+          <column gap="8">
+            <badge>Draft</badge>
+            <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
+          </column>
+        </if>
+        <else>
+          <row gap="12" cross="center">
+            <badge>Draft</badge>
+            <text foreground="text_muted" grow="1">Next: Queued, Submitted, Confirmed, and Paid</text>
+          </row>
+        </else>
+      </if>
+      <else>
+        <stepper active="0">
+          <step>Draft</step>
+          <step>Queued</step>
+          <step>Submitted</step>
+          <step>Confirmed</step>
+          <step>Paid</step>
+        </stepper>
+      </else>
+    </column>
+  </card>
+</template>
+
+<template name="form-1702-rt">
+  <scroll grow="1" global-key="page-form-1702-rt">
+    <column padding="32" gap="24">
+      <use template="form-1702-rt-masthead"/>
+
+      <use template="form-1702-rt-filing-status"/>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Part I — Background Information</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1702-rt-grid-1" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1702-rt-grid-1" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1702-rt-grid-1" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Part IV — Computation of Tax</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1702-rt-grid-2" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1702-rt-grid-2" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1702-rt-grid-2" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Part IV — Computed Amounts</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1702-rt-grid-3" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1702-rt-grid-3" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1702-rt-grid-3" columns="4"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Part IV — Tax Credits/Payments</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1702-rt-grid-4" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1702-rt-grid-4" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1702-rt-grid-4" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Part II — Total Tax Payable</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1702-rt-grid-5" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1702-rt-grid-5" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1702-rt-grid-5" columns="3"/>
+          </if>
+          <separator />
+          <if test="{constrainedLayout}">
+            <column gap="8">
+              <text>Current total</text>
+              <badge>PHP 0.00</badge>
+            </column>
+          </if>
+          <else>
+            <row gap="8">
+              <text grow="1">Current total</text>
+              <badge>PHP 0.00</badge>
+            </row>
+          </else>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Overpayment Disposition</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1702-rt-grid-6" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1702-rt-grid-6" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1702-rt-grid-6" columns="3"/>
+          </if>
+        </column>
+      </card>
+
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Official Fixed Schedule Capacity</text>
+          <text foreground="text_muted">The desktop form preserves the official number and order of schedule rows. Additional supporting schedules remain separate attachments.</text>
+          <use template="form-1702-rt-table-1"/>
+        </column>
+      </card>
+    </column>
+  </scroll>
+</template>

@@ -1,0 +1,71 @@
+<template name="email-confirmation-card-content">
+  <column padding="24" gap="10">
+    <text wrap="true" size="heading">BIR Electronic Filing and Payment System</text>
+    <text wrap="true" foreground="text_muted">Tax Return Receipt Confirmation</text>
+    <separator/>
+
+    <text><span mono="true">Date Received: July 29, 2026 10:42 AM</span></text>
+    <text><span mono="true">Reference Number: 2551Q-2026-0001842</span></text>
+    <text><span mono="true">Form Type: 2551Q</span></text>
+    <text><span mono="true">Return Period: September 30, 2026</span></text>
+    <text><span mono="true">TIN: 123-456-789-000</span></text>
+    <text><span mono="true">Taxpayer: JUAN DELA CRUZ</span></text>
+    <text><span mono="true">Status: RECEIVED</span></text>
+
+    <separator/>
+
+    <text wrap="true">
+      This confirms receipt of the electronically filed return. Keep this
+      confirmation with the taxpayer's filing records.
+    </text>
+  </column>
+</template>
+
+<template name="form-2551q-email-confirmation-window">
+  <column grow="1" background="background">
+    <if test="{constrainedLayout}">
+      <column padding="12" gap="10">
+        <row gap="10" cross="center">
+          <text wrap="true" size="heading" grow="1">Email Confirmation</text>
+          <button
+            size="icon"
+            variant="ghost"
+            icon="x"
+            label="Close email confirmation"
+            on-press="go_back">
+          </button>
+        </row>
+        <column gap="8">
+          <button size="sm" variant="outline" icon="copy" disabled="true">Copy Text</button>
+          <button size="sm" variant="outline" icon="download" disabled="true">Export</button>
+          <button size="sm" variant="outline" icon="file-text" disabled="true">Print</button>
+        </column>
+      </column>
+    </if>
+    <else>
+      <row padding="12" gap="12" cross="center">
+        <text size="heading" grow="1">Email Confirmation</text>
+        <button size="sm" variant="outline" icon="copy" disabled="true">Copy Text</button>
+        <button size="sm" variant="outline" icon="download" disabled="true">Export</button>
+        <button size="sm" variant="outline" icon="file-text" disabled="true">Print</button>
+        <button
+          size="icon"
+          variant="ghost"
+          icon="x"
+          label="Close email confirmation"
+          on-press="go_back">
+        </button>
+      </row>
+    </else>
+
+    <separator/>
+
+    <scroll grow="1" overscroll="none">
+      <column padding="24" gap="12">
+        <card background="surface">
+          <use template="email-confirmation-card-content"/>
+        </card>
+      </column>
+    </scroll>
+  </column>
+</template>
