@@ -1,8 +1,8 @@
 .{
-    .id = "dev.goldcoders.ebirforms.static",
+    .id = "dev.goldcoders.ebirforms",
     .name = "ebirforms-zero",
     .display_name = "eBIRForms",
-    .description = "A static Zero Native recreation of the eBIRForms desktop interface.",
+    .description = "A Native eBIRForms reconstruction with a functional tax calendar and SQLite policy store.",
     .version = "0.1.0",
     .theme = "geist",
     .icons = .{"assets/icon.svg"},

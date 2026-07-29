@@ -1,0 +1,21 @@
+.{
+    .name = .ebirforms_zero,
+    .fingerprint = 0x4287c24c5a707070,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .native_sdk = .{ .path = "node_modules/@native-sdk/cli" },
+        .sqlite = .{
+            .url = "https://www.sqlite.org/2026/sqlite-amalgamation-3530400.zip",
+            .hash = "N-V-__8AAGVtrgCcOcmjrOJnagmnRyMrcKaOo09KbU-vu8w8",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "assets",
+        "app.zon",
+        "README.md",
+    },
+}

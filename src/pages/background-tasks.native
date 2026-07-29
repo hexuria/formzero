@@ -116,7 +116,7 @@
           </row>
         </else>
         <row gap="8" cross="center">
-          <badge variant="secondary">2 queued</badge>
+          <badge variant="secondary">1 queued</badge>
           <text wrap="true" foreground="text_muted">Last checked moments ago</text>
         </row>
       </column>
@@ -130,13 +130,6 @@
       cadence="Every minute"
       next_run="Past due"/>
 
-    <use
-      template="background-job-card"
-      title="Synchronize tax calendar"
-      description="Refreshes the local filing calendar for Juan Dela Cruz."
-      source="System"
-      cadence="Every 15 minutes"
-      next_run="In 8 minutes"/>
   </column>
 </template>
 

@@ -2,6 +2,7 @@
 .native/
 .zig-cache/
 zig-cache/
+zig-pkg/
 zig-out/
 
 # JavaScript dependencies and generated reports

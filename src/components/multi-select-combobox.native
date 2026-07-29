@@ -3,23 +3,23 @@
 
   The host supplies derived option rows and summary flags. The fixed
   multi_select_* messages form the adapter seam to the host model:
-    - multi_select_toggle / multi_select_close
+    - multi_select_open / multi_select_close
     - multi_select_query_changed
     - multi_select_toggle_option:{option.id}
     - multi_select_select_all_filtered / multi_select_clear_all
 -->
 <template
   name="multi-select-combobox"
-  args="value open options allselected hiddencount width menuheight placeholder label">
+  args="value query open options allselected hiddencount width menuheight placeholder label">
   <stack width="{width}">
-    <combobox
+    <!-- The summary trigger and search editor are deliberately separate.
+         Mounting a menu around the same editor that initiated the click
+         creates a focus/dismiss race on AppKit. -->
+    <select
       size="sm"
-      text="{value}"
-      placeholder="{placeholder}"
+      placeholder="Select options..."
       label="{label}"
-      autofocus="{open}"
-      on-input="multi_select_query_changed"
-      on-press="multi_select_toggle"/>
+      on-press="multi_select_open">{value}</select>
 
     <if test="{open}">
       <dropdown-menu
@@ -28,6 +28,15 @@
         anchor-offset="4"
         height="{menuheight}"
         on-dismiss="multi_select_close">
+        <input
+          size="sm"
+          text="{query}"
+          placeholder="{placeholder}"
+          autofocus="true"
+          on-input="multi_select_query_changed"/>
+
+        <separator/>
+
         <if test="{allselected}">
           <menu-item icon="x" on-press="multi_select_clear_all">Deselect All</menu-item>
         </if>
@@ -40,9 +49,16 @@
         <separator/>
 
         <for each="options" key="id" as="option">
-          <menu-item
-            selected="{option.selected}"
-            on-press="multi_select_toggle_option:{option.id}">{option.label}</menu-item>
+          <if test="{option.selected}">
+            <menu-item
+              selected="true"
+              on-press="multi_select_toggle_option:{option.id}">{option.label}</menu-item>
+          </if>
+          <else>
+            <menu-item
+              selected="false"
+              on-press="multi_select_toggle_option:{option.id}">{option.label}</menu-item>
+          </else>
         </for>
         <else>
           <menu-item disabled="true">No matching options</menu-item>

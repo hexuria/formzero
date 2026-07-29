@@ -1,8 +1,11 @@
 {
   "name": "ebirforms-0",
   "private": true,
-  "description": "Static eBIRForms desktop reconstruction using Native SDK markup and a Zig state core.",
+  "description": "Native eBIRForms reconstruction with a Zig calendar engine and SQLite policy store.",
   "scripts": {
     "generate": "node scripts/flatten-native.mjs"
+  },
+  "devDependencies": {
+    "@native-sdk/cli": "0.6.1"
   }
 }

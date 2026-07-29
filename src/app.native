@@ -616,23 +616,23 @@
 
   The host supplies derived option rows and summary flags. The fixed
   multi_select_* messages form the adapter seam to the host model:
-    - multi_select_toggle / multi_select_close
+    - multi_select_open / multi_select_close
     - multi_select_query_changed
     - multi_select_toggle_option:{option.id}
     - multi_select_select_all_filtered / multi_select_clear_all
 -->
 <template
   name="multi-select-combobox"
-  args="value open options allselected hiddencount width menuheight placeholder label">
+  args="value query open options allselected hiddencount width menuheight placeholder label">
   <stack width="{width}">
-    <combobox
+    <!-- The summary trigger and search editor are deliberately separate.
+         Mounting a menu around the same editor that initiated the click
+         creates a focus/dismiss race on AppKit. -->
+    <select
       size="sm"
-      text="{value}"
-      placeholder="{placeholder}"
+      placeholder="Select options..."
       label="{label}"
-      autofocus="{open}"
-      on-input="multi_select_query_changed"
-      on-press="multi_select_toggle"/>
+      on-press="multi_select_open">{value}</select>
 
     <if test="{open}">
       <dropdown-menu
@@ -641,6 +641,15 @@
         anchor-offset="4"
         height="{menuheight}"
         on-dismiss="multi_select_close">
+        <input
+          size="sm"
+          text="{query}"
+          placeholder="{placeholder}"
+          autofocus="true"
+          on-input="multi_select_query_changed"/>
+
+        <separator/>
+
         <if test="{allselected}">
           <menu-item icon="x" on-press="multi_select_clear_all">Deselect All</menu-item>
         </if>
@@ -653,9 +662,16 @@
         <separator/>
 
         <for each="options" key="id" as="option">
-          <menu-item
-            selected="{option.selected}"
-            on-press="multi_select_toggle_option:{option.id}">{option.label}</menu-item>
+          <if test="{option.selected}">
+            <menu-item
+              selected="true"
+              on-press="multi_select_toggle_option:{option.id}">{option.label}</menu-item>
+          </if>
+          <else>
+            <menu-item
+              selected="false"
+              on-press="multi_select_toggle_option:{option.id}">{option.label}</menu-item>
+          </else>
         </for>
         <else>
           <menu-item disabled="true">No matching options</menu-item>
@@ -670,56 +686,87 @@
   </stack>
 </template>
 
-<template name="global-deadline-row" args="date form title detail tone=secondary">
-  <card>
-    <row padding="16" gap="12" cross="center">
-      <column width="48" cross="center" gap="2">
-        <text><span weight="bold">{date}</span></text>
-        <text foreground="text_muted">JUL</text>
+<template name="global-deadline-row" args="date form title detail">
+  <card padding="0">
+    <row padding="12" gap="14" cross="center">
+      <card padding="0" background="surface_subtle">
+        <column width="54" height="54" main="center" cross="center" gap="1">
+          <text foreground="text_muted"><span weight="bold">JUL</span></text>
+          <text size="heading"><span weight="bold">{date}</span></text>
+        </column>
+      </card>
+      <column grow="1" gap="4">
+        <text><span weight="bold">{form}</span></text>
+        <text wrap="true" foreground="text_muted">{title}</text>
+        <if test="{detail}">
+          <text wrap="true" foreground="text_muted">{detail}</text>
+        </if>
       </column>
-      <separator/>
-      <column grow="1" gap="5">
-        <row cross="center">
-          <badge variant="{tone}">{form}</badge>
-        </row>
-        <text><span weight="bold">{title}</span></text>
-        <text wrap="true" foreground="text_muted">{detail}</text>
-      </column>
-      <slot/>
     </row>
   </card>
 </template>
 
 <template name="global-news-item" args="title body meta">
-  <card>
+  <card padding="0">
     <column padding="16" gap="8">
+      <row cross="center" gap="8">
+        <badge variant="secondary">RSS Feed</badge>
+        <text grow="1" text-alignment="end" foreground="text_muted">{meta}</text>
+      </row>
       <text><span weight="bold">{title}</span></text>
       <text wrap="true" foreground="text_muted">{body}</text>
-      <text foreground="text_muted">{meta}</text>
     </column>
   </card>
 </template>
 
+<template name="global-calendar-weekday" args="label">
+  <column height="34" padding="6" main="center" cross="center" background="surface_subtle">
+    <text text-alignment="center" foreground="text_muted">
+      <span weight="bold">{label}</span>
+    </text>
+  </column>
+</template>
+
 <template name="global-calendar-day" args="day marker=">
-  <column height="58" padding="4" main="center" cross="center" gap="2" background="surface_subtle" radius="sm">
-    <text text-alignment="center">{day}</text>
+  <column height="58" padding="7" main="space_between" cross="stretch" background="surface">
+    <text text-alignment="end">{day}</text>
     <if test="{marker}">
-      <text text-alignment="center" foreground="accent">{marker}</text>
+      <text text-alignment="center" foreground="destructive">{marker}</text>
     </if>
+  </column>
+</template>
+
+<template name="global-calendar-warning-day" args="day marker=">
+  <column height="58" padding="7" main="space_between" cross="stretch" background="surface">
+    <text text-alignment="end">{day}</text>
+    <if test="{marker}">
+      <text text-alignment="center" foreground="warning">{marker}</text>
+    </if>
+  </column>
+</template>
+
+<template name="global-calendar-empty">
+  <column height="58" background="surface_subtle"></column>
+</template>
+
+<template name="global-calendar-today">
+  <column height="58" padding="7" main="space_between" cross="stretch" background="surface">
+    <row main="end">
+      <badge variant="outline">29</badge>
+    </row>
+    <spacer/>
   </column>
 </template>
 
 <template name="global-calendar-column">
   <column grow="1" gap="12">
     <if test="{constrainedLayout}">
-      <column gap="8">
-        <column gap="4">
-          <text><span weight="bold">Compliance Calendar</span></text>
-          <text wrap="true" foreground="text_muted">Upcoming filing and payment deadlines</text>
-        </column>
+      <column gap="10">
+        <text><span weight="bold">Compliance Calendar</span></text>
         <use
           template="multi-select-combobox"
           value="{formFilterText}"
+          query="{formFilterQuery}"
           open="{formFilterOpen}"
           options="{visibleFormOptions}"
           allselected="{formFilterAllFilteredSelected}"
@@ -732,13 +779,11 @@
     </if>
     <else>
       <row cross="center" gap="12">
-        <column grow="1" gap="4">
-          <text><span weight="bold">Compliance Calendar</span></text>
-          <text wrap="true" foreground="text_muted">Upcoming filing and payment deadlines</text>
-        </column>
+        <text grow="1"><span weight="bold">Compliance Calendar</span></text>
         <use
           template="multi-select-combobox"
           value="{formFilterText}"
+          query="{formFilterQuery}"
           open="{formFilterOpen}"
           options="{visibleFormOptions}"
           allselected="{formFilterAllFilteredSelected}"
@@ -750,25 +795,36 @@
       </row>
     </else>
 
-    <card>
-      <column padding="12" gap="8">
-        <row cross="center" gap="8">
+    <card padding="0">
+      <column gap="0">
+        <row padding="12" cross="center" gap="8">
           <text grow="1"><span weight="bold">July 2026</span></text>
-          <button size="sm" variant="ghost" icon="chevron-left" label="Previous month" disabled="true"></button>
-          <button size="sm" variant="ghost" icon="chevron-right" label="Next month" disabled="true"></button>
+          <row padding="4" cross="center" gap="2" background="surface_subtle" radius="md">
+            <button
+              size="sm"
+              variant="ghost"
+              icon="chevron-left"
+              label="Previous month"></button>
+            <button
+              size="sm"
+              variant="ghost"
+              icon="chevron-right"
+              label="Next month"></button>
+          </row>
         </row>
-        <grid columns="7" gap="4">
-          <text text-alignment="center" foreground="text_muted">Sun</text>
-          <text text-alignment="center" foreground="text_muted">Mon</text>
-          <text text-alignment="center" foreground="text_muted">Tue</text>
-          <text text-alignment="center" foreground="text_muted">Wed</text>
-          <text text-alignment="center" foreground="text_muted">Thu</text>
-          <text text-alignment="center" foreground="text_muted">Fri</text>
-          <text text-alignment="center" foreground="text_muted">Sat</text>
+        <separator/>
+        <grid columns="7" gap="1" background="border">
+          <use template="global-calendar-weekday" label="Sun"/>
+          <use template="global-calendar-weekday" label="Mon"/>
+          <use template="global-calendar-weekday" label="Tue"/>
+          <use template="global-calendar-weekday" label="Wed"/>
+          <use template="global-calendar-weekday" label="Thu"/>
+          <use template="global-calendar-weekday" label="Fri"/>
+          <use template="global-calendar-weekday" label="Sat"/>
 
-          <use template="global-calendar-day" day=""/>
-          <use template="global-calendar-day" day=""/>
-          <use template="global-calendar-day" day=""/>
+          <use template="global-calendar-empty"/>
+          <use template="global-calendar-empty"/>
+          <use template="global-calendar-empty"/>
           <use template="global-calendar-day" day="1"/>
           <use template="global-calendar-day" day="2"/>
           <use template="global-calendar-day" day="3"/>
@@ -801,10 +857,13 @@
           <use template="global-calendar-day" day="26"/>
           <use template="global-calendar-day" day="27" marker="{calendarDay27Marker}"/>
           <use template="global-calendar-day" day="28"/>
-          <use template="global-calendar-day" day="29"/>
+          <use template="global-calendar-today"/>
           <use template="global-calendar-day" day="30"/>
-          <use template="global-calendar-day" day="31" marker="{calendarDay31Marker}"/>
-          <use template="global-calendar-day" day=""/>
+          <use
+            template="global-calendar-warning-day"
+            day="31"
+            marker="{calendarDay31Marker}"/>
+          <use template="global-calendar-empty"/>
         </grid>
       </column>
     </card>
@@ -817,24 +876,16 @@
           date="{deadline.day}"
           form="{deadline.form}"
           title="{deadline.title}"
-          detail="{deadline.detail}">
-          <button
-            size="sm"
-            variant="ghost"
-            icon="chevron-right"
-            label="Open selected BIR form"
-            disabled="{not deadline.openable}"
-            on-press="show_deadline_form:{deadline.target}"></button>
-        </use>
+          detail="{deadline.detail}"/>
       </for>
     </if>
     <else>
-      <card>
+      <card padding="0">
         <column padding="24" gap="8" cross="center">
-          <icon name="info" foreground="text_muted" width="20" height="20"/>
+          <icon name="file-text" foreground="text_muted" width="22" height="22"/>
           <text><span weight="bold">No upcoming deadlines</span></text>
           <text wrap="true" text-alignment="center" foreground="text_muted">
-            Select one or more forms to show their July 2026 filing deadlines.
+            Select one or more forms to show their July filing deadlines.
           </text>
         </column>
       </card>
@@ -845,63 +896,51 @@
 <template name="global-news-column">
   <column grow="1" gap="12">
     <row cross="center" gap="12">
-      <column grow="1" gap="4">
-        <text><span weight="bold">Important News</span></text>
-        <text wrap="true" foreground="text_muted">BIR updates and application notices</text>
-      </column>
-      <button size="sm" variant="ghost" icon="refresh-cw" disabled="true">Refresh</button>
+      <text grow="1"><span weight="bold">Important News</span></text>
+      <button size="sm" variant="secondary">Refresh</button>
     </row>
 
     <use
       template="global-news-item"
-      title="Stay current with BIR advisories"
-      body="Review official issuances before filing. Tax calendars in this prototype are presented for planning and layout preview."
-      meta="Application notice"/>
+      title="Executive Order No. 115, s. 2026"
+      body="STRENGTHENING THE TECHNICAL COOPERATION COUNCIL OF THE PHILIPPINES"
+      meta="Wed, 29 Apr 2026 02:00:36 +0000"/>
     <use
       template="global-news-item"
-      title="Quarterly returns are due this month"
-      body="Confirm taxpayer classifications and registered tax types before preparing each return."
-      meta="July 2026"/>
+      title="Republic Act No. 12321"
+      body="AN ACT INSTITUTIONALIZING SUPPORT FOR PUBLIC BASIC EDUCATION SCHOOLS IN GEOGRAPHICALLY ISOLATED AND DISADVANTAGED AREAS (GIDA) AND UNDERSERVED COMMUNITIES, AND APPROPRIATING FUNDS THEREFOR"
+      meta="Wed, 22 Jul 2026 03:04:07 +0000"/>
     <use
       template="global-news-item"
-      title="Keep profile information complete"
-      body="Accurate registration details help pre-fill forms consistently across the application."
-      meta="Profile guidance"/>
-
-    <card>
-      <column padding="20" gap="10">
-        <row gap="10" cross="center">
-          <icon name="info" foreground="info" width="22" height="22"/>
-          <text><span weight="bold">Static Native preview</span></text>
-        </row>
-        <text wrap="true" foreground="text_muted">
-          Calendar browsing and news refresh remain static. Deadline arrows open the matching reconstructed tax forms.
-        </text>
-      </column>
-    </card>
+      title="DMW-Advisory No. 44, s. 2026"
+      body="OWWA E-CARD AS AN OFW'S PRIMARY IDENTIFICATION CARD AND VALID GOVERNMENT-ISSUED ID"
+      meta="Wed, 15 Jul 2026 02:00:38 +0000"/>
+    <use
+      template="global-news-item"
+      title="Executive Order No. 118, s. 2026"
+      body="MALACAÑAN PALACE MANILA BY THE PRESIDENT OF THE PHILIPPINES EXECUTIVE ORDER NO. 118 IMPOSITION OF A MANDATED PRICE CEILING ON IMPORTED RICE"
+      meta="Wed, 13 May 2026 08:00:36 +0000"/>
+    <use
+      template="global-news-item"
+      title="Proclamation No. 1317 s. 2026"
+      body="DECLARING WEDNESDAY, 01 JULY 2026 AS A SPECIAL (NON-WORKING) DAY IN THE CITY OF DIPOLOG, PROVINCE OF ZAMBOANGA DEL NORTE"
+      meta="Wed, 10 Jun 2026 04:05:31 +0000"/>
+    <use
+      template="global-news-item"
+      title="Proclamation No. 1316 s. 2026"
+      body="DECLARING WEDNESDAY, 01 JULY 2026, A SPECIAL (NON-WORKING) DAY IN THE MUNICIPALITY OF KIBAWE"
+      meta="Wed, 10 Jun 2026 04:00:31 +0000"/>
   </column>
 </template>
 
 <template name="global-dashboard-content" args="padding">
-  <column padding="{padding}" gap="24">
-    <if test="{constrainedLayout}">
-      <column gap="12">
-        <column gap="6">
-          <text size="heading">Global Dashboard</text>
-          <text wrap="true" foreground="text_muted">Overview of all taxpayer profiles for 2026</text>
-        </column>
-        <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
-      </column>
-    </if>
-    <else>
-      <row cross="center" gap="16">
-        <column grow="1" gap="6">
-          <text size="heading">Global Dashboard</text>
-          <text foreground="text_muted">Overview of all taxpayer profiles for 2026</text>
-        </column>
-        <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
-      </row>
-    </else>
+  <column padding="{padding}" gap="32">
+    <column gap="6">
+      <text size="heading">Global Dashboard</text>
+      <text wrap="true" foreground="text_muted">
+        Overview of all taxpayer profiles for 2026
+      </text>
+    </column>
 
     <if test="{constrainedLayout}">
       <column gap="24">
@@ -1047,10 +1086,12 @@
   <column gap="24">
     <row cross="center" gap="12">
       <column grow="1" gap="4">
-        <text><span weight="bold">July Deadlines</span></text>
-        <text wrap="true" foreground="text_muted">Deadlines and filing actions for this taxpayer</text>
+        <text><span weight="bold">Taxpayer Calendar</span></text>
+        <text wrap="true" foreground="text_muted">
+          Profile applicability requires an authoritative per-year Forms Set
+        </text>
       </column>
-      <badge variant="secondary">July 2026</badge>
+      <badge variant="secondary">{currentCalendarYear}</badge>
     </row>
 
     <if test="{constrainedLayout}">
@@ -1059,7 +1100,7 @@
           template="taxpayer-empty-card"
           title="Upcoming Deadlines"
           icon="clock"
-          body="No upcoming deadlines in the selected period."/>
+          body="No authoritative Forms Set is persisted for this reconstructed profile yet. The global calendar remains available."/>
         <use
           template="taxpayer-empty-card"
           title="Action Required"
@@ -1074,7 +1115,7 @@
             template="taxpayer-empty-card"
             title="Upcoming Deadlines"
             icon="clock"
-            body="No upcoming deadlines in the selected period."/>
+            body="No authoritative Forms Set is persisted for this reconstructed profile yet. The global calendar remains available."/>
         </column>
         <column grow="1">
           <use
@@ -1093,8 +1134,11 @@
           <text><span weight="bold">Tax form preparation</span></text>
         </row>
         <text wrap="true" foreground="text_muted">
-          Open Tax Form Library to browse the reconstructed returns. Form data entry and filing remain outside this static layout milestone.
+          Open the full compliance calendar for compiled rules and sourced
+          changes. This profile view will filter that same resolver after its
+          registered per-year Forms Set is persisted.
         </text>
+        <button variant="primary" icon="external-link" on-press="show_tax_calendar">Open Full Compliance Calendar</button>
       </column>
     </card>
   </column>
@@ -1745,7 +1789,7 @@
           </row>
         </else>
         <row gap="8" cross="center">
-          <badge variant="secondary">2 queued</badge>
+          <badge variant="secondary">1 queued</badge>
           <text wrap="true" foreground="text_muted">Last checked moments ago</text>
         </row>
       </column>
@@ -1759,13 +1803,6 @@
       cadence="Every minute"
       next_run="Past due"/>
 
-    <use
-      template="background-job-card"
-      title="Synchronize tax calendar"
-      description="Refreshes the local filing calendar for Juan Dela Cruz."
-      source="System"
-      cadence="Every 15 minutes"
-      next_run="In 8 minutes"/>
   </column>
 </template>
 
@@ -1874,171 +1911,373 @@
   </scroll>
 </template>
 
-<template name="calendar-deadline-row" args="date form period description status tone=secondary">
-  <card>
-    <row padding="16" gap="12" cross="center">
-      <column width="58" gap="3" cross="center">
-        <text text-alignment="center"><span weight="bold">{date}</span></text>
-        <text text-alignment="center" foreground="text_muted">2026</text>
-      </column>
-      <separator/>
-      <column grow="1" gap="6">
-        <row gap="8" cross="center">
-          <badge variant="{tone}">{form}</badge>
-          <badge variant="{tone}">{status}</badge>
-        </row>
-        <text><span weight="bold">{description}</span></text>
-        <text wrap="true" foreground="text_muted">Taxable period: {period}</text>
-      </column>
-      <slot/>
-    </row>
-  </card>
-</template>
-
 <template name="tax-calendar-deadlines-section">
   <column gap="12">
     <row cross="center" gap="12">
       <column grow="1" gap="4">
-        <text><span weight="bold">2026 Calendar-Year Deadlines</span></text>
-        <text wrap="true" foreground="text_muted">Quarterly filing dates commonly used by taxpayer profiles</text>
+        <text><span weight="bold">{currentCalendarMonth} {currentCalendarYear} Deadlines</span></text>
+        <text wrap="true" foreground="text_muted">
+          The complete year is resolved and exported together. The explorer renders
+          one month at a time to keep the native schedule fast and accessible.
+        </text>
       </column>
-      <badge variant="secondary">6 deadlines</badge>
+      <badge variant="secondary">{calendarVisibleDeadlineCount}</badge>
     </row>
 
-    <use
-      template="calendar-deadline-row"
-      date="APR 25"
-      form="2551Q"
-      period="January to March"
-      description="Quarterly Percentage Tax Return"
-      status="Past">
-      <button
-        size="sm"
-        variant="ghost"
-        icon="chevron-right"
-        label="Open April BIR Form 2551Q deadline"
-        on-press="show_form_2551q"></button>
-    </use>
-    <use
-      template="calendar-deadline-row"
-      date="MAY 15"
-      form="1701Q"
-      period="January to March"
-      description="Quarterly Income Tax Return"
-      status="Past">
-      <button
-        size="sm"
-        variant="ghost"
-        icon="chevron-right"
-        label="Open May BIR Form 1701Q deadline"
-        on-press="show_form_1701q"></button>
-    </use>
-    <use
-      template="calendar-deadline-row"
-      date="JUL 31"
-      form="2551Q"
-      period="April to June"
-      description="Quarterly Percentage Tax Return"
-      status="Upcoming"
-      tone="primary">
-      <button
-        size="sm"
-        variant="ghost"
-        icon="chevron-right"
-        label="Open July BIR Form 2551Q deadline"
-        on-press="show_form_2551q"></button>
-    </use>
-    <use
-      template="calendar-deadline-row"
-      date="AUG 15"
-      form="1701Q"
-      period="April to June"
-      description="Quarterly Income Tax Return"
-      status="Upcoming"
-      tone="primary">
-      <button
-        size="sm"
-        variant="ghost"
-        icon="chevron-right"
-        label="Open August BIR Form 1701Q deadline"
-        on-press="show_form_1701q"></button>
-    </use>
-    <use
-      template="calendar-deadline-row"
-      date="OCT 25"
-      form="2551Q"
-      period="July to September"
-      description="Quarterly Percentage Tax Return"
-      status="Scheduled">
-      <button
-        size="sm"
-        variant="ghost"
-        icon="chevron-right"
-        label="Open October BIR Form 2551Q deadline"
-        on-press="show_form_2551q"></button>
-    </use>
-    <use
-      template="calendar-deadline-row"
-      date="NOV 15"
-      form="1701Q"
-      period="July to September"
-      description="Quarterly Income Tax Return"
-      status="Scheduled">
-      <button
-        size="sm"
-        variant="ghost"
-        icon="chevron-right"
-        label="Open November BIR Form 1701Q deadline"
-        on-press="show_form_1701q"></button>
-    </use>
+    <card>
+      <row padding="12" gap="12" cross="center">
+        <button
+          size="sm"
+          variant="outline"
+          icon="chevron-left"
+          label="Previous calendar month"
+          on-press="calendar_previous_month"/>
+        <column grow="1" gap="3" cross="center">
+          <text><span weight="bold">{currentCalendarMonth} {currentCalendarYear}</span></text>
+          <text foreground="text_muted">{calendarVisibleDeadlineCount}</text>
+        </column>
+        <button
+          size="sm"
+          variant="outline"
+          icon="chevron-right"
+          label="Next calendar month"
+          on-press="calendar_next_month"/>
+      </row>
+    </card>
+
+    <for each="calendarDeadlines" key="id" as="deadline">
+      <card>
+        <row padding="16" gap="12" cross="center">
+          <column width="72" gap="3" cross="center">
+            <text text-alignment="center"><span weight="bold">{deadline.dateLabel}</span></text>
+            <text text-alignment="center" foreground="text_muted">{deadline.yearLabel}</text>
+          </column>
+          <separator/>
+          <column grow="1" gap="6">
+            <row gap="8" cross="center">
+              <badge variant="{deadline.tone}">{deadline.display_form_no}</badge>
+              <badge variant="{deadline.tone}">{deadline.statusLabel}</badge>
+            </row>
+            <text><span weight="bold">{deadline.form_name}</span></text>
+            <text wrap="true" foreground="text_muted">Taxable period: {deadline.periodLabel}</text>
+            <text wrap="true" foreground="text_muted">{deadline.description}</text>
+            <if test="{deadline.adjustmentVisible}">
+              <text wrap="true" foreground="accent">{deadline.adjustmentLabel}</text>
+            </if>
+            <if test="{deadline.sourceVisible}">
+              <text wrap="true" foreground="text_muted">Source: {deadline.sourceLabel}</text>
+            </if>
+          </column>
+        </row>
+      </card>
+    </for>
   </column>
 </template>
 
 <template name="tax-calendar-rules-section">
   <column gap="12">
     <column gap="4">
-      <text><span weight="bold">Calendar Rules</span></text>
+      <text><span weight="bold">Compiled Calendar Rules</span></text>
       <text wrap="true" foreground="text_muted">
-        Static reference notes used to explain how the calendar preview is organized.
+        The same recurring formulas and canonical form aliases used by the reference
+        eBIRForms calendar subsystem. Event-based forms stay separate from dated deadlines.
       </text>
     </column>
+
+    <for each="calendarRules" key="id" as="rule">
+      <card>
+        <column padding="20" gap="10">
+          <row gap="8" cross="center">
+            <badge variant="secondary">{rule.frequency}</badge>
+            <text><span weight="bold">{rule.form_name}</span></text>
+          </row>
+          <text wrap="true" foreground="text_muted">Forms: {rule.form_codes}</text>
+          <text wrap="true">{rule.description}</text>
+        </column>
+      </card>
+    </for>
+
     <card>
-      <column padding="20" gap="10">
-        <text><span weight="bold">Quarterly percentage tax</span></text>
+      <column padding="20" gap="8">
+        <text><span weight="bold">Source boundary</span></text>
         <text wrap="true" foreground="text_muted">
-          Form 2551Q is represented on the 25th day after the close of each taxable quarter in this preview.
-        </text>
-      </column>
-    </card>
-    <card>
-      <column padding="20" gap="10">
-        <text><span weight="bold">Quarterly individual income tax</span></text>
-        <text wrap="true" foreground="text_muted">
-          Form 1701Q is represented on the 15th day of the second month after each quarter in this preview.
-        </text>
-      </column>
-    </card>
-    <card>
-      <column padding="20" gap="10">
-        <text><span weight="bold">Official sources remain authoritative</span></text>
-        <text wrap="true" foreground="text_muted">
-          Confirm current BIR issuances, holidays, and taxpayer-specific registration details before filing.
+          The reference implementation does not attach a legal citation to each base
+          compiled rule. Current BIR issuances, the registered Forms Set, eFPS channel
+          rules, fiscal-year facts, and official holiday proclamations remain authoritative.
         </text>
       </column>
     </card>
   </column>
 </template>
 
-<template name="tax-calendar-overrides-section">
+<template name="deadline-override-editor">
   <card>
-    <column padding="24" gap="12" cross="center">
-      <icon name="clock" foreground="text_muted" width="34" height="34"/>
-      <text><span weight="bold">No calendar overrides</span></text>
-      <text wrap="true" text-alignment="center" foreground="text_muted">
-        This static reconstruction does not define profile-specific deadline changes.
+    <column padding="20" gap="14">
+      <text><span weight="bold">{overrideEditorTitle}</span></text>
+      <text wrap="true" foreground="text_muted">
+        Source and at least one recognized canonical form are required.
+        Separate multiple values with commas.
       </text>
+      <input
+        text="{overrideTitleValue}"
+        placeholder="Extension title"
+        label="Override title"
+        on-input="calendar_override_title_input"/>
+      <input
+        text="{overrideFormsValue}"
+        placeholder="1701Q, 1702Q"
+        label="Affected form codes"
+        on-input="calendar_override_forms_input"/>
+      <if test="{constrainedLayout}">
+        <column gap="10">
+          <input
+            text="{overrideOriginalValue}"
+            placeholder="YYYY-MM-DD"
+            label="Original or operative deadline"
+            on-input="calendar_override_original_input"/>
+          <input
+            text="{overrideAdjustedValue}"
+            placeholder="YYYY-MM-DD"
+            label="Adjusted deadline"
+            on-input="calendar_override_adjusted_input"/>
+        </column>
+      </if>
+      <else>
+        <row gap="10">
+          <input
+            grow="1"
+            text="{overrideOriginalValue}"
+            placeholder="YYYY-MM-DD"
+            label="Original or operative deadline"
+            on-input="calendar_override_original_input"/>
+          <input
+            grow="1"
+            text="{overrideAdjustedValue}"
+            placeholder="YYYY-MM-DD"
+            label="Adjusted deadline"
+            on-input="calendar_override_adjusted_input"/>
+        </row>
+      </else>
+      <input
+        text="{overrideSourceValue}"
+        placeholder="RMC / RR / advisory reference"
+        label="Official source reference"
+        on-input="calendar_override_source_input"/>
+      <if test="{constrainedLayout}">
+        <column gap="10">
+          <input
+            text="{overrideRegionsValue}"
+            placeholder="Optional, e.g. NCR"
+            label="Regions"
+            on-input="calendar_override_regions_input"/>
+          <input
+            text="{overrideTaxpayerTypesValue}"
+            placeholder="Optional, e.g. individual"
+            label="Taxpayer types"
+            on-input="calendar_override_taxpayer_types_input"/>
+        </column>
+      </if>
+      <else>
+        <row gap="10">
+          <input
+            grow="1"
+            text="{overrideRegionsValue}"
+            placeholder="Optional, e.g. NCR"
+            label="Regions"
+            on-input="calendar_override_regions_input"/>
+          <input
+            grow="1"
+            text="{overrideTaxpayerTypesValue}"
+            placeholder="Optional, e.g. individual"
+            label="Taxpayer types"
+            on-input="calendar_override_taxpayer_types_input"/>
+        </row>
+      </else>
+      <if test="{constrainedLayout}">
+        <column gap="10">
+          <input
+            text="{overrideEffectiveFromValue}"
+            placeholder="Optional YYYY-MM-DD"
+            label="Effective from"
+            on-input="calendar_override_effective_from_input"/>
+          <input
+            text="{overrideExpiresOnValue}"
+            placeholder="Optional YYYY-MM-DD"
+            label="Expires on"
+            on-input="calendar_override_expires_on_input"/>
+        </column>
+      </if>
+      <else>
+        <row gap="10">
+          <input
+            grow="1"
+            text="{overrideEffectiveFromValue}"
+            placeholder="Optional YYYY-MM-DD"
+            label="Effective from"
+            on-input="calendar_override_effective_from_input"/>
+          <input
+            grow="1"
+            text="{overrideExpiresOnValue}"
+            placeholder="Optional YYYY-MM-DD"
+            label="Expires on"
+            on-input="calendar_override_expires_on_input"/>
+        </row>
+      </else>
+      <row gap="10">
+        <button variant="primary" icon="check" on-press="calendar_save_override">{overrideSaveLabel}</button>
+        <button variant="outline" on-press="calendar_cancel_override">Clear</button>
+      </row>
     </column>
   </card>
+</template>
+
+<template name="non-working-day-editor">
+  <card>
+    <column padding="20" gap="14">
+      <text><span weight="bold">{nonWorkingDayEditorTitle}</span></text>
+      <text wrap="true" foreground="text_muted">
+        Kind must be regular, local, special, or closure. Only nationwide
+        entries adjust the global explorer; regional entries remain stored
+        for a future profile/region projection.
+      </text>
+      <if test="{constrainedLayout}">
+        <column gap="10">
+          <input
+            text="{nonWorkingDateValue}"
+            placeholder="YYYY-MM-DD"
+            label="Date"
+            on-input="calendar_non_working_date_input"/>
+          <input
+            text="{nonWorkingKindValue}"
+            placeholder="regular"
+            label="Kind"
+            on-input="calendar_non_working_kind_input"/>
+        </column>
+      </if>
+      <else>
+        <row gap="10">
+          <input
+            grow="1"
+            text="{nonWorkingDateValue}"
+            placeholder="YYYY-MM-DD"
+            label="Date"
+            on-input="calendar_non_working_date_input"/>
+          <input
+            grow="1"
+            text="{nonWorkingKindValue}"
+            placeholder="regular"
+            label="Kind"
+            on-input="calendar_non_working_kind_input"/>
+        </row>
+      </else>
+      <input
+        text="{nonWorkingNameValue}"
+        placeholder="Official holiday or closure name"
+        label="Name"
+        on-input="calendar_non_working_name_input"/>
+      <input
+        text="{nonWorkingSourceValue}"
+        placeholder="Official Gazette / proclamation reference"
+        label="Official source"
+        on-input="calendar_non_working_source_input"/>
+      <input
+        text="{nonWorkingRegionsValue}"
+        placeholder="Optional, e.g. NCR, Region IV-A"
+        label="Regions"
+        on-input="calendar_non_working_regions_input"/>
+      <row gap="10">
+        <button variant="primary" icon="check" on-press="calendar_save_non_working_day">{nonWorkingDaySaveLabel}</button>
+        <button variant="outline" on-press="calendar_cancel_non_working_day">Clear</button>
+      </row>
+    </column>
+  </card>
+</template>
+
+<template name="tax-calendar-overrides-section">
+  <column gap="20">
+    <column gap="10">
+      <text><span weight="bold">Deadline Overrides</span></text>
+      <text wrap="true" foreground="text_muted">
+        Matching follows the reference resolver: form code plus original or
+        already business-day-adjusted deadline; later matching overrides win.
+        Scope and effective-date metadata are preserved in SQLite.
+      </text>
+    </column>
+
+    <if test="{calendarOverridesEmpty}">
+      <card>
+        <column padding="20" gap="8" cross="center">
+          <icon name="clock" foreground="text_muted" width="30" height="30"/>
+          <text><span weight="bold">No deadline overrides</span></text>
+          <text wrap="true" text-alignment="center" foreground="text_muted">
+            Add only sourced BIR extensions or corrections. No sample or
+            fictitious holiday override is seeded.
+          </text>
+        </column>
+      </card>
+    </if>
+    <for each="calendarOverrides" key="id" as="override">
+      <card>
+        <column padding="18" gap="8">
+          <row gap="10" cross="center">
+            <column grow="1" gap="4">
+              <text><span weight="bold">{override.titleLabel}</span></text>
+              <text wrap="true" foreground="text_muted">Forms: {override.formsLabel}</text>
+            </column>
+            <badge variant="primary">{override.datesLabel}</badge>
+          </row>
+          <text wrap="true" foreground="text_muted">{override.scopeLabel}</text>
+          <text wrap="true" foreground="text_muted">{override.effectiveLabel}</text>
+          <text wrap="true">Source: {override.sourceLabel}</text>
+          <row gap="8">
+            <button size="sm" variant="outline" on-press="calendar_edit_override:{override.id}">Edit</button>
+            <button size="sm" variant="ghost" on-press="calendar_delete_override:{override.id}">Delete</button>
+          </row>
+        </column>
+      </card>
+    </for>
+    <use template="deadline-override-editor"/>
+
+    <separator/>
+
+    <column gap="10">
+      <text><span weight="bold">Non-working Days</span></text>
+      <text wrap="true" foreground="text_muted">
+        Weekends are built in. Official holidays and closures are explicit,
+        source-cited SQLite records; none are guessed or auto-seeded.
+      </text>
+    </column>
+    <if test="{calendarNonWorkingDaysEmpty}">
+      <card>
+        <column padding="18" gap="6" cross="center">
+          <text><span weight="bold">No configured non-working days</span></text>
+          <text wrap="true" text-alignment="center" foreground="text_muted">
+            Until an official day is entered, only Saturday and Sunday
+            business-day adjustment is active.
+          </text>
+        </column>
+      </card>
+    </if>
+    <for each="calendarNonWorkingDays" key="id" as="day">
+      <card>
+        <column padding="18" gap="8">
+          <row gap="10" cross="center">
+            <badge variant="secondary">{day.dateLabel}</badge>
+            <column grow="1" gap="3">
+              <text><span weight="bold">{day.nameLabel}</span></text>
+              <text wrap="true" foreground="text_muted">{day.kindLabel} · {day.regionsLabel}</text>
+            </column>
+          </row>
+          <text wrap="true">Source: {day.sourceLabel}</text>
+          <row gap="8">
+            <button size="sm" variant="outline" on-press="calendar_edit_non_working_day:{day.id}">Edit</button>
+            <button size="sm" variant="ghost" on-press="calendar_delete_non_working_day:{day.id}">Delete</button>
+          </row>
+        </column>
+      </card>
+    </for>
+    <use template="non-working-day-editor"/>
+  </column>
 </template>
 
 <template name="tax-calendar-content" args="padding">
@@ -2047,20 +2286,49 @@
       <column gap="12">
         <column gap="6">
           <text size="heading">Tax Calendar Explorer</text>
-          <text wrap="true" foreground="text_muted">Browse official filing rules and calendar-year deadlines.</text>
+          <text wrap="true" foreground="text_muted">
+            Resolve full recurring schedules, source-cited changes, and calendar handoff.
+          </text>
         </column>
-        <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
+        <column gap="8">
+          <button variant="primary" icon="external-link" on-press="calendar_export">Add to default calendar</button>
+          <button variant="outline" icon="refresh-cw" on-press="calendar_refresh">Refresh from SQLite</button>
+        </column>
       </column>
     </if>
     <else>
       <row gap="16" cross="center">
         <column grow="1" gap="6">
           <text size="heading">Tax Calendar Explorer</text>
-          <text foreground="text_muted">Browse official filing rules and calendar-year deadlines.</text>
+          <text foreground="text_muted">
+            Resolve full recurring schedules, source-cited changes, and calendar handoff.
+          </text>
         </column>
-        <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
+        <button variant="outline" icon="refresh-cw" on-press="calendar_refresh">Refresh</button>
+        <button variant="primary" icon="external-link" on-press="calendar_export">Add to default calendar</button>
       </row>
     </else>
+
+    <if test="{calendarNoticeVisible}">
+      <badge variant="{calendarNoticeTone}">{calendarNotice}</badge>
+    </if>
+
+    <card>
+      <column padding="18" gap="10">
+        <row gap="10" cross="center">
+          <icon name="clock" foreground="accent" width="24" height="24"/>
+          <column grow="1" gap="4">
+            <text><span weight="bold">Native/default calendar handoff</span></text>
+            <text wrap="true" foreground="text_muted">
+              A standards-based ICS file opens in Apple Calendar, Outlook, or
+              another registered calendar app. Select an iCloud, Google, or
+              Outlook calendar during import to let that account propagate it
+              to mobile. This action is an import handoff, not managed two-way sync.
+            </text>
+          </column>
+        </row>
+      </column>
+    </card>
 
     <tabs gap="4" label="Tax calendar sections">
       <button
@@ -2078,23 +2346,24 @@
     </tabs>
 
     <card>
-      <column padding="16" gap="12">
-        <if test="{constrainedLayout}">
-          <column gap="12">
-            <select disabled="true" text="Calendar Year 2026" label="Calendar year"/>
-            <select disabled="true" text="All Forms" label="Form filter"/>
-            <search-field disabled="true" placeholder="Search forms or deadlines" label="Search tax calendar"/>
-          </column>
-        </if>
-        <else>
-          <row gap="12" cross="center">
-            <select disabled="true" text="Calendar Year 2026" label="Calendar year"/>
-            <select disabled="true" text="All Forms" label="Form filter"/>
-            <search-field grow="1" disabled="true" placeholder="Search forms or deadlines" label="Search tax calendar"/>
-          </row>
-        </else>
-        <text wrap="true" foreground="text_muted">Dates shown below are a static planning preview.</text>
-      </column>
+      <row padding="14" gap="12" cross="center">
+        <button
+          size="sm"
+          variant="outline"
+          icon="chevron-left"
+          label="Previous calendar year"
+          on-press="calendar_previous_year"/>
+        <column grow="1" gap="3" cross="center">
+          <text><span weight="bold">Calendar Year {currentCalendarYear}</span></text>
+          <text foreground="text_muted">{calendarDeadlineCount} in the full export</text>
+        </column>
+        <button
+          size="sm"
+          variant="outline"
+          icon="chevron-right"
+          label="Next calendar year"
+          on-press="calendar_next_year"/>
+      </row>
     </card>
 
     <if test="{calendarDeadlinesActive}">
@@ -2287,12 +2556,12 @@
             <row gap="14" cross="start">
               <icon name="file-text" foreground="accent" width="30" height="30"/>
               <column grow="1" gap="4">
-                <text><span weight="bold">Google Calendar</span></text>
-                <text wrap="true" foreground="text_muted">Connected as demo@example.com</text>
+                <text><span weight="bold">Calendar Integration</span></text>
+                <text wrap="true" foreground="text_muted">Default calendar handoff is ready</text>
               </column>
             </row>
             <row cross="center">
-              <badge variant="secondary">Connected</badge>
+              <badge variant="primary">Ready</badge>
             </row>
           </column>
         </if>
@@ -2300,27 +2569,28 @@
           <row gap="14" cross="center">
             <icon name="file-text" foreground="accent" width="30" height="30"/>
             <column grow="1" gap="4">
-              <text><span weight="bold">Google Calendar</span></text>
-              <text foreground="text_muted">Connected as demo@example.com</text>
-            </column>
-            <badge variant="secondary">Connected</badge>
-          </row>
+            <text><span weight="bold">Calendar Integration</span></text>
+            <text foreground="text_muted">Default calendar handoff is ready</text>
+          </column>
+          <badge variant="primary">Ready</badge>
+        </row>
         </else>
         <text wrap="true" foreground="text_muted">
-          Sync taxpayer filing deadlines to a dedicated Google Calendar.
+          Add the resolved schedule to Apple Calendar, Outlook, Google Calendar,
+          or another registered calendar app using an ICS handoff. Choose an
+          iCloud, Google, or Outlook calendar during import to propagate it to
+          mobile. Direct managed Google OAuth sync is optional and not connected.
         </text>
         <if test="{constrainedLayout}">
           <column gap="10">
-            <button variant="primary" icon="refresh-cw" disabled="true">Reconnect Google</button>
-            <button variant="outline" disabled="true">Disconnect</button>
-            <button variant="ghost" icon="external-link" disabled="true">Setup Guide</button>
+            <button variant="primary" icon="external-link" on-press="show_tax_calendar">Open Tax Calendar</button>
+            <button variant="outline" disabled="true">Connect Google Directly</button>
           </column>
         </if>
         <else>
           <row gap="10">
-            <button variant="primary" icon="refresh-cw" disabled="true">Reconnect Google</button>
-            <button variant="outline" disabled="true">Disconnect</button>
-            <button variant="ghost" icon="external-link" disabled="true">Setup Guide</button>
+            <button variant="primary" icon="external-link" on-press="show_tax_calendar">Open Tax Calendar</button>
+            <button variant="outline" disabled="true">Connect Google Directly</button>
           </row>
         </else>
       </column>
