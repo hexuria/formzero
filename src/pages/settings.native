@@ -164,7 +164,9 @@
                 <text wrap="true" foreground="text_muted">Connected as demo@example.com</text>
               </column>
             </row>
-            <badge variant="secondary">Connected</badge>
+            <row cross="center">
+              <badge variant="secondary">Connected</badge>
+            </row>
           </column>
         </if>
         <else>

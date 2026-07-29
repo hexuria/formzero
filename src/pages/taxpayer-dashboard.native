@@ -17,7 +17,9 @@
 <template name="taxpayer-form-launcher" args="code title body">
   <card>
     <column padding="16" gap="10">
-      <badge variant="secondary">{code}</badge>
+      <row cross="center">
+        <badge variant="secondary">{code}</badge>
+      </row>
       <text><span weight="bold">{title}</span></text>
       <text wrap="true" foreground="text_muted">{body}</text>
       <slot/>

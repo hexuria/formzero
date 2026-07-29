@@ -41,7 +41,9 @@
   <column gap="24">
     <if test="{constrainedLayout}">
       <column gap="8">
-        <badge variant="outline">Developer Tools</badge>
+        <row cross="center">
+          <badge variant="outline">Developer Tools</badge>
+        </row>
         <column gap="4">
           <text size="heading">Screen Gallery</text>
           <text wrap="true" foreground="text_muted">

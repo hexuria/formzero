@@ -355,17 +355,32 @@
 
 <template name="sidebar-avatar" args="initials name profile active=false">
   <row width="48" height="64" main="center" cross="center">
-    <button
-      width="48"
-      height="48"
-      size="icon"
-      variant="secondary"
-      radius="xl"
-      selected="{active}"
-      label="{name}"
-      on-press="select_taxpayer:{profile}">
-      {initials}
-    </button>
+    <if test="{active}">
+      <button
+        width="48"
+        height="48"
+        size="icon"
+        variant="primary"
+        radius="xl"
+        selected="true"
+        label="{name}"
+        on-press="select_taxpayer:{profile}">
+        {initials}
+      </button>
+    </if>
+    <else>
+      <button
+        width="48"
+        height="48"
+        size="icon"
+        variant="ghost"
+        radius="xl"
+        selected="false"
+        label="{name}"
+        on-press="select_taxpayer:{profile}">
+        {initials}
+      </button>
+    </else>
   </row>
 </template>
 
@@ -419,7 +434,7 @@
           width="48"
           height="48"
           size="icon"
-          variant="secondary"
+          variant="ghost"
           radius="xl"
           icon="search"
           label="Search taxpayer profiles"
@@ -604,7 +619,9 @@
       </column>
       <separator/>
       <column grow="1" gap="5">
-        <badge variant="{tone}">{form}</badge>
+        <row cross="center">
+          <badge variant="{tone}">{form}</badge>
+        </row>
         <text><span weight="bold">{title}</span></text>
         <text wrap="true" foreground="text_muted">{detail}</text>
       </column>
@@ -842,7 +859,9 @@
 <template name="taxpayer-form-launcher" args="code title body">
   <card>
     <column padding="16" gap="10">
-      <badge variant="secondary">{code}</badge>
+      <row cross="center">
+        <badge variant="secondary">{code}</badge>
+      </row>
       <text><span weight="bold">{title}</span></text>
       <text wrap="true" foreground="text_muted">{body}</text>
       <slot/>
@@ -1429,7 +1448,9 @@
                 <text wrap="true" foreground="text_muted">Restore compatible eBIRForms data from one archive</text>
               </column>
             </row>
-            <badge variant="secondary">Recommended</badge>
+            <row cross="center">
+              <badge variant="secondary">Recommended</badge>
+            </row>
           </column>
         </if>
         <else>
@@ -1524,7 +1545,9 @@
               <text wrap="true" foreground="text_muted">{description}</text>
             </column>
           </row>
-          <badge variant="secondary">Queued</badge>
+          <row cross="center">
+            <badge variant="secondary">Queued</badge>
+          </row>
         </column>
       </if>
       <else>
@@ -2174,7 +2197,9 @@
                 <text wrap="true" foreground="text_muted">Connected as demo@example.com</text>
               </column>
             </row>
-            <badge variant="secondary">Connected</badge>
+            <row cross="center">
+              <badge variant="secondary">Connected</badge>
+            </row>
           </column>
         </if>
         <else>
@@ -2364,7 +2389,9 @@
   <column gap="24">
     <if test="{constrainedLayout}">
       <column gap="8">
-        <badge variant="outline">Developer Tools</badge>
+        <row cross="center">
+          <badge variant="outline">Developer Tools</badge>
+        </row>
         <column gap="4">
           <text size="heading">Screen Gallery</text>
           <text wrap="true" foreground="text_muted">
@@ -2675,7 +2702,9 @@
       <if test="{constrainedLayout}">
         <if test="{phoneLayout}">
           <column gap="8">
-            <badge>Draft</badge>
+            <row cross="center">
+              <badge>Draft</badge>
+            </row>
             <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
           </column>
         </if>
@@ -2752,7 +2781,9 @@
           <if test="{constrainedLayout}">
             <column gap="8">
               <text>21 Total Amount Payable (19 + 20D)</text>
-              <badge>PHP 0.00</badge>
+              <row cross="center">
+                <badge>PHP 0.00</badge>
+              </row>
             </column>
           </if>
           <else>
@@ -2989,7 +3020,9 @@
       <if test="{constrainedLayout}">
         <if test="{phoneLayout}">
           <column gap="8">
-            <badge>Draft</badge>
+            <row cross="center">
+              <badge>Draft</badge>
+            </row>
             <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
           </column>
         </if>
@@ -3051,7 +3084,9 @@
           <if test="{constrainedLayout}">
             <column gap="8">
               <text>18 Total Amount of Remittance (16 + 17D)</text>
-              <badge>PHP 0.00</badge>
+              <row cross="center">
+                <badge>PHP 0.00</badge>
+              </row>
             </column>
           </if>
           <else>
@@ -3301,7 +3336,9 @@
       <if test="{constrainedLayout}">
         <if test="{phoneLayout}">
           <column gap="8">
-            <badge>Draft</badge>
+            <row cross="center">
+              <badge>Draft</badge>
+            </row>
             <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
           </column>
         </if>
@@ -3363,7 +3400,9 @@
           <if test="{constrainedLayout}">
             <column gap="8">
               <text>19 Total Amount of Remittance (17 + 18D)</text>
-              <badge>PHP 0.00</badge>
+              <row cross="center">
+                <badge>PHP 0.00</badge>
+              </row>
             </column>
           </if>
           <else>
@@ -3643,7 +3682,9 @@
       <if test="{constrainedLayout}">
         <if test="{phoneLayout}">
           <column gap="8">
-            <badge>Draft</badge>
+            <row cross="center">
+              <badge>Draft</badge>
+            </row>
             <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
           </column>
         </if>
@@ -3735,7 +3776,9 @@
           <if test="{constrainedLayout}">
             <column gap="8">
               <text>36 Total Amount Payable</text>
-              <badge>PHP 0.00</badge>
+              <row cross="center">
+                <badge>PHP 0.00</badge>
+              </row>
             </column>
           </if>
           <else>
@@ -4216,7 +4259,9 @@
       <if test="{constrainedLayout}">
         <if test="{phoneLayout}">
           <column gap="8">
-            <badge>Draft</badge>
+            <row cross="center">
+              <badge>Draft</badge>
+            </row>
             <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
           </column>
         </if>
@@ -4418,7 +4463,9 @@
           <if test="{constrainedLayout}">
             <column gap="8">
               <text>Total Tax Payable / (Overpayment)</text>
-              <badge>PHP 0.00</badge>
+              <row cross="center">
+                <badge>PHP 0.00</badge>
+              </row>
             </column>
           </if>
           <else>
@@ -4705,7 +4752,9 @@
       <if test="{constrainedLayout}">
         <if test="{phoneLayout}">
           <column gap="8">
-            <badge>Draft</badge>
+            <row cross="center">
+              <badge>Draft</badge>
+            </row>
             <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
           </column>
         </if>
@@ -4842,7 +4891,9 @@
           <if test="{constrainedLayout}">
             <column gap="8">
               <text>PART III - TOTAL TAX PAYABLE</text>
-              <badge>PHP 0.00</badge>
+              <row cross="center">
+                <badge>PHP 0.00</badge>
+              </row>
             </column>
           </if>
           <else>
@@ -5139,7 +5190,9 @@
       <if test="{constrainedLayout}">
         <if test="{phoneLayout}">
           <column gap="8">
-            <badge>Draft</badge>
+            <row cross="center">
+              <badge>Draft</badge>
+            </row>
             <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
           </column>
         </if>
@@ -5216,7 +5269,9 @@
           <if test="{constrainedLayout}">
             <column gap="8">
               <text>Computed amount</text>
-              <badge>PHP 0.00</badge>
+              <row cross="center">
+                <badge>PHP 0.00</badge>
+              </row>
             </column>
           </if>
           <else>
@@ -5540,7 +5595,9 @@
       <if test="{constrainedLayout}">
         <if test="{phoneLayout}">
           <column gap="8">
-            <badge>Draft</badge>
+            <row cross="center">
+              <badge>Draft</badge>
+            </row>
             <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
           </column>
         </if>
@@ -5647,7 +5704,9 @@
           <if test="{constrainedLayout}">
             <column gap="8">
               <text>Current total</text>
-              <badge>PHP 0.00</badge>
+              <row cross="center">
+                <badge>PHP 0.00</badge>
+              </row>
             </column>
           </if>
           <else>
@@ -6116,7 +6175,9 @@
       <if test="{constrainedLayout}">
         <if test="{phoneLayout}">
           <column gap="8">
-            <badge>Draft</badge>
+            <row cross="center">
+              <badge>Draft</badge>
+            </row>
             <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
           </column>
         </if>
@@ -6244,7 +6305,9 @@
           <if test="{constrainedLayout}">
             <column gap="8">
               <text>Total Amount Payable</text>
-              <badge>PHP 0.00</badge>
+              <row cross="center">
+                <badge>PHP 0.00</badge>
+              </row>
             </column>
           </if>
           <else>
@@ -6515,7 +6578,9 @@
       <if test="{constrainedLayout}">
         <if test="{phoneLayout}">
           <column gap="8">
-            <badge>Draft</badge>
+            <row cross="center">
+              <badge>Draft</badge>
+            </row>
             <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
           </column>
         </if>
@@ -6599,7 +6664,9 @@
           <if test="{constrainedLayout}">
             <column gap="8">
               <text>Total Amount Payable</text>
-              <badge>PHP 0.00</badge>
+              <row cross="center">
+                <badge>PHP 0.00</badge>
+              </row>
             </column>
           </if>
           <else>
@@ -6842,7 +6909,9 @@
           <text wrap="true" size="heading">BIR Form No. 2551Q</text>
           <text wrap="true" foreground="text_muted">Quarterly Percentage Tax Return</text>
         </column>
-        <badge variant="outline">Page 1 of 2</badge>
+        <row cross="center">
+          <badge variant="outline">Page 1 of 2</badge>
+        </row>
       </column>
     </if>
     <else>
@@ -6930,7 +6999,9 @@
     <if test="{constrainedLayout}">
       <column gap="10">
         <text wrap="true" size="heading">BIR Form No. 2551Q</text>
-        <badge variant="outline">Page 2 of 2</badge>
+        <row cross="center">
+          <badge variant="outline">Page 2 of 2</badge>
+        </row>
       </column>
     </if>
     <else>
@@ -7115,7 +7186,9 @@
             on-press="go_back">
           </button>
         </row>
-        <badge variant="outline">Completed</badge>
+        <row cross="center">
+          <badge variant="outline">Completed</badge>
+        </row>
       </column>
     </if>
     <else>

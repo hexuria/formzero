@@ -15,7 +15,9 @@
             on-press="go_back">
           </button>
         </row>
-        <badge variant="outline">Completed</badge>
+        <row cross="center">
+          <badge variant="outline">Completed</badge>
+        </row>
       </column>
     </if>
     <else>

@@ -6,7 +6,9 @@
           <text wrap="true" size="heading">BIR Form No. 2551Q</text>
           <text wrap="true" foreground="text_muted">Quarterly Percentage Tax Return</text>
         </column>
-        <badge variant="outline">Page 1 of 2</badge>
+        <row cross="center">
+          <badge variant="outline">Page 1 of 2</badge>
+        </row>
       </column>
     </if>
     <else>
@@ -94,7 +96,9 @@
     <if test="{constrainedLayout}">
       <column gap="10">
         <text wrap="true" size="heading">BIR Form No. 2551Q</text>
-        <badge variant="outline">Page 2 of 2</badge>
+        <row cross="center">
+          <badge variant="outline">Page 2 of 2</badge>
+        </row>
       </column>
     </if>
     <else>

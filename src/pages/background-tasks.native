@@ -10,7 +10,9 @@
               <text wrap="true" foreground="text_muted">{description}</text>
             </column>
           </row>
-          <badge variant="secondary">Queued</badge>
+          <row cross="center">
+            <badge variant="secondary">Queued</badge>
+          </row>
         </column>
       </if>
       <else>

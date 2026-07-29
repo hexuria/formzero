@@ -211,7 +211,9 @@
       <if test="{constrainedLayout}">
         <if test="{phoneLayout}">
           <column gap="8">
-            <badge>Draft</badge>
+            <row cross="center">
+              <badge>Draft</badge>
+            </row>
             <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
           </column>
         </if>
@@ -273,7 +275,9 @@
           <if test="{constrainedLayout}">
             <column gap="8">
               <text>19 Total Amount of Remittance (17 + 18D)</text>
-              <badge>PHP 0.00</badge>
+              <row cross="center">
+                <badge>PHP 0.00</badge>
+              </row>
             </column>
           </if>
           <else>

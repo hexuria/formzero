@@ -16,7 +16,9 @@
                 <text wrap="true" foreground="text_muted">Restore compatible eBIRForms data from one archive</text>
               </column>
             </row>
-            <badge variant="secondary">Recommended</badge>
+            <row cross="center">
+              <badge variant="secondary">Recommended</badge>
+            </row>
           </column>
         </if>
         <else>

@@ -315,17 +315,32 @@
 
 <template name="sidebar-avatar" args="initials name profile active=false">
   <row width="48" height="64" main="center" cross="center">
-    <button
-      width="48"
-      height="48"
-      size="icon"
-      variant="secondary"
-      radius="xl"
-      selected="{active}"
-      label="{name}"
-      on-press="select_taxpayer:{profile}">
-      {initials}
-    </button>
+    <if test="{active}">
+      <button
+        width="48"
+        height="48"
+        size="icon"
+        variant="primary"
+        radius="xl"
+        selected="true"
+        label="{name}"
+        on-press="select_taxpayer:{profile}">
+        {initials}
+      </button>
+    </if>
+    <else>
+      <button
+        width="48"
+        height="48"
+        size="icon"
+        variant="ghost"
+        radius="xl"
+        selected="false"
+        label="{name}"
+        on-press="select_taxpayer:{profile}">
+        {initials}
+      </button>
+    </else>
   </row>
 </template>
 
@@ -379,7 +394,7 @@
           width="48"
           height="48"
           size="icon"
-          variant="secondary"
+          variant="ghost"
           radius="xl"
           icon="search"
           label="Search taxpayer profiles"

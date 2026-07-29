@@ -7,7 +7,9 @@
       </column>
       <separator/>
       <column grow="1" gap="5">
-        <badge variant="{tone}">{form}</badge>
+        <row cross="center">
+          <badge variant="{tone}">{form}</badge>
+        </row>
         <text><span weight="bold">{title}</span></text>
         <text wrap="true" foreground="text_muted">{detail}</text>
       </column>

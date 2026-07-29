@@ -323,18 +323,15 @@ pub const Model = struct {
     }
 
     pub fn juanProfileActive(self: *const Model) bool {
-        return self.page == .taxpayer_dashboard and
-            self.selectedTaxpayer == .juan_dela_cruz;
+        return self.selectedTaxpayer == .juan_dela_cruz;
     }
 
     pub fn demoProfileActive(self: *const Model) bool {
-        return self.page == .taxpayer_dashboard and
-            self.selectedTaxpayer == .demo_corporation;
+        return self.selectedTaxpayer == .demo_corporation;
     }
 
     pub fn partnershipProfileActive(self: *const Model) bool {
-        return self.page == .taxpayer_dashboard and
-            self.selectedTaxpayer == .sample_partnership;
+        return self.selectedTaxpayer == .sample_partnership;
     }
 
     pub fn dashboardCalendarActive(self: *const Model) bool {
@@ -734,10 +731,17 @@ test "sidebar can be collapsed hidden and restored without losing its route" {
 
 test "taxpayer selection and local page tabs are model owned" {
     var model = Model{};
+    try std.testing.expect(model.juanProfileActive());
+    try std.testing.expect(!model.demoProfileActive());
+    try std.testing.expect(!model.partnershipProfileActive());
+
     update(&model, .{ .select_taxpayer = .demo_corporation });
     try std.testing.expectEqual(Page.taxpayer_dashboard, model.page);
     try std.testing.expectEqual(TaxpayerProfile.demo_corporation, model.selectedTaxpayer);
     try std.testing.expectEqualStrings("Demo Corporation", model.selectedTaxpayerName());
+    try std.testing.expect(!model.juanProfileActive());
+    try std.testing.expect(model.demoProfileActive());
+    try std.testing.expect(!model.partnershipProfileActive());
 
     update(&model, .show_dashboard_forms);
     try std.testing.expect(model.dashboardFormsActive());
@@ -747,6 +751,9 @@ test "taxpayer selection and local page tabs are model owned" {
     update(&model, .show_profile_setup);
     update(&model, .show_profile_email);
     try std.testing.expect(model.profileEmailActive());
+
+    update(&model, .show_screen_gallery);
+    try std.testing.expect(model.demoProfileActive());
 }
 
 test "transient pages return to their exact origin" {
