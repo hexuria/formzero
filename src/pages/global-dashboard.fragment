@@ -39,13 +39,44 @@
 
 <template name="global-calendar-column">
   <column grow="1" gap="12">
-    <row cross="center" gap="12">
-      <column grow="1" gap="4">
-        <text><span weight="bold">Compliance Calendar</span></text>
-        <text wrap="true" foreground="text_muted">Upcoming filing and payment deadlines</text>
+    <if test="{constrainedLayout}">
+      <column gap="8">
+        <column gap="4">
+          <text><span weight="bold">Compliance Calendar</span></text>
+          <text wrap="true" foreground="text_muted">Upcoming filing and payment deadlines</text>
+        </column>
+        <use
+          template="multi-select-combobox"
+          value="{formFilterText}"
+          open="{formFilterOpen}"
+          options="{visibleFormOptions}"
+          allselected="{formFilterAllFilteredSelected}"
+          hiddencount="{formFilterHiddenCount}"
+          width="240"
+          menuheight="420"
+          placeholder="Search form codes..."
+          label="Filter compliance calendar forms"/>
       </column>
-      <button size="sm" variant="outline" disabled="true">3 profiles selected</button>
-    </row>
+    </if>
+    <else>
+      <row cross="center" gap="12">
+        <column grow="1" gap="4">
+          <text><span weight="bold">Compliance Calendar</span></text>
+          <text wrap="true" foreground="text_muted">Upcoming filing and payment deadlines</text>
+        </column>
+        <use
+          template="multi-select-combobox"
+          value="{formFilterText}"
+          open="{formFilterOpen}"
+          options="{visibleFormOptions}"
+          allselected="{formFilterAllFilteredSelected}"
+          hiddencount="{formFilterHiddenCount}"
+          width="240"
+          menuheight="420"
+          placeholder="Search form codes..."
+          label="Filter compliance calendar forms"/>
+      </row>
+    </else>
 
     <card>
       <column padding="12" gap="8">
@@ -76,13 +107,13 @@
           <use template="global-calendar-day" day="7"/>
           <use template="global-calendar-day" day="8"/>
           <use template="global-calendar-day" day="9"/>
-          <use template="global-calendar-day" day="10" marker="•••• +"/>
+          <use template="global-calendar-day" day="10" marker="{calendarDay10Marker}"/>
           <use template="global-calendar-day" day="11"/>
 
           <use template="global-calendar-day" day="12"/>
           <use template="global-calendar-day" day="13"/>
           <use template="global-calendar-day" day="14"/>
-          <use template="global-calendar-day" day="15" marker="•"/>
+          <use template="global-calendar-day" day="15" marker="{calendarDay15Marker}"/>
           <use template="global-calendar-day" day="16"/>
           <use template="global-calendar-day" day="17"/>
           <use template="global-calendar-day" day="18"/>
@@ -96,43 +127,46 @@
           <use template="global-calendar-day" day="25"/>
 
           <use template="global-calendar-day" day="26"/>
-          <use template="global-calendar-day" day="27" marker="••"/>
+          <use template="global-calendar-day" day="27" marker="{calendarDay27Marker}"/>
           <use template="global-calendar-day" day="28"/>
           <use template="global-calendar-day" day="29"/>
           <use template="global-calendar-day" day="30"/>
-          <use template="global-calendar-day" day="31" marker="••••"/>
+          <use template="global-calendar-day" day="31" marker="{calendarDay31Marker}"/>
           <use template="global-calendar-day" day=""/>
         </grid>
       </column>
     </card>
 
     <text><span weight="bold">Deadlines for July 2026</span></text>
-    <use
-      template="global-deadline-row"
-      date="10"
-      form="0619-E"
-      title="Withholding Tax Remittance"
-      detail="Juan Dela Cruz">
-      <button
-        size="sm"
-        variant="ghost"
-        icon="chevron-right"
-        label="Open BIR Form 0619-E"
-        on-press="show_form_0619_e"></button>
-    </use>
-    <use
-      template="global-deadline-row"
-      date="31"
-      form="2551Q"
-      title="Quarterly Percentage Tax Return"
-      detail="2 taxpayer profiles have this deadline">
-      <button
-        size="sm"
-        variant="ghost"
-        icon="chevron-right"
-        label="Open BIR Form 2551Q"
-        on-press="show_form_2551q"></button>
-    </use>
+    <if test="{hasVisibleGlobalDeadlines}">
+      <for each="visibleGlobalDeadlines" key="id" as="deadline">
+        <use
+          template="global-deadline-row"
+          date="{deadline.day}"
+          form="{deadline.form}"
+          title="{deadline.title}"
+          detail="{deadline.detail}">
+          <button
+            size="sm"
+            variant="ghost"
+            icon="chevron-right"
+            label="Open selected BIR form"
+            disabled="{not deadline.openable}"
+            on-press="show_deadline_form:{deadline.target}"></button>
+        </use>
+      </for>
+    </if>
+    <else>
+      <card>
+        <column padding="24" gap="8" cross="center">
+          <icon name="info" foreground="text_muted" width="20" height="20"/>
+          <text><span weight="bold">No upcoming deadlines</span></text>
+          <text wrap="true" text-alignment="center" foreground="text_muted">
+            Select one or more forms to show their July 2026 filing deadlines.
+          </text>
+        </column>
+      </card>
+    </else>
   </column>
 </template>
 

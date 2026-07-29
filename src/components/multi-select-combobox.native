@@ -1,0 +1,58 @@
+<!--
+  Reusable view contract for the app's bounded multi-select state.
+
+  The host supplies derived option rows and summary flags. The fixed
+  multi_select_* messages form the adapter seam to the host model:
+    - multi_select_toggle / multi_select_close
+    - multi_select_query_changed
+    - multi_select_toggle_option:{option.id}
+    - multi_select_select_all_filtered / multi_select_clear_all
+-->
+<template
+  name="multi-select-combobox"
+  args="value open options allselected hiddencount width menuheight placeholder label">
+  <stack width="{width}">
+    <combobox
+      size="sm"
+      text="{value}"
+      placeholder="{placeholder}"
+      label="{label}"
+      autofocus="{open}"
+      on-input="multi_select_query_changed"
+      on-press="multi_select_toggle"/>
+
+    <if test="{open}">
+      <dropdown-menu
+        anchor="below"
+        anchor-alignment="stretch"
+        anchor-offset="4"
+        height="{menuheight}"
+        on-dismiss="multi_select_close">
+        <if test="{allselected}">
+          <menu-item icon="x" on-press="multi_select_clear_all">Deselect All</menu-item>
+        </if>
+        <else>
+          <menu-item icon="check" on-press="multi_select_select_all_filtered">Select All</menu-item>
+        </else>
+
+        <menu-item icon="x-circle" on-press="multi_select_clear_all">Clear All</menu-item>
+
+        <separator/>
+
+        <for each="options" key="id" as="option">
+          <menu-item
+            selected="{option.selected}"
+            on-press="multi_select_toggle_option:{option.id}">{option.label}</menu-item>
+        </for>
+        <else>
+          <menu-item disabled="true">No matching options</menu-item>
+        </else>
+
+        <if test="{hiddencount > 0}">
+          <separator/>
+          <menu-item disabled="true">{hiddencount} more matches - keep typing</menu-item>
+        </if>
+      </dropdown-menu>
+    </if>
+  </stack>
+</template>

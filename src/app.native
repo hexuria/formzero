@@ -4,10 +4,11 @@
   Edit those files, then rerun the generator.
 
   Fixed concatenation order:
-  shell:
+  shared components:
     - src/components/shell.native
+    - src/components/multi-select-combobox.native
   main pages:
-    - src/pages/global-dashboard.native
+    - src/pages/global-dashboard.fragment
     - src/pages/taxpayer-dashboard.native
     - src/pages/profile-setup.native
     - src/pages/import-data.native
@@ -610,6 +611,65 @@
   </stack>
 </template>
 
+<!--
+  Reusable view contract for the app's bounded multi-select state.
+
+  The host supplies derived option rows and summary flags. The fixed
+  multi_select_* messages form the adapter seam to the host model:
+    - multi_select_toggle / multi_select_close
+    - multi_select_query_changed
+    - multi_select_toggle_option:{option.id}
+    - multi_select_select_all_filtered / multi_select_clear_all
+-->
+<template
+  name="multi-select-combobox"
+  args="value open options allselected hiddencount width menuheight placeholder label">
+  <stack width="{width}">
+    <combobox
+      size="sm"
+      text="{value}"
+      placeholder="{placeholder}"
+      label="{label}"
+      autofocus="{open}"
+      on-input="multi_select_query_changed"
+      on-press="multi_select_toggle"/>
+
+    <if test="{open}">
+      <dropdown-menu
+        anchor="below"
+        anchor-alignment="stretch"
+        anchor-offset="4"
+        height="{menuheight}"
+        on-dismiss="multi_select_close">
+        <if test="{allselected}">
+          <menu-item icon="x" on-press="multi_select_clear_all">Deselect All</menu-item>
+        </if>
+        <else>
+          <menu-item icon="check" on-press="multi_select_select_all_filtered">Select All</menu-item>
+        </else>
+
+        <menu-item icon="x-circle" on-press="multi_select_clear_all">Clear All</menu-item>
+
+        <separator/>
+
+        <for each="options" key="id" as="option">
+          <menu-item
+            selected="{option.selected}"
+            on-press="multi_select_toggle_option:{option.id}">{option.label}</menu-item>
+        </for>
+        <else>
+          <menu-item disabled="true">No matching options</menu-item>
+        </else>
+
+        <if test="{hiddencount > 0}">
+          <separator/>
+          <menu-item disabled="true">{hiddencount} more matches - keep typing</menu-item>
+        </if>
+      </dropdown-menu>
+    </if>
+  </stack>
+</template>
+
 <template name="global-deadline-row" args="date form title detail tone=secondary">
   <card>
     <row padding="16" gap="12" cross="center">
@@ -651,13 +711,44 @@
 
 <template name="global-calendar-column">
   <column grow="1" gap="12">
-    <row cross="center" gap="12">
-      <column grow="1" gap="4">
-        <text><span weight="bold">Compliance Calendar</span></text>
-        <text wrap="true" foreground="text_muted">Upcoming filing and payment deadlines</text>
+    <if test="{constrainedLayout}">
+      <column gap="8">
+        <column gap="4">
+          <text><span weight="bold">Compliance Calendar</span></text>
+          <text wrap="true" foreground="text_muted">Upcoming filing and payment deadlines</text>
+        </column>
+        <use
+          template="multi-select-combobox"
+          value="{formFilterText}"
+          open="{formFilterOpen}"
+          options="{visibleFormOptions}"
+          allselected="{formFilterAllFilteredSelected}"
+          hiddencount="{formFilterHiddenCount}"
+          width="240"
+          menuheight="420"
+          placeholder="Search form codes..."
+          label="Filter compliance calendar forms"/>
       </column>
-      <button size="sm" variant="outline" disabled="true">3 profiles selected</button>
-    </row>
+    </if>
+    <else>
+      <row cross="center" gap="12">
+        <column grow="1" gap="4">
+          <text><span weight="bold">Compliance Calendar</span></text>
+          <text wrap="true" foreground="text_muted">Upcoming filing and payment deadlines</text>
+        </column>
+        <use
+          template="multi-select-combobox"
+          value="{formFilterText}"
+          open="{formFilterOpen}"
+          options="{visibleFormOptions}"
+          allselected="{formFilterAllFilteredSelected}"
+          hiddencount="{formFilterHiddenCount}"
+          width="240"
+          menuheight="420"
+          placeholder="Search form codes..."
+          label="Filter compliance calendar forms"/>
+      </row>
+    </else>
 
     <card>
       <column padding="12" gap="8">
@@ -688,13 +779,13 @@
           <use template="global-calendar-day" day="7"/>
           <use template="global-calendar-day" day="8"/>
           <use template="global-calendar-day" day="9"/>
-          <use template="global-calendar-day" day="10" marker="•••• +"/>
+          <use template="global-calendar-day" day="10" marker="{calendarDay10Marker}"/>
           <use template="global-calendar-day" day="11"/>
 
           <use template="global-calendar-day" day="12"/>
           <use template="global-calendar-day" day="13"/>
           <use template="global-calendar-day" day="14"/>
-          <use template="global-calendar-day" day="15" marker="•"/>
+          <use template="global-calendar-day" day="15" marker="{calendarDay15Marker}"/>
           <use template="global-calendar-day" day="16"/>
           <use template="global-calendar-day" day="17"/>
           <use template="global-calendar-day" day="18"/>
@@ -708,43 +799,46 @@
           <use template="global-calendar-day" day="25"/>
 
           <use template="global-calendar-day" day="26"/>
-          <use template="global-calendar-day" day="27" marker="••"/>
+          <use template="global-calendar-day" day="27" marker="{calendarDay27Marker}"/>
           <use template="global-calendar-day" day="28"/>
           <use template="global-calendar-day" day="29"/>
           <use template="global-calendar-day" day="30"/>
-          <use template="global-calendar-day" day="31" marker="••••"/>
+          <use template="global-calendar-day" day="31" marker="{calendarDay31Marker}"/>
           <use template="global-calendar-day" day=""/>
         </grid>
       </column>
     </card>
 
     <text><span weight="bold">Deadlines for July 2026</span></text>
-    <use
-      template="global-deadline-row"
-      date="10"
-      form="0619-E"
-      title="Withholding Tax Remittance"
-      detail="Juan Dela Cruz">
-      <button
-        size="sm"
-        variant="ghost"
-        icon="chevron-right"
-        label="Open BIR Form 0619-E"
-        on-press="show_form_0619_e"></button>
-    </use>
-    <use
-      template="global-deadline-row"
-      date="31"
-      form="2551Q"
-      title="Quarterly Percentage Tax Return"
-      detail="2 taxpayer profiles have this deadline">
-      <button
-        size="sm"
-        variant="ghost"
-        icon="chevron-right"
-        label="Open BIR Form 2551Q"
-        on-press="show_form_2551q"></button>
-    </use>
+    <if test="{hasVisibleGlobalDeadlines}">
+      <for each="visibleGlobalDeadlines" key="id" as="deadline">
+        <use
+          template="global-deadline-row"
+          date="{deadline.day}"
+          form="{deadline.form}"
+          title="{deadline.title}"
+          detail="{deadline.detail}">
+          <button
+            size="sm"
+            variant="ghost"
+            icon="chevron-right"
+            label="Open selected BIR form"
+            disabled="{not deadline.openable}"
+            on-press="show_deadline_form:{deadline.target}"></button>
+        </use>
+      </for>
+    </if>
+    <else>
+      <card>
+        <column padding="24" gap="8" cross="center">
+          <icon name="info" foreground="text_muted" width="20" height="20"/>
+          <text><span weight="bold">No upcoming deadlines</span></text>
+          <text wrap="true" text-alignment="center" foreground="text_muted">
+            Select one or more forms to show their July 2026 filing deadlines.
+          </text>
+        </column>
+      </card>
+    </else>
   </column>
 </template>
 

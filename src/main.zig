@@ -8,6 +8,7 @@
 const std = @import("std");
 const runner = @import("runner");
 const native_sdk = @import("native_sdk");
+const multi_select = @import("components/multi_select.zig");
 
 pub const panic = std.debug.FullPanic(native_sdk.debug.capturePanic);
 
@@ -129,6 +130,211 @@ pub const ViewportClass = enum {
     desktop,
 };
 
+const form_filter_codes = [_][]const u8{
+    // This is the current 51-form registry represented by the reference
+    // dashboard. Keep the order stable so menu identity remains stable.
+    "0605",
+    "1905",
+    "1600",
+    "1600PT",
+    "1600VT",
+    "1600WP",
+    "1601C",
+    "1601E",
+    "1601F",
+    "0619F",
+    "1601FQ",
+    "1602",
+    "1602Q",
+    "1603",
+    "1603Q",
+    "1604CF",
+    "1604E",
+    "0620",
+    "2316",
+    "1700",
+    "1701Q",
+    "1701",
+    "1701A",
+    "1702Q",
+    "1702",
+    "1702RT",
+    "1702EX",
+    "1702MX",
+    "1704",
+    "2550M",
+    "2550Q",
+    "2551Q",
+    "2551M",
+    "2552",
+    "2553",
+    "2000",
+    "2000OT",
+    "2200A",
+    "2200AN",
+    "2200M",
+    "2200P",
+    "2200T",
+    "2200C",
+    "2200S",
+    "0619E",
+    "1601EQ",
+    "1701MS",
+    "1706",
+    "1707A",
+    "1800",
+    "1801",
+};
+const max_rendered_form_options: usize = 9;
+const FormFilterState = multi_select.State(form_filter_codes.len, 64);
+
+pub const FormFilterRow = struct {
+    id: usize,
+    label: []const u8,
+    selected: bool,
+};
+
+pub const GlobalDeadline = struct {
+    id: usize,
+    day: u8,
+    form_index: usize,
+    form: []const u8,
+    title: []const u8,
+    detail: []const u8,
+    openable: bool,
+    target: Page,
+};
+
+fn formIndex(comptime wanted: []const u8) usize {
+    inline for (form_filter_codes, 0..) |code, index| {
+        if (std.mem.eql(u8, code, wanted)) return index;
+    }
+    @compileError("global deadline references an unknown form code: " ++ wanted);
+}
+
+const global_deadlines = [_]GlobalDeadline{
+    .{
+        .id = 1,
+        .day = 10,
+        .form_index = formIndex("0619E"),
+        .form = "0619-E",
+        .title = "Withholding Tax Remittance",
+        .detail = "Juan Dela Cruz",
+        .openable = true,
+        .target = .form_0619_e,
+    },
+    .{
+        .id = 2,
+        .day = 10,
+        .form_index = formIndex("0619F"),
+        .form = "0619-F",
+        .title = "Final Income Tax Remittance",
+        .detail = "Juan Dela Cruz",
+        .openable = true,
+        .target = .form_0619_f,
+    },
+    .{
+        .id = 3,
+        .day = 10,
+        .form_index = formIndex("1601C"),
+        .form = "1601-C",
+        .title = "Compensation Withholding Remittance",
+        .detail = "2 taxpayer profiles have this deadline",
+        .openable = true,
+        .target = .form_1601_c,
+    },
+    .{
+        .id = 4,
+        .day = 10,
+        .form_index = formIndex("1601E"),
+        .form = "1601-E",
+        .title = "Expanded Withholding Tax Return",
+        .detail = "Juan Dela Cruz",
+        .openable = false,
+        .target = .global_dashboard,
+    },
+    .{
+        .id = 5,
+        .day = 10,
+        .form_index = formIndex("1601F"),
+        .form = "1601-F",
+        .title = "Final Withholding Tax Return",
+        .detail = "Juan Dela Cruz",
+        .openable = false,
+        .target = .global_dashboard,
+    },
+    .{
+        .id = 6,
+        .day = 15,
+        .form_index = formIndex("1601EQ"),
+        .form = "1601-EQ",
+        .title = "Quarterly Expanded Withholding Return",
+        .detail = "2 taxpayer profiles have this deadline",
+        .openable = false,
+        .target = .global_dashboard,
+    },
+    .{
+        .id = 7,
+        .day = 27,
+        .form_index = formIndex("1701Q"),
+        .form = "1701Q",
+        .title = "Quarterly Income Tax Return",
+        .detail = "Juan Dela Cruz",
+        .openable = true,
+        .target = .form_1701q,
+    },
+    .{
+        .id = 8,
+        .day = 27,
+        .form_index = formIndex("2550Q"),
+        .form = "2550Q",
+        .title = "Quarterly VAT Return",
+        .detail = "2 taxpayer profiles have this deadline",
+        .openable = true,
+        .target = .form_2550q,
+    },
+    .{
+        .id = 9,
+        .day = 31,
+        .form_index = formIndex("2551Q"),
+        .form = "2551Q",
+        .title = "Quarterly Percentage Tax Return",
+        .detail = "2 taxpayer profiles have this deadline",
+        .openable = true,
+        .target = .form_2551q,
+    },
+    .{
+        .id = 10,
+        .day = 31,
+        .form_index = formIndex("1601FQ"),
+        .form = "1601-FQ",
+        .title = "Quarterly Final Withholding Return",
+        .detail = "Juan Dela Cruz",
+        .openable = false,
+        .target = .global_dashboard,
+    },
+    .{
+        .id = 11,
+        .day = 31,
+        .form_index = formIndex("1702Q"),
+        .form = "1702Q",
+        .title = "Quarterly Corporate Income Tax Return",
+        .detail = "Demo Corporation",
+        .openable = false,
+        .target = .global_dashboard,
+    },
+    .{
+        .id = 12,
+        .day = 31,
+        .form_index = formIndex("1603"),
+        .form = "1603",
+        .title = "Final Income Tax Withheld Return",
+        .detail = "Juan Dela Cruz",
+        .openable = false,
+        .target = .global_dashboard,
+    },
+};
+
 pub const Model = struct {
     page: Page = .global_dashboard,
     returnPage: Page = .global_dashboard,
@@ -137,6 +343,7 @@ pub const Model = struct {
     profileSetupSection: ProfileSetupSection = .tax_profile,
     taxCalendarSection: TaxCalendarSection = .deadlines,
     backgroundTasksSection: BackgroundTasksSection = .jobs,
+    formFilter: FormFilterState = FormFilterState.allSelected(),
     themePreference: ThemePreference = .system,
     sidebarPreference: SidebarPreference = .expanded,
     sidebarOverlayOpen: bool = false,
@@ -160,6 +367,7 @@ pub const Model = struct {
         "profileSetupSection",
         "taxCalendarSection",
         "backgroundTasksSection",
+        "formFilter",
         "systemColorScheme",
         "reduceMotion",
         "highContrast",
@@ -373,6 +581,130 @@ pub const Model = struct {
     pub fn backgroundLogsActive(self: *const Model) bool {
         return self.backgroundTasksSection == .logs;
     }
+
+    pub fn formFilterOpen(self: *const Model) bool {
+        return self.formFilter.isOpen();
+    }
+
+    /// The closed face summarizes selection; the open face is the live query.
+    pub fn formFilterText(self: *const Model, arena: std.mem.Allocator) []const u8 {
+        if (self.formFilter.isOpen()) return self.formFilter.query();
+
+        const count = self.formFilter.selectedCount();
+        if (count == 0) return "Select forms...";
+        return std.fmt.allocPrint(arena, "{d} selected", .{count}) catch "Selected forms";
+    }
+
+    /// The anchored menu stays bounded; typing exposes matches beyond this
+    /// first view-sized page without mounting all registry rows at once.
+    pub fn visibleFormOptions(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const FormFilterRow {
+        const visible_count = @min(self.filteredFormOptionCount(), max_rendered_form_options);
+        if (visible_count == 0) return &.{};
+
+        const rows = arena.alloc(FormFilterRow, visible_count) catch return &.{};
+        var output_index: usize = 0;
+        for (form_filter_codes, 0..) |code, index| {
+            if (!self.formFilter.matches(code)) continue;
+            if (output_index == rows.len) break;
+
+            rows[output_index] = .{
+                .id = index,
+                .label = code,
+                .selected = self.formFilter.isSelected(index),
+            };
+            output_index += 1;
+        }
+        return rows[0..output_index];
+    }
+
+    pub fn formFilterAllFilteredSelected(self: *const Model) bool {
+        var found_match = false;
+        for (form_filter_codes, 0..) |code, index| {
+            if (!self.formFilter.matches(code)) continue;
+            found_match = true;
+            if (!self.formFilter.isSelected(index)) return false;
+        }
+        return found_match;
+    }
+
+    pub fn formFilterHiddenCount(self: *const Model) usize {
+        return self.filteredFormOptionCount() -| max_rendered_form_options;
+    }
+
+    /// Deadline rows are derived from the selection on every rebuild. No
+    /// secondary cache or selection callback can leave calendar content stale.
+    pub fn visibleGlobalDeadlines(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const GlobalDeadline {
+        const rows = arena.alloc(GlobalDeadline, global_deadlines.len) catch return &.{};
+        var count: usize = 0;
+        for (global_deadlines) |deadline| {
+            if (!self.formFilter.isSelected(deadline.form_index)) continue;
+            rows[count] = deadline;
+            count += 1;
+        }
+        return rows[0..count];
+    }
+
+    pub fn hasVisibleGlobalDeadlines(self: *const Model) bool {
+        for (global_deadlines) |deadline| {
+            if (self.formFilter.isSelected(deadline.form_index)) return true;
+        }
+        return false;
+    }
+
+    pub fn calendarDay10Marker(self: *const Model) []const u8 {
+        return self.deadlineMarkerForDay(10);
+    }
+
+    pub fn calendarDay15Marker(self: *const Model) []const u8 {
+        return self.deadlineMarkerForDay(15);
+    }
+
+    pub fn calendarDay27Marker(self: *const Model) []const u8 {
+        return self.deadlineMarkerForDay(27);
+    }
+
+    pub fn calendarDay31Marker(self: *const Model) []const u8 {
+        return self.deadlineMarkerForDay(31);
+    }
+
+    fn filteredFormOptionCount(self: *const Model) usize {
+        var count: usize = 0;
+        for (form_filter_codes) |code| {
+            if (self.formFilter.matches(code)) count += 1;
+        }
+        return count;
+    }
+
+    fn setFilteredFormOptions(self: *Model, selected: bool) void {
+        for (form_filter_codes, 0..) |code, index| {
+            if (!self.formFilter.matches(code)) continue;
+            _ = self.formFilter.set(index, selected);
+        }
+    }
+
+    fn deadlineMarkerForDay(self: *const Model, day: u8) []const u8 {
+        var count: usize = 0;
+        for (global_deadlines) |deadline| {
+            if (deadline.day == day and self.formFilter.isSelected(deadline.form_index)) {
+                count += 1;
+            }
+        }
+
+        return switch (count) {
+            0 => "",
+            1 => "•",
+            2 => "••",
+            3 => "•••",
+            4 => "••••",
+            else => "•••• +",
+        };
+    }
 };
 
 pub const Msg = union(enum) {
@@ -412,6 +744,13 @@ pub const Msg = union(enum) {
     show_calendar_overrides,
     show_background_jobs,
     show_background_logs,
+    multi_select_toggle,
+    multi_select_close,
+    multi_select_query_changed: canvas.TextInputEvent,
+    multi_select_toggle_option: usize,
+    multi_select_select_all_filtered,
+    multi_select_clear_all,
+    show_deadline_form: Page,
     go_back,
     toggle_theme,
     set_theme_system,
@@ -493,6 +832,17 @@ pub fn update(model: *Model, msg: Msg) void {
         .show_calendar_overrides => model.taxCalendarSection = .overrides,
         .show_background_jobs => model.backgroundTasksSection = .jobs,
         .show_background_logs => model.backgroundTasksSection = .logs,
+        .multi_select_toggle => model.formFilter.togglePicker(),
+        .multi_select_close => model.formFilter.closePicker(),
+        .multi_select_query_changed => |edit| model.formFilter.applyQuery(edit),
+        .multi_select_toggle_option => |index| {
+            _ = model.formFilter.toggle(index);
+        },
+        .multi_select_select_all_filtered => model.setFilteredFormOptions(true),
+        .multi_select_clear_all => {
+            _ = model.formFilter.clear();
+        },
+        .show_deadline_form => |page| navigate(model, page),
         .go_back => {
             const destination = model.returnPage;
             model.returnPage = .global_dashboard;
@@ -641,6 +991,23 @@ fn registerBootImages(_: *Model, fx: *Effects) void {
 
 const EbirFormsApp = native_sdk.UiApp(Model, Msg);
 pub const app_markup = @embedFile("app.native");
+const multi_select_component_markup = @embedFile("components/multi-select-combobox.native");
+const multi_select_component_fixture = multi_select_component_markup ++
+    \\
+    \\<column>
+    \\  <use
+    \\    template="multi-select-combobox"
+    \\    value="{formFilterText}"
+    \\    open="{formFilterOpen}"
+    \\    options="{visibleFormOptions}"
+    \\    allselected="{formFilterAllFilteredSelected}"
+    \\    hiddencount="{formFilterHiddenCount}"
+    \\    width="240"
+    \\    menuheight="420"
+    \\    placeholder="Search form codes..."
+    \\    label="Filter compliance calendar forms"/>
+    \\</column>
+;
 
 pub fn main(init: std.process.Init) !void {
     const app_state = try EbirFormsApp.create(std.heap.page_allocator, .{
@@ -784,4 +1151,124 @@ test "viewport classes cover phone compact tablet and desktop breakpoints" {
     try std.testing.expectEqual(ViewportClass.rail_narrow, viewportClassForWidth(800));
     try std.testing.expectEqual(ViewportClass.rail_regular, viewportClassForWidth(1024));
     try std.testing.expectEqual(ViewportClass.desktop, viewportClassForWidth(1225));
+}
+
+fn findWidgetByKind(widget: canvas.Widget, kind: canvas.WidgetKind) ?canvas.Widget {
+    if (widget.kind == kind) return widget;
+    for (widget.children) |child| {
+        if (findWidgetByKind(child, kind)) |found| return found;
+    }
+    return null;
+}
+
+fn findWidgetByText(
+    widget: canvas.Widget,
+    kind: canvas.WidgetKind,
+    text: []const u8,
+) ?canvas.Widget {
+    if (widget.kind == kind and std.mem.eql(u8, widget.text, text)) return widget;
+    for (widget.children) |child| {
+        if (findWidgetByText(child, kind, text)) |found| return found;
+    }
+    return null;
+}
+
+test "multi-select component dispatches open search toggle and dismiss interactions" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var model = Model{};
+    var view = try canvas.MarkupView(Model, Msg).init(
+        arena,
+        multi_select_component_fixture,
+    );
+
+    var closed_ui = canvas.Ui(Msg).init(arena);
+    const closed_tree = try closed_ui.finalize(try view.build(&closed_ui, &model));
+    const closed_combobox = findWidgetByKind(closed_tree.root, .combobox).?;
+    try std.testing.expectEqualStrings("51 selected", closed_combobox.text);
+
+    update(&model, closed_tree.msgForPointer(closed_combobox.id, .up).?);
+    try std.testing.expect(model.formFilter.isOpen());
+
+    var open_ui = canvas.Ui(Msg).init(arena);
+    const open_tree = try open_ui.finalize(try view.build(&open_ui, &model));
+    const open_combobox = findWidgetByKind(open_tree.root, .combobox).?;
+    const first_option = findWidgetByText(open_tree.root, .menu_item, "0605").?;
+    try std.testing.expectEqualStrings("", open_combobox.text);
+    try std.testing.expect(first_option.state.selected);
+
+    update(
+        &model,
+        open_tree.msgForTextEdit(
+            open_combobox.id,
+            .{ .insert_text = "0619E" },
+        ).?,
+    );
+
+    var filtered_ui = canvas.Ui(Msg).init(arena);
+    const filtered_tree = try filtered_ui.finalize(try view.build(&filtered_ui, &model));
+    const matching_option = findWidgetByText(
+        filtered_tree.root,
+        .menu_item,
+        "0619E",
+    ).?;
+    try std.testing.expect(matching_option.state.selected);
+    try std.testing.expectEqualStrings("•••• +", model.calendarDay10Marker());
+
+    update(
+        &model,
+        filtered_tree.msgForPointer(matching_option.id, .up).?,
+    );
+    try std.testing.expectEqual(@as(usize, 50), model.formFilter.selectedCount());
+    try std.testing.expectEqualStrings("••••", model.calendarDay10Marker());
+
+    var toggled_ui = canvas.Ui(Msg).init(arena);
+    const toggled_tree = try toggled_ui.finalize(try view.build(&toggled_ui, &model));
+    const toggled_option = findWidgetByText(
+        toggled_tree.root,
+        .menu_item,
+        "0619E",
+    ).?;
+    try std.testing.expect(!toggled_option.state.selected);
+
+    const menu = findWidgetByKind(toggled_tree.root, .dropdown_menu).?;
+    update(&model, toggled_tree.msgForDismiss(menu.id).?);
+    try std.testing.expect(!model.formFilter.isOpen());
+
+    var dismissed_ui = canvas.Ui(Msg).init(arena);
+    const dismissed_tree = try dismissed_ui.finalize(try view.build(&dismissed_ui, &model));
+    const dismissed_combobox = findWidgetByKind(dismissed_tree.root, .combobox).?;
+    try std.testing.expectEqualStrings("50 selected", dismissed_combobox.text);
+}
+
+test "form selection directly derives deadline rows and calendar markers" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var model = Model{};
+    update(&model, .multi_select_clear_all);
+
+    try std.testing.expectEqual(@as(usize, 0), model.formFilter.selectedCount());
+    try std.testing.expect(!model.hasVisibleGlobalDeadlines());
+    try std.testing.expectEqual(@as(usize, 0), model.visibleGlobalDeadlines(arena).len);
+    try std.testing.expectEqualStrings("", model.calendarDay10Marker());
+    try std.testing.expectEqualStrings("", model.calendarDay15Marker());
+    try std.testing.expectEqualStrings("", model.calendarDay27Marker());
+    try std.testing.expectEqualStrings("", model.calendarDay31Marker());
+
+    update(&model, .multi_select_toggle);
+    update(
+        &model,
+        .{ .multi_select_query_changed = .{ .insert_text = "2551Q" } },
+    );
+    update(&model, .multi_select_select_all_filtered);
+
+    const deadlines = model.visibleGlobalDeadlines(arena);
+    try std.testing.expectEqual(@as(usize, 1), model.formFilter.selectedCount());
+    try std.testing.expectEqual(@as(usize, 1), deadlines.len);
+    try std.testing.expectEqualStrings("2551Q", deadlines[0].form);
+    try std.testing.expectEqualStrings("•", model.calendarDay31Marker());
 }
