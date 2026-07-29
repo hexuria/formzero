@@ -1,101 +1,33 @@
-# eBIRForms Native reconstruction
+# eBIRForms Native
 
-This project recreates the current Rust/GPUI eBIRForms desktop surfaces
-with [Native SDK](https://github.com/vercel-labs/native) declarative markup
-and a compact Zig state core.
+Native macOS reconstruction of eBIRForms, built with Native SDK 0.6.1 and Zig
+0.16.0. The app includes responsive desktop UI, ten BIR form layouts, a global
+form/deadline dashboard, and a functional tax-calendar engine.
 
-Most form, filing, payment, authentication, import, print, and network
-surfaces remain presentation-only. The tax-calendar milestone is functional:
-it resolves the global calendar-year / non-eFPS baseline, applies business-day
-policy and sourced overrides, persists calendar policy in SQLite, and exports
-the selected calendar year from the active tax profile to the user's default
-calendar application.
+## Product status
 
-## Tax calendar
+| Area | Status |
+| --- | --- |
+| Navigation, themes, responsive layouts | Functional |
+| Global Dashboard form filter | Functional; 51-form searchable multi-select |
+| Tax deadline calculation | Functional; 20 compiled rule groups |
+| Calendar policy | Persisted in SQLite with sourced holidays and overrides |
+| Calendar export | Functional `.ics` handoff to the default calendar app |
+| Form editors and print previews | UI only; not filing-ready |
+| Profile setup, import, authentication, payment, and submission | UI only |
+| Distribution | macOS development build; not notarized or production-ready |
 
-- 20 compiled rule groups derived from the local Rust reference and corrected
-  against official BIR filing guidance. A modern full taxable year (2026+)
-  resolves 175 dated catalog entries and 16 event-based entries; the 2550-DS
-  effective-date guard yields 174 dated entries for 2025 and 171 before 2025.
-- Calendar-year projection includes prior-December and prior-taxable-year
-  filings whose final due date falls in the selected year.
-- Saturdays and Sundays are automatic. Official holidays and closures are
-  explicit, source-cited SQLite records; no guessed holiday data is seeded.
-- Sourced deadline overrides are applied after base business-day adjustment.
-  The global projection applies only unscoped overrides; region- and
-  taxpayer-scoped records remain stored for a future profile-aware projection.
-  `effective_from`, `effective_until`, and `expires_at` are preserved as
-  distinct fields. As in the reference resolver, those temporal fields are
-  metadata today and do not filter the global schedule.
-- The calendar database is stored in the platform application-data directory
-  as `calendar.sqlite3`, with versioned migrations, foreign keys, WAL, a busy
-  timeout, sourced-policy validation, and confirmed destructive edits.
-- “Add this profile to default calendar” is available only on the active
-  taxpayer's Calendar tab. It creates a standards-compliant all-day `.ics`
-  calendar with profile-namespaced, collision-checked stable UIDs and
-  7-day/1-day alerts, then opens the registered calendar application.
-  Importing into an iCloud, Google, or Outlook calendar can propagate through
-  that account.
+**Do not use this app as an authoritative filing plan yet.** Calendar export
+currently falls back to the full supported form catalog. It does not yet apply
+a taxpayer's persisted Forms Set, fiscal year, eFPS group, or scoped policy.
+Always confirm deadlines and filing requirements with official BIR guidance.
 
-The `.ics` path is a user-confirmed import handoff, not managed two-way sync.
-The handoff is owned and identified by the selected tax profile, but its
-temporary `catalog_fallback` mode deliberately exports every supported form.
-It is not yet an authoritative taxpayer filing plan.
+All bundled taxpayer data is synthetic. `reference/` is intentionally ignored
+because source-app captures may contain private taxpayer data.
 
-**Tax-profile Forms Set gate:** when per-year profile registration is
-persisted, the caller must replace `catalog_fallback` with the profile's
-canonical registered form codes. An explicitly configured empty Forms Set
-must export zero events. Fiscal-year schedules, eFPS filer-group deadlines,
-region/taxpayer-scoped policy, and effective-date evaluation must also be
-resolved from that profile before the export can be treated as filing-specific.
-Provider-neutral connection/event mapping tables are ready for later EventKit,
-Google Calendar API, or Microsoft Graph adapters, but direct OAuth sync is not
-configured. The current packaged application target remains macOS.
+## Quick start
 
-## Included surfaces
-
-- 7 primary application pages
-- 10 BIR form editor layouts
-- 7 auxiliary overlays, previews, and supporting windows
-- 1 Screen Gallery that makes every static surface directly reviewable
-
-All sample taxpayer information is synthetic. Local GPUI reference captures
-live under `reference/` and are intentionally git-ignored because the source
-application can display private taxpayer data.
-
-Rendered Native review captures are kept in `review/`:
-
-- `global-dashboard.png`
-- `screen-gallery.png`
-- `form-0605.png`
-- `admin-auth.png`
-- `theme-light.png`
-- `theme-dark.png`
-
-## Engineering guide
-
-Read the
-[Native SDK guide and eBIRForms improvement plan](docs/NATIVE_SDK_GUIDE_AND_IMPROVEMENT_PLAN.md)
-before adding CI, full-loop tests, automation, extensions, or release signing.
-
-## Source layout
-
-- `src/main.zig` owns navigation, appearance, and Native SDK effect wiring.
-- `src/calendar/domain.zig` owns pure rules and schedule resolution.
-- `src/calendar/store.zig` owns SQLite schema, policy, and provider mappings.
-- `src/calendar/ics.zig` owns standards-based calendar export.
-- `src/calendar/ui_state.zig` converts domain/storage records into bounded UI state.
-- `src/components/` contains the shared application shell.
-- `src/pages/` contains the editable screen templates.
-- `src/app-root.fragment` contains the final page dispatcher.
-- `src/app.native` is generated; do not edit it directly.
-
-Native SDK 0.6.1 compiles one markup entrypoint. The deterministic flattening
-step keeps the editable files modular while producing that runtime entrypoint.
-The theme selector uses model-owned Geist design tokens while preserving the
-system high-contrast and reduced-motion settings.
-
-## Build and run
+Requirements: Node.js 22.15+, Zig 0.16.0, and macOS.
 
 ```sh
 rtk npm ci
@@ -106,9 +38,46 @@ rtk npx native build . --yes
 rtk npx native dev . --yes
 ```
 
-Run the flattening command after editing any `.native` source. The generated
-file is stable and the script is idempotent.
+`@native-sdk/cli` is pinned to 0.6.1 in `package-lock.json`.
 
-The repository owns its Native SDK 0.6.1 build graph and pins the official
-SQLite 3.53.4 amalgamation by Zig package hash. Requirements: Node.js 22.15
-or newer and Zig 0.16.0.
+## Development rule
+
+`src/app.native` is generated. Edit files under `src/components/`,
+`src/pages/`, or `src/app-root.fragment`, then run:
+
+```sh
+rtk npm run generate
+```
+
+Commit the regenerated `src/app.native`. The generator is deterministic and
+idempotent.
+
+## Source map
+
+- `src/main.zig` — application model, messages, navigation, effects, and tests
+- `src/components/` — reusable UI and state components
+- `src/pages/` — editable page and form markup
+- `src/calendar/domain.zig` — deadline rules and schedule resolution
+- `src/calendar/store.zig` — SQLite schema, policy, and provider mappings
+- `src/calendar/ics.zig` — RFC 5545 calendar generation
+- `src/calendar/ui_state.zig` — calendar state and application adapter
+- `scripts/flatten-native.mjs` — modular markup generator
+- `app.zon` — product manifest, permissions, assets, and platform target
+
+## Quality gate
+
+Before merging:
+
+```sh
+rtk npm run generate
+rtk git diff --check
+rtk npx native test --yes -Dplatform=null
+rtk npx native check . --strict
+rtk npx native build . --yes
+```
+
+For visible changes, rebuild and relaunch the app before reviewing screenshots;
+an already-running process may still show an older binary.
+
+See the [contributor guide](docs/NATIVE_SDK_GUIDE_AND_IMPROVEMENT_PLAN.md) for
+automation, security, packaging, and the remaining release gates.
