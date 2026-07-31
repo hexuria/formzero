@@ -1,66 +1,49 @@
 <template name="profile-setup-content">
   <column gap="24">
-    <column gap="6">
-      <text size="heading">{profileEditorTitle}</text>
-      <text wrap="true" foreground="text_muted">
-        Reusable tax facts are versioned once and projected into each qualified
-        form. Existing filing snapshots never change when a profile is revised.
-      </text>
-    </column>
-
-    <if test="{profileNoticeVisible}">
-      <badge variant="{profileNoticeTone}">{profileNotice}</badge>
-    </if>
-
-    <if test="{constrainedLayout}">
-      <column gap="4" label="Profile setup sections">
+    <row gap="10" cross="start">
+      <if test="{profileInlineBackVisible}">
         <button
+          width="40"
+          height="40"
+          size="icon"
           variant="ghost"
-          selected="{profileTaxActive}"
-          on-press="show_profile_tax">
-          Tax Profile
+          radius="xl"
+          icon="chevron-left"
+          label="{profileBackLabel}"
+          on-press="cancel_profile_edit">
         </button>
-        <button
-          variant="ghost"
-          selected="{profileCertificateActive}"
-          on-press="show_profile_certificate">
-          COR
-        </button>
-        <button
-          variant="ghost"
-          selected="{profileEmailActive}"
-          on-press="show_profile_email">
-          Email Settings
-        </button>
+      </if>
+      <column grow="1" gap="6">
+        <text size="heading">{profileEditorTitle}</text>
+        <text wrap="true" foreground="text_muted">
+          Reusable tax facts are versioned once and projected into each qualified
+          form. Existing filing snapshots never change when a profile is revised.
+        </text>
       </column>
-    </if>
-    <else>
-      <tabs gap="4" label="Profile setup sections">
-        <button
-          variant="ghost"
-          selected="{profileTaxActive}"
-          on-press="show_profile_tax">
-          Tax Profile
-        </button>
-        <button
-          variant="ghost"
-          selected="{profileCertificateActive}"
-          on-press="show_profile_certificate">
-          COR
-        </button>
-        <button
-          variant="ghost"
-          selected="{profileEmailActive}"
-          on-press="show_profile_email">
-          Email Settings
-        </button>
-      </tabs>
-    </else>
+    </row>
+
+    <tabs label="Profile setup sections">
+      <button
+        selected="{profileTaxActive}"
+        on-press="show_profile_tax">
+        Tax Profile
+      </button>
+      <button
+        selected="{profileCertificateActive}"
+        on-press="show_profile_certificate">
+        COR
+      </button>
+      <button
+        selected="{profileEmailActive}"
+        on-press="show_profile_email">
+        Email Settings
+      </button>
+    </tabs>
 
     <if test="{profileTaxActive}">
       <column gap="24">
-        <card>
-          <column padding="24" gap="16">
+        <card size="sm">
+          <column gap="16">
             <column gap="4">
               <text><span weight="bold">Identity and registration</span></text>
               <text wrap="true" foreground="text_muted">
@@ -187,8 +170,8 @@
           </column>
         </card>
 
-        <card>
-          <column padding="24" gap="16">
+        <card size="sm">
+          <column gap="16">
             <column gap="4">
               <text><span weight="bold">Individual capabilities</span></text>
               <text wrap="true" foreground="text_muted">
@@ -239,8 +222,8 @@
           </column>
         </card>
 
-        <card>
-          <column padding="24" gap="16">
+        <card size="sm">
+          <column gap="16">
             <column gap="4">
               <text><span weight="bold">Business registration</span></text>
               <text wrap="true" foreground="text_muted">
@@ -300,8 +283,8 @@
           </column>
         </card>
 
-        <card>
-          <column padding="24" gap="16">
+        <card size="sm">
+          <column gap="16">
             <column gap="4">
               <text><span weight="bold">Revision and registered Forms Set</span></text>
               <text wrap="true" foreground="text_muted">
@@ -421,8 +404,8 @@
     </if>
 
     <if test="{profileCertificateActive}">
-      <card>
-        <column padding="24" gap="12">
+      <card size="sm">
+        <column gap="12">
           <text><span weight="bold">Certificate of Registration evidence</span></text>
           <text wrap="true" foreground="text_muted">
             COR attachments and extraction evidence are intentionally stored
@@ -435,8 +418,8 @@
     </if>
 
     <if test="{profileEmailActive}">
-      <card>
-        <column padding="24" gap="12">
+      <card size="sm">
+        <column gap="12">
           <text><span weight="bold">Email monitoring credentials</span></text>
           <text wrap="true" foreground="text_muted">
             Mailbox credentials are operational secrets, not reusable tax

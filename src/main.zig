@@ -10,6 +10,7 @@ const runner = @import("runner");
 const native_sdk = @import("native_sdk");
 const multi_select = @import("components/multi_select.zig");
 const calendar_ui = @import("calendar/ui_state.zig");
+const calendar_domain = @import("calendar/domain.zig");
 const profile_ui = @import("tax_profile/ui_state.zig");
 const profile_store = @import("tax_profile/store.zig");
 const profile_persistence = @import("tax_profile/persistence_adapter.zig");
@@ -75,7 +76,6 @@ pub const Page = enum {
     profile_setup,
     import_data,
     background_tasks,
-    tax_calendar,
     settings,
     screen_gallery,
     form_0605,
@@ -372,7 +372,8 @@ const global_deadlines = [_]GlobalDeadline{
 
 pub const Model = struct {
     page: Page = .global_dashboard,
-    returnPage: Page = .global_dashboard,
+    profileEditorOrigin: Page = .global_dashboard,
+    overlayReturnPage: Page = .global_dashboard,
     dashboardSection: DashboardSection = .calendar,
     profileSetupSection: ProfileSetupSection = .tax_profile,
     taxCalendarSection: TaxCalendarSection = .deadlines,
@@ -397,13 +398,15 @@ pub const Model = struct {
     calendarExportProfileRevision: ?profile_ui.RevisionContext = null,
     profileCalendarExportStatus: ProfileCalendarExportStatus = .idle,
     profileActionsOpen: bool = false,
+    profileNoticeTimerKey: u64 = 0,
 
     // These values drive Zig-owned tokens rather than markup bindings.
     pub const view_unbound = .{
         "sidebarPreference",
         "sidebarOverlayOpen",
         "viewportClass",
-        "returnPage",
+        "profileEditorOrigin",
+        "overlayReturnPage",
         "dashboardSection",
         "profileSetupSection",
         "taxCalendarSection",
@@ -419,6 +422,7 @@ pub const Model = struct {
         "percentageTax",
         "calendarExportProfileRevision",
         "profileCalendarExportStatus",
+        "profileNoticeTimerKey",
         "selectedTaxpayerCalendarKey",
         "hasSelectedTaxpayer",
     };
@@ -507,7 +511,10 @@ pub const Model = struct {
     /// Auxiliary surfaces sit above the shell while the page that opened
     /// them remains visible underneath.
     pub fn contentPage(self: *const Model) Page {
-        return if (isAuxiliaryPage(self.page)) self.returnPage else self.page;
+        return if (isAuxiliaryPage(self.page))
+            self.overlayReturnPage
+        else
+            self.page;
     }
 
     pub fn shellVisible(self: *const Model) bool {
@@ -525,7 +532,6 @@ pub const Model = struct {
             .profile_setup => "Taxpayer Profile",
             .import_data => "Import Data",
             .background_tasks => "Background Tasks",
-            .tax_calendar => "Tax Calendars",
             .settings => "Settings",
             .screen_gallery => "Screen Gallery",
             .form_0605 => "BIR Form 0605",
@@ -1317,6 +1323,18 @@ pub const Model = struct {
             "Revise Taxpayer Profile";
     }
 
+    pub fn profileInlineBackVisible(self: *const Model) bool {
+        return self.page == .profile_setup and
+            !self.sidebarLauncherVisible();
+    }
+
+    pub fn profileBackLabel(self: *const Model) []const u8 {
+        return if (self.profileEditorOrigin == .taxpayer_dashboard)
+            "Back to tax profile"
+        else
+            "Back";
+    }
+
     pub fn profileSaveLabel(self: *const Model) []const u8 {
         return if (self.taxProfiles.editing_new)
             "Create Profile"
@@ -1336,8 +1354,12 @@ pub const Model = struct {
         return self.taxProfiles.noticeText();
     }
 
-    pub fn profileNoticeTone(self: *const Model) []const u8 {
-        return self.taxProfiles.noticeTone();
+    pub fn profileNoticeSuccess(self: *const Model) bool {
+        return self.taxProfiles.noticeSuccess();
+    }
+
+    pub fn profileNoticeFailure(self: *const Model) bool {
+        return self.taxProfiles.noticeFailure();
     }
 
     pub fn profileIndividualSelected(self: *const Model) bool {
@@ -1569,10 +1591,14 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
+        var count: usize = 0;
+        for (self.calendar.deadlines[0..self.calendar.deadline_count]) |row| {
+            if (self.calendarDeadlineVisible(&row)) count += 1;
+        }
         return std.fmt.allocPrint(
             arena,
             "{d} scheduled deadlines",
-            .{self.calendar.deadline_count},
+            .{count},
         ) catch "";
     }
 
@@ -1582,7 +1608,9 @@ pub const Model = struct {
     ) []const u8 {
         var count: usize = 0;
         for (self.calendar.deadlines[0..self.calendar.deadline_count]) |row| {
-            if (row.final_deadline.month == self.calendar.selected_month) {
+            if (row.final_deadline.month == self.calendar.selected_month and
+                self.calendarDeadlineVisible(&row))
+            {
                 count += 1;
             }
         }
@@ -1598,6 +1626,7 @@ pub const Model = struct {
         var count: usize = 0;
         for (all) |row| {
             if (row.final_deadline.month != self.calendar.selected_month) continue;
+            if (!self.calendarDeadlineVisible(&row)) continue;
             visible[count] = row;
             count += 1;
         }
@@ -1605,18 +1634,127 @@ pub const Model = struct {
     }
 
     pub fn calendarRules(
-        _: *const Model,
+        self: *const Model,
         arena: std.mem.Allocator,
     ) []const calendar_ui.RuleRow {
-        return calendar_ui.ruleRows(arena);
+        const all = calendar_ui.ruleRows(arena);
+        if (!self.profileCalendarScopeActive()) return all;
+        const visible = arena.alloc(calendar_ui.RuleRow, all.len) catch
+            return &.{};
+        var count: usize = 0;
+        for (all) |row| {
+            const form_codes = self.profileCalendarRuleForms(
+                arena,
+                row.form_codes,
+            );
+            if (form_codes.len == 0) continue;
+            var projected = row;
+            projected.form_codes = form_codes;
+            visible[count] = projected;
+            count += 1;
+        }
+        return visible[0..count];
     }
 
-    pub fn calendarOverrides(self: *const Model) []const calendar_ui.OverrideRow {
-        return self.calendar.overrides[0..self.calendar.override_count];
+    pub fn calendarOverrides(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const calendar_ui.OverrideRow {
+        const all = self.calendar.overrides[0..self.calendar.override_count];
+        if (!self.profileCalendarScopeActive()) return all;
+        const visible = arena.alloc(calendar_ui.OverrideRow, all.len) catch
+            return &.{};
+        var count: usize = 0;
+        for (all) |row| {
+            var projected = row;
+            projected.form_count = 0;
+            for (row.form_codes[0..row.form_count]) |form_code| {
+                if (!self.profileCalendarFormVisible(form_code.text())) continue;
+                projected.form_codes[projected.form_count] = form_code;
+                projected.form_count += 1;
+            }
+            if (projected.form_count == 0) continue;
+            visible[count] = projected;
+            count += 1;
+        }
+        return visible[0..count];
     }
 
     pub fn calendarOverridesEmpty(self: *const Model) bool {
-        return self.calendar.override_count == 0;
+        if (!self.profileCalendarScopeActive()) {
+            return self.calendar.override_count == 0;
+        }
+        for (self.calendar.overrides[0..self.calendar.override_count]) |row| {
+            if (self.calendarOverrideVisible(&row)) return false;
+        }
+        return true;
+    }
+
+    fn profileCalendarScopeActive(self: *const Model) bool {
+        return self.contentPage() == .taxpayer_dashboard and
+            self.hasSelectedTaxpayer();
+    }
+
+    fn profileCalendarFormVisible(
+        self: *const Model,
+        form_code: []const u8,
+    ) bool {
+        if (!self.profileCalendarScopeActive()) return true;
+        const canonical = calendar_domain.canonicalFormCode(form_code);
+        return self.taxProfiles.formAvailable(
+            self.calendar.selected_year,
+            if (std.mem.eql(
+                u8,
+                canonical,
+                calendar_domain.unknown_form_code,
+            ))
+                form_code
+            else
+                canonical,
+        );
+    }
+
+    fn calendarDeadlineVisible(
+        self: *const Model,
+        row: *const calendar_ui.DeadlineRow,
+    ) bool {
+        return self.profileCalendarFormVisible(row.form_code);
+    }
+
+    fn profileCalendarRuleForms(
+        self: *const Model,
+        arena: std.mem.Allocator,
+        form_codes: []const u8,
+    ) []const u8 {
+        const filtered = arena.alloc(
+            u8,
+            form_codes.len * 2 + 2,
+        ) catch return "";
+        var filtered_len: usize = 0;
+        var tokens = std.mem.tokenizeAny(u8, form_codes, ", /");
+        while (tokens.next()) |form_code| {
+            if (!self.profileCalendarFormVisible(form_code)) continue;
+            if (filtered_len != 0) {
+                @memcpy(filtered[filtered_len..][0..2], ", ");
+                filtered_len += 2;
+            }
+            @memcpy(
+                filtered[filtered_len..][0..form_code.len],
+                form_code,
+            );
+            filtered_len += form_code.len;
+        }
+        return filtered[0..filtered_len];
+    }
+
+    fn calendarOverrideVisible(
+        self: *const Model,
+        row: *const calendar_ui.OverrideRow,
+    ) bool {
+        for (row.form_codes[0..row.form_count]) |*form_code| {
+            if (self.profileCalendarFormVisible(form_code.text())) return true;
+        }
+        return false;
     }
 
     pub fn calendarNonWorkingDays(
@@ -1630,7 +1768,11 @@ pub const Model = struct {
     }
 
     pub fn calendarNoticeVisible(self: *const Model) bool {
-        return self.calendar.notice.len != 0;
+        // Successful reloads and edits are already reflected by the calendar
+        // content itself. Keep the inline notice for actionable failures only;
+        // a permanent "loaded" badge wastes scarce profile-screen space.
+        return self.calendar.notice.len != 0 and
+            self.calendar.notice_kind == .failure;
     }
 
     pub fn calendarNotice(self: *const Model) []const u8 {
@@ -1924,7 +2066,6 @@ pub const Msg = union(enum) {
     new_taxpayer_profile,
     show_import_data,
     show_background_tasks,
-    show_tax_calendar,
     show_settings,
     show_screen_gallery,
     show_form_0605,
@@ -2047,6 +2188,8 @@ pub const Msg = union(enum) {
     profile_forms_set_input: canvas.TextInputEvent,
     save_profile,
     cancel_profile_edit,
+    dismiss_profile_notice,
+    profile_notice_timeout: native_sdk.EffectTimer,
     toggle_profile_actions,
     close_profile_actions,
     show_calendar_deadlines,
@@ -2114,6 +2257,7 @@ pub const Msg = union(enum) {
         "hide_sidebar",
         "profile_calendar_export_written",
         "profile_calendar_export_opened",
+        "profile_notice_timeout",
     };
 };
 
@@ -2122,7 +2266,11 @@ pub fn update(model: *Model, msg: Msg) void {
 }
 
 fn updateWithEffects(model: *Model, msg: Msg, fx: *Effects) void {
+    const notice_epoch = model.taxProfiles.noticeEpoch();
     updateCore(model, msg, fx);
+    if (notice_epoch != model.taxProfiles.noticeEpoch()) {
+        syncProfileNoticeTimer(model, fx);
+    }
 }
 
 fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
@@ -2133,12 +2281,14 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             navigate(model, .taxpayer_dashboard);
         },
         .show_profile_setup => {
+            model.profileSetupSection = .tax_profile;
             model.taxProfiles.editSelected();
-            openReturnablePage(model, .profile_setup);
+            openProfileEditor(model);
         },
         .new_taxpayer_profile => {
+            model.profileSetupSection = .tax_profile;
             model.taxProfiles.startNew();
-            openReturnablePage(model, .profile_setup);
+            openProfileEditor(model);
         },
         .show_import_data => {
             bumpSidebarActionEpoch(model);
@@ -2147,10 +2297,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .show_background_tasks => {
             bumpSidebarActionEpoch(model);
             navigate(model, .background_tasks);
-        },
-        .show_tax_calendar => {
-            bumpSidebarActionEpoch(model);
-            navigate(model, .tax_calendar);
         },
         .show_settings => {
             bumpSidebarActionEpoch(model);
@@ -2528,15 +2674,17 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.taxProfiles.captureInputTruncation();
         },
         .save_profile => {
-            model.taxProfiles.save();
-            refreshSelectedProfileFormSet(model);
+            if (model.taxProfiles.save()) {
+                refreshSelectedProfileFormSet(model);
+                closeProfileEditor(model);
+            }
         },
         .cancel_profile_edit => {
             model.taxProfiles.cancelEdit();
-            const destination = model.returnPage;
-            model.returnPage = .global_dashboard;
-            navigate(model, destination);
+            closeProfileEditor(model);
         },
+        .dismiss_profile_notice => model.taxProfiles.dismissNotice(),
+        .profile_notice_timeout => |timer| profileNoticeTimeout(model, timer),
         .toggle_profile_actions => model.profileActionsOpen = !model.profileActionsOpen,
         .close_profile_actions => model.profileActionsOpen = false,
         .show_calendar_deadlines => model.taxCalendarSection = .deadlines,
@@ -2639,11 +2787,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .multi_select_clear_all => {
             _ = model.formFilter.clear();
         },
-        .go_back => {
-            const destination = model.returnPage;
-            model.returnPage = .global_dashboard;
-            navigate(model, destination);
-        },
+        .go_back => closeTransient(model),
         .toggle_theme => {
             bumpSidebarActionEpoch(model);
             model.themePreference = if (effectiveColorScheme(model) == .dark) .light else .dark;
@@ -2894,13 +3038,27 @@ fn bumpSidebarActionEpoch(model: *Model) void {
 }
 
 fn openTransient(model: *Model, page: Page) void {
-    if (model.page != page) model.returnPage = model.page;
+    if (model.page != page) model.overlayReturnPage = model.contentPage();
     navigate(model, page);
 }
 
-fn openReturnablePage(model: *Model, page: Page) void {
-    if (model.page != page) model.returnPage = model.page;
-    navigate(model, page);
+fn closeTransient(model: *Model) void {
+    const destination = model.overlayReturnPage;
+    model.overlayReturnPage = .global_dashboard;
+    navigate(model, destination);
+}
+
+fn openProfileEditor(model: *Model) void {
+    if (model.page != .profile_setup) {
+        model.profileEditorOrigin = model.contentPage();
+    }
+    navigate(model, .profile_setup);
+}
+
+fn closeProfileEditor(model: *Model) void {
+    const destination = model.profileEditorOrigin;
+    model.profileEditorOrigin = .global_dashboard;
+    navigate(model, destination);
 }
 
 fn isAuxiliaryPage(page: Page) bool {
@@ -2966,6 +3124,46 @@ fn viewportClassForWidth(width: f32) ViewportClass {
 const Effects = native_sdk.Effects(Msg);
 const calendar_export_file_key: u64 = 20_260_001;
 const calendar_open_file_key: u64 = 20_260_002;
+const profile_notice_timer_key_base: u64 = 20_260_100;
+const profile_notice_duration_ms: u64 = 5_000;
+
+fn profileNoticeTimerKey(epoch: u64) u64 {
+    const key = profile_notice_timer_key_base +% epoch;
+    return if (key == 0) profile_notice_timer_key_base else key;
+}
+
+fn syncProfileNoticeTimer(model: *Model, fx: *Effects) void {
+    if (model.profileNoticeTimerKey != 0) {
+        fx.cancelTimer(model.profileNoticeTimerKey);
+        model.profileNoticeTimerKey = 0;
+    }
+    if (!model.taxProfiles.noticeAutoDismissible()) return;
+
+    const key = profileNoticeTimerKey(model.taxProfiles.noticeEpoch());
+    model.profileNoticeTimerKey = key;
+    fx.startTimer(.{
+        .key = key,
+        .interval_ms = profile_notice_duration_ms,
+        .mode = .one_shot,
+        .on_fire = Effects.timerMsg(.profile_notice_timeout),
+    });
+}
+
+fn profileNoticeTimeout(
+    model: *Model,
+    timer: native_sdk.EffectTimer,
+) void {
+    if (timer.key != model.profileNoticeTimerKey) return;
+    model.profileNoticeTimerKey = 0;
+    switch (timer.outcome) {
+        .fired => {
+            if (model.taxProfiles.noticeAutoDismissible()) {
+                model.taxProfiles.dismissNotice();
+            }
+        },
+        .rejected => {},
+    }
+}
 
 fn exportProfileCalendar(model: *Model, maybe_fx: ?*Effects) void {
     if (model.profileCalendarExportBusy()) return;
@@ -3093,12 +3291,13 @@ fn profileCalendarExportOpened(
     }
 }
 
-fn registerBootImages(_: *Model, fx: *Effects) void {
+fn registerBootImages(model: *Model, fx: *Effects) void {
     fx.loadImage(.{ .id = 1, .path = "assets/brand/ebirforms.png" });
     fx.loadImage(.{ .id = 2, .path = "assets/brand/bagong-pilipinas.png" });
     fx.loadImage(.{ .id = 3, .path = "assets/brand/bir-new-logo.png" });
     fx.loadImage(.{ .id = 4, .path = "assets/brand/goldcoders-logo.png" });
     fx.loadImage(.{ .id = 6, .path = "assets/icon.png" });
+    syncProfileNoticeTimer(model, fx);
 }
 
 const EbirFormsApp = native_sdk.UiApp(Model, Msg);
@@ -3474,7 +3673,7 @@ test "sidebar derives full rail and floating modes from viewport width" {
 }
 
 test "sidebar can be collapsed hidden and restored without losing its route" {
-    var model = Model{ .page = .tax_calendar };
+    var model = Model{ .page = .settings };
     update(&model, .collapse_sidebar);
     try std.testing.expect(model.sidebarRailVisible());
 
@@ -3485,7 +3684,7 @@ test "sidebar can be collapsed hidden and restored without losing its route" {
 
     update(&model, .toggle_navigation);
     try std.testing.expect(model.sidebarExpandedVisible());
-    try std.testing.expectEqual(Page.tax_calendar, model.page);
+    try std.testing.expectEqual(Page.settings, model.page);
 }
 
 test "taxpayer selection and local page tabs are model owned" {
@@ -3617,6 +3816,95 @@ test "Forms Set explicit empty disables editors while fallback enables them" {
     try std.testing.expect(model.taxpayerForm0605Disabled());
     try std.testing.expect(model.taxpayerForm1701QDisabled());
     try std.testing.expect(!model.taxpayerForm2551QDisabled());
+}
+
+test "profile calendar deadlines follow the selected Forms Set" {
+    const allocator = std.testing.allocator;
+    var profile_store_state = try profile_store.Store.openMemory(allocator);
+    defer profile_store_state.close();
+    try addTestProfile(
+        &profile_store_state,
+        "11111111111111111111111111111111",
+        "Juan Dela Cruz",
+        "123-456-789-000",
+        .individual,
+    );
+
+    var calendar_store_state =
+        try calendar_ui.persistence.Store.openMemory(allocator);
+    defer calendar_store_state.close();
+
+    var model = Model{ .page = .taxpayer_dashboard };
+    try model.taxProfiles.attach(
+        allocator,
+        &profile_store_state,
+        "2026-07-29",
+        2026,
+    );
+    try model.calendar.attach(
+        allocator,
+        &calendar_store_state,
+        "profile-calendar.ics",
+        "20260731T000000Z",
+        2026,
+        7,
+    );
+    try std.testing.expect(!model.calendarNoticeVisible());
+    model.calendar.setError(error.NotAttached);
+    try std.testing.expect(model.calendarNoticeVisible());
+    model.calendar.refresh();
+    try std.testing.expect(!model.calendarNoticeVisible());
+    const profile_id = model.taxProfiles.selectedProfileId().?;
+    _ = try calendar_store_state.putOverride(.{
+        .title = "Quarterly indirect tax extension",
+        .source = "Official projection fixture",
+        .original_deadline = "2026-07-25",
+        .adjusted_deadline = "2026-07-27",
+        .affected_form_codes = &.{ "2550Q", "2551Q" },
+    });
+    model.calendar.refresh();
+
+    try profile_store_state.replaceFormSet(profile_id, 2026, &.{});
+    refreshSelectedProfileFormSet(&model);
+    var empty_arena = std.heap.ArenaAllocator.init(allocator);
+    defer empty_arena.deinit();
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        model.calendarDeadlines(empty_arena.allocator()).len,
+    );
+
+    try profile_store_state.replaceFormSet(profile_id, 2026, &.{.{
+        .form_code = "2551Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+    refreshSelectedProfileFormSet(&model);
+    var scoped_arena = std.heap.ArenaAllocator.init(allocator);
+    defer scoped_arena.deinit();
+    const deadlines = model.calendarDeadlines(scoped_arena.allocator());
+    try std.testing.expect(deadlines.len != 0);
+    for (deadlines) |deadline| {
+        try std.testing.expectEqualStrings("2551Q", deadline.form_code);
+    }
+
+    const rules = model.calendarRules(scoped_arena.allocator());
+    var found_indirect_rule = false;
+    for (rules) |rule| {
+        if (!std.mem.eql(
+            u8,
+            rule.form_name,
+            "Quarterly Percentage/Value-Added Tax",
+        )) continue;
+        found_indirect_rule = true;
+        try std.testing.expectEqualStrings("2551Q", rule.form_codes);
+    }
+    try std.testing.expect(found_indirect_rule);
+
+    const overrides = model.calendarOverrides(scoped_arena.allocator());
+    try std.testing.expectEqual(@as(usize, 1), overrides.len);
+    try std.testing.expectEqualStrings(
+        "2551Q",
+        overrides[0].formsLabel(scoped_arena.allocator()),
+    );
 }
 
 test "2551Q app wiring saves and resumes exact profile and transaction data" {
@@ -3950,22 +4238,302 @@ test "transient pages return to their exact origin" {
     var model = Model{ .page = .form_1701q };
     update(&model, .show_aux_html_print_preview);
     try std.testing.expectEqual(Page.aux_html_preview, model.page);
-    try std.testing.expectEqual(Page.form_1701q, model.returnPage);
+    try std.testing.expectEqual(Page.form_1701q, model.overlayReturnPage);
     try std.testing.expectEqual(Page.form_1701q, model.contentPage());
 
     update(&model, .go_back);
     try std.testing.expectEqual(Page.form_1701q, model.page);
-    try std.testing.expectEqual(Page.global_dashboard, model.returnPage);
+    try std.testing.expectEqual(
+        Page.global_dashboard,
+        model.overlayReturnPage,
+    );
 }
 
 test "profile setup cancel returns to its opening page" {
-    var model = Model{ .page = .taxpayer_dashboard };
+    var model = Model{
+        .page = .taxpayer_dashboard,
+        .profileSetupSection = .email,
+    };
     update(&model, .show_profile_setup);
     try std.testing.expectEqual(Page.profile_setup, model.page);
-    try std.testing.expectEqual(Page.taxpayer_dashboard, model.returnPage);
+    try std.testing.expect(model.profileTaxActive());
+    try std.testing.expectEqual(
+        Page.taxpayer_dashboard,
+        model.profileEditorOrigin,
+    );
+    try std.testing.expectEqualStrings(
+        "Back to tax profile",
+        model.profileBackLabel(),
+    );
+
+    update(&model, .cancel_profile_edit);
+    try std.testing.expectEqual(Page.taxpayer_dashboard, model.page);
+    try std.testing.expectEqual(
+        Page.global_dashboard,
+        model.profileEditorOrigin,
+    );
+}
+
+test "profile and transient return origins remain independent" {
+    var model = Model{ .page = .taxpayer_dashboard };
+    update(&model, .show_profile_setup);
+    update(&model, .show_aux_command_palette);
+
+    try std.testing.expectEqual(Page.aux_command_palette, model.page);
+    try std.testing.expectEqual(Page.profile_setup, model.overlayReturnPage);
+    try std.testing.expectEqual(
+        Page.taxpayer_dashboard,
+        model.profileEditorOrigin,
+    );
 
     update(&model, .go_back);
+    try std.testing.expectEqual(Page.profile_setup, model.page);
+    try std.testing.expectEqual(
+        Page.taxpayer_dashboard,
+        model.profileEditorOrigin,
+    );
+
+    update(&model, .cancel_profile_edit);
     try std.testing.expectEqual(Page.taxpayer_dashboard, model.page);
+}
+
+test "transient switches preserve one bounded underlying origin" {
+    var model = Model{ .page = .form_1701q };
+    update(&model, .show_aux_html_print_preview);
+    update(&model, .show_aux_command_palette);
+
+    try std.testing.expectEqual(Page.aux_command_palette, model.page);
+    try std.testing.expectEqual(Page.form_1701q, model.overlayReturnPage);
+
+    update(&model, .go_back);
+    try std.testing.expectEqual(Page.form_1701q, model.page);
+}
+
+test "successful profile save returns to the tax profile" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+
+    var model = Model{ .page = .taxpayer_dashboard };
+    try model.taxProfiles.attach(
+        allocator,
+        &store,
+        "2026-07-31",
+        2026,
+    );
+    update(&model, .new_taxpayer_profile);
+    model.taxProfiles.tin.set("123-456-789-000");
+    model.taxProfiles.rdo.set("040");
+    model.taxProfiles.display_name.set("Navigation Test Taxpayer");
+    model.taxProfiles.registered_address.set("Quezon City");
+    model.taxProfiles.effective_from.set("2026-01-01");
+
+    update(&model, .save_profile);
+
+    try std.testing.expectEqual(Page.taxpayer_dashboard, model.page);
+    try std.testing.expectEqual(
+        Page.global_dashboard,
+        model.profileEditorOrigin,
+    );
+    try std.testing.expectEqualStrings(
+        "Navigation Test Taxpayer",
+        model.selectedTaxpayerName(),
+    );
+}
+
+test "profile editor has one responsive back control per shell mode" {
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        std.mem.count(u8, app_markup, "label=\"{profileBackLabel}\""),
+    );
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup,
+        "<if test=\"{profileInlineBackVisible}\">",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup,
+        "<if test=\"{page == 'profile_setup'}\">",
+    ) != null);
+}
+
+test "profile notice toast supports manual and timed dismissal" {
+    const allocator = std.testing.allocator;
+    const fx = try allocator.create(Effects);
+    defer allocator.destroy(fx);
+    fx.* = .{
+        .allocator = allocator,
+        .executor = .fake,
+    };
+    defer fx.deinit();
+
+    var model = Model{};
+    model.taxProfiles.startNew();
+    syncProfileNoticeTimer(&model, fx);
+
+    try std.testing.expect(model.profileNoticeVisible());
+    try std.testing.expectEqual(@as(usize, 1), fx.pendingTimerCount());
+    const first_request = fx.pendingTimerAt(0).?;
+    try std.testing.expectEqual(
+        profile_notice_duration_ms,
+        first_request.interval_ms,
+    );
+    try std.testing.expectEqual(
+        native_sdk.TimerMode.one_shot,
+        first_request.mode,
+    );
+
+    updateWithEffects(&model, .dismiss_profile_notice, fx);
+    try std.testing.expect(!model.profileNoticeVisible());
+    try std.testing.expectEqual(@as(usize, 0), fx.pendingTimerCount());
+
+    model.taxProfiles.startNew();
+    syncProfileNoticeTimer(&model, fx);
+    const fired_key = model.profileNoticeTimerKey;
+    try fx.fireTimer(fired_key);
+    updateWithEffects(&model, fx.takeMsg().?, fx);
+    try std.testing.expect(!model.profileNoticeVisible());
+    try std.testing.expectEqual(@as(usize, 0), fx.pendingTimerCount());
+
+    model.taxProfiles.startNew();
+    syncProfileNoticeTimer(&model, fx);
+    const rejected_key = model.profileNoticeTimerKey;
+    fx.cancelTimer(rejected_key);
+    updateWithEffects(&model, .{ .profile_notice_timeout = .{
+        .key = rejected_key,
+        .outcome = .rejected,
+    } }, fx);
+    try std.testing.expect(model.profileNoticeVisible());
+    try std.testing.expectEqual(@as(u64, 0), model.profileNoticeTimerKey);
+
+    updateWithEffects(&model, .save_profile, fx);
+    try std.testing.expect(model.profileNoticeVisible());
+    try std.testing.expect(!model.taxProfiles.noticeAutoDismissible());
+    try std.testing.expectEqual(@as(usize, 0), fx.pendingTimerCount());
+}
+
+test "compact header keeps navigation leftmost without duplicate branding" {
+    const header_start = std.mem.indexOf(
+        u8,
+        app_markup,
+        "<template name=\"app-mobile-header\">",
+    ).?;
+    const header_tail = app_markup[header_start..];
+    const header_end = std.mem.indexOf(u8, header_tail, "</template>").?;
+    const header = header_tail[0 .. header_end + "</template>".len];
+
+    try std.testing.expect(
+        std.mem.indexOf(u8, header, "app_icon") == null,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(u8, header, "<image") == null,
+    );
+    const title_position = std.mem.indexOf(
+        u8,
+        header,
+        "{currentPageTitle}",
+    ).?;
+    try std.testing.expect(
+        std.mem.indexOf(u8, header, "icon=\"chevron-left\"").? <
+            title_position,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(u8, header, "icon=\"menu\"").? <
+            title_position,
+    );
+}
+
+test "profile setup uses compact cards and native tabs with a shell toast" {
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        std.mem.count(
+            u8,
+            app_markup,
+            "label=\"Profile setup sections\"",
+        ),
+    );
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup,
+        "<tabs label=\"Profile setup sections\">",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup,
+        "<column gap=\"4\" label=\"Profile setup sections\">",
+    ) == null);
+    try std.testing.expect(
+        std.mem.count(u8, app_markup, "<card size=\"sm\">") >= 6,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        std.mem.count(
+            u8,
+            app_markup,
+            "<if test=\"{profileNoticeVisible}\">",
+        ),
+    );
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup,
+        "<template name=\"profile-notice-toast\" args=\"width=320\">",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup,
+        "label=\"Dismiss tax profile notification\"",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup,
+        "width=\"44\"\nheight=\"44\"",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup,
+        "<column grow=\"1\" padding=\"16\" main=\"end\" cross=\"center\">",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup,
+        "<badge variant=\"{profileNoticeTone}\">",
+    ) == null);
+}
+
+test "calendar explorer is compiled only inside a tax profile" {
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        std.mem.count(u8, app_markup, "on-press=\"show_tax_calendar\""),
+    );
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup,
+        "contentPage == 'tax_calendar'",
+    ) == null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup,
+        "<template name=\"tax-calendar-page\">",
+    ) == null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup,
+        "Profile-specific deadlines will appear",
+    ) == null);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        std.mem.count(
+            u8,
+            app_markup,
+            "<use template=\"tax-calendar-deadlines-section\"/>",
+        ),
+    );
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup,
+        "label=\"Tax profile calendar sections\"",
+    ) != null);
 }
 
 test "viewport classes cover phone compact tablet and desktop breakpoints" {

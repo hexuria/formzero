@@ -25,11 +25,11 @@ const sourceGroups = [
     name: "main pages",
     files: [
       "src/pages/global-dashboard.fragment",
+      "src/pages/tax-calendar.native",
       "src/pages/taxpayer-dashboard.native",
       "src/pages/profile-setup.native",
       "src/pages/import-data.native",
       "src/pages/background-tasks.native",
-      "src/pages/tax-calendar.native",
       "src/pages/settings.native",
       "src/pages/screen-gallery.native",
     ],
@@ -70,6 +70,9 @@ const sourceGroups = [
 const sourceFiles = sourceGroups.flatMap((group) => group.files);
 const generatedTemplateIncludes = new Set([
   "tax-profile-form-context",
+  "tax-calendar-deadlines-section",
+  "tax-calendar-rules-section",
+  "tax-calendar-overrides-section",
 ]);
 
 function normalizeFragment(source) {

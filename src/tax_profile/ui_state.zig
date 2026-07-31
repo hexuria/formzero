@@ -176,6 +176,7 @@ pub const State = struct {
 
     notice: NoticeText = .{},
     notice_kind: NoticeKind = .neutral,
+    notice_epoch: u64 = 0,
 
     pub fn attach(
         self: *State,
@@ -226,12 +227,26 @@ pub const State = struct {
         return self.notice.text();
     }
 
-    pub fn noticeTone(self: *const State) []const u8 {
-        return switch (self.notice_kind) {
-            .neutral => "secondary",
-            .success => "primary",
-            .failure => "destructive",
-        };
+    pub fn noticeSuccess(self: *const State) bool {
+        return self.notice_kind == .success;
+    }
+
+    pub fn noticeFailure(self: *const State) bool {
+        return self.notice_kind == .failure;
+    }
+
+    pub fn noticeAutoDismissible(self: *const State) bool {
+        return self.noticeVisible() and self.notice_kind != .failure;
+    }
+
+    pub fn noticeEpoch(self: *const State) u64 {
+        return self.notice_epoch;
+    }
+
+    pub fn dismissNotice(self: *State) void {
+        self.notice.clear();
+        self.notice_kind = .neutral;
+        self.notice_epoch +%= 1;
     }
 
     pub fn saveDisabled(self: *const State) bool {
@@ -334,10 +349,14 @@ pub const State = struct {
 
     pub fn cancelEdit(self: *State) void {
         if (self.has_selection) {
-            self.loadSelectedRevision(true) catch |err| self.setError(err);
+            self.loadSelectedRevision(true) catch |err| {
+                self.setError(err);
+                return;
+            };
         } else {
             self.startNew();
         }
+        self.dismissNotice();
     }
 
     pub fn setSubjectKind(self: *State, subject_kind: model.SubjectKind) void {
@@ -385,9 +404,12 @@ pub const State = struct {
         );
     }
 
-    pub fn save(self: *State) void {
+    pub fn save(self: *State) bool {
         const was_new = self.editing_new;
-        self.saveFallible() catch |err| return self.setError(err);
+        self.saveFallible() catch |err| {
+            self.setError(err);
+            return false;
+        };
         self.setNotice(
             .success,
             if (was_new)
@@ -395,6 +417,7 @@ pub const State = struct {
             else
                 "A new immutable profile revision was saved.",
         );
+        return true;
     }
 
     fn saveFallible(self: *State) !void {
@@ -1060,6 +1083,7 @@ pub const State = struct {
             self.notice.clear();
             self.notice.set("Tax-profile status changed.") catch unreachable;
         };
+        self.notice_epoch +%= 1;
     }
 
     fn setError(self: *State, err: anyerror) void {
@@ -1304,6 +1328,38 @@ test "form availability distinguishes fallback from an explicit empty set" {
     try std.testing.expect(!state.formAvailable(2026, "1701Q"));
 }
 
+test "profile notices expose transient and manually dismissible lifecycles" {
+    var state = State{};
+    const initial_epoch = state.noticeEpoch();
+
+    state.startNew();
+    try std.testing.expect(state.noticeVisible());
+    try std.testing.expect(state.noticeAutoDismissible());
+    try std.testing.expect(state.noticeEpoch() != initial_epoch);
+    try std.testing.expect(!state.noticeSuccess());
+    try std.testing.expect(!state.noticeFailure());
+
+    state.setNotice(.failure, "Profile validation failed.");
+    try std.testing.expect(state.noticeVisible());
+    try std.testing.expect(!state.noticeAutoDismissible());
+    try std.testing.expect(!state.noticeSuccess());
+    try std.testing.expect(state.noticeFailure());
+
+    const failure_epoch = state.noticeEpoch();
+    state.dismissNotice();
+    try std.testing.expect(!state.noticeVisible());
+    try std.testing.expect(state.noticeEpoch() != failure_epoch);
+}
+
+test "canceling profile creation clears its transient notice" {
+    var state = State{};
+    state.startNew();
+    try std.testing.expect(state.noticeVisible());
+
+    state.cancelEdit();
+    try std.testing.expect(!state.noticeVisible());
+}
+
 test "profile state builds domain revision and explicit empty Forms Set" {
     const allocator = std.testing.allocator;
     var store = try persistence.Store.openMemory(allocator);
@@ -1319,7 +1375,7 @@ test "profile state builds domain revision and explicit empty Forms Set" {
     state.effective_from.set("2026-01-01");
     state.tax_type.set("Percentage Tax");
     state.forms_set_configured = true;
-    state.save();
+    try std.testing.expect(state.save());
 
     try std.testing.expectEqual(NoticeKind.success, state.notice_kind);
     const profile_id = state.selectedProfileDomainId().?;
@@ -1359,7 +1415,7 @@ test "profile state appends immutable source-aware revision" {
     state.display_name.set("Maria Santos");
     state.registered_address.set("Quezon City");
     state.effective_from.set("2026-01-01");
-    state.save();
+    try std.testing.expect(state.save());
     const profile_id = state.selectedProfileDomainId().?;
     const first_id = state.selectedRevisionContext().?.revision_id;
 
@@ -1367,7 +1423,7 @@ test "profile state appends immutable source-aware revision" {
     state.effective_from.set("2026-07-01");
     state.setSourceKind(.imported);
     state.source_reference.set("COR import batch 7");
-    state.save();
+    try std.testing.expect(state.save());
     try std.testing.expectEqual(@as(u32, 2), state.selectedRevisionSequence().?);
 
     var first = (try profile_persistence.loadRevision(

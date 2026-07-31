@@ -113,50 +113,70 @@
       <column grow="1" gap="4">
         <text><span weight="bold">Taxpayer Calendar</span></text>
         <text wrap="true" foreground="text_muted">
-          Add to Calendar follows this profile's registered Forms Set. An
-          unconfigured year uses the catalog fallback; an explicitly empty
-          set creates no obligations.
+          Review this profile's deadlines, rules, and SQLite overrides. Add to
+          Calendar follows its registered Forms Set; an unconfigured year uses
+          the catalog fallback and an explicitly empty set creates no obligations.
         </text>
       </column>
       <badge variant="secondary">{currentCalendarYear}</badge>
     </row>
 
     <if test="{profileCalendarExportNoticeVisible}">
-      <badge variant="{profileCalendarExportNoticeTone}">{profileCalendarExportNotice}</badge>
+      <row cross="center">
+        <badge variant="{profileCalendarExportNoticeTone}">{profileCalendarExportNotice}</badge>
+      </row>
     </if>
 
-    <if test="{constrainedLayout}">
-      <column gap="20">
-        <use
-          template="taxpayer-empty-card"
-          title="Upcoming Deadlines"
-          icon="clock"
-          body="Profile-specific deadlines will appear when its registered Forms Set is available."/>
-        <use
-          template="taxpayer-empty-card"
-          title="Action Required"
-          icon="alert"
-          body="No forms currently require your attention."/>
-      </column>
-    </if>
-    <else>
-      <row gap="20" cross="start">
-        <column grow="1">
-          <use
-            template="taxpayer-empty-card"
-            title="Upcoming Deadlines"
-            icon="clock"
-            body="Profile-specific deadlines will appear when its registered Forms Set is available."/>
+    <row gap="10" cross="center">
+      <button
+        grow="1"
+        variant="outline"
+        icon="refresh-cw"
+        on-press="calendar_refresh">Refresh from SQLite</button>
+    </row>
+
+    <tabs label="Tax profile calendar sections">
+      <button
+        selected="{calendarDeadlinesActive}"
+        on-press="show_calendar_deadlines">Deadlines</button>
+      <button
+        selected="{calendarRulesActive}"
+        on-press="show_calendar_rules">Rules</button>
+      <button
+        selected="{calendarOverridesActive}"
+        on-press="show_calendar_overrides">Overrides</button>
+    </tabs>
+
+    <card size="sm">
+      <row gap="12" cross="center">
+        <button
+          size="sm"
+          variant="outline"
+          icon="chevron-left"
+          label="Previous calendar year"
+          on-press="calendar_previous_year"/>
+        <column grow="1" gap="3" cross="center">
+          <text><span weight="bold">Calendar Year {currentCalendarYear}</span></text>
+          <text foreground="text_muted">{calendarDeadlineCount} in the full export</text>
         </column>
-        <column grow="1">
-          <use
-            template="taxpayer-empty-card"
-            title="Action Required"
-            icon="alert"
-            body="No forms currently require your attention."/>
-        </column>
+        <button
+          size="sm"
+          variant="outline"
+          icon="chevron-right"
+          label="Next calendar year"
+          on-press="calendar_next_year"/>
       </row>
-    </else>
+    </card>
+
+    <if test="{calendarDeadlinesActive}">
+      <!-- @include-template tax-calendar-deadlines-section -->
+    </if>
+    <if test="{calendarRulesActive}">
+      <!-- @include-template tax-calendar-rules-section -->
+    </if>
+    <if test="{calendarOverridesActive}">
+      <!-- @include-template tax-calendar-overrides-section -->
+    </if>
 
   </column>
 </template>
@@ -193,12 +213,12 @@
         <column grow="1" gap="5">
           <text size="heading" wrap="true">{selectedTaxpayerName}</text>
           <text wrap="true" foreground="text_muted">TIN: {selectedTaxpayerTin}</text>
-          <text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year 2026 - Non-VAT</text>
+          <text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear}</text>
         </column>
         <stack>
           <button
-            width="40"
-            height="40"
+            width="44"
+            height="44"
             size="icon"
             variant="outline"
             radius="xl"
@@ -229,7 +249,7 @@
             <column grow="1" gap="5">
               <text size="heading" wrap="true">{selectedTaxpayerName}</text>
               <text wrap="true" foreground="text_muted">TIN: {selectedTaxpayerTin}</text>
-              <text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year 2026 - Non-VAT</text>
+              <text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear}</text>
             </column>
           </row>
           <row gap="10">
@@ -244,7 +264,7 @@
           <column grow="1" gap="6">
             <text size="heading">{selectedTaxpayerName}</text>
             <text wrap="true" foreground="text_muted">
-              TIN: {selectedTaxpayerTin} - Type: {selectedTaxpayerKind} - Tax Year 2026 - Non-VAT
+              TIN: {selectedTaxpayerTin} - Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear}
             </text>
           </column>
           <button variant="primary" icon="clock" disabled="{profileCalendarExportBusy}" on-press="profile_calendar_export">Add to Calendar</button>
@@ -257,14 +277,14 @@
       <if test="{constrainedLayout}">
         <column gap="12">
           <search-field disabled="true" placeholder="Search tax forms" label="Search tax forms"/>
-          <select disabled="true" text="Tax Year 2026" label="Tax year"/>
+          <select disabled="true" text="{currentCalendarYear}" label="Tax year"/>
           <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
         </column>
       </if>
       <else>
         <row gap="12" cross="center">
           <search-field grow="1" disabled="true" placeholder="Search tax forms" label="Search tax forms"/>
-          <select disabled="true" text="Tax Year 2026" label="Tax year"/>
+          <select disabled="true" text="{currentCalendarYear}" label="Tax year"/>
           <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
         </row>
       </else>

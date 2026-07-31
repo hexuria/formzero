@@ -1756,6 +1756,78 @@ test "provider connections and full event metadata upsert and cascade" {
     ));
 }
 
+test "file store reopens with overrides and non-working days intact" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var directory_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const directory_len = try tmp.dir.realPath(
+        std.testing.io,
+        &directory_buffer,
+    );
+    var path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const database_path = try std.fmt.bufPrint(
+        &path_buffer,
+        "{s}/calendar.sqlite3",
+        .{directory_buffer[0..directory_len]},
+    );
+
+    const affected_forms = [_][]const u8{"1701Q"};
+    const regions = [_][]const u8{"NCR"};
+    {
+        var store = try Store.open(allocator, database_path);
+        defer store.close();
+        _ = try store.putOverride(.{
+            .title = "Sourced filing extension",
+            .source = "RMC restart fixture",
+            .original_deadline = "2026-05-15",
+            .adjusted_deadline = "2026-05-22",
+            .effective_from = "2026-05-01",
+            .effective_until = "2026-05-31",
+            .affected_form_codes = &affected_forms,
+            .regions = &regions,
+        });
+        _ = try store.putNonWorkingDay(.{
+            .day = "2026-05-18",
+            .name = "Official closure fixture",
+            .kind = "closure",
+            .source = "Official Gazette restart fixture",
+            .regions = &regions,
+        });
+    }
+
+    {
+        var reopened = try Store.open(allocator, database_path);
+        defer reopened.close();
+        var overrides = try reopened.listOverrides(allocator);
+        defer overrides.deinit(allocator);
+        var non_working_days = try reopened.listNonWorkingDays(allocator);
+        defer non_working_days.deinit(allocator);
+
+        try std.testing.expectEqual(@as(usize, 1), overrides.items.len);
+        try std.testing.expectEqualStrings(
+            "Sourced filing extension",
+            overrides.items[0].title,
+        );
+        try std.testing.expectEqualStrings(
+            "1701Q",
+            overrides.items[0].affected_form_codes[0],
+        );
+        try std.testing.expectEqualStrings(
+            "NCR",
+            overrides.items[0].regions[0],
+        );
+        try std.testing.expectEqual(
+            @as(usize, 1),
+            non_working_days.items.len,
+        );
+        try std.testing.expectEqualStrings(
+            "Official closure fixture",
+            non_working_days.items[0].name,
+        );
+    }
+}
+
 fn scalarCount(store: *Store, sql_text: []const u8, value: i64) !i64 {
     var statement = try store.prepare(sql_text);
     defer statement.deinit();

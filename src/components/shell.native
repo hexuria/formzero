@@ -82,20 +82,6 @@
         height="40"
         padding="12"
         radius="md"
-        icon="file-text"
-        selected="false"
-        on-press="show_tax_calendar">
-        Tax Calendars
-      </list-item>
-    </row>
-
-    <row width="232" height="48" cross="center">
-      <list-item
-        key="{sidebarActionEpoch}"
-        width="232"
-        height="40"
-        padding="12"
-        radius="md"
         icon="settings"
         selected="false"
         on-press="show_settings">
@@ -152,17 +138,6 @@
       icon="clock"
       label="Background Tasks"
       on-press="show_background_tasks">
-    </button>
-
-    <button
-      width="48"
-      height="48"
-      size="icon"
-      variant="ghost"
-      radius="xl"
-      icon="file-text"
-      label="Tax Calendars"
-      on-press="show_tax_calendar">
     </button>
 
     <button
@@ -444,21 +419,35 @@
   </row>
 </template>
 
-<template name="app-mobile-header" args="app_icon">
+<template name="app-mobile-header">
   <column>
     <row height="56" padding="8" gap="10" cross="center" background="background">
-      <button
-        width="40"
-        height="40"
-        size="icon"
-        variant="ghost"
-        radius="xl"
-        icon="menu"
-        label="Open navigation"
-        on-press="toggle_navigation">
-      </button>
-      <image image="{app_icon}" width="38" height="38" label="eBIRForms"/>
+      <if test="{page == 'profile_setup'}">
+        <button
+          width="40"
+          height="40"
+          size="icon"
+          variant="ghost"
+          radius="xl"
+          icon="chevron-left"
+          label="{profileBackLabel}"
+          on-press="cancel_profile_edit">
+        </button>
+      </if>
+      <else>
+        <button
+          width="40"
+          height="40"
+          size="icon"
+          variant="ghost"
+          radius="xl"
+          icon="menu"
+          label="Open navigation"
+          on-press="toggle_navigation">
+        </button>
+      </else>
       <text grow="1"><span weight="bold">{currentPageTitle}</span></text>
+      <spacer width="40"/>
     </row>
     <separator/>
   </column>
@@ -570,6 +559,38 @@
   </card>
 </template>
 
+<template name="profile-notice-toast" args="width=320">
+  <alert
+    width="{width}"
+    global-key="profile-notice-toast"
+    label="Tax profile notification">
+    <row gap="12" cross="center">
+      <if test="{profileNoticeFailure}">
+        <icon name="alert" foreground="destructive" width="20" height="20"/>
+      </if>
+      <else>
+        <if test="{profileNoticeSuccess}">
+          <icon name="check-circle" foreground="success" width="20" height="20"/>
+        </if>
+        <else>
+          <icon name="info" foreground="info" width="20" height="20"/>
+        </else>
+      </else>
+      <text grow="1" wrap="true">{profileNotice}</text>
+      <button
+        width="44"
+        height="44"
+        size="icon"
+        variant="ghost"
+        radius="xl"
+        icon="x"
+        label="Dismiss tax profile notification"
+        on-press="dismiss_profile_notice">
+      </button>
+    </row>
+  </alert>
+</template>
+
 <template name="app-shell" args="brand_logo app_icon bagong_logo bir_logo goldcoders_logo">
   <stack grow="1">
     <!--
@@ -593,7 +614,7 @@
         <column grow="1" min-width="0">
           <column grow="1" min-width="0">
             <if test="{sidebarLauncherVisible}">
-              <use template="app-mobile-header" app_icon="{app_icon}"/>
+              <use template="app-mobile-header"/>
             </if>
             <slot/>
           </column>
@@ -628,6 +649,23 @@
           </status-bar>
         </row>
       </column>
+    </if>
+
+    <if test="{profileNoticeVisible}">
+      <if test="{phoneLayout}">
+        <column grow="1" padding="16" main="end" cross="center">
+          <use template="profile-notice-toast" width="288"/>
+          <spacer height="72"/>
+        </column>
+      </if>
+      <else>
+        <column grow="1" padding="16" cross="end">
+          <if test="{sidebarLauncherVisible}">
+            <spacer height="56"/>
+          </if>
+          <use template="profile-notice-toast"/>
+        </column>
+      </else>
     </if>
   </stack>
 </template>

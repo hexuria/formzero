@@ -8,11 +8,11 @@ shared components:
 - src/components/multi-select-combobox.native
 main pages:
 - src/pages/global-dashboard.fragment
+- src/pages/tax-calendar.native
 - src/pages/taxpayer-dashboard.native
 - src/pages/profile-setup.native
 - src/pages/import-data.native
 - src/pages/background-tasks.native
-- src/pages/tax-calendar.native
 - src/pages/settings.native
 - src/pages/screen-gallery.native
 forms:
@@ -117,19 +117,6 @@ width="232"
 height="40"
 padding="12"
 radius="md"
-icon="file-text"
-selected="false"
-on-press="show_tax_calendar">
-Tax Calendars
-</list-item>
-</row>
-<row width="232" height="48" cross="center">
-<list-item
-key="{sidebarActionEpoch}"
-width="232"
-height="40"
-padding="12"
-radius="md"
 icon="settings"
 selected="false"
 on-press="show_settings">
@@ -183,16 +170,6 @@ radius="xl"
 icon="clock"
 label="Background Tasks"
 on-press="show_background_tasks">
-</button>
-<button
-width="48"
-height="48"
-size="icon"
-variant="ghost"
-radius="xl"
-icon="file-text"
-label="Tax Calendars"
-on-press="show_tax_calendar">
 </button>
 <button
 width="48"
@@ -453,9 +430,22 @@ on-press="show_screen_gallery">
 <separator/>
 </row>
 </template>
-<template name="app-mobile-header" args="app_icon">
+<template name="app-mobile-header">
 <column>
 <row height="56" padding="8" gap="10" cross="center" background="background">
+<if test="{page == 'profile_setup'}">
+<button
+width="40"
+height="40"
+size="icon"
+variant="ghost"
+radius="xl"
+icon="chevron-left"
+label="{profileBackLabel}"
+on-press="cancel_profile_edit">
+</button>
+</if>
+<else>
 <button
 width="40"
 height="40"
@@ -466,8 +456,9 @@ icon="menu"
 label="Open navigation"
 on-press="toggle_navigation">
 </button>
-<image image="{app_icon}" width="38" height="38" label="eBIRForms"/>
+</else>
 <text grow="1"><span weight="bold">{currentPageTitle}</span></text>
+<spacer width="40"/>
 </row>
 <separator/>
 </column>
@@ -572,6 +563,37 @@ on-press="select_form_spouse:{spouse.id}">
 </column>
 </card>
 </template>
+<template name="profile-notice-toast" args="width=320">
+<alert
+width="{width}"
+global-key="profile-notice-toast"
+label="Tax profile notification">
+<row gap="12" cross="center">
+<if test="{profileNoticeFailure}">
+<icon name="alert" foreground="destructive" width="20" height="20"/>
+</if>
+<else>
+<if test="{profileNoticeSuccess}">
+<icon name="check-circle" foreground="success" width="20" height="20"/>
+</if>
+<else>
+<icon name="info" foreground="info" width="20" height="20"/>
+</else>
+</else>
+<text grow="1" wrap="true">{profileNotice}</text>
+<button
+width="44"
+height="44"
+size="icon"
+variant="ghost"
+radius="xl"
+icon="x"
+label="Dismiss tax profile notification"
+on-press="dismiss_profile_notice">
+</button>
+</row>
+</alert>
+</template>
 <template name="app-shell" args="brand_logo app_icon bagong_logo bir_logo goldcoders_logo">
 <stack grow="1">
 <!--
@@ -593,7 +615,7 @@ so every theme switch damages the entire surface immediately.
 <column grow="1" min-width="0">
 <column grow="1" min-width="0">
 <if test="{sidebarLauncherVisible}">
-<use template="app-mobile-header" app_icon="{app_icon}"/>
+<use template="app-mobile-header"/>
 </if>
 <slot/>
 </column>
@@ -626,6 +648,22 @@ label="Close navigation">
 </status-bar>
 </row>
 </column>
+</if>
+<if test="{profileNoticeVisible}">
+<if test="{phoneLayout}">
+<column grow="1" padding="16" main="end" cross="center">
+<use template="profile-notice-toast" width="288"/>
+<spacer height="72"/>
+</column>
+</if>
+<else>
+<column grow="1" padding="16" cross="end">
+<if test="{sidebarLauncherVisible}">
+<spacer height="56"/>
+</if>
+<use template="profile-notice-toast"/>
+</column>
+</else>
 </if>
 </stack>
 </template>
@@ -962,6 +1000,384 @@ Overview of all taxpayer profiles for 2026
 </else>
 </scroll>
 </template>
+<template name="tax-calendar-deadlines-section">
+<column gap="12">
+<row cross="center" gap="12">
+<column grow="1" gap="4">
+<text><span weight="bold">{currentCalendarMonth} {currentCalendarYear} Deadlines</span></text>
+<text wrap="true" foreground="text_muted">
+The complete year is resolved and exported together. The explorer renders
+one month at a time to keep the native schedule fast and accessible.
+</text>
+</column>
+<badge variant="secondary">{calendarVisibleDeadlineCount}</badge>
+</row>
+<card>
+<row padding="12" gap="12" cross="center">
+<button
+size="sm"
+variant="outline"
+icon="chevron-left"
+label="Previous calendar month"
+on-press="calendar_previous_month"/>
+<column grow="1" gap="3" cross="center">
+<text><span weight="bold">{currentCalendarMonth} {currentCalendarYear}</span></text>
+<text foreground="text_muted">{calendarVisibleDeadlineCount}</text>
+</column>
+<button
+size="sm"
+variant="outline"
+icon="chevron-right"
+label="Next calendar month"
+on-press="calendar_next_month"/>
+</row>
+</card>
+<for each="calendarDeadlines" key="id" as="deadline">
+<card>
+<row padding="16" gap="12" cross="center">
+<column width="72" gap="3" cross="center">
+<text text-alignment="center"><span weight="bold">{deadline.dateLabel}</span></text>
+<text text-alignment="center" foreground="text_muted">{deadline.yearLabel}</text>
+</column>
+<separator/>
+<column grow="1" gap="6">
+<row gap="8" cross="center">
+<badge variant="{deadline.tone}">{deadline.display_form_no}</badge>
+<badge variant="{deadline.tone}">{deadline.statusLabel}</badge>
+</row>
+<text><span weight="bold">{deadline.form_name}</span></text>
+<text wrap="true" foreground="text_muted">Taxable period: {deadline.periodLabel}</text>
+<text wrap="true" foreground="text_muted">{deadline.description}</text>
+<if test="{deadline.adjustmentVisible}">
+<text wrap="true" foreground="accent">{deadline.adjustmentLabel}</text>
+</if>
+<if test="{deadline.sourceVisible}">
+<text wrap="true" foreground="text_muted">Source: {deadline.sourceLabel}</text>
+</if>
+</column>
+</row>
+</card>
+</for>
+</column>
+</template>
+<template name="tax-calendar-rules-section">
+<column gap="12">
+<column gap="4">
+<text><span weight="bold">Compiled Calendar Rules</span></text>
+<text wrap="true" foreground="text_muted">
+Shared form-deadline rules derived from the reference eBIRForms
+subsystem and checked against current BIR guidance. Event-based forms
+stay separate from dated deadlines.
+</text>
+</column>
+<for each="calendarRules" key="id" as="rule">
+<card>
+<column padding="20" gap="10">
+<row gap="8" cross="center">
+<badge variant="secondary">{rule.frequency}</badge>
+<text><span weight="bold">{rule.form_name}</span></text>
+</row>
+<text wrap="true" foreground="text_muted">Forms: {rule.form_codes}</text>
+<text wrap="true">{rule.description}</text>
+</column>
+</card>
+</for>
+<card>
+<column padding="20" gap="8">
+<text><span weight="bold">Source boundary</span></text>
+<text wrap="true" foreground="text_muted">
+This view is a calendar-year / non-eFPS baseline and includes mutually
+exclusive or conditional form alternatives. Current BIR issuances, the
+taxpayer's registered Forms Set, eFPS filer group, fiscal-year facts,
+and official holiday proclamations remain authoritative.
+</text>
+</column>
+</card>
+</column>
+</template>
+<template name="deadline-override-editor">
+<card>
+<column padding="20" gap="14">
+<text><span weight="bold">{overrideEditorTitle}</span></text>
+<text wrap="true" foreground="text_muted">
+Source and at least one recognized canonical form are required.
+Separate multiple values with commas.
+</text>
+<input
+text="{overrideTitleValue}"
+placeholder="Extension title"
+label="Override title"
+on-input="calendar_override_title_input"/>
+<input
+text="{overrideFormsValue}"
+placeholder="1701Q, 1702Q"
+label="Affected form codes"
+on-input="calendar_override_forms_input"/>
+<if test="{constrainedLayout}">
+<column gap="10">
+<input
+text="{overrideOriginalValue}"
+placeholder="YYYY-MM-DD"
+label="Original or operative deadline"
+on-input="calendar_override_original_input"/>
+<input
+text="{overrideAdjustedValue}"
+placeholder="YYYY-MM-DD"
+label="Adjusted deadline"
+on-input="calendar_override_adjusted_input"/>
+</column>
+</if>
+<else>
+<row gap="10">
+<input
+grow="1"
+text="{overrideOriginalValue}"
+placeholder="YYYY-MM-DD"
+label="Original or operative deadline"
+on-input="calendar_override_original_input"/>
+<input
+grow="1"
+text="{overrideAdjustedValue}"
+placeholder="YYYY-MM-DD"
+label="Adjusted deadline"
+on-input="calendar_override_adjusted_input"/>
+</row>
+</else>
+<input
+text="{overrideSourceValue}"
+placeholder="RMC / RR / advisory reference"
+label="Official source reference"
+on-input="calendar_override_source_input"/>
+<if test="{constrainedLayout}">
+<column gap="10">
+<input
+text="{overrideRegionsValue}"
+placeholder="Optional, e.g. NCR"
+label="Regions"
+on-input="calendar_override_regions_input"/>
+<input
+text="{overrideTaxpayerTypesValue}"
+placeholder="Optional, e.g. individual"
+label="Taxpayer types"
+on-input="calendar_override_taxpayer_types_input"/>
+</column>
+</if>
+<else>
+<row gap="10">
+<input
+grow="1"
+text="{overrideRegionsValue}"
+placeholder="Optional, e.g. NCR"
+label="Regions"
+on-input="calendar_override_regions_input"/>
+<input
+grow="1"
+text="{overrideTaxpayerTypesValue}"
+placeholder="Optional, e.g. individual"
+label="Taxpayer types"
+on-input="calendar_override_taxpayer_types_input"/>
+</row>
+</else>
+<if test="{constrainedLayout}">
+<column gap="10">
+<input
+text="{overrideEffectiveFromValue}"
+placeholder="Optional YYYY-MM-DD"
+label="Effective from"
+on-input="calendar_override_effective_from_input"/>
+<input
+text="{overrideEffectiveUntilValue}"
+placeholder="Optional YYYY-MM-DD"
+label="Effective until"
+on-input="calendar_override_effective_until_input"/>
+<input
+text="{overrideExpiresAtValue}"
+placeholder="Optional YYYY-MM-DD"
+label="Expires at"
+on-input="calendar_override_expires_at_input"/>
+</column>
+</if>
+<else>
+<row gap="10">
+<input
+grow="1"
+text="{overrideEffectiveFromValue}"
+placeholder="Optional YYYY-MM-DD"
+label="Effective from"
+on-input="calendar_override_effective_from_input"/>
+<input
+grow="1"
+text="{overrideEffectiveUntilValue}"
+placeholder="Optional YYYY-MM-DD"
+label="Effective until"
+on-input="calendar_override_effective_until_input"/>
+<input
+grow="1"
+text="{overrideExpiresAtValue}"
+placeholder="Optional YYYY-MM-DD"
+label="Expires at"
+on-input="calendar_override_expires_at_input"/>
+</row>
+</else>
+<row gap="10">
+<button variant="primary" icon="check" on-press="calendar_save_override">{overrideSaveLabel}</button>
+<button variant="outline" on-press="calendar_cancel_override">Clear</button>
+</row>
+</column>
+</card>
+</template>
+<template name="non-working-day-editor">
+<card>
+<column padding="20" gap="14">
+<text><span weight="bold">{nonWorkingDayEditorTitle}</span></text>
+<text wrap="true" foreground="text_muted">
+Kind must be regular, local, special, or closure. Only nationwide
+entries adjust the global explorer; regional entries remain stored
+for a future profile/region projection.
+</text>
+<if test="{constrainedLayout}">
+<column gap="10">
+<input
+text="{nonWorkingDateValue}"
+placeholder="YYYY-MM-DD"
+label="Date"
+on-input="calendar_non_working_date_input"/>
+<input
+text="{nonWorkingKindValue}"
+placeholder="regular"
+label="Kind"
+on-input="calendar_non_working_kind_input"/>
+</column>
+</if>
+<else>
+<row gap="10">
+<input
+grow="1"
+text="{nonWorkingDateValue}"
+placeholder="YYYY-MM-DD"
+label="Date"
+on-input="calendar_non_working_date_input"/>
+<input
+grow="1"
+text="{nonWorkingKindValue}"
+placeholder="regular"
+label="Kind"
+on-input="calendar_non_working_kind_input"/>
+</row>
+</else>
+<input
+text="{nonWorkingNameValue}"
+placeholder="Official holiday or closure name"
+label="Name"
+on-input="calendar_non_working_name_input"/>
+<input
+text="{nonWorkingSourceValue}"
+placeholder="Official Gazette / proclamation reference"
+label="Official source"
+on-input="calendar_non_working_source_input"/>
+<input
+text="{nonWorkingRegionsValue}"
+placeholder="Optional, e.g. NCR, Region IV-A"
+label="Regions"
+on-input="calendar_non_working_regions_input"/>
+<row gap="10">
+<button variant="primary" icon="check" on-press="calendar_save_non_working_day">{nonWorkingDaySaveLabel}</button>
+<button variant="outline" on-press="calendar_cancel_non_working_day">Clear</button>
+</row>
+</column>
+</card>
+</template>
+<template name="tax-calendar-overrides-section">
+<column gap="20">
+<if test="{calendarNoticeVisible}">
+<row cross="center">
+<badge variant="{calendarNoticeTone}">{calendarNotice}</badge>
+</row>
+</if>
+<column gap="10">
+<text><span weight="bold">Deadline Overrides</span></text>
+<text wrap="true" foreground="text_muted">
+Matching follows the reference resolver: form code plus original or
+already business-day-adjusted deadline; later matching overrides win.
+Region- or taxpayer-scoped overrides remain stored until profile facts
+are available to resolve them safely.
+Effective-range and expiry metadata are preserved separately in SQLite;
+like the reference resolver, they do not limit global matching yet.
+</text>
+</column>
+<if test="{calendarOverridesEmpty}">
+<card>
+<column padding="20" gap="8" cross="center">
+<icon name="clock" foreground="text_muted" width="30" height="30"/>
+<text><span weight="bold">No deadline overrides</span></text>
+<text wrap="true" text-alignment="center" foreground="text_muted">
+Add only sourced BIR extensions or corrections. No sample or
+fictitious holiday override is seeded.
+</text>
+</column>
+</card>
+</if>
+<for each="calendarOverrides" key="id" as="override">
+<card>
+<column padding="18" gap="8">
+<row gap="10" cross="center">
+<column grow="1" gap="4">
+<text><span weight="bold">{override.titleLabel}</span></text>
+<text wrap="true" foreground="text_muted">Forms: {override.formsLabel}</text>
+</column>
+<badge variant="primary">{override.datesLabel}</badge>
+</row>
+<text wrap="true" foreground="text_muted">{override.scopeLabel}</text>
+<text wrap="true" foreground="text_muted">{override.effectiveLabel}</text>
+<text wrap="true">Source: {override.sourceLabel}</text>
+<row gap="8">
+<button size="sm" variant="outline" on-press="calendar_edit_override:{override.id}">Edit</button>
+<button size="sm" variant="ghost" on-press="calendar_delete_override:{override.id}">Delete</button>
+</row>
+</column>
+</card>
+</for>
+<use template="deadline-override-editor"/>
+<separator/>
+<column gap="10">
+<text><span weight="bold">Non-working Days</span></text>
+<text wrap="true" foreground="text_muted">
+Weekends are built in. Official holidays and closures are explicit,
+source-cited SQLite records; none are guessed or auto-seeded.
+</text>
+</column>
+<if test="{calendarNonWorkingDaysEmpty}">
+<card>
+<column padding="18" gap="6" cross="center">
+<text><span weight="bold">No configured non-working days</span></text>
+<text wrap="true" text-alignment="center" foreground="text_muted">
+Until an official day is entered, only Saturday and Sunday
+business-day adjustment is active.
+</text>
+</column>
+</card>
+</if>
+<for each="calendarNonWorkingDays" key="id" as="day">
+<card>
+<column padding="18" gap="8">
+<row gap="10" cross="center">
+<badge variant="secondary">{day.dateLabel}</badge>
+<column grow="1" gap="3">
+<text><span weight="bold">{day.nameLabel}</span></text>
+<text wrap="true" foreground="text_muted">{day.kindLabel} · {day.regionsLabel}</text>
+</column>
+</row>
+<text wrap="true">Source: {day.sourceLabel}</text>
+<row gap="8">
+<button size="sm" variant="outline" on-press="calendar_edit_non_working_day:{day.id}">Edit</button>
+<button size="sm" variant="ghost" on-press="calendar_delete_non_working_day:{day.id}">Delete</button>
+</row>
+</column>
+</card>
+</for>
+<use template="non-working-day-editor"/>
+</column>
+</template>
 <template name="taxpayer-empty-card" args="title icon body">
 <card>
 <column padding="20" gap="16">
@@ -1073,48 +1489,65 @@ body="Quarterly return for taxpayers subject to percentage tax.">
 <column grow="1" gap="4">
 <text><span weight="bold">Taxpayer Calendar</span></text>
 <text wrap="true" foreground="text_muted">
-Add to Calendar follows this profile's registered Forms Set. An
-unconfigured year uses the catalog fallback; an explicitly empty
-set creates no obligations.
+Review this profile's deadlines, rules, and SQLite overrides. Add to
+Calendar follows its registered Forms Set; an unconfigured year uses
+the catalog fallback and an explicitly empty set creates no obligations.
 </text>
 </column>
 <badge variant="secondary">{currentCalendarYear}</badge>
 </row>
 <if test="{profileCalendarExportNoticeVisible}">
+<row cross="center">
 <badge variant="{profileCalendarExportNoticeTone}">{profileCalendarExportNotice}</badge>
-</if>
-<if test="{constrainedLayout}">
-<column gap="20">
-<use
-template="taxpayer-empty-card"
-title="Upcoming Deadlines"
-icon="clock"
-body="Profile-specific deadlines will appear when its registered Forms Set is available."/>
-<use
-template="taxpayer-empty-card"
-title="Action Required"
-icon="alert"
-body="No forms currently require your attention."/>
-</column>
-</if>
-<else>
-<row gap="20" cross="start">
-<column grow="1">
-<use
-template="taxpayer-empty-card"
-title="Upcoming Deadlines"
-icon="clock"
-body="Profile-specific deadlines will appear when its registered Forms Set is available."/>
-</column>
-<column grow="1">
-<use
-template="taxpayer-empty-card"
-title="Action Required"
-icon="alert"
-body="No forms currently require your attention."/>
-</column>
 </row>
-</else>
+</if>
+<row gap="10" cross="center">
+<button
+grow="1"
+variant="outline"
+icon="refresh-cw"
+on-press="calendar_refresh">Refresh from SQLite</button>
+</row>
+<tabs label="Tax profile calendar sections">
+<button
+selected="{calendarDeadlinesActive}"
+on-press="show_calendar_deadlines">Deadlines</button>
+<button
+selected="{calendarRulesActive}"
+on-press="show_calendar_rules">Rules</button>
+<button
+selected="{calendarOverridesActive}"
+on-press="show_calendar_overrides">Overrides</button>
+</tabs>
+<card size="sm">
+<row gap="12" cross="center">
+<button
+size="sm"
+variant="outline"
+icon="chevron-left"
+label="Previous calendar year"
+on-press="calendar_previous_year"/>
+<column grow="1" gap="3" cross="center">
+<text><span weight="bold">Calendar Year {currentCalendarYear}</span></text>
+<text foreground="text_muted">{calendarDeadlineCount} in the full export</text>
+</column>
+<button
+size="sm"
+variant="outline"
+icon="chevron-right"
+label="Next calendar year"
+on-press="calendar_next_year"/>
+</row>
+</card>
+<if test="{calendarDeadlinesActive}">
+<use template="tax-calendar-deadlines-section"/>
+</if>
+<if test="{calendarRulesActive}">
+<use template="tax-calendar-rules-section"/>
+</if>
+<if test="{calendarOverridesActive}">
+<use template="tax-calendar-overrides-section"/>
+</if>
 </column>
 </template>
 <template name="taxpayer-form-library-section">
@@ -1148,12 +1581,12 @@ year. An unconfigured Forms Set uses the catalog fallback.
 <column grow="1" gap="5">
 <text size="heading" wrap="true">{selectedTaxpayerName}</text>
 <text wrap="true" foreground="text_muted">TIN: {selectedTaxpayerTin}</text>
-<text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year 2026 - Non-VAT</text>
+<text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear}</text>
 </column>
 <stack>
 <button
-width="40"
-height="40"
+width="44"
+height="44"
 size="icon"
 variant="outline"
 radius="xl"
@@ -1184,7 +1617,7 @@ on-press="profile_calendar_export">Add to Calendar</menu-item>
 <column grow="1" gap="5">
 <text size="heading" wrap="true">{selectedTaxpayerName}</text>
 <text wrap="true" foreground="text_muted">TIN: {selectedTaxpayerTin}</text>
-<text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year 2026 - Non-VAT</text>
+<text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear}</text>
 </column>
 </row>
 <row gap="10">
@@ -1199,7 +1632,7 @@ on-press="profile_calendar_export">Add to Calendar</menu-item>
 <column grow="1" gap="6">
 <text size="heading">{selectedTaxpayerName}</text>
 <text wrap="true" foreground="text_muted">
-TIN: {selectedTaxpayerTin} - Type: {selectedTaxpayerKind} - Tax Year 2026 - Non-VAT
+TIN: {selectedTaxpayerTin} - Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear}
 </text>
 </column>
 <button variant="primary" icon="clock" disabled="{profileCalendarExportBusy}" on-press="profile_calendar_export">Add to Calendar</button>
@@ -1211,14 +1644,14 @@ TIN: {selectedTaxpayerTin} - Type: {selectedTaxpayerKind} - Tax Year 2026 - Non-
 <if test="{constrainedLayout}">
 <column gap="12">
 <search-field disabled="true" placeholder="Search tax forms" label="Search tax forms"/>
-<select disabled="true" text="Tax Year 2026" label="Tax year"/>
+<select disabled="true" text="{currentCalendarYear}" label="Tax year"/>
 <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
 </column>
 </if>
 <else>
 <row gap="12" cross="center">
 <search-field grow="1" disabled="true" placeholder="Search tax forms" label="Search tax forms"/>
-<select disabled="true" text="Tax Year 2026" label="Tax year"/>
+<select disabled="true" text="{currentCalendarYear}" label="Tax year"/>
 <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
 </row>
 </else>
@@ -1260,64 +1693,48 @@ on-press="show_dashboard_forms">Tax Form Library</button>
 </template>
 <template name="profile-setup-content">
 <column gap="24">
-<column gap="6">
+<row gap="10" cross="start">
+<if test="{profileInlineBackVisible}">
+<button
+width="40"
+height="40"
+size="icon"
+variant="ghost"
+radius="xl"
+icon="chevron-left"
+label="{profileBackLabel}"
+on-press="cancel_profile_edit">
+</button>
+</if>
+<column grow="1" gap="6">
 <text size="heading">{profileEditorTitle}</text>
 <text wrap="true" foreground="text_muted">
 Reusable tax facts are versioned once and projected into each qualified
 form. Existing filing snapshots never change when a profile is revised.
 </text>
 </column>
-<if test="{profileNoticeVisible}">
-<badge variant="{profileNoticeTone}">{profileNotice}</badge>
-</if>
-<if test="{constrainedLayout}">
-<column gap="4" label="Profile setup sections">
+</row>
+<tabs label="Profile setup sections">
 <button
-variant="ghost"
 selected="{profileTaxActive}"
 on-press="show_profile_tax">
 Tax Profile
 </button>
 <button
-variant="ghost"
 selected="{profileCertificateActive}"
 on-press="show_profile_certificate">
 COR
 </button>
 <button
-variant="ghost"
-selected="{profileEmailActive}"
-on-press="show_profile_email">
-Email Settings
-</button>
-</column>
-</if>
-<else>
-<tabs gap="4" label="Profile setup sections">
-<button
-variant="ghost"
-selected="{profileTaxActive}"
-on-press="show_profile_tax">
-Tax Profile
-</button>
-<button
-variant="ghost"
-selected="{profileCertificateActive}"
-on-press="show_profile_certificate">
-COR
-</button>
-<button
-variant="ghost"
 selected="{profileEmailActive}"
 on-press="show_profile_email">
 Email Settings
 </button>
 </tabs>
-</else>
 <if test="{profileTaxActive}">
 <column gap="24">
-<card>
-<column padding="24" gap="16">
+<card size="sm">
+<column gap="16">
 <column gap="4">
 <text><span weight="bold">Identity and registration</span></text>
 <text wrap="true" foreground="text_muted">
@@ -1438,8 +1855,8 @@ label="Registered email address"
 on-input="profile_email_input"/>
 </column>
 </card>
-<card>
-<column padding="24" gap="16">
+<card size="sm">
+<column gap="16">
 <column gap="4">
 <text><span weight="bold">Individual capabilities</span></text>
 <text wrap="true" foreground="text_muted">
@@ -1489,8 +1906,8 @@ disabled="{profilePersonalFieldsDisabled}"
 on-input="profile_foreign_tax_number_input"/>
 </column>
 </card>
-<card>
-<column padding="24" gap="16">
+<card size="sm">
+<column gap="16">
 <column gap="4">
 <text><span weight="bold">Business registration</span></text>
 <text wrap="true" foreground="text_muted">
@@ -1549,8 +1966,8 @@ label="Special-rate basis"
 on-input="profile_special_rate_basis_input"/>
 </column>
 </card>
-<card>
-<column padding="24" gap="16">
+<card size="sm">
+<column gap="16">
 <column gap="4">
 <text><span weight="bold">Revision and registered Forms Set</span></text>
 <text wrap="true" foreground="text_muted">
@@ -1669,8 +2086,8 @@ on-input="profile_forms_set_input"/>
 </column>
 </if>
 <if test="{profileCertificateActive}">
-<card>
-<column padding="24" gap="12">
+<card size="sm">
+<column gap="12">
 <text><span weight="bold">Certificate of Registration evidence</span></text>
 <text wrap="true" foreground="text_muted">
 COR attachments and extraction evidence are intentionally stored
@@ -1682,8 +2099,8 @@ evidence without changing a filed form snapshot.
 </card>
 </if>
 <if test="{profileEmailActive}">
-<card>
-<column padding="24" gap="12">
+<card size="sm">
+<column gap="12">
 <text><span weight="bold">Email monitoring credentials</span></text>
 <text wrap="true" foreground="text_muted">
 Mailbox credentials are operational secrets, not reusable tax
@@ -2061,468 +2478,6 @@ Job controls are presented to match the desktop application. This static milesto
 </else>
 </scroll>
 </template>
-<template name="tax-calendar-deadlines-section">
-<column gap="12">
-<row cross="center" gap="12">
-<column grow="1" gap="4">
-<text><span weight="bold">{currentCalendarMonth} {currentCalendarYear} Deadlines</span></text>
-<text wrap="true" foreground="text_muted">
-The complete year is resolved and exported together. The explorer renders
-one month at a time to keep the native schedule fast and accessible.
-</text>
-</column>
-<badge variant="secondary">{calendarVisibleDeadlineCount}</badge>
-</row>
-<card>
-<row padding="12" gap="12" cross="center">
-<button
-size="sm"
-variant="outline"
-icon="chevron-left"
-label="Previous calendar month"
-on-press="calendar_previous_month"/>
-<column grow="1" gap="3" cross="center">
-<text><span weight="bold">{currentCalendarMonth} {currentCalendarYear}</span></text>
-<text foreground="text_muted">{calendarVisibleDeadlineCount}</text>
-</column>
-<button
-size="sm"
-variant="outline"
-icon="chevron-right"
-label="Next calendar month"
-on-press="calendar_next_month"/>
-</row>
-</card>
-<for each="calendarDeadlines" key="id" as="deadline">
-<card>
-<row padding="16" gap="12" cross="center">
-<column width="72" gap="3" cross="center">
-<text text-alignment="center"><span weight="bold">{deadline.dateLabel}</span></text>
-<text text-alignment="center" foreground="text_muted">{deadline.yearLabel}</text>
-</column>
-<separator/>
-<column grow="1" gap="6">
-<row gap="8" cross="center">
-<badge variant="{deadline.tone}">{deadline.display_form_no}</badge>
-<badge variant="{deadline.tone}">{deadline.statusLabel}</badge>
-</row>
-<text><span weight="bold">{deadline.form_name}</span></text>
-<text wrap="true" foreground="text_muted">Taxable period: {deadline.periodLabel}</text>
-<text wrap="true" foreground="text_muted">{deadline.description}</text>
-<if test="{deadline.adjustmentVisible}">
-<text wrap="true" foreground="accent">{deadline.adjustmentLabel}</text>
-</if>
-<if test="{deadline.sourceVisible}">
-<text wrap="true" foreground="text_muted">Source: {deadline.sourceLabel}</text>
-</if>
-</column>
-</row>
-</card>
-</for>
-</column>
-</template>
-<template name="tax-calendar-rules-section">
-<column gap="12">
-<column gap="4">
-<text><span weight="bold">Compiled Calendar Rules</span></text>
-<text wrap="true" foreground="text_muted">
-Shared form-deadline rules derived from the reference eBIRForms
-subsystem and checked against current BIR guidance. Event-based forms
-stay separate from dated deadlines.
-</text>
-</column>
-<for each="calendarRules" key="id" as="rule">
-<card>
-<column padding="20" gap="10">
-<row gap="8" cross="center">
-<badge variant="secondary">{rule.frequency}</badge>
-<text><span weight="bold">{rule.form_name}</span></text>
-</row>
-<text wrap="true" foreground="text_muted">Forms: {rule.form_codes}</text>
-<text wrap="true">{rule.description}</text>
-</column>
-</card>
-</for>
-<card>
-<column padding="20" gap="8">
-<text><span weight="bold">Source boundary</span></text>
-<text wrap="true" foreground="text_muted">
-This view is a calendar-year / non-eFPS baseline and includes mutually
-exclusive or conditional form alternatives. Current BIR issuances, the
-taxpayer's registered Forms Set, eFPS filer group, fiscal-year facts,
-and official holiday proclamations remain authoritative.
-</text>
-</column>
-</card>
-</column>
-</template>
-<template name="deadline-override-editor">
-<card>
-<column padding="20" gap="14">
-<text><span weight="bold">{overrideEditorTitle}</span></text>
-<text wrap="true" foreground="text_muted">
-Source and at least one recognized canonical form are required.
-Separate multiple values with commas.
-</text>
-<input
-text="{overrideTitleValue}"
-placeholder="Extension title"
-label="Override title"
-on-input="calendar_override_title_input"/>
-<input
-text="{overrideFormsValue}"
-placeholder="1701Q, 1702Q"
-label="Affected form codes"
-on-input="calendar_override_forms_input"/>
-<if test="{constrainedLayout}">
-<column gap="10">
-<input
-text="{overrideOriginalValue}"
-placeholder="YYYY-MM-DD"
-label="Original or operative deadline"
-on-input="calendar_override_original_input"/>
-<input
-text="{overrideAdjustedValue}"
-placeholder="YYYY-MM-DD"
-label="Adjusted deadline"
-on-input="calendar_override_adjusted_input"/>
-</column>
-</if>
-<else>
-<row gap="10">
-<input
-grow="1"
-text="{overrideOriginalValue}"
-placeholder="YYYY-MM-DD"
-label="Original or operative deadline"
-on-input="calendar_override_original_input"/>
-<input
-grow="1"
-text="{overrideAdjustedValue}"
-placeholder="YYYY-MM-DD"
-label="Adjusted deadline"
-on-input="calendar_override_adjusted_input"/>
-</row>
-</else>
-<input
-text="{overrideSourceValue}"
-placeholder="RMC / RR / advisory reference"
-label="Official source reference"
-on-input="calendar_override_source_input"/>
-<if test="{constrainedLayout}">
-<column gap="10">
-<input
-text="{overrideRegionsValue}"
-placeholder="Optional, e.g. NCR"
-label="Regions"
-on-input="calendar_override_regions_input"/>
-<input
-text="{overrideTaxpayerTypesValue}"
-placeholder="Optional, e.g. individual"
-label="Taxpayer types"
-on-input="calendar_override_taxpayer_types_input"/>
-</column>
-</if>
-<else>
-<row gap="10">
-<input
-grow="1"
-text="{overrideRegionsValue}"
-placeholder="Optional, e.g. NCR"
-label="Regions"
-on-input="calendar_override_regions_input"/>
-<input
-grow="1"
-text="{overrideTaxpayerTypesValue}"
-placeholder="Optional, e.g. individual"
-label="Taxpayer types"
-on-input="calendar_override_taxpayer_types_input"/>
-</row>
-</else>
-<if test="{constrainedLayout}">
-<column gap="10">
-<input
-text="{overrideEffectiveFromValue}"
-placeholder="Optional YYYY-MM-DD"
-label="Effective from"
-on-input="calendar_override_effective_from_input"/>
-<input
-text="{overrideEffectiveUntilValue}"
-placeholder="Optional YYYY-MM-DD"
-label="Effective until"
-on-input="calendar_override_effective_until_input"/>
-<input
-text="{overrideExpiresAtValue}"
-placeholder="Optional YYYY-MM-DD"
-label="Expires at"
-on-input="calendar_override_expires_at_input"/>
-</column>
-</if>
-<else>
-<row gap="10">
-<input
-grow="1"
-text="{overrideEffectiveFromValue}"
-placeholder="Optional YYYY-MM-DD"
-label="Effective from"
-on-input="calendar_override_effective_from_input"/>
-<input
-grow="1"
-text="{overrideEffectiveUntilValue}"
-placeholder="Optional YYYY-MM-DD"
-label="Effective until"
-on-input="calendar_override_effective_until_input"/>
-<input
-grow="1"
-text="{overrideExpiresAtValue}"
-placeholder="Optional YYYY-MM-DD"
-label="Expires at"
-on-input="calendar_override_expires_at_input"/>
-</row>
-</else>
-<row gap="10">
-<button variant="primary" icon="check" on-press="calendar_save_override">{overrideSaveLabel}</button>
-<button variant="outline" on-press="calendar_cancel_override">Clear</button>
-</row>
-</column>
-</card>
-</template>
-<template name="non-working-day-editor">
-<card>
-<column padding="20" gap="14">
-<text><span weight="bold">{nonWorkingDayEditorTitle}</span></text>
-<text wrap="true" foreground="text_muted">
-Kind must be regular, local, special, or closure. Only nationwide
-entries adjust the global explorer; regional entries remain stored
-for a future profile/region projection.
-</text>
-<if test="{constrainedLayout}">
-<column gap="10">
-<input
-text="{nonWorkingDateValue}"
-placeholder="YYYY-MM-DD"
-label="Date"
-on-input="calendar_non_working_date_input"/>
-<input
-text="{nonWorkingKindValue}"
-placeholder="regular"
-label="Kind"
-on-input="calendar_non_working_kind_input"/>
-</column>
-</if>
-<else>
-<row gap="10">
-<input
-grow="1"
-text="{nonWorkingDateValue}"
-placeholder="YYYY-MM-DD"
-label="Date"
-on-input="calendar_non_working_date_input"/>
-<input
-grow="1"
-text="{nonWorkingKindValue}"
-placeholder="regular"
-label="Kind"
-on-input="calendar_non_working_kind_input"/>
-</row>
-</else>
-<input
-text="{nonWorkingNameValue}"
-placeholder="Official holiday or closure name"
-label="Name"
-on-input="calendar_non_working_name_input"/>
-<input
-text="{nonWorkingSourceValue}"
-placeholder="Official Gazette / proclamation reference"
-label="Official source"
-on-input="calendar_non_working_source_input"/>
-<input
-text="{nonWorkingRegionsValue}"
-placeholder="Optional, e.g. NCR, Region IV-A"
-label="Regions"
-on-input="calendar_non_working_regions_input"/>
-<row gap="10">
-<button variant="primary" icon="check" on-press="calendar_save_non_working_day">{nonWorkingDaySaveLabel}</button>
-<button variant="outline" on-press="calendar_cancel_non_working_day">Clear</button>
-</row>
-</column>
-</card>
-</template>
-<template name="tax-calendar-overrides-section">
-<column gap="20">
-<if test="{calendarNoticeVisible}">
-<badge variant="{calendarNoticeTone}">{calendarNotice}</badge>
-</if>
-<column gap="10">
-<text><span weight="bold">Deadline Overrides</span></text>
-<text wrap="true" foreground="text_muted">
-Matching follows the reference resolver: form code plus original or
-already business-day-adjusted deadline; later matching overrides win.
-Region- or taxpayer-scoped overrides remain stored until profile facts
-are available to resolve them safely.
-Effective-range and expiry metadata are preserved separately in SQLite;
-like the reference resolver, they do not limit global matching yet.
-</text>
-</column>
-<if test="{calendarOverridesEmpty}">
-<card>
-<column padding="20" gap="8" cross="center">
-<icon name="clock" foreground="text_muted" width="30" height="30"/>
-<text><span weight="bold">No deadline overrides</span></text>
-<text wrap="true" text-alignment="center" foreground="text_muted">
-Add only sourced BIR extensions or corrections. No sample or
-fictitious holiday override is seeded.
-</text>
-</column>
-</card>
-</if>
-<for each="calendarOverrides" key="id" as="override">
-<card>
-<column padding="18" gap="8">
-<row gap="10" cross="center">
-<column grow="1" gap="4">
-<text><span weight="bold">{override.titleLabel}</span></text>
-<text wrap="true" foreground="text_muted">Forms: {override.formsLabel}</text>
-</column>
-<badge variant="primary">{override.datesLabel}</badge>
-</row>
-<text wrap="true" foreground="text_muted">{override.scopeLabel}</text>
-<text wrap="true" foreground="text_muted">{override.effectiveLabel}</text>
-<text wrap="true">Source: {override.sourceLabel}</text>
-<row gap="8">
-<button size="sm" variant="outline" on-press="calendar_edit_override:{override.id}">Edit</button>
-<button size="sm" variant="ghost" on-press="calendar_delete_override:{override.id}">Delete</button>
-</row>
-</column>
-</card>
-</for>
-<use template="deadline-override-editor"/>
-<separator/>
-<column gap="10">
-<text><span weight="bold">Non-working Days</span></text>
-<text wrap="true" foreground="text_muted">
-Weekends are built in. Official holidays and closures are explicit,
-source-cited SQLite records; none are guessed or auto-seeded.
-</text>
-</column>
-<if test="{calendarNonWorkingDaysEmpty}">
-<card>
-<column padding="18" gap="6" cross="center">
-<text><span weight="bold">No configured non-working days</span></text>
-<text wrap="true" text-alignment="center" foreground="text_muted">
-Until an official day is entered, only Saturday and Sunday
-business-day adjustment is active.
-</text>
-</column>
-</card>
-</if>
-<for each="calendarNonWorkingDays" key="id" as="day">
-<card>
-<column padding="18" gap="8">
-<row gap="10" cross="center">
-<badge variant="secondary">{day.dateLabel}</badge>
-<column grow="1" gap="3">
-<text><span weight="bold">{day.nameLabel}</span></text>
-<text wrap="true" foreground="text_muted">{day.kindLabel} · {day.regionsLabel}</text>
-</column>
-</row>
-<text wrap="true">Source: {day.sourceLabel}</text>
-<row gap="8">
-<button size="sm" variant="outline" on-press="calendar_edit_non_working_day:{day.id}">Edit</button>
-<button size="sm" variant="ghost" on-press="calendar_delete_non_working_day:{day.id}">Delete</button>
-</row>
-</column>
-</card>
-</for>
-<use template="non-working-day-editor"/>
-</column>
-</template>
-<template name="tax-calendar-content" args="padding">
-<column padding="{padding}" gap="24">
-<if test="{constrainedLayout}">
-<column gap="12">
-<column gap="6">
-<text size="heading">Tax Calendar Explorer</text>
-<text wrap="true" foreground="text_muted">
-Review calendar-year rules, source-cited changes, and SQLite overrides.
-</text>
-</column>
-<column gap="8">
-<button variant="outline" icon="refresh-cw" on-press="calendar_refresh">Refresh from SQLite</button>
-</column>
-</column>
-</if>
-<else>
-<row gap="16" cross="center">
-<column grow="1" gap="6">
-<text size="heading">Tax Calendar Explorer</text>
-<text foreground="text_muted">
-Review calendar-year rules, source-cited changes, and SQLite overrides.
-</text>
-</column>
-<button variant="outline" icon="refresh-cw" on-press="calendar_refresh">Refresh</button>
-</row>
-</else>
-<tabs gap="4" label="Tax calendar sections">
-<button
-variant="ghost"
-selected="{calendarDeadlinesActive}"
-on-press="show_calendar_deadlines">Deadlines</button>
-<button
-variant="ghost"
-selected="{calendarRulesActive}"
-on-press="show_calendar_rules">Rules</button>
-<button
-variant="ghost"
-selected="{calendarOverridesActive}"
-on-press="show_calendar_overrides">Overrides</button>
-</tabs>
-<card>
-<row padding="14" gap="12" cross="center">
-<button
-size="sm"
-variant="outline"
-icon="chevron-left"
-label="Previous calendar year"
-on-press="calendar_previous_year"/>
-<column grow="1" gap="3" cross="center">
-<text><span weight="bold">Calendar Year {currentCalendarYear}</span></text>
-<text foreground="text_muted">{calendarDeadlineCount} in the full export</text>
-</column>
-<button
-size="sm"
-variant="outline"
-icon="chevron-right"
-label="Next calendar year"
-on-press="calendar_next_year"/>
-</row>
-</card>
-<if test="{calendarDeadlinesActive}">
-<use template="tax-calendar-deadlines-section"/>
-</if>
-<if test="{calendarRulesActive}">
-<use template="tax-calendar-rules-section"/>
-</if>
-<if test="{calendarOverridesActive}">
-<use template="tax-calendar-overrides-section"/>
-</if>
-</column>
-</template>
-<template name="tax-calendar-page">
-<scroll grow="1" global-key="page-tax-calendar" label="Tax calendar explorer content">
-<if test="{phoneLayout}">
-<use template="tax-calendar-content" padding="16"/>
-</if>
-<else>
-<if test="{desktopLayout}">
-<use template="tax-calendar-content" padding="32"/>
-</if>
-<else>
-<use template="tax-calendar-content" padding="24"/>
-</else>
-</else>
-</scroll>
-</template>
 <template name="settings-action-row" args="icon title body action">
 <column>
 <if test="{constrainedLayout}">
@@ -2675,52 +2630,6 @@ Dark
 </card>
 <card>
 <column padding="22" gap="18">
-<if test="{constrainedLayout}">
-<column gap="12">
-<row gap="14" cross="start">
-<icon name="file-text" foreground="accent" width="30" height="30"/>
-<column grow="1" gap="4">
-<text><span weight="bold">Calendar Integration</span></text>
-<text wrap="true" foreground="text_muted">Default calendar handoff is ready</text>
-</column>
-</row>
-<row cross="center">
-<badge variant="primary">Ready</badge>
-</row>
-</column>
-</if>
-<else>
-<row gap="14" cross="center">
-<icon name="file-text" foreground="accent" width="30" height="30"/>
-<column grow="1" gap="4">
-<text><span weight="bold">Calendar Integration</span></text>
-<text foreground="text_muted">Default calendar handoff is ready</text>
-</column>
-<badge variant="primary">Ready</badge>
-</row>
-</else>
-<text wrap="true" foreground="text_muted">
-Add the resolved schedule to Apple Calendar, Outlook, Google Calendar,
-or another registered calendar app using an ICS handoff. Choose an
-iCloud, Google, or Outlook calendar during import to propagate it to
-mobile. Direct managed Google OAuth sync is optional and not connected.
-</text>
-<if test="{constrainedLayout}">
-<column gap="10">
-<button variant="primary" icon="external-link" on-press="show_tax_calendar">Open Tax Calendar</button>
-<button variant="outline" disabled="true">Connect Google Directly</button>
-</column>
-</if>
-<else>
-<row gap="10">
-<button variant="primary" icon="external-link" on-press="show_tax_calendar">Open Tax Calendar</button>
-<button variant="outline" disabled="true">Connect Google Directly</button>
-</row>
-</else>
-</column>
-</card>
-<card>
-<column padding="22" gap="18">
 <column gap="4">
 <text><span weight="bold">Security</span></text>
 <text wrap="true" foreground="text_muted">Protect application access and individual taxpayer profiles.</text>
@@ -2835,7 +2744,6 @@ action="Zero Out Everything"/>
 <button variant="secondary" on-press="show_profile_setup">Taxpayer Profile Setup</button>
 <button variant="secondary" on-press="show_background_tasks">Background Tasks</button>
 <button variant="secondary" on-press="show_import_data">Import Data</button>
-<button variant="secondary" on-press="show_tax_calendar">Tax Calendar Explorer</button>
 <button variant="secondary" on-press="show_settings">Settings</button>
 </grid>
 </template>
@@ -7920,9 +7828,6 @@ goldcoders_logo="{goldcodersLogo}">
 </if>
 <if test="{contentPage == 'background_tasks'}">
 <use template="background-tasks-page"/>
-</if>
-<if test="{contentPage == 'tax_calendar'}">
-<use template="tax-calendar-page"/>
 </if>
 <if test="{contentPage == 'settings'}">
 <use template="settings-page"/>

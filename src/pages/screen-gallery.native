@@ -5,7 +5,6 @@
     <button variant="secondary" on-press="show_profile_setup">Taxpayer Profile Setup</button>
     <button variant="secondary" on-press="show_background_tasks">Background Tasks</button>
     <button variant="secondary" on-press="show_import_data">Import Data</button>
-    <button variant="secondary" on-press="show_tax_calendar">Tax Calendar Explorer</button>
     <button variant="secondary" on-press="show_settings">Settings</button>
   </grid>
 </template>
