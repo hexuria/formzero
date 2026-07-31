@@ -27,6 +27,9 @@
     <if test="{contentPage == 'background_tasks'}">
       <use template="background-tasks-page"/>
     </if>
+    <if test="{contentPage == 'tax_calendar'}">
+      <use template="tax-calendar-page"/>
+    </if>
     <if test="{contentPage == 'settings'}">
       <use template="settings-page"/>
     </if>

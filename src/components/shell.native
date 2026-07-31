@@ -82,6 +82,20 @@
         height="40"
         padding="12"
         radius="md"
+        icon="file-text"
+        selected="false"
+        on-press="show_tax_calendar">
+        Tax Calendars
+      </list-item>
+    </row>
+
+    <row width="232" height="48" cross="center">
+      <list-item
+        key="{sidebarActionEpoch}"
+        width="232"
+        height="40"
+        padding="12"
+        radius="md"
         icon="settings"
         selected="false"
         on-press="show_settings">
@@ -138,6 +152,17 @@
       icon="clock"
       label="Background Tasks"
       on-press="show_background_tasks">
+    </button>
+
+    <button
+      width="48"
+      height="48"
+      size="icon"
+      variant="ghost"
+      radius="xl"
+      icon="file-text"
+      label="Tax Calendars"
+      on-press="show_tax_calendar">
     </button>
 
     <button

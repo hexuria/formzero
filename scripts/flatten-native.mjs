@@ -70,9 +70,6 @@ const sourceGroups = [
 const sourceFiles = sourceGroups.flatMap((group) => group.files);
 const generatedTemplateIncludes = new Set([
   "tax-profile-form-context",
-  "tax-calendar-deadlines-section",
-  "tax-calendar-rules-section",
-  "tax-calendar-overrides-section",
 ]);
 
 function normalizeFragment(source) {

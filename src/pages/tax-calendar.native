@@ -306,8 +306,8 @@
       <text wrap="true" foreground="text_muted">
         Matching follows the reference resolver: form code plus original or
         already business-day-adjusted deadline; later matching overrides win.
-        Region- or taxpayer-scoped overrides remain stored until profile facts
-        are available to resolve them safely.
+        Region- or taxpayer-applicability metadata remains stored on the same
+        global record until those facts are available to resolve it safely.
         Effective-range and expiry metadata are preserved separately in SQLite;
         like the reference resolver, they do not limit global matching yet.
       </text>
@@ -387,4 +387,97 @@
     </for>
     <use template="non-working-day-editor"/>
   </column>
+</template>
+
+<template name="tax-calendar-content" args="padding">
+  <column padding="{padding}" gap="24">
+    <if test="{constrainedLayout}">
+      <column gap="12">
+        <column gap="6">
+          <text size="heading">Tax Calendar Explorer</text>
+          <text wrap="true" foreground="text_muted">
+            Manage the shared schedule used by every tax profile: deadlines,
+            rules, and SQLite overrides live here as global calendar policy.
+          </text>
+        </column>
+        <column gap="8">
+          <button variant="outline" icon="refresh-cw" on-press="calendar_refresh">Refresh from SQLite</button>
+        </column>
+      </column>
+    </if>
+    <else>
+      <row gap="16" cross="center">
+        <column grow="1" gap="6">
+          <text size="heading">Tax Calendar Explorer</text>
+          <text wrap="true" foreground="text_muted">
+            Manage the shared schedule used by every tax profile: deadlines,
+            rules, and SQLite overrides live here as global calendar policy.
+          </text>
+        </column>
+        <button variant="outline" icon="refresh-cw" on-press="calendar_refresh">Refresh</button>
+      </row>
+    </else>
+
+    <tabs gap="4" label="Tax calendar sections">
+      <button
+        variant="ghost"
+        selected="{calendarDeadlinesActive}"
+        on-press="show_calendar_deadlines">Deadlines</button>
+      <button
+        variant="ghost"
+        selected="{calendarRulesActive}"
+        on-press="show_calendar_rules">Rules</button>
+      <button
+        variant="ghost"
+        selected="{calendarOverridesActive}"
+        on-press="show_calendar_overrides">Overrides</button>
+    </tabs>
+
+    <card>
+      <row padding="14" gap="12" cross="center">
+        <button
+          size="sm"
+          variant="outline"
+          icon="chevron-left"
+          label="Previous calendar year"
+          on-press="calendar_previous_year"/>
+        <column grow="1" gap="3" cross="center">
+          <text><span weight="bold">Calendar Year {currentCalendarYear}</span></text>
+          <text foreground="text_muted">{calendarDeadlineCount} in the full export</text>
+        </column>
+        <button
+          size="sm"
+          variant="outline"
+          icon="chevron-right"
+          label="Next calendar year"
+          on-press="calendar_next_year"/>
+      </row>
+    </card>
+
+    <if test="{calendarDeadlinesActive}">
+      <use template="tax-calendar-deadlines-section"/>
+    </if>
+    <if test="{calendarRulesActive}">
+      <use template="tax-calendar-rules-section"/>
+    </if>
+    <if test="{calendarOverridesActive}">
+      <use template="tax-calendar-overrides-section"/>
+    </if>
+  </column>
+</template>
+
+<template name="tax-calendar-page">
+  <scroll grow="1" global-key="page-tax-calendar" label="Tax calendar explorer content">
+    <if test="{phoneLayout}">
+      <use template="tax-calendar-content" padding="16"/>
+    </if>
+    <else>
+      <if test="{desktopLayout}">
+        <use template="tax-calendar-content" padding="32"/>
+      </if>
+      <else>
+        <use template="tax-calendar-content" padding="24"/>
+      </else>
+    </else>
+  </scroll>
 </template>
