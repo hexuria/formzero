@@ -143,13 +143,20 @@ git diff --check
 
 ## Screenshot evidence
 
-The existing files below are pre-fix baseline captures from the earlier visual
-pass. They show the original wide mobile action and are useful for comparison,
-but they must not be treated as post-fix evidence:
+Post-fix reference-rendered captures are available for review:
+
+- Phone, 408 x 800: `/tmp/ebirforms-tax-form-library-current-phone.png`
+- Narrow tablet, 768 x 768: `/tmp/ebirforms-tax-form-library-current-tablet.png`
+- Wider desktop, 1176 x 768: `/tmp/ebirforms-tax-form-library-current-desktop.png`
+
+The phone and narrow-tablet captures show the icon-only action. The wider
+desktop capture intentionally retains the labeled `Open Form` action. These
+PNGs were rendered from the real app markup and synthetic profile model through
+the Native SDK reference renderer. The live macOS window still could not attach
+to the Computer Use or Native automation service in this environment.
+
+The earlier pre-fix baselines remain available for comparison:
 
 - `/tmp/ebirforms-tax-form-library-desktop.png`
 - `/tmp/ebirforms-tax-form-library-tablet.png`
 - `/tmp/ebirforms-tax-form-library-mobile.png`
-
-No post-fix desktop/tablet/mobile screenshot is included because the live app
-could not attach to either available UI automation service in this run.
