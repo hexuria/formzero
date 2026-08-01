@@ -1,32 +1,35 @@
-<template name="global-deadline-row" args="date form title detail">
+<template name="global-deadline-row" args="date year form status tone title period adjusted adjustment">
   <card padding="0">
     <row padding="12" gap="14" cross="center">
-      <card padding="0" background="surface_subtle">
-        <column width="54" height="54" main="center" cross="center" gap="1">
-          <text foreground="text_muted"><span weight="bold">JUL</span></text>
-          <text size="heading"><span weight="bold">{date}</span></text>
-        </column>
-      </card>
+      <column width="58" gap="2" cross="center">
+        <text><span weight="bold">{date}</span></text>
+        <text foreground="text_muted">{year}</text>
+      </column>
+      <column width="1" height="54" background="border"></column>
       <column grow="1" gap="4">
-        <text><span weight="bold">{form}</span></text>
-        <text wrap="true" foreground="text_muted">{title}</text>
-        <if test="{detail}">
-          <text wrap="true" foreground="text_muted">{detail}</text>
+        <row gap="8" cross="center">
+          <badge variant="secondary">{form}</badge>
+          <badge variant="{tone}">{status}</badge>
+        </row>
+        <text><span weight="bold">{title}</span></text>
+        <text wrap="true" foreground="text_muted">Taxable period: {period}</text>
+        <if test="{adjusted}">
+          <text wrap="true" foreground="text_muted">{adjustment}</text>
         </if>
       </column>
     </row>
   </card>
 </template>
 
-<template name="global-news-item" args="title body meta">
+<template name="global-news-item" args="title summary source published">
   <card padding="0">
-    <column padding="16" gap="8">
-      <row cross="center" gap="8">
-        <badge variant="secondary">RSS Feed</badge>
-        <text grow="1" text-alignment="end" foreground="text_muted">{meta}</text>
+    <column padding="12" gap="6">
+      <row cross="center" gap="6">
+        <badge variant="secondary">{source}</badge>
+        <text size="sm" grow="1" text-alignment="end" foreground="text_muted">{published}</text>
       </row>
-      <text><span weight="bold">{title}</span></text>
-      <text wrap="true" foreground="text_muted">{body}</text>
+      <text size="sm"><span weight="bold">{title}</span></text>
+      <text size="sm" wrap="true" foreground="text_muted">{summary}</text>
     </column>
   </card>
 </template>
@@ -39,89 +42,58 @@
   </column>
 </template>
 
-<template name="global-calendar-day" args="day marker=">
-  <column height="58" padding="7" main="space_between" cross="stretch" background="surface">
-    <text text-alignment="end">{day}</text>
-    <if test="{marker}">
-      <text text-alignment="center" foreground="destructive">{marker}</text>
-    </if>
-  </column>
-</template>
-
-<template name="global-calendar-warning-day" args="day marker=">
-  <column height="58" padding="7" main="space_between" cross="stretch" background="surface">
-    <text text-alignment="end">{day}</text>
-    <if test="{marker}">
-      <text text-alignment="center" foreground="warning">{marker}</text>
-    </if>
-  </column>
-</template>
-
-<template name="global-calendar-empty">
-  <column height="58" background="surface_subtle"></column>
-</template>
-
-<template name="global-calendar-today">
-  <column height="58" padding="7" main="space_between" cross="stretch" background="surface">
-    <row main="end">
-      <badge variant="outline">29</badge>
-    </row>
-    <spacer/>
+<template name="global-calendar-empty-state">
+  <column padding="16" gap="8" cross="center" background="surface_subtle" radius="md">
+    <icon name="clock" foreground="text_muted" width="24" height="24"/>
+    <text><span weight="bold">No deadlines to show</span></text>
+    <text wrap="true" text-alignment="center" foreground="text_muted">
+      No selected forms have a resolved deadline for this view.
+    </text>
   </column>
 </template>
 
 <template name="global-calendar-column">
-  <column grow="1" gap="12">
-    <if test="{constrainedLayout}">
+  <column width="{globalCalendarLaneWidth}" gap="12">
+    <if test="{globalCalendarHeaderStacked}">
       <column gap="10">
         <text><span weight="bold">Compliance Calendar</span></text>
-        <use
-          template="multi-select-combobox"
-          value="{formFilterText}"
-          query="{formFilterQuery}"
-          open="{formFilterOpen}"
-          options="{visibleFormOptions}"
-          allselected="{formFilterAllFilteredSelected}"
-          hiddencount="{formFilterHiddenCount}"
-          width="240"
-          menuheight="420"
+        <!-- @include-template multi-select-combobox
           placeholder="Search form codes..."
-          label="Filter compliance calendar forms"/>
+          label="Filter global compliance forms"
+        -->
       </column>
     </if>
     <else>
       <row cross="center" gap="12">
         <text grow="1"><span weight="bold">Compliance Calendar</span></text>
-        <use
-          template="multi-select-combobox"
-          value="{formFilterText}"
-          query="{formFilterQuery}"
-          open="{formFilterOpen}"
-          options="{visibleFormOptions}"
-          allselected="{formFilterAllFilteredSelected}"
-          hiddencount="{formFilterHiddenCount}"
-          width="240"
-          menuheight="420"
+        <!-- @include-template multi-select-combobox
           placeholder="Search form codes..."
-          label="Filter compliance calendar forms"/>
+          label="Filter global compliance forms"
+        -->
       </row>
     </else>
 
     <card padding="0">
       <column gap="0">
         <row padding="12" cross="center" gap="8">
-          <text grow="1"><span weight="bold">July 2026</span></text>
-          <row padding="4" cross="center" gap="2" background="surface_subtle" radius="md">
+          <text grow="1"><span weight="bold">{globalCalendarMonth} {globalCalendarYear}</span></text>
+          <row cross="center" gap="2">
             <button
-              size="sm"
+              width="44"
+              height="44"
+              size="icon"
               variant="ghost"
               icon="chevron-left"
-              label="Previous month"></button>
+              label="Previous month"
+              on-press="global_calendar_previous_month"></button>
             <button
-              size="sm"
+              width="44"
+              height="44"
+              size="icon"
               variant="ghost"
               icon="chevron-right"
-              label="Next month"></button>
+              label="Next month"
+              on-press="global_calendar_next_month"></button>
           </row>
         </row>
         <separator/>
@@ -134,153 +106,214 @@
           <use template="global-calendar-weekday" label="Fri"/>
           <use template="global-calendar-weekday" label="Sat"/>
 
-          <use template="global-calendar-empty"/>
-          <use template="global-calendar-empty"/>
-          <use template="global-calendar-empty"/>
-          <use template="global-calendar-day" day="1"/>
-          <use template="global-calendar-day" day="2"/>
-          <use template="global-calendar-day" day="3"/>
-          <use template="global-calendar-day" day="4"/>
-
-          <use template="global-calendar-day" day="5"/>
-          <use template="global-calendar-day" day="6"/>
-          <use template="global-calendar-day" day="7"/>
-          <use template="global-calendar-day" day="8"/>
-          <use template="global-calendar-day" day="9"/>
-          <use template="global-calendar-day" day="10" marker="{calendarDay10Marker}"/>
-          <use template="global-calendar-day" day="11"/>
-
-          <use template="global-calendar-day" day="12"/>
-          <use template="global-calendar-day" day="13"/>
-          <use template="global-calendar-day" day="14"/>
-          <use template="global-calendar-day" day="15" marker="{calendarDay15Marker}"/>
-          <use template="global-calendar-day" day="16"/>
-          <use template="global-calendar-day" day="17"/>
-          <use template="global-calendar-day" day="18"/>
-
-          <use template="global-calendar-day" day="19"/>
-          <use template="global-calendar-day" day="20"/>
-          <use template="global-calendar-day" day="21"/>
-          <use template="global-calendar-day" day="22"/>
-          <use template="global-calendar-day" day="23"/>
-          <use template="global-calendar-day" day="24"/>
-          <use template="global-calendar-day" day="25"/>
-
-          <use template="global-calendar-day" day="26"/>
-          <use template="global-calendar-day" day="27" marker="{calendarDay27Marker}"/>
-          <use template="global-calendar-day" day="28"/>
-          <use template="global-calendar-today"/>
-          <use template="global-calendar-day" day="30"/>
-          <use
-            template="global-calendar-warning-day"
-            day="31"
-            marker="{calendarDay31Marker}"/>
-          <use template="global-calendar-empty"/>
+          <for each="globalCalendarDays" key="id" as="cell">
+            <column height="{globalCalendarDayHeight}" cross="stretch" background="surface_subtle">
+              <if test="{cell.blank}">
+                <spacer/>
+              </if>
+              <else>
+                <column
+                  grow="1"
+                  padding="7"
+                  main="space_between"
+                  cross="stretch"
+                  background="surface"
+                  role="button"
+                  label="{cell.actionLabel}"
+                  selected="{cell.selected}"
+                  on-press="global_calendar_select_day:{cell.day}">
+                  <if test="{cell.selected}">
+                    <row main="end">
+                      <badge variant="primary">{cell.dayLabel}</badge>
+                    </row>
+                  </if>
+                  <else>
+                    <text text-alignment="end">{cell.dayLabel}</text>
+                  </else>
+                  <if test="{cell.hasDeadlines}">
+                    <if test="{cell.overdue}">
+                      <text text-alignment="center" foreground="destructive">{cell.marker}</text>
+                    </if>
+                    <else>
+                      <if test="{cell.dueSoon}">
+                        <text text-alignment="center" foreground="warning">{cell.marker}</text>
+                      </if>
+                      <else>
+                        <if test="{cell.approaching}">
+                          <text text-alignment="center" foreground="success">{cell.marker}</text>
+                        </if>
+                        <else>
+                          <text text-alignment="center">{cell.marker}</text>
+                        </else>
+                      </else>
+                    </else>
+                  </if>
+                </column>
+              </else>
+            </column>
+          </for>
         </grid>
       </column>
     </card>
 
-    <text><span weight="bold">Deadlines for July 2026</span></text>
-    <if test="{hasVisibleGlobalDeadlines}">
-      <for each="visibleGlobalDeadlines" key="id" as="deadline">
+    <row cross="center" gap="10">
+      <text grow="1"><span weight="bold">{globalCalendarDeadlineHeading}</span></text>
+      <badge variant="secondary">{globalCalendarDeadlineCount}</badge>
+    </row>
+    <if test="{globalCalendarHasDeadlines}">
+      <for each="globalDeadlines" key="id" as="deadline">
         <use
           template="global-deadline-row"
-          date="{deadline.day}"
-          form="{deadline.form}"
-          title="{deadline.title}"
-          detail="{deadline.detail}"/>
+          date="{deadline.dateLabel}"
+          year="{deadline.yearLabel}"
+          form="{deadline.display_form_no}"
+          status="{deadline.statusLabel}"
+          tone="{deadline.tone}"
+          title="{deadline.form_name}"
+          period="{deadline.periodLabel}"
+          adjusted="{deadline.adjustmentVisible}"
+          adjustment="{deadline.adjustmentLabel}"/>
       </for>
     </if>
     <else>
-      <card padding="0">
-        <column padding="24" gap="8" cross="center">
-          <icon name="file-text" foreground="text_muted" width="22" height="22"/>
-          <text><span weight="bold">No upcoming deadlines</span></text>
-          <text wrap="true" text-alignment="center" foreground="text_muted">
-            Select one or more forms to show their July filing deadlines.
-          </text>
-        </column>
-      </card>
+      <use template="global-calendar-empty-state"/>
     </else>
   </column>
 </template>
 
-<template name="global-news-column">
-  <column grow="1" gap="12">
+<template name="global-news-column" args="weight=1">
+  <column grow="{weight}" gap="12">
     <row cross="center" gap="12">
       <text grow="1"><span weight="bold">Important News</span></text>
-      <button size="sm" variant="secondary">Refresh</button>
+      <if test="{constrainedLayout}">
+        <if test="{importantNewsRefreshing}">
+          <button
+            width="44"
+            height="44"
+            size="icon"
+            variant="secondary"
+            icon="refresh-cw"
+            label="Refreshing important news"
+            disabled="{importantNewsRefreshDisabled}"
+            on-press="refresh_important_news"></button>
+        </if>
+        <else>
+          <button
+            width="44"
+            height="44"
+            size="icon"
+            variant="secondary"
+            icon="refresh-cw"
+            label="Refresh important news"
+            disabled="{importantNewsRefreshDisabled}"
+            on-press="refresh_important_news"></button>
+        </else>
+      </if>
+      <else>
+        <if test="{importantNewsRefreshing}">
+          <button
+            size="sm"
+            variant="secondary"
+            icon="refresh-cw"
+            disabled="{importantNewsRefreshDisabled}"
+            on-press="refresh_important_news">Refreshing…</button>
+        </if>
+        <else>
+          <button
+            size="sm"
+            variant="secondary"
+            icon="refresh-cw"
+            disabled="{importantNewsRefreshDisabled}"
+            on-press="refresh_important_news">Refresh</button>
+        </else>
+      </else>
     </row>
 
-    <use
-      template="global-news-item"
-      title="Executive Order No. 115, s. 2026"
-      body="STRENGTHENING THE TECHNICAL COOPERATION COUNCIL OF THE PHILIPPINES"
-      meta="Wed, 29 Apr 2026 02:00:36 +0000"/>
-    <use
-      template="global-news-item"
-      title="Republic Act No. 12321"
-      body="AN ACT INSTITUTIONALIZING SUPPORT FOR PUBLIC BASIC EDUCATION SCHOOLS IN GEOGRAPHICALLY ISOLATED AND DISADVANTAGED AREAS (GIDA) AND UNDERSERVED COMMUNITIES, AND APPROPRIATING FUNDS THEREFOR"
-      meta="Wed, 22 Jul 2026 03:04:07 +0000"/>
-    <use
-      template="global-news-item"
-      title="DMW-Advisory No. 44, s. 2026"
-      body="OWWA E-CARD AS AN OFW'S PRIMARY IDENTIFICATION CARD AND VALID GOVERNMENT-ISSUED ID"
-      meta="Wed, 15 Jul 2026 02:00:38 +0000"/>
-    <use
-      template="global-news-item"
-      title="Executive Order No. 118, s. 2026"
-      body="MALACAÑAN PALACE MANILA BY THE PRESIDENT OF THE PHILIPPINES EXECUTIVE ORDER NO. 118 IMPOSITION OF A MANDATED PRICE CEILING ON IMPORTED RICE"
-      meta="Wed, 13 May 2026 08:00:36 +0000"/>
-    <use
-      template="global-news-item"
-      title="Proclamation No. 1317 s. 2026"
-      body="DECLARING WEDNESDAY, 01 JULY 2026 AS A SPECIAL (NON-WORKING) DAY IN THE CITY OF DIPOLOG, PROVINCE OF ZAMBOANGA DEL NORTE"
-      meta="Wed, 10 Jun 2026 04:05:31 +0000"/>
-    <use
-      template="global-news-item"
-      title="Proclamation No. 1316 s. 2026"
-      body="DECLARING WEDNESDAY, 01 JULY 2026, A SPECIAL (NON-WORKING) DAY IN THE MUNICIPALITY OF KIBAWE"
-      meta="Wed, 10 Jun 2026 04:00:31 +0000"/>
+    <if test="{importantNewsErrorVisible}">
+      <alert label="Important news refresh failed">
+        <row gap="10" cross="start">
+          <icon name="alert" foreground="destructive" width="20" height="20"/>
+          <column grow="1" gap="2">
+            <text><span weight="bold">Could not refresh important news</span></text>
+            <text wrap="true" foreground="text_muted">{importantNewsError}</text>
+          </column>
+          <button
+            width="44"
+            height="44"
+            size="icon"
+            variant="ghost"
+            radius="xl"
+            icon="x"
+            label="Dismiss important news error"
+            on-press="dismiss_important_news_error">
+          </button>
+        </row>
+      </alert>
+    </if>
+
+    <if test="{importantNewsLoadingEmpty}">
+      <column padding="20" gap="8" cross="center">
+        <icon name="refresh-cw" foreground="text_muted" width="24" height="24"/>
+        <text><span weight="bold">Loading important news…</span></text>
+        <text wrap="true" text-alignment="center" foreground="text_muted">
+          Checking the latest notices while keeping your cached news available.
+        </text>
+      </column>
+    </if>
+
+    <if test="{importantNewsEmpty}">
+      <column padding="20" gap="8" cross="center">
+        <icon name="file-text" foreground="text_muted" width="24" height="24"/>
+        <text><span weight="bold">No important news yet</span></text>
+        <text wrap="true" text-alignment="center" foreground="text_muted">
+          Refresh to check for the latest notices.
+        </text>
+      </column>
+    </if>
+
+    <if test="{importantNewsHasRows}">
+      <for each="importantNewsRows" key="id" as="item">
+        <use
+          template="global-news-item"
+          title="{item.title}"
+          summary="{item.summary}"
+          source="{item.source}"
+          published="{item.publishedLabel}"/>
+      </for>
+    </if>
   </column>
 </template>
 
-<template name="global-dashboard-content" args="padding">
-  <column padding="{padding}" gap="32">
-    <column gap="6">
-      <text size="heading">Global Dashboard</text>
-      <text wrap="true" foreground="text_muted">
-        Overview of all taxpayer profiles for 2026
-      </text>
-    </column>
-
+<template name="global-dashboard-content">
+  <column padding="{globalDashboardPagePadding}" gap="32">
     <if test="{constrainedLayout}">
-      <column gap="24">
-        <use template="global-calendar-column"/>
-        <use template="global-news-column"/>
-      </column>
     </if>
     <else>
+      <column gap="6">
+        <text size="heading">Global Dashboard</text>
+        <text wrap="true" foreground="text_muted">
+          Global tax schedule for {globalCalendarYear}. Profile choices do not filter this calendar.
+        </text>
+      </column>
+    </else>
+
+    <if test="{globalDashboardTwoColumnLayout}">
       <row gap="20" cross="start">
-        <use template="global-calendar-column"/>
-        <use template="global-news-column"/>
+      <use template="global-calendar-column"/>
+        <use template="global-news-column" weight="1"/>
       </row>
+    </if>
+    <else>
+      <column gap="24">
+      <use template="global-calendar-column"/>
+        <use template="global-news-column" weight="1"/>
+      </column>
     </else>
   </column>
 </template>
 
 <template name="global-dashboard-page">
   <scroll grow="1" global-key="page-global-dashboard" label="Global dashboard content">
-    <if test="{phoneLayout}">
-      <use template="global-dashboard-content" padding="16"/>
-    </if>
-    <else>
-      <if test="{desktopLayout}">
-        <use template="global-dashboard-content" padding="32"/>
-      </if>
-      <else>
-        <use template="global-dashboard-content" padding="24"/>
-      </else>
-    </else>
+    <use template="global-dashboard-content"/>
   </scroll>
 </template>

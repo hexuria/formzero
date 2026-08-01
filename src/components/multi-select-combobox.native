@@ -10,64 +10,92 @@
 -->
 <template
   name="multi-select-combobox"
-  args="value query open options allselected hiddencount width menuheight placeholder label">
-  <stack width="{width}">
+  args="placeholder label">
+  <stack width="{globalCalendarFormPickerWidth}">
     <!-- The summary trigger and search editor are deliberately separate.
          Mounting a menu around the same editor that initiated the click
          creates a focus/dismiss race on AppKit. -->
     <select
       size="sm"
+      height="{globalCalendarFormRowHeight}"
       placeholder="Select options..."
       label="{label}"
-      on-press="multi_select_open">{value}</select>
+      disabled="{globalCalendarFormPickerDisabled}"
+      on-press="multi_select_open">{globalCalendarFormSelectionText}</select>
 
-    <if test="{open}">
+    <if test="{globalCalendarFormPickerOpen}">
       <dropdown-menu
         anchor="below"
         anchor-alignment="stretch"
         anchor-offset="4"
-        height="{menuheight}"
+        height="{globalCalendarFormMenuHeight}"
         on-dismiss="multi_select_close">
-        <input
+        <!-- Search and bulk actions remain pinned; only the supplied option
+             rows participate in the bounded scrolling region below. -->
+        <search-field
           size="sm"
-          text="{query}"
+          height="{globalCalendarFormRowHeight}"
+          text="{globalCalendarFormQuery}"
           placeholder="{placeholder}"
           autofocus="true"
           on-input="multi_select_query_changed"/>
 
         <separator/>
 
-        <if test="{allselected}">
-          <menu-item icon="x" on-press="multi_select_clear_all">Deselect All</menu-item>
-        </if>
-        <else>
-          <menu-item icon="check" on-press="multi_select_select_all_filtered">Select All</menu-item>
-        </else>
-
-        <menu-item icon="x-circle" on-press="multi_select_clear_all">Clear All</menu-item>
+        <row height="{globalCalendarFormRowHeight}" gap="4" cross="center">
+          <if test="{globalCalendarAllFilteredSelected}">
+            <button
+              height="{globalCalendarFormRowHeight}"
+              size="sm"
+              variant="ghost"
+              icon="x"
+              on-press="multi_select_clear_all">Deselect All</button>
+          </if>
+          <else>
+            <button
+              height="{globalCalendarFormRowHeight}"
+              size="sm"
+              variant="ghost"
+              icon="check"
+              on-press="multi_select_select_all_filtered">Select All</button>
+            <if test="{globalCalendarAnyFormsSelected}">
+              <button
+                height="{globalCalendarFormRowHeight}"
+                size="sm"
+                variant="ghost"
+                icon="x-circle"
+                on-press="multi_select_clear_all">Clear All</button>
+            </if>
+          </else>
+        </row>
 
         <separator/>
 
-        <for each="options" key="id" as="option">
-          <if test="{option.selected}">
-            <menu-item
-              selected="true"
-              on-press="multi_select_toggle_option:{option.id}">{option.label}</menu-item>
-          </if>
-          <else>
-            <menu-item
-              selected="false"
-              on-press="multi_select_toggle_option:{option.id}">{option.label}</menu-item>
-          </else>
-        </for>
-        <else>
-          <menu-item disabled="true">No matching options</menu-item>
-        </else>
-
-        <if test="{hiddencount > 0}">
-          <separator/>
-          <menu-item disabled="true">{hiddencount} more matches - keep typing</menu-item>
-        </if>
+        <scroll
+          height="{globalCalendarFormOptionsHeight}"
+          overscroll="none"
+          label="{label}">
+          <column>
+            <for each="visibleGlobalCalendarFormOptions" key="id" as="option">
+              <if test="{option.selected}">
+                <menu-item
+                  height="{globalCalendarFormRowHeight}"
+                  icon="check"
+                  selected="true"
+                  on-press="multi_select_toggle_option:{option.id}">{option.label}</menu-item>
+              </if>
+              <else>
+                <menu-item
+                  height="{globalCalendarFormRowHeight}"
+                  selected="false"
+                  on-press="multi_select_toggle_option:{option.id}">{option.label}</menu-item>
+              </else>
+            </for>
+            <else>
+              <menu-item height="{globalCalendarFormRowHeight}" disabled="true">No matching options</menu-item>
+            </else>
+          </column>
+        </scroll>
       </dropdown-menu>
     </if>
   </stack>

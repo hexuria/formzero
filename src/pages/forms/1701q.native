@@ -1,471 +1,616 @@
-<template name="form-1701q-grid-1" args="columns">
-  <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">1 Taxable Year</text>
-      <input text="{incomeTaxYear}" placeholder="YYYY" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">2 Quarter</text>
-      <input text="{incomeTaxQuarter}" placeholder="Q1 / Q2 / Q3" disabled="true" />
-      <row gap="8">
-        <button
-          variant="outline"
-          selected="{incomeTaxQuarterQ1Selected}"
-          disabled="{incomeTaxInputsDisabled}"
-          on-press="income_tax_quarter_q1">
-          Q1
-        </button>
-        <button
-          variant="outline"
-          selected="{incomeTaxQuarterQ2Selected}"
-          disabled="{incomeTaxInputsDisabled}"
-          on-press="income_tax_quarter_q2">
-          Q2
-        </button>
-        <button
-          variant="outline"
-          selected="{incomeTaxQuarterQ3Selected}"
-          disabled="{incomeTaxInputsDisabled}"
-          on-press="income_tax_quarter_q3">
-          Q3
-        </button>
-      </row>
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">3 Amended Return?</text>
-      <input text="{incomeTaxAmendedReturn}" placeholder="No" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">4 Number of Sheets Attached</text>
-      <input
-        text="{incomeTaxSheetsAttached}"
-        placeholder="Enter number"
-        disabled="{incomeTaxInputsDisabled}"
-        on-input="income_tax_sheets_attached_input"/>
-    </column>
-  </grid>
+<!-- <text>January 2018 (ENCS)</text> -->
+<template name="form-1701q-tax-catalog-source-a">
+  <column>
+    <text>1 Taxable Year</text>
+    <input placeholder="YYYY" disabled="true"/>
+
+
+    <text>2 Quarter</text>
+    <input placeholder="Q1 / Q2 / Q3" disabled="true"/>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <text>3 Amended Return?</text>
+    <input placeholder="No" disabled="true"/>
+  </column>
 </template>
-
-<template name="form-1701q-grid-2" args="columns">
-  <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">5 TIN</text>
-      <input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">6 RDO Code</text>
-      <input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">7 Taxpayer / Filer Name</text>
-      <input text="{formFilerTaxpayerName}" placeholder="Registered name" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Registered Address</text>
-      <input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Date of Birth</text>
-      <input text="{formFilerDateOfBirth}" placeholder="MM / DD / YYYY" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Email Address</text>
-      <input text="{formFilerEmailAddress}" placeholder="name@example.com" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Citizenship</text>
-      <input text="{formFilerCitizenship}" placeholder="Citizenship" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Foreign Tax Number</text>
-      <input text="{formFilerForeignTaxNumber}" placeholder="Foreign tax number" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Income-tax-rate election</text>
-      <input text="{incomeTaxElection}" placeholder="Graduated / 8 percent" disabled="true" />
-      <row gap="8">
-        <button
-          variant="outline"
-          selected="{incomeTaxElectionGraduatedSelected}"
-          disabled="{incomeTaxInputsDisabled}"
-          on-press="income_tax_election_graduated">
-          Graduated
-        </button>
-        <button
-          variant="outline"
-          selected="{incomeTaxElectionEightPercentSelected}"
-          disabled="{incomeTaxInputsDisabled}"
-          on-press="income_tax_election_eight_percent">
-          8 percent
-        </button>
-      </row>
-    </column>
-  </grid>
+<!-- <text>4 Number of Sheets Attached</text> --><template name="form-1701q-selected-editor-input">
+  <input text="{exact1701QSelectedEditorText}" placeholder="Masked until explicitly revealed" disabled="{not exact1701QSelectedCanEdit}" on-input="exact_1701q_editor_input"/>
 </template>
+<template name="form-1701q-tax-catalog-source-b">
+  <column>
 
-<template name="form-1701q-grid-3" args="columns">
-  <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Spouse TIN</text>
-      <input text="{formSpouseTin}" placeholder="000-000-000-000" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Spouse RDO Code</text>
-      <input text="{formSpouseRdo}" placeholder="RDO" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Spouse Name</text>
-      <input text="{formSpouseName}" placeholder="Registered spouse name" disabled="true" />
-    </column>
-  </grid>
-</template>
 
-<template name="form-1701q-grid-4" args="columns">
-  <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Sales / Revenues / Receipts</text>
-      <input
-        text="{incomeTaxGraduatedSales}"
-        placeholder="Enter amount"
-        disabled="{incomeTaxGraduatedInputsDisabled}"
-        on-input="income_tax_graduated_sales_input"/>
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Cost of Sales / Services</text>
-      <input
-        text="{incomeTaxGraduatedCost}"
-        placeholder="Enter amount"
-        disabled="{incomeTaxGraduatedInputsDisabled}"
-        on-input="income_tax_graduated_cost_input"/>
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Allowable Deductions</text>
-      <input
-        text="{incomeTaxGraduatedDeductions}"
-        placeholder="Enter amount"
-        disabled="{incomeTaxGraduatedInputsDisabled}"
-        on-input="income_tax_graduated_deductions_input"/>
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Taxable Income (external policy result)</text>
-      <input
-        text="{incomeTaxGraduatedTaxableIncome}"
-        placeholder="Enter externally supplied amount"
-        disabled="{incomeTaxGraduatedInputsDisabled}"
-        on-input="income_tax_graduated_taxable_income_input"/>
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Income Tax Due (external policy result)</text>
-      <input
-        text="{incomeTaxGraduatedTaxDue}"
-        placeholder="Enter externally supplied amount"
-        disabled="{incomeTaxGraduatedInputsDisabled}"
-        on-input="income_tax_graduated_tax_due_input"/>
-    </column>
-  </grid>
-</template>
 
-<template name="form-1701q-grid-5" args="columns">
-  <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Gross Sales / Receipts</text>
-      <input
-        text="{incomeTaxEightGrossSales}"
-        placeholder="Enter amount"
-        disabled="{incomeTaxEightPercentInputsDisabled}"
-        on-input="income_tax_eight_gross_sales_input"/>
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Less: Non-Operating Income</text>
-      <input
-        text="{incomeTaxEightNonOperatingIncome}"
-        placeholder="Enter amount"
-        disabled="{incomeTaxEightPercentInputsDisabled}"
-        on-input="income_tax_eight_non_operating_input"/>
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Tax Due at 8 percent (external policy result)</text>
-      <input
-        text="{incomeTaxEightTaxDue}"
-        placeholder="Enter externally supplied amount"
-        disabled="{incomeTaxEightPercentInputsDisabled}"
-        on-input="income_tax_eight_tax_due_input"/>
-    </column>
-  </grid>
-</template>
 
-<template name="form-1701q-grid-6" args="columns">
-  <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Prior-quarter income tax payments</text>
-      <input
-        text="{incomeTaxPriorQuarterPayments}"
-        placeholder="Enter amount"
-        disabled="{incomeTaxInputsDisabled}"
-        on-input="income_tax_prior_payments_input"/>
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Creditable tax withheld (BIR Form 2307)</text>
-      <input
-        text="{incomeTaxWithheld2307}"
-        placeholder="Enter amount"
-        disabled="{incomeTaxInputsDisabled}"
-        on-input="income_tax_withheld_2307_input"/>
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Other Tax Credits / Payments</text>
-      <input
-        text="{incomeTaxOtherCredits}"
-        placeholder="Enter amount"
-        disabled="{incomeTaxInputsDisabled}"
-        on-input="income_tax_other_credits_input"/>
-    </column>
-  </grid>
-</template>
 
-<template name="form-1701q-grid-7" args="columns">
-  <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">63 Tax Payable / (Overpayment) (external policy result)</text>
-      <input
-        text="{incomeTaxPayableOrOverpayment}"
-        placeholder="Enter externally supplied signed amount"
-        disabled="{incomeTaxInputsDisabled}"
-        on-input="income_tax_payable_input"/>
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">64 Surcharge (external policy result)</text>
-      <input
-        text="{incomeTaxSurcharge}"
-        placeholder="Enter externally supplied amount"
-        disabled="{incomeTaxInputsDisabled}"
-        on-input="income_tax_surcharge_input"/>
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">65 Interest (external policy result)</text>
-      <input
-        text="{incomeTaxInterest}"
-        placeholder="Enter externally supplied amount"
-        disabled="{incomeTaxInputsDisabled}"
-        on-input="income_tax_interest_input"/>
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">66 Compromise (external policy result)</text>
-      <input
-        text="{incomeTaxCompromise}"
-        placeholder="Enter externally supplied amount"
-        disabled="{incomeTaxInputsDisabled}"
-        on-input="income_tax_compromise_input"/>
-    </column>
-  </grid>
-</template>
 
-<template name="form-1701q-table-1">
-  <column gap="16">
-    <row gap="8" cross="center">
-      <column gap="2" grow="1">
-        <text><span weight="bold">Payment rows</span></text>
-        <text foreground="text_muted" wrap="true">
-          Optional, bounded payment evidence. Each row keeps a stable persistence identity.
-        </text>
-      </column>
-      <button
-        variant="secondary"
-        disabled="{incomeTaxPaymentAddDisabled}"
-        on-press="income_tax_add_payment">
-        Add payment
-      </button>
-    </row>
 
-    <for each="incomeTaxPaymentRows" key="idLabel" as="payment">
-      <button
-        variant="outline"
-        selected="{payment.selected}"
-        disabled="{incomeTaxInputsDisabled}"
-        on-press="income_tax_select_payment:{payment.id}">
-        {payment.name} — {payment.bankOrAgencyText} — {payment.referenceText} — PHP {payment.amountText}
-      </button>
-    </for>
-    <else>
-      <text foreground="text_muted">No payment rows. Add one only when payment evidence exists.</text>
-    </else>
 
-    <table gap="4">
-      <table-row gap="8">
+    <text>5 TIN</text>
+    <input placeholder="000-000-000-000" disabled="true"/>
+
+
+    <text>6 RDO Code</text>
+    <input placeholder="RDO" disabled="true"/>
+
+
+    <text>7 Taxpayer / Filer Name</text>
+    <input placeholder="Registered name" disabled="true"/>
+
+
+    <text>Registered Address</text>
+    <input placeholder="Registered address" disabled="true"/>
+
+    <text>ZIP Code</text>
+    <input placeholder="ZIP code" disabled="true"/>
+
+
+    <text>Date of Birth</text>
+    <input placeholder="MM / DD / YYYY" disabled="true"/>
+
+
+    <text>Email Address</text>
+    <input placeholder="name@example.com" disabled="true"/>
+
+
+    <text>Citizenship</text>
+    <input placeholder="Citizenship" disabled="true"/>
+
+
+    <text>Foreign Tax Number</text>
+    <input placeholder="Foreign tax number" disabled="true"/>
+
+
+    <text>Income-tax-rate election</text>
+    <input placeholder="Graduated / 8 percent" disabled="true"/>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <text>Spouse TIN</text>
+    <input placeholder="000-000-000-000" disabled="true"/>
+
+
+    <text>Spouse RDO Code</text>
+    <input placeholder="RDO" disabled="true"/>
+
+
+    <text>Spouse Name</text>
+    <input placeholder="Registered spouse name" disabled="true"/>
+
+    <text>Spouse Citizenship</text>
+    <input placeholder="Spouse citizenship" disabled="true"/>
+
+    <text>Spouse Foreign Tax Number</text>
+    <input placeholder="Spouse foreign tax number" disabled="true"/>
+
+
+
+
+
+
+
+    <text>Sales / Revenues / Receipts</text>
+    <input placeholder="Enter amount" disabled="true"/>
+
+
+
+
+
+
+    <text>Cost of Sales / Services</text>
+    <input placeholder="Enter amount" disabled="true"/>
+
+
+
+
+
+
+    <text>Allowable Deductions</text>
+    <input placeholder="Enter amount" disabled="true"/>
+
+
+
+
+
+
+    <text>Taxable Income (external policy result)</text>
+    <input placeholder="Enter externally supplied amount" disabled="true"/>
+
+
+
+
+
+
+    <text>Income Tax Due (external policy result)</text>
+    <input placeholder="Enter externally supplied amount" disabled="true"/>
+
+
+
+
+
+
+
+
+
+
+
+    <text>Gross Sales / Receipts</text>
+    <input placeholder="Enter amount" disabled="true"/>
+
+
+
+
+
+
+    <text>Less: Non-Operating Income</text>
+    <input placeholder="Enter amount" disabled="true"/>
+
+
+
+
+
+
+    <text>Tax Due at 8 percent (external policy result)</text>
+    <input placeholder="Enter externally supplied amount" disabled="true"/>
+
+
+
+
+
+
+
+
+
+
+
+    <text>Prior-quarter income tax payments</text>
+    <input placeholder="Enter amount" disabled="true"/>
+
+
+
+
+
+
+    <text>Creditable tax withheld (BIR Form 2307)</text>
+    <input placeholder="Enter amount" disabled="true"/>
+
+
+
+
+
+
+    <text>Other Tax Credits / Payments</text>
+    <input placeholder="Enter amount" disabled="true"/>
+
+
+
+
+
+
+
+
+
+
+
+    <text>63 Tax Payable / (Overpayment) (external policy result)</text>
+    <input placeholder="Enter externally supplied signed amount" disabled="true"/>
+
+
+
+
+
+
+    <text>64 Surcharge (external policy result)</text>
+    <input placeholder="Enter externally supplied amount" disabled="true"/>
+
+
+
+
+
+
+    <text>65 Interest (external policy result)</text>
+    <input placeholder="Enter externally supplied amount" disabled="true"/>
+
+
+
+
+
+
+    <text>66 Compromise (external policy result)</text>
+    <input placeholder="Enter externally supplied amount" disabled="true"/>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <text>Bank / Agency</text>
+    <input placeholder="Bank or collecting agency" disabled="true"/>
+
+
+
+
+
+
+    <text>Reference</text>
+    <input placeholder="Reference number" disabled="true"/>
+
+
+
+
+
+
+    <text>Amount</text>
+    <input placeholder="Enter amount" disabled="true"/>
+    <table>
+      <table-row>
         <table-cell>Method</table-cell>
         <table-cell>Bank / Agency</table-cell>
         <table-cell>Reference</table-cell>
         <table-cell>Amount</table-cell>
       </table-row>
-      <table-row gap="8">
-        <table-cell>{incomeTaxPaymentMethod}</table-cell>
-        <table-cell>{incomeTaxPaymentBankOrAgency}</table-cell>
-        <table-cell>{incomeTaxPaymentReference}</table-cell>
-        <table-cell>{incomeTaxPaymentAmount}</table-cell>
-      </table-row>
     </table>
-
-    <if test="{incomeTaxPaymentEditorVisible}">
-      <separator/>
-      <column gap="12">
-        <row gap="8" cross="center">
-          <column gap="2" grow="1">
-            <text><span weight="bold">Selected payment</span></text>
-            <text foreground="text_muted">{incomeTaxPaymentMethod}</text>
-          </column>
-          <button
-            variant="ghost"
-            disabled="{incomeTaxPaymentRemoveDisabled}"
-            on-press="income_tax_remove_selected_payment">
-            Remove
-          </button>
-        </row>
-
-        <row gap="8">
-          <button
-            variant="outline"
-            selected="{incomeTaxPaymentMethodCashSelected}"
-            disabled="{incomeTaxInputsDisabled}"
-            on-press="income_tax_payment_method_cash">
-            Cash
-          </button>
-          <button
-            variant="outline"
-            selected="{incomeTaxPaymentMethodCheckSelected}"
-            disabled="{incomeTaxInputsDisabled}"
-            on-press="income_tax_payment_method_check">
-            Check
-          </button>
-          <button
-            variant="outline"
-            selected="{incomeTaxPaymentMethodTaxDebitMemoSelected}"
-            disabled="{incomeTaxInputsDisabled}"
-            on-press="income_tax_payment_method_tax_debit_memo">
-            Tax Debit Memo
-          </button>
-          <button
-            variant="outline"
-            selected="{incomeTaxPaymentMethodOtherSelected}"
-            disabled="{incomeTaxInputsDisabled}"
-            on-press="income_tax_payment_method_other">
-            Other
-          </button>
-        </row>
-
-        <column gap="12">
-          <column gap="4">
-            <text foreground="text_muted">Bank / Agency</text>
-            <input
-              text="{incomeTaxPaymentBankOrAgency}"
-              placeholder="Bank or collecting agency"
-              disabled="{incomeTaxInputsDisabled}"
-              on-input="income_tax_payment_bank_input"/>
-          </column>
-          <column gap="4">
-            <text foreground="text_muted">Reference</text>
-            <input
-              text="{incomeTaxPaymentReference}"
-              placeholder="Reference number"
-              disabled="{incomeTaxInputsDisabled}"
-              on-input="income_tax_payment_reference_input"/>
-          </column>
-          <column gap="4">
-            <text foreground="text_muted">Amount</text>
-            <input
-              text="{incomeTaxPaymentAmount}"
-              placeholder="Enter amount"
-              disabled="{incomeTaxInputsDisabled}"
-              on-input="income_tax_payment_amount_input"/>
-          </column>
-        </column>
-      </column>
-    </if>
   </column>
 </template>
 
-<template name="form-1701q-masthead">
-  <column>
-    <if test="{constrainedLayout}">
-      <column gap="16">
-      <column gap="6">
-        <text size="heading">BIR Form No. 1701Q</text>
-        <text>Quarterly Income Tax Return for Individuals, Estates and Trusts</text>
-        <row gap="8" cross="center">
-          <text foreground="text_muted" grow="1">January 2018 (ENCS)</text>
-          <badge>Draft</badge>
-        </row>
-      </column>
-        <column gap="8">
-        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
-        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
-        <button variant="secondary" on-press="show_aux_html_print_preview">HTML Preview</button>
-        <separator/>
-        <button
-          variant="secondary"
-          disabled="{incomeTaxSaveDisabled}"
-          on-press="save_recurring_form_draft">
-          Save Draft
-        </button>
-        <button variant="primary" disabled="true">Manual / External Filing</button>
-        </column>
-      </column>
-    </if>
-    <else>
-      <column gap="16">
-        <row gap="16" cross="center">
-          <column gap="4" grow="1">
-            <text size="heading">BIR Form No. 1701Q</text>
-            <text>Quarterly Income Tax Return for Individuals, Estates and Trusts</text>
-            <text foreground="text_muted">January 2018 (ENCS)</text>
-          </column>
-          <badge>Draft</badge>
-        </row>
-        <row gap="8">
-        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
-        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
-        <button variant="secondary" on-press="show_aux_html_print_preview">HTML Preview</button>
-        <spacer/>
-        <button
-          variant="secondary"
-          disabled="{incomeTaxSaveDisabled}"
-          on-press="save_recurring_form_draft">
-          Save Draft
-        </button>
-        <button variant="primary" disabled="true">Manual / External Filing</button>
-        </row>
-      </column>
-    </else>
-  </column>
+<!--
+  The two tax-catalog-source templates are never mounted. Their deliberate
+  spacing preserves the existing coarse catalog's stable source-line facts
+  while the visible page is replaced by the exact 173-control inventory.
+  Only form-1701q-selected-editor-input is mounted, as the bounded editor.
+-->
+<template name="form-1701q-boundaries">
+  <card>
+    <column padding="16" gap="8">
+      <text><span weight="bold">Fail-closed research boundaries</span></text>
+      <text wrap="true">Network transport: disabled</text>
+      <text wrap="true">Outbound encryption: unavailable - 0/67 private Windows vectors</text>
+      <text wrap="true">Local database: plaintext / synthetic-test-only until key custody</text>
+      <text wrap="true">Submission/queue: disabled</text>
+    </column>
+  </card>
 </template>
 
-<template name="form-1701q-filing-status">
+<template name="form-1701q-actions">
   <card>
     <column padding="20" gap="12">
-      <text size="heading">Filing status</text>
+      <row gap="12" cross="center">
+        <column grow="1" gap="2">
+          <text size="heading">Exact ordered workflow</text>
+          <text wrap="true" foreground="text_muted">
+            Calculate, run the four-rule Save gate, inspect an Editable candidate, then run full source-ordered validation before creating a Final Copy candidate.
+          </text>
+        </column>
+        <badge>{exact1701QPhase}</badge>
+      </row>
+
+      <text foreground="text_muted">{exact1701QHistory}</text>
+
       <if test="{constrainedLayout}">
-        <if test="{phoneLayout}">
-          <column gap="8">
-            <row cross="center">
-              <badge>Draft</badge>
-            </row>
-            <text foreground="text_muted">Next: Queued, Submitted, Confirmed, and Paid</text>
-          </column>
-        </if>
-        <else>
-          <row gap="12" cross="center">
-            <badge>Draft</badge>
-            <text foreground="text_muted" grow="1">Next: Queued, Submitted, Confirmed, and Paid</text>
-          </row>
-        </else>
+        <column gap="8">
+          <button
+            variant="secondary"
+            disabled="{not exact1701QCanCalculate}"
+            on-press="exact_1701q_calculate">
+            1. Calculate
+          </button>
+          <button
+            variant="secondary"
+            disabled="{not exact1701QCanValidateSave}"
+            on-press="exact_1701q_validate_save">
+            2. Save validation
+          </button>
+          <button
+            variant="secondary"
+            disabled="{not exact1701QCanGenerateEditableCandidate}"
+            on-press="exact_1701q_generate_editable_candidate">
+            3. Build Editable candidate
+          </button>
+          <button
+            variant="secondary"
+            disabled="{not exact1701QCanValidateFull}"
+            on-press="exact_1701q_validate_full">
+            4. Full validation
+          </button>
+          <button
+            variant="secondary"
+            disabled="{not exact1701QCanGenerateFinalCandidate}"
+            on-press="exact_1701q_generate_final_candidate">
+            5. Build Final Copy candidate
+          </button>
+        </column>
       </if>
       <else>
-        <stepper active="0">
-          <step>Draft</step>
-          <step>Queued</step>
-          <step>Submitted</step>
-          <step>Confirmed</step>
-          <step>Paid</step>
-        </stepper>
+        <row gap="8">
+          <button
+            variant="secondary"
+            disabled="{not exact1701QCanCalculate}"
+            on-press="exact_1701q_calculate">
+            1. Calculate
+          </button>
+          <button
+            variant="secondary"
+            disabled="{not exact1701QCanValidateSave}"
+            on-press="exact_1701q_validate_save">
+            2. Save validation
+          </button>
+          <button
+            variant="secondary"
+            disabled="{not exact1701QCanGenerateEditableCandidate}"
+            on-press="exact_1701q_generate_editable_candidate">
+            3. Editable candidate
+          </button>
+          <button
+            variant="secondary"
+            disabled="{not exact1701QCanValidateFull}"
+            on-press="exact_1701q_validate_full">
+            4. Full validation
+          </button>
+          <button
+            variant="secondary"
+            disabled="{not exact1701QCanGenerateFinalCandidate}"
+            on-press="exact_1701q_generate_final_candidate">
+            5. Final Copy candidate
+          </button>
+        </row>
+      </else>
+    </column>
+  </card>
+</template>
+
+<template name="form-1701q-artifact-lab">
+  <column>
+    <if test="{exact1701QCandidateVisible}">
+      <card>
+        <column padding="20" gap="12">
+        <row gap="12" cross="center">
+          <column grow="1" gap="2">
+            <text size="heading">Artifact Lab - generated plaintext</text>
+            <text wrap="true">{exact1701QCandidateLabel}</text>
+          </column>
+          <badge>{exact1701QCandidateQualification}</badge>
+        </row>
+
+        <text>{exact1701QCandidateShape}</text>
+        <text foreground="text_muted" wrap="true">{exact1701QCandidateMasked}</text>
+        <button
+          variant="outline"
+          on-press="exact_1701q_toggle_generated_reveal">
+          {exact1701QGeneratedRevealLabel}
+        </button>
+
+        <if test="{exact1701QGeneratedRevealed}">
+          <column
+            padding="12"
+            gap="4"
+            background="surface_subtle"
+            radius="md">
+            <text wrap="true">{exact1701QGeneratedText}</text>
+          </column>
+        </if>
+
+        <separator/>
+        <text wrap="true" foreground="text_muted">
+          Imported ciphertext: unavailable until bounded import and a secure SecretProvider are connected.
+        </text>
+        <text wrap="true" foreground="text_muted">
+          Decrypted plaintext: unavailable. No protocol-secret text input is exposed.
+        </text>
+        </column>
+      </card>
+    </if>
+  </column>
+</template>
+
+<template name="form-1701q-selected-control">
+  <column>
+    <if test="{exact1701QSelectedVisible}">
+      <card>
+        <column padding="20" gap="12">
+        <row gap="12" cross="center">
+          <column grow="1" gap="2">
+            <text size="heading">Selected exact control</text>
+            <text wrap="true">{exact1701QSelectedId}</text>
+            <text wrap="true" foreground="text_muted">{exact1701QSelectedMeta}</text>
+          </column>
+          <badge>{exact1701QSelectedValueLabel}</badge>
+        </row>
+
+        <if test="{exact1701QSelectedIsRadio}">
+          <row gap="8" cross="center">
+            <text grow="1">{exact1701QSelectedRadioLabel}</text>
+            <button
+              variant="outline"
+              disabled="{not exact1701QSelectedCanToggleRadio}"
+              on-press="exact_1701q_toggle_selected_radio">
+              Toggle exact radio
+            </button>
+          </row>
+        </if>
+        <else>
+          <button
+            variant="outline"
+            disabled="{not exact1701QSelectedCanReveal}"
+            on-press="exact_1701q_toggle_selected_reveal">
+            {exact1701QSelectedRevealLabel}
+          </button>
+          <if test="{exact1701QSelectedCanReveal}">
+            <use template="form-1701q-selected-editor-input"/>
+            <button
+              variant="secondary"
+              disabled="{not exact1701QSelectedCanEdit}"
+              on-press="exact_1701q_commit_selected">
+              Commit reviewed value
+            </button>
+          </if>
+        </else>
+        </column>
+      </card>
+    </if>
+  </column>
+</template>
+
+<template name="form-1701q-control-list">
+  <card>
+    <column padding="20" gap="12">
+      <column gap="2">
+        <text size="heading">Exact live control inventory - 173 controls</text>
+        <text wrap="true" foreground="text_muted">
+          Values stay masked in this list. Selecting a control never reveals it. The ordered row inventory is a view only and is never serialized.
+        </text>
+      </column>
+
+      <for each="exact1701QRows" key="idLabel" as="control">
+        <button
+          variant="outline"
+          selected="{control.selected}"
+          on-press="exact_1701q_select_control:{control.slot}">
+          {control.metaLabel} - {control.idLabel} - {control.accessLabel} - {control.valueLabel}
+        </button>
+      </for>
+      <else>
+        <text foreground="text_muted">
+          No exact controls are available because the workspace is blocked or not attached.
+        </text>
       </else>
     </column>
   </card>
@@ -474,150 +619,80 @@
 <template name="form-1701q">
   <scroll grow="1" global-key="page-form-1701q">
     <column padding="32" gap="24">
-      <use template="form-1701q-masthead"/>
+      <if test="{constrainedLayout}">
+        <column gap="12">
+          <column gap="4">
+            <text size="heading">BIR Form No. 1701Q</text>
+            <text wrap="true">Exact January 2018 (ENCS) core-logic research editor</text>
+            <text foreground="text_muted">{exact1701QFilingContext}</text>
+          </column>
+          <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+        </column>
+      </if>
+      <else>
+        <row gap="16" cross="center">
+          <column grow="1" gap="4">
+            <text size="heading">BIR Form No. 1701Q</text>
+            <text>Exact January 2018 (ENCS) core-logic research editor</text>
+            <text foreground="text_muted">{exact1701QFilingContext}</text>
+          </column>
+          <badge>Research / candidate</badge>
+          <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+        </row>
+      </else>
+
+      <use template="form-1701q-boundaries"/>
 
       <!-- @include-template tax-profile-form-context -->
 
-      <if test="{incomeTaxNoticeVisible}">
+      <if test="{exact1701QNoticeVisible}">
         <row gap="8" cross="center">
-          <badge variant="{incomeTaxNoticeTone}">{incomeTaxNotice}</badge>
+          <badge variant="{exact1701QNoticeTone}">{exact1701QNotice}</badge>
         </row>
       </if>
 
-      <use template="form-1701q-filing-status"/>
-
       <card>
         <column padding="20" gap="12">
-          <text size="heading">ITEMS 1-4 - FILING PERIOD</text>
-          <if test="{constrainedLayout}">
-            <use template="form-1701q-grid-1" columns="1"/>
-          </if>
-          <if test="{tabletLayout}">
-            <use template="form-1701q-grid-1" columns="2"/>
-          </if>
-          <if test="{desktopLayout}">
-            <use template="form-1701q-grid-1" columns="4"/>
-          </if>
-        </column>
-      </card>
-
-      <card>
-        <column padding="20" gap="12">
-          <text size="heading">PART I - ITEMS 5-16A</text>
-          <if test="{constrainedLayout}">
-            <use template="form-1701q-grid-2" columns="1"/>
-          </if>
-          <if test="{tabletLayout}">
-            <use template="form-1701q-grid-2" columns="2"/>
-          </if>
-          <if test="{desktopLayout}">
-            <use template="form-1701q-grid-2" columns="3"/>
-          </if>
-        </column>
-      </card>
-
-      <card>
-        <column padding="20" gap="12">
-          <text size="heading">PART II - ITEMS 17-25A (SPOUSE)</text>
-          <if test="{constrainedLayout}">
-            <use template="form-1701q-grid-3" columns="1"/>
-          </if>
-          <if test="{tabletLayout}">
-            <use template="form-1701q-grid-3" columns="2"/>
-          </if>
-          <if test="{desktopLayout}">
-            <use template="form-1701q-grid-3" columns="3"/>
-          </if>
-        </column>
-      </card>
-
-      <card>
-        <column padding="20" gap="12">
-          <text size="heading">PART V - SCHEDULE I: GRADUATED IT RATE</text>
-          <text foreground="text_muted" wrap="true">
-            Taxable income and income tax due are explicit externally supplied policy results. This form does not infer a rate or tax table.
+          <text size="heading">Open filing workspace</text>
+          <text wrap="true" foreground="text_muted">
+            Original and Amended are separate exact workspaces. Opening either action creates a new workspace identity; existing material work must be explicitly discarded first.
           </text>
-          <if test="{constrainedLayout}">
-            <use template="form-1701q-grid-4" columns="1"/>
-          </if>
-          <if test="{tabletLayout}">
-            <use template="form-1701q-grid-4" columns="2"/>
-          </if>
-          <if test="{desktopLayout}">
-            <use template="form-1701q-grid-4" columns="3"/>
-          </if>
+          <row gap="12">
+            <button
+              variant="outline"
+              on-press="exact_1701q_open_original">
+              Open Original workspace
+            </button>
+            <button
+              variant="outline"
+              on-press="exact_1701q_open_amended">
+              Open Amended workspace
+            </button>
+          </row>
         </column>
       </card>
 
-      <card>
-        <column padding="20" gap="12">
-          <text size="heading">PART V - SCHEDULE II: 8% IT RATE</text>
-          <text foreground="text_muted" wrap="true">
-            Tax due is an explicit externally supplied policy result. Selecting this election does not calculate or assume an 8 percent policy.
-          </text>
-          <if test="{constrainedLayout}">
-            <use template="form-1701q-grid-5" columns="1"/>
-          </if>
-          <if test="{tabletLayout}">
-            <use template="form-1701q-grid-5" columns="2"/>
-          </if>
-          <if test="{desktopLayout}">
-            <use template="form-1701q-grid-5" columns="3"/>
-          </if>
-        </column>
-      </card>
-
-      <card>
-        <column padding="20" gap="12">
-          <text size="heading">PART V - SCHEDULE III: TAX CREDITS/PAYMENTS</text>
-          <if test="{constrainedLayout}">
-            <use template="form-1701q-grid-6" columns="1"/>
-          </if>
-          <if test="{tabletLayout}">
-            <use template="form-1701q-grid-6" columns="2"/>
-          </if>
-          <if test="{desktopLayout}">
-            <use template="form-1701q-grid-6" columns="3"/>
-          </if>
-        </column>
-      </card>
-
-      <card>
-        <column padding="20" gap="12">
-          <text size="heading">PART V - ITEMS 63-68</text>
-          <if test="{constrainedLayout}">
-            <use template="form-1701q-grid-7" columns="1"/>
-          </if>
-          <if test="{tabletLayout}">
-            <use template="form-1701q-grid-7" columns="2"/>
-          </if>
-          <if test="{desktopLayout}">
-            <use template="form-1701q-grid-7" columns="3"/>
-          </if>
-          <separator />
-          <if test="{constrainedLayout}">
-            <column gap="8">
-              <text>PART III - TOTAL TAX PAYABLE</text>
-              <row cross="center">
-                <badge>{incomeTaxTotalTaxPayable}</badge>
-              </row>
-            </column>
-          </if>
-          <else>
-            <row gap="8">
-              <text grow="1">PART III - TOTAL TAX PAYABLE</text>
-              <badge>{incomeTaxTotalTaxPayable}</badge>
-            </row>
-          </else>
-        </column>
-      </card>
-
-      <card>
-        <column padding="20" gap="12">
-          <text size="heading">PART IV - DETAILS OF PAYMENT</text>
-          <use template="form-1701q-table-1"/>
-        </column>
-      </card>
+      <if test="{exact1701QReady}">
+        <button
+          variant="outline"
+          on-press="exact_1701q_discard_workspace">
+          Discard and close exact workspace
+        </button>
+        <use template="form-1701q-actions"/>
+        <use template="form-1701q-artifact-lab"/>
+        <use template="form-1701q-selected-control"/>
+        <use template="form-1701q-control-list"/>
+      </if>
+      <else>
+        <card>
+          <column padding="20" gap="8">
+            <text size="heading">Exact workspace unavailable</text>
+            <text wrap="true" foreground="text_muted">
+              Resolve the tax-profile projection or Windows runtime failure shown above. No fallback serializer or legacy draft editor is used by this page.
+            </text>
+          </column>
+        </card>
+      </else>
     </column>
   </scroll>
 </template>

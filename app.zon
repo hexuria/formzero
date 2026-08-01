@@ -15,8 +15,8 @@
             .{ .id = 6, .path = "assets/icon.png" },
         },
     },
-    .platforms = .{"macos"},
-    .permissions = .{ "view", "command" },
+    .platforms = .{ "macos", "windows" },
+    .permissions = .{ "view", "command", "network" },
     .capabilities = .{ "native_views", "gpu_surfaces" },
     .shell = .{
         .windows = .{
@@ -30,7 +30,7 @@
                 .restore_state = false,
                 .restore_policy = "center_on_primary",
                 .views = .{
-                    .{ .label = "main-canvas", .kind = "gpu_surface", .fill = true, .role = "eBIRForms application", .accessibility_label = "eBIRForms", .gpu_backend = "metal", .gpu_pixel_format = "bgra8_unorm", .gpu_present_mode = "timer", .gpu_alpha_mode = "opaque", .gpu_color_space = "srgb", .gpu_vsync = true },
+                    .{ .label = "main-canvas", .kind = "gpu_surface", .fill = true, .role = "eBIRForms application", .accessibility_label = "eBIRForms", .gpu_backend = "software", .gpu_pixel_format = "bgra8_unorm", .gpu_present_mode = "timer", .gpu_alpha_mode = "opaque", .gpu_color_space = "srgb", .gpu_vsync = true },
                 },
             },
         },
@@ -42,5 +42,5 @@
         },
     },
     .web_engine = "system",
-    .cef = .{ .dir = "third_party/cef/macos", .auto_install = false },
+    .webview_layer = "exclude",
 }

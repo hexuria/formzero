@@ -17,6 +17,7 @@ const canvas = native_sdk.canvas;
 
 pub const max_profiles: usize = 64;
 pub const max_registered_forms: usize = catalog.registry_count;
+pub const max_draft_summaries: usize = 64;
 
 pub const Error = error{
     FieldTooLong,
@@ -80,6 +81,10 @@ const NameText = FixedText(160);
 const TinText = FixedText(32);
 const InitialsText = FixedText(8);
 const FormCodeText = FixedText(32);
+const DraftIdText = FixedText(64);
+const PeriodKeyText = FixedText(32);
+const LifecycleText = FixedText(16);
+const IntentText = FixedText(16);
 const NoticeText = FixedText(256);
 
 pub const RevisionContext = struct {
@@ -123,6 +128,63 @@ pub const ProfileRow = struct {
         return self.initials.text();
     }
 };
+
+pub const DraftSummaryRow = struct {
+    slot: usize,
+    draft_id: DraftIdText = .{},
+    form_code: FormCodeText = .{},
+    period_key: PeriodKeyText = .{},
+    lifecycle: LifecycleText = .{},
+    intent: IntentText = .{},
+
+    pub fn key(self: *const DraftSummaryRow) canvas.UiKey {
+        return canvas.uiKey(self.slot);
+    }
+
+    pub fn draftId(self: *const DraftSummaryRow) []const u8 {
+        return self.draft_id.text();
+    }
+
+    pub fn formCode(self: *const DraftSummaryRow) []const u8 {
+        return self.form_code.text();
+    }
+
+    pub fn periodKey(self: *const DraftSummaryRow) []const u8 {
+        return self.period_key.text();
+    }
+
+    pub fn lifecycleText(self: *const DraftSummaryRow) []const u8 {
+        return self.lifecycle.text();
+    }
+
+    pub fn intentText(self: *const DraftSummaryRow) []const u8 {
+        return self.intent.text();
+    }
+};
+
+const CalendarFormSetResolution = enum {
+    /// No successful persistence read exists for this profile/year. Callers
+    /// must treat the cache as authoritative-empty, never catalog-all.
+    unavailable,
+    /// A successful query found no configured Forms Set.
+    catalog_fallback,
+    /// A successful query found an authoritative set, including zero forms.
+    configured,
+};
+
+const CalendarFormSetCache = struct {
+    tax_year: i32 = 0,
+    resolution: CalendarFormSetResolution = .unavailable,
+    codes: [max_registered_forms]FormCodeText = undefined,
+    count: usize = 0,
+};
+
+fn calendarFormSetCacheEntries(tax_year: i32) [2]CalendarFormSetCache {
+    var entries: [2]CalendarFormSetCache = .{ .{}, .{} };
+    entries[0].tax_year = tax_year;
+    if (tax_year > 1) entries[1].tax_year = tax_year - 1;
+    return entries;
+}
 
 pub const State = struct {
     allocator: ?std.mem.Allocator = null,
@@ -169,13 +231,20 @@ pub const State = struct {
     default_effective_from: FixedText(10) = .{},
     default_tax_year: i32 = 2026,
 
-    cached_form_year: i32 = 0,
-    cached_form_set_configured: bool = false,
-    cached_form_codes: [max_registered_forms]FormCodeText = undefined,
-    cached_form_count: usize = 0,
+    /// The dashboard renders deadlines for the viewed year while some of
+    /// those deadlines belong to the immediately preceding taxable year.
+    /// Keep both authoritative Forms Sets in memory so view rendering never
+    /// performs persistence I/O and an explicitly empty set stays distinct
+    /// from the catalog fallback.
+    cached_calendar_form_sets: [2]CalendarFormSetCache = .{ .{}, .{} },
+
+    draft_summaries: [max_draft_summaries]DraftSummaryRow = undefined,
+    draft_summary_count: usize = 0,
+    draft_summaries_truncated: bool = false,
 
     notice: NoticeText = .{},
     notice_kind: NoticeKind = .neutral,
+    notice_epoch: u64 = 0,
 
     pub fn attach(
         self: *State,
@@ -226,12 +295,26 @@ pub const State = struct {
         return self.notice.text();
     }
 
-    pub fn noticeTone(self: *const State) []const u8 {
-        return switch (self.notice_kind) {
-            .neutral => "secondary",
-            .success => "primary",
-            .failure => "destructive",
-        };
+    pub fn noticeSuccess(self: *const State) bool {
+        return self.notice_kind == .success;
+    }
+
+    pub fn noticeFailure(self: *const State) bool {
+        return self.notice_kind == .failure;
+    }
+
+    pub fn noticeAutoDismissible(self: *const State) bool {
+        return self.noticeVisible() and self.notice_kind != .failure;
+    }
+
+    pub fn noticeEpoch(self: *const State) u64 {
+        return self.notice_epoch;
+    }
+
+    pub fn dismissNotice(self: *State) void {
+        self.notice.clear();
+        self.notice_kind = .neutral;
+        self.notice_epoch +%= 1;
     }
 
     pub fn saveDisabled(self: *const State) bool {
@@ -298,17 +381,32 @@ pub const State = struct {
         return subjectKindLabel(row.subject_kind);
     }
 
+    pub fn draftSummaries(self: *const State) []const DraftSummaryRow {
+        return self.draft_summaries[0..self.draft_summary_count];
+    }
+
     pub fn selectSlot(self: *State, slot: usize) !void {
         if (slot >= self.profile_count) return persistence.Error.NotFound;
+        // Invalidate before changing identity or performing any fallible load.
+        // A failed profile switch must not expose the prior profile's forms.
+        self.invalidateCalendarFormSetCache(self.default_tax_year);
         try self.selected_id.set(self.profiles[slot].stable_id.text());
         self.has_selection = true;
         self.markActiveRow();
         try self.loadSelectedRevision(true);
         try self.refreshCalendarFormSet(self.default_tax_year);
+        try self.refreshDraftSummariesForYear(self.default_tax_year);
     }
 
     pub fn select(self: *State, slot: usize) void {
         self.selectSlot(slot) catch |err| self.setError(err);
+    }
+
+    /// Repairs only the presentation flags derived from the already-selected
+    /// stable profile identity. It does not reload a revision or overwrite an
+    /// in-progress profile editor.
+    pub fn reconcileSelectedRow(self: *State) void {
+        self.markActiveRow();
     }
 
     pub fn startNew(self: *State) void {
@@ -385,9 +483,12 @@ pub const State = struct {
         );
     }
 
-    pub fn save(self: *State) void {
+    pub fn save(self: *State) bool {
         const was_new = self.editing_new;
-        self.saveFallible() catch |err| return self.setError(err);
+        self.saveFallible() catch |err| {
+            self.setError(err);
+            return false;
+        };
         self.setNotice(
             .success,
             if (was_new)
@@ -395,6 +496,7 @@ pub const State = struct {
             else
                 "A new immutable profile revision was saved.",
         );
+        return true;
     }
 
     fn saveFallible(self: *State) !void {
@@ -574,6 +676,52 @@ pub const State = struct {
         setTaxYearBuffer(&self.tax_year, year);
         try self.loadEditorFormSet(year);
         try self.refreshCalendarFormSet(year);
+        try self.refreshDraftSummariesForYear(year);
+    }
+
+    /// Compatibility wrapper for screens that still follow the application's
+    /// default year. Calendar views should call `refreshDraftSummariesForYear`
+    /// whenever their viewed year changes.
+    pub fn refreshDraftSummaries(self: *State) !void {
+        return self.refreshDraftSummariesForYear(self.default_tax_year);
+    }
+
+    /// Loads only filing work relevant to a dashboard year: that viewed tax
+    /// year and the immediately preceding taxable year. Older history remains
+    /// persisted but cannot consume the bounded presentation cache.
+    pub fn refreshDraftSummariesForYear(
+        self: *State,
+        viewed_tax_year: i32,
+    ) !void {
+        const allocator = self.allocator orelse return error.NotAttached;
+        const store = self.store orelse return error.NotAttached;
+        self.draft_summary_count = 0;
+        self.draft_summaries_truncated = false;
+        const profile_id = self.selectedProfileId() orelse return;
+        var summaries = try store.listDraftSummariesForProfile(
+            allocator,
+            profile_id,
+            viewed_tax_year,
+        );
+        defer summaries.deinit(allocator);
+        self.draft_summaries_truncated =
+            summaries.items.len > self.draft_summaries.len;
+        for (
+            summaries.items[0..@min(
+                summaries.items.len,
+                self.draft_summaries.len,
+            )],
+            0..,
+        ) |summary, slot| {
+            var row = DraftSummaryRow{ .slot = slot };
+            try row.draft_id.set(summary.id);
+            try row.form_code.set(summary.form_code);
+            try row.period_key.set(summary.period_key);
+            try row.lifecycle.set(summary.lifecycle);
+            try row.intent.set(summary.intent);
+            self.draft_summaries[self.draft_summary_count] = row;
+            self.draft_summary_count += 1;
+        }
     }
 
     pub fn taxYearInputChanged(self: *State) void {
@@ -664,32 +812,64 @@ pub const State = struct {
     }
 
     pub fn refreshCalendarFormSet(self: *State, tax_year: i32) !void {
+        if (tax_year < 1 or tax_year > 9999) return error.InvalidTaxYear;
+        // Publish an unavailable, authoritative-empty cache first. Any later
+        // persistence or bounded-copy failure therefore remains fail-closed
+        // and cannot leave stale data from a prior profile or viewed year.
+        self.invalidateCalendarFormSetCache(tax_year);
+
         const allocator = self.allocator orelse return error.NotAttached;
         const store = self.store orelse return error.NotAttached;
-        self.cached_form_year = tax_year;
-        self.cached_form_set_configured = false;
-        self.cached_form_count = 0;
-        const profile_id = self.selectedProfileId() orelse return;
-        var maybe_set = try store.getFormSet(allocator, profile_id, tax_year);
-        if (maybe_set) |*form_set| {
-            defer form_set.deinit(allocator);
-            self.cached_form_set_configured = true;
-            if (form_set.items.len > self.cached_form_codes.len) {
-                return error.TooManyForms;
+
+        var refreshed = calendarFormSetCacheEntries(tax_year);
+
+        if (self.selectedProfileId()) |profile_id| {
+            for (&refreshed) |*cache| {
+                if (cache.tax_year == 0) continue;
+                var maybe_set = try store.getFormSet(
+                    allocator,
+                    profile_id,
+                    cache.tax_year,
+                );
+                if (maybe_set) |*form_set| {
+                    defer form_set.deinit(allocator);
+                    cache.resolution = .configured;
+                    if (form_set.items.len > cache.codes.len) {
+                        return error.TooManyForms;
+                    }
+                    for (form_set.items, 0..) |item, index| {
+                        try cache.codes[index].set(item.form_code);
+                    }
+                    cache.count = form_set.items.len;
+                } else {
+                    cache.resolution = .catalog_fallback;
+                }
             }
-            for (form_set.items, 0..) |item, index| {
-                try self.cached_form_codes[index].set(item.form_code);
-            }
-            self.cached_form_count = form_set.items.len;
         }
+
+        // Publish both successful resolutions together. Until this point the
+        // visible cache remains unavailable rather than partially refreshed.
+        self.cached_calendar_form_sets = refreshed;
     }
 
+    /// Tells existing calendar callers whether cached codes are authoritative.
+    /// `false` is reserved for a successfully resolved catalog fallback.
+    /// Missing or failed resolutions return `true` with zero cached codes so
+    /// callers that branch on this API remain fail-closed.
     pub fn calendarFormSetConfigured(
         self: *const State,
         tax_year: i32,
     ) bool {
-        return self.cached_form_year == tax_year and
-            self.cached_form_set_configured;
+        const cache = self.calendarFormSetCache(tax_year) orelse return true;
+        return cache.resolution != .catalog_fallback;
+    }
+
+    pub fn calendarFormSetAvailable(
+        self: *const State,
+        tax_year: i32,
+    ) bool {
+        const cache = self.calendarFormSetCache(tax_year) orelse return false;
+        return cache.resolution != .unavailable;
     }
 
     pub fn calendarFormCodes(
@@ -697,31 +877,161 @@ pub const State = struct {
         arena: std.mem.Allocator,
         tax_year: i32,
     ) []const []const u8 {
-        if (!self.calendarFormSetConfigured(tax_year)) return &.{};
-        const output = arena.alloc([]const u8, self.cached_form_count) catch
-            return &.{};
-        for (
-            self.cached_form_codes[0..self.cached_form_count],
-            0..,
-        ) |*code, index| {
+        const cache = self.calendarFormSetCache(tax_year) orelse return &.{};
+        if (cache.resolution != .configured) return &.{};
+        const output = arena.alloc([]const u8, cache.count) catch return &.{};
+        for (cache.codes[0..cache.count], 0..) |*code, index| {
             output[index] = code.text();
         }
         return output;
     }
 
-    /// Unconfigured years use the caller's catalog fallback. Once a Forms Set
-    /// is configured it is authoritative, including when it contains no
-    /// entries.
+    /// Successfully queried, unconfigured years use the catalog fallback.
+    /// Configured sets are authoritative, including when empty; unavailable
+    /// or uncached years are also authoritative-empty until a refresh succeeds.
     pub fn formAvailable(
         self: *const State,
         tax_year: i32,
         form_code: []const u8,
     ) bool {
-        if (!self.calendarFormSetConfigured(tax_year)) return true;
-        for (self.cached_form_codes[0..self.cached_form_count]) |*code| {
+        const cache = self.calendarFormSetCache(tax_year) orelse return false;
+        if (cache.resolution == .unavailable) return false;
+        if (cache.resolution == .catalog_fallback) return true;
+        for (cache.codes[0..cache.count]) |*code| {
             if (std.ascii.eqlIgnoreCase(code.text(), form_code)) return true;
         }
         return false;
+    }
+
+    fn calendarFormSetCache(
+        self: *const State,
+        tax_year: i32,
+    ) ?*const CalendarFormSetCache {
+        for (&self.cached_calendar_form_sets) |*cache| {
+            if (cache.tax_year == tax_year) return cache;
+        }
+        return null;
+    }
+
+    fn invalidateCalendarFormSetCache(self: *State, tax_year: i32) void {
+        self.cached_calendar_form_sets = calendarFormSetCacheEntries(tax_year);
+    }
+
+    /// Loads the profile-level calendar filter into caller-owned selection
+    /// state. No persisted parent means every current catalog form is
+    /// selected; a present parent with no rows means none are selected.
+    pub fn refreshCalendarFormSelection(
+        self: *State,
+        catalog_codes: []const []const u8,
+        selected: []bool,
+    ) bool {
+        self.refreshCalendarFormSelectionFallible(
+            catalog_codes,
+            selected,
+        ) catch {
+            // A durable preference that could not be read must never be
+            // widened to every form. Keep the caller fail-closed until a
+            // later refresh succeeds.
+            @memset(selected, false);
+            self.setNotice(
+                .failure,
+                "Calendar form choices could not be loaded. Deadlines and export are unavailable until the profile is reopened.",
+            );
+            return false;
+        };
+        return true;
+    }
+
+    fn refreshCalendarFormSelectionFallible(
+        self: *State,
+        catalog_codes: []const []const u8,
+        selected: []bool,
+    ) !void {
+        if (catalog_codes.len != selected.len or
+            catalog_codes.len > max_registered_forms)
+        {
+            return error.TooManyForms;
+        }
+        const allocator = self.allocator orelse return error.NotAttached;
+        const store = self.store orelse return error.NotAttached;
+        const profile_id = self.selectedProfileId() orelse
+            return error.NoSelectedProfile;
+
+        @memset(selected, true);
+        var maybe_selection = try store.getCalendarFormSelection(
+            allocator,
+            profile_id,
+        );
+        if (maybe_selection) |*selection| {
+            defer selection.deinit(allocator);
+            @memset(selected, false);
+            for (selection.form_codes) |stored_code| {
+                for (catalog_codes, 0..) |catalog_code, index| {
+                    if (!std.ascii.eqlIgnoreCase(
+                        stored_code,
+                        catalog_code,
+                    )) continue;
+                    selected[index] = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Persists only explicit subsets. Selecting the complete catalog removes
+    /// the parent marker so new forms remain selected automatically.
+    pub fn persistCalendarFormSelection(
+        self: *State,
+        catalog_codes: []const []const u8,
+        selected: []const bool,
+    ) bool {
+        self.persistCalendarFormSelectionFallible(
+            catalog_codes,
+            selected,
+        ) catch {
+            self.setNotice(
+                .failure,
+                "Calendar form choices could not be saved. The last saved selection will be restored.",
+            );
+            return false;
+        };
+        return true;
+    }
+
+    fn persistCalendarFormSelectionFallible(
+        self: *State,
+        catalog_codes: []const []const u8,
+        selected: []const bool,
+    ) !void {
+        if (catalog_codes.len != selected.len or
+            catalog_codes.len > max_registered_forms)
+        {
+            return error.TooManyForms;
+        }
+        const store = self.store orelse return error.NotAttached;
+        const profile_id = self.selectedProfileId() orelse
+            return error.NoSelectedProfile;
+
+        var selected_count: usize = 0;
+        for (selected) |is_selected| {
+            if (is_selected) selected_count += 1;
+        }
+        if (selected_count == catalog_codes.len) {
+            _ = try store.clearCalendarFormSelection(profile_id);
+            return;
+        }
+
+        var selected_codes: [max_registered_forms][]const u8 = undefined;
+        var output_index: usize = 0;
+        for (catalog_codes, selected) |form_code, is_selected| {
+            if (!is_selected) continue;
+            selected_codes[output_index] = form_code;
+            output_index += 1;
+        }
+        try store.replaceCalendarFormSelection(
+            profile_id,
+            selected_codes[0..output_index],
+        );
     }
 
     fn reloadRows(self: *State) !void {
@@ -1060,6 +1370,7 @@ pub const State = struct {
             self.notice.clear();
             self.notice.set("Tax-profile status changed.") catch unreachable;
         };
+        self.notice_epoch +%= 1;
     }
 
     fn setError(self: *State, err: anyerror) void {
@@ -1290,18 +1601,119 @@ test "forms set parsing canonicalizes codes and preserves explicit revisions" {
     try std.testing.expectEqualStrings("1701Q", output[1].form_code);
 }
 
-test "form availability distinguishes fallback from an explicit empty set" {
+test "form availability distinguishes unavailable fallback and configured sets" {
     var state = State{};
-    state.cached_form_year = 2026;
-    try std.testing.expect(state.formAvailable(2026, "2551Q"));
+    state.cached_calendar_form_sets[0].tax_year = 2026;
+    state.cached_calendar_form_sets[1].tax_year = 2025;
 
-    state.cached_form_set_configured = true;
+    try std.testing.expect(!state.formAvailable(2026, "2551Q"));
+    try std.testing.expect(state.calendarFormSetConfigured(2026));
+
+    state.cached_calendar_form_sets[0].resolution = .catalog_fallback;
+    try std.testing.expect(state.formAvailable(2026, "2551Q"));
+    try std.testing.expect(!state.calendarFormSetConfigured(2026));
+
+    state.cached_calendar_form_sets[0].resolution = .configured;
     try std.testing.expect(!state.formAvailable(2026, "2551Q"));
 
-    try state.cached_form_codes[0].set("2551Q");
-    state.cached_form_count = 1;
+    try state.cached_calendar_form_sets[0].codes[0].set("2551Q");
+    state.cached_calendar_form_sets[0].count = 1;
     try std.testing.expect(state.formAvailable(2026, "2551q"));
     try std.testing.expect(!state.formAvailable(2026, "1701Q"));
+
+    state.cached_calendar_form_sets[1].resolution = .configured;
+    try std.testing.expect(!state.formAvailable(2025, "2551Q"));
+    try state.cached_calendar_form_sets[1].codes[0].set("1701Q");
+    state.cached_calendar_form_sets[1].count = 1;
+    try std.testing.expect(state.formAvailable(2025, "1701q"));
+    try std.testing.expect(!state.formAvailable(2025, "2551Q"));
+
+    // A year outside the two-entry cache has no successful fallback query and
+    // therefore remains authoritative-empty.
+    try std.testing.expect(!state.formAvailable(2024, "2551Q"));
+    try std.testing.expect(state.calendarFormSetConfigured(2024));
+}
+
+test "calendar form refresh failure invalidates stale profile and year data" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    store.close();
+
+    var state = State{
+        .allocator = allocator,
+        .store = &store,
+        .has_selection = true,
+    };
+    try state.selected_id.set("closed-store-profile");
+    state.cached_calendar_form_sets[0].tax_year = 2026;
+    state.cached_calendar_form_sets[0].resolution = .configured;
+    try state.cached_calendar_form_sets[0].codes[0].set("2551Q");
+    state.cached_calendar_form_sets[0].count = 1;
+    try std.testing.expect(state.formAvailable(2026, "2551Q"));
+
+    try std.testing.expectError(
+        persistence.Error.Closed,
+        state.refreshCalendarFormSet(2027),
+    );
+
+    // The failed refresh published unavailable entries for 2027 and 2026
+    // before attempting I/O, so neither the stale code nor catalog-all leaks.
+    try std.testing.expect(!state.formAvailable(2027, "2551Q"));
+    try std.testing.expect(!state.formAvailable(2026, "2551Q"));
+    try std.testing.expect(!state.formAvailable(2025, "2551Q"));
+    try std.testing.expect(state.calendarFormSetConfigured(2027));
+    try std.testing.expect(state.calendarFormSetConfigured(2026));
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        state.calendarFormCodes(arena_state.allocator(), 2026).len,
+    );
+}
+
+test "failed selected profile switch cannot reuse prior profile forms" {
+    var state = State{};
+    state.default_tax_year = 2027;
+    state.profile_count = 1;
+    state.profiles[0] = .{
+        .slot = 0,
+        .subject_kind = .individual,
+    };
+    try state.profiles[0].stable_id.set("new-profile");
+
+    state.cached_calendar_form_sets[0].tax_year = 2026;
+    state.cached_calendar_form_sets[0].resolution = .configured;
+    try state.cached_calendar_form_sets[0].codes[0].set("1701Q");
+    state.cached_calendar_form_sets[0].count = 1;
+    try std.testing.expect(state.formAvailable(2026, "1701Q"));
+
+    try std.testing.expectError(error.NotAttached, state.selectSlot(0));
+    try std.testing.expect(!state.formAvailable(2027, "1701Q"));
+    try std.testing.expect(!state.formAvailable(2026, "1701Q"));
+}
+
+test "profile notices expose transient and manually dismissible lifecycles" {
+    var state = State{};
+    const initial_epoch = state.noticeEpoch();
+
+    state.startNew();
+    try std.testing.expect(state.noticeVisible());
+    try std.testing.expect(state.noticeAutoDismissible());
+    try std.testing.expect(state.noticeEpoch() != initial_epoch);
+    try std.testing.expect(!state.noticeSuccess());
+    try std.testing.expect(!state.noticeFailure());
+
+    state.setNotice(.failure, "Profile validation failed.");
+    try std.testing.expect(state.noticeVisible());
+    try std.testing.expect(!state.noticeAutoDismissible());
+    try std.testing.expect(!state.noticeSuccess());
+    try std.testing.expect(state.noticeFailure());
+
+    const failure_epoch = state.noticeEpoch();
+    state.dismissNotice();
+    try std.testing.expect(!state.noticeVisible());
+    try std.testing.expect(state.noticeEpoch() != failure_epoch);
 }
 
 test "profile state builds domain revision and explicit empty Forms Set" {
@@ -1319,7 +1731,7 @@ test "profile state builds domain revision and explicit empty Forms Set" {
     state.effective_from.set("2026-01-01");
     state.tax_type.set("Percentage Tax");
     state.forms_set_configured = true;
-    state.save();
+    try std.testing.expect(state.save());
 
     try std.testing.expectEqual(NoticeKind.success, state.notice_kind);
     const profile_id = state.selectedProfileDomainId().?;
@@ -1345,6 +1757,31 @@ test "profile state builds domain revision and explicit empty Forms Set" {
     var form_set = maybe_set.?;
     defer form_set.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), form_set.items.len);
+
+    // The preceding year was queried successfully and has no configuration,
+    // so catalog fallback remains intentional for that resolved cache entry.
+    try std.testing.expect(!state.calendarFormSetConfigured(2025));
+    try std.testing.expect(state.formAvailable(2025, "2551Q"));
+
+    try store.replaceFormSet(profile_id.asSlice(), 2025, &.{.{
+        .form_code = "1701Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+    try state.refreshCalendarFormSet(2026);
+    try std.testing.expect(state.calendarFormSetConfigured(2026));
+    try std.testing.expect(!state.formAvailable(2026, "1701Q"));
+    try std.testing.expect(state.calendarFormSetConfigured(2025));
+    try std.testing.expect(state.formAvailable(2025, "1701q"));
+    try std.testing.expect(!state.formAvailable(2025, "2551Q"));
+
+    var cache_arena = std.heap.ArenaAllocator.init(allocator);
+    defer cache_arena.deinit();
+    const prior_codes = state.calendarFormCodes(
+        cache_arena.allocator(),
+        2025,
+    );
+    try std.testing.expectEqual(@as(usize, 1), prior_codes.len);
+    try std.testing.expectEqualStrings("1701Q", prior_codes[0]);
 }
 
 test "profile state appends immutable source-aware revision" {
@@ -1359,7 +1796,7 @@ test "profile state appends immutable source-aware revision" {
     state.display_name.set("Maria Santos");
     state.registered_address.set("Quezon City");
     state.effective_from.set("2026-01-01");
-    state.save();
+    try std.testing.expect(state.save());
     const profile_id = state.selectedProfileDomainId().?;
     const first_id = state.selectedRevisionContext().?.revision_id;
 
@@ -1367,7 +1804,7 @@ test "profile state appends immutable source-aware revision" {
     state.effective_from.set("2026-07-01");
     state.setSourceKind(.imported);
     state.source_reference.set("COR import batch 7");
-    state.save();
+    try std.testing.expect(state.save());
     try std.testing.expectEqual(@as(u32, 2), state.selectedRevisionSequence().?);
 
     var first = (try profile_persistence.loadRevision(
@@ -1394,5 +1831,25 @@ test "profile state appends immutable source-aware revision" {
     try std.testing.expectEqual(
         std.meta.Tag(model.RevisionSource).imported,
         std.meta.activeTag(current.revision.source),
+    );
+}
+
+test "calendar form selection refresh fails closed" {
+    var state = State{};
+    var selected = [_]bool{ true, true };
+
+    try std.testing.expect(!state.refreshCalendarFormSelection(
+        &.{ "0605", "2551Q" },
+        &selected,
+    ));
+    try std.testing.expectEqualSlices(
+        bool,
+        &.{ false, false },
+        &selected,
+    );
+    try std.testing.expect(state.noticeVisible());
+    try std.testing.expectEqualStrings(
+        "Calendar form choices could not be loaded. Deadlines and export are unavailable until the profile is reopened.",
+        state.noticeText(),
     );
 }

@@ -6,6 +6,8 @@
 //! return owned records/lists and require the same allocator when deinitialized.
 
 const std = @import("std");
+const key_custody = @import("../security/key_custody.zig");
+const repository_opening = @import("../security/repository_opening.zig");
 
 const sqlite = @cImport({
     @cInclude("sqlite3.h");
@@ -13,6 +15,13 @@ const sqlite = @cImport({
 
 pub const latest_schema_version: u32 = 2;
 pub const max_scope_text_bytes: usize = 128;
+pub const storage_classification =
+    repository_opening.legacy_plaintext_repository_classification;
+pub const production_repository_integration_state =
+    repository_opening.current_production_repository_integration_state;
+pub const production_repository_scope =
+    repository_opening.ProductionRepositoryScope
+        .shared_calendar_tax_profile_database;
 
 pub const Error = error{
     Closed,
@@ -212,15 +221,22 @@ pub const EventLinkList = struct {
 pub const Store = struct {
     db: ?*sqlite.sqlite3,
 
-    /// Opens and migrates a file-backed database. The parent directory must
+    /// Opens the legacy file-backed plaintext repository only after validating
+    /// authority minted by the source-selected development-artifact bootstrap.
+    /// It is not a production repository factory. The parent directory must
     /// already exist. WAL and a five-second busy timeout are enabled.
-    pub fn open(allocator: std.mem.Allocator, path: []const u8) !Store {
+    pub fn openDevelopmentPlaintext(
+        capability: *const key_custody.DevelopmentPlaintextStorageCapability,
+        allocator: std.mem.Allocator,
+        path: []const u8,
+    ) !Store {
+        try key_custody.requireDevelopmentPlaintextStorage(capability);
         if (path.len == 0) return Error.InvalidValue;
         return openInternal(allocator, path, true);
     }
 
-    /// Opens a private in-memory database with the same schema and foreign-key
-    /// enforcement as production.
+    /// Explicit ephemeral in-memory constructor with the same schema and
+    /// foreign-key enforcement as the development plaintext file store.
     pub fn openMemory(allocator: std.mem.Allocator) !Store {
         return openInternal(allocator, ":memory:", false);
     }

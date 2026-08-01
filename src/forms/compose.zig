@@ -188,7 +188,7 @@ test "1701Q composes exact-one filer with optional named spouse" {
         try model.Date.parseIso("2026-03-31"),
     );
     const snapshot = result.accepted;
-    try std.testing.expectEqual(@as(u8, 10), snapshot.len);
+    try std.testing.expectEqual(@as(u8, 12), snapshot.len);
 
     var filer_count: usize = 0;
     var spouse_count: usize = 0;
@@ -196,8 +196,8 @@ test "1701Q composes exact-one filer with optional named spouse" {
         if (entry.role == .filer) filer_count += 1;
         if (entry.role == .spouse) spouse_count += 1;
     }
-    try std.testing.expectEqual(@as(usize, 7), filer_count);
-    try std.testing.expectEqual(@as(usize, 3), spouse_count);
+    try std.testing.expectEqual(@as(usize, 8), filer_count);
+    try std.testing.expectEqual(@as(usize, 4), spouse_count);
 }
 
 test "1701Q accepts an omitted optional spouse" {
@@ -213,7 +213,7 @@ test "1701Q accepts an omitted optional spouse" {
         &.{.{ .role = .filer, .revision = &filer }},
         try model.Date.parseIso("2026-03-31"),
     );
-    try std.testing.expectEqual(@as(u8, 7), result.accepted.len);
+    try std.testing.expectEqual(@as(u8, 8), result.accepted.len);
 }
 
 test "named role and distinct-profile constraints reject wrong composition" {

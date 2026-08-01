@@ -43,6 +43,12 @@ pub const filer_requirements = [_]spec.Requirement{
         ),
     },
     .{
+        .source = .zip_code,
+        .target = ids.FieldId.initComptime(
+            "1701Q.2018-01-ENCS.input.zip_code",
+        ),
+    },
+    .{
         .source = .date_of_birth,
         .target = ids.FieldId.initComptime(
             "1701Q.2018-01-ENCS.input.date_of_birth",
@@ -91,6 +97,20 @@ pub const spouse_requirements = [_]spec.Requirement{
         .target = ids.FieldId.initComptime(
             "1701Q.2018-01-ENCS.input.spouse_name",
         ),
+    },
+    .{
+        .source = .citizenship,
+        .target = ids.FieldId.initComptime(
+            "1701Q.2018-01-ENCS.input.spouse_citizenship",
+        ),
+        .presence = .optional,
+    },
+    .{
+        .source = .foreign_tax_number,
+        .target = ids.FieldId.initComptime(
+            "1701Q.2018-01-ENCS.input.spouse_foreign_tax_number",
+        ),
+        .presence = .optional,
     },
 };
 
@@ -236,7 +256,7 @@ test "1701Q has a required filer and optional named spouse role" {
         profile_spec.role(.spouse).?.cardinality,
     );
     try std.testing.expectEqual(
-        @as(usize, 3),
+        @as(usize, 5),
         profile_spec.role(.spouse).?.requirements.len,
     );
 }

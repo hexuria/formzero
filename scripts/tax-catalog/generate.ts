@@ -61,9 +61,9 @@ const generatedMarkdownPath = "docs/tax-profile/FORM_FIELD_CATALOG.md";
 const expectedRegistryCount = 51;
 const expectedEditorCount = 10;
 const expectedCalendarOnlyCount = 41;
-const expectedInputCount = 296;
-const expectedProfileTargetCount = 69;
-const expectedOptionalProfileTargetCount = 7;
+const expectedInputCount = 299;
+const expectedProfileTargetCount = 72;
+const expectedOptionalProfileTargetCount = 9;
 
 function fail(message: string): never {
   throw new Error(message);
@@ -267,6 +267,15 @@ async function validateSourceCoverage(): Promise<void> {
 
 async function validateRegistryCoverage(): Promise<void> {
   const mainSource = await readFile(path.join(projectRoot, "src/main.zig"), "utf8");
+  if (
+    mainSource.includes("const calendar_form_codes = blk:") &&
+    mainSource.includes("for (form_catalog.forms, 0..)")
+  ) {
+    // The calendar picker derives its stable option order directly from this
+    // generated catalog. Calendar-only obligations may be appended without
+    // turning the generated form registry into a hand-maintained duplicate.
+    return;
+  }
   const registryMatch =
     /const form_filter_codes = \[_\]\[\]const u8\{([\s\S]*?)\n\};/u.exec(mainSource);
   if (!registryMatch?.[1]) fail("Cannot locate form_filter_codes in src/main.zig");
@@ -645,12 +654,21 @@ function generateZig(forms: readonly FormDefinition[]): string {
     sections.push("};", "");
     sections.push(`const profile_roles_${name} = [_]ProfileRoleDefinition{`);
     for (const role of form.profileRoles) {
+      const distinctRoles = (role.distinctFrom ?? []).map(
+        (other) => `.${other}`,
+      );
+      const distinctLiteral =
+        distinctRoles.length === 0
+          ? "&.{}"
+          : distinctRoles.length === 1
+            ? `&.{${distinctRoles[0]}}`
+            : `&.{ ${distinctRoles.join(", ")} }`;
       sections.push(
         "    .{",
         `        .role = .${role.role},`,
         `        .cardinality = .${role.cardinality},`,
         `        .allowed_subjects = &.{ ${role.allowedSubjectKinds.map((kind) => `.${kind}`).join(", ")} },`,
-        `        .distinct_from = &.{ ${(role.distinctFrom ?? []).map((other) => `.${other}`).join(", ")} },`,
+        `        .distinct_from = ${distinctLiteral},`,
         "    },",
       );
     }
@@ -884,7 +902,7 @@ async function main(): Promise<void> {
 
   if (checkOnly) {
     process.stdout.write(
-      `tax-catalog: verified ${forms.length} codes, 10 editors, 41 calendar-only forms, 296 Native inputs, and 69 profile targets (7 optional).\n`,
+      `tax-catalog: verified ${forms.length} codes, 10 editors, 41 calendar-only forms, 299 Native inputs, and 72 profile targets (9 optional).\n`,
     );
   } else if (changed === 0) {
     process.stdout.write("tax-catalog: generated outputs are already up to date.\n");
