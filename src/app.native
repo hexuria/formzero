@@ -1495,10 +1495,13 @@ body="No unpaid deadline has passed for this tax profile."/>
 <row gap="10" cross="center">
 <column grow="1" gap="4">
 <text><span weight="bold">Tax Form Library</span></text>
-<text wrap="true" foreground="text_muted">{profileFormsCountLabel} · Tax Year {currentCalendarYear}</text>
+<text wrap="true" foreground="text_muted">{profileFormsCountLabel}</text>
 </column>
+<row gap="4" cross="center">
 <button width="44" height="44" size="icon" variant="ghost" icon="chevron-left" label="Previous tax year" on-press="calendar_previous_year"></button>
+<text width="52" text-alignment="center" foreground="text_muted"><span weight="bold">{currentCalendarYear}</span></text>
 <button width="44" height="44" size="icon" variant="ghost" icon="chevron-right" label="Next tax year" on-press="calendar_next_year"></button>
+</row>
 </row>
 <if test="{managingProfileForms}">
 <row gap="8" cross="center">
@@ -1513,10 +1516,13 @@ body="No unpaid deadline has passed for this tax profile."/>
 <row gap="10" cross="center">
 <column grow="1" gap="4">
 <text><span weight="bold">Tax Form Library</span></text>
-<text wrap="true" foreground="text_muted">{profileFormsCountLabel} · Tax Year {currentCalendarYear}</text>
+<text wrap="true" foreground="text_muted">{profileFormsCountLabel}</text>
 </column>
+<row gap="4" cross="center">
 <button width="44" height="44" size="icon" variant="ghost" icon="chevron-left" label="Previous tax year" on-press="calendar_previous_year"></button>
+<text width="52" text-alignment="center" foreground="text_muted"><span weight="bold">{currentCalendarYear}</span></text>
 <button width="44" height="44" size="icon" variant="ghost" icon="chevron-right" label="Next tax year" on-press="calendar_next_year"></button>
+</row>
 <if test="{managingProfileForms}">
 <button height="44" variant="outline" on-press="profile_forms_cancel">Cancel</button>
 <button height="44" icon="check" disabled="{profileFormsSaveDisabled}" on-press="profile_forms_save">Save</button>

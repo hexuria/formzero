@@ -13,6 +13,10 @@ launch label remains on the button as its accessible name, so the action is
 compact visually without becoming unnamed for keyboard or screen-reader users.
 The desktop row keeps the text action because its available width is larger.
 
+The selected tax year is also now displayed directly between the previous- and
+next-year chevrons on both compact and desktop headers. The count remains with
+the Tax Form Library title, making the year-navigation relationship explicit.
+
 ## Evidence and limitation
 
 The control wiring, state transitions, and persistence paths were inspected in
