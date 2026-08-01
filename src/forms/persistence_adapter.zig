@@ -1352,7 +1352,7 @@ test "1701Q named filer and spouse bindings roundtrip independently" {
     defer opened.deinit(allocator);
 
     try std.testing.expectEqual(@as(usize, 2), opened.draft.bindings.len);
-    try std.testing.expectEqual(@as(usize, 10), opened.draft.snapshots.len);
+    try std.testing.expectEqual(@as(usize, 12), opened.draft.snapshots.len);
     try std.testing.expectEqualStrings(
         "profile-1701q-filer",
         bindingByRole(&opened.draft, "filer").?.profile_id,
@@ -1373,10 +1373,23 @@ test "1701Q named filer and spouse bindings roundtrip independently" {
     try std.testing.expectEqualStrings("JUAN DELA CRUZ", filer_name.value_text);
     try std.testing.expectEqualStrings("spouse", spouse_name.role);
     try std.testing.expectEqualStrings("ANA DELA CRUZ", spouse_name.value_text);
+    const spouse_citizenship = snapshotByField(
+        &opened.draft,
+        "1701Q.2018-01-ENCS.input.spouse_citizenship",
+    ).?;
+    try std.testing.expectEqualStrings("spouse", spouse_citizenship.role);
+    try std.testing.expectEqualStrings(
+        "Filipino",
+        spouse_citizenship.value_text,
+    );
+    try std.testing.expect(snapshotByField(
+        &opened.draft,
+        "1701Q.2018-01-ENCS.input.spouse_foreign_tax_number",
+    ) == null);
     const typed = try rehydrate(&opened.draft);
     try std.testing.expect(typed.role_bindings.get(.filer) != null);
     try std.testing.expect(typed.role_bindings.get(.spouse) != null);
-    try std.testing.expectEqual(@as(u8, 10), typed.snapshot.len);
+    try std.testing.expectEqual(@as(u8, 12), typed.snapshot.len);
 }
 
 test "input role contract rejects extras aliases and missing filer but keeps optional spouse" {

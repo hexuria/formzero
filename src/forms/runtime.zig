@@ -572,7 +572,7 @@ test "1701Q accepts an omitted spouse and captures an optional named spouse" {
     const no_spouse = no_spouse_result.accepted;
     try std.testing.expectEqual(@as(u8, 1), no_spouse.role_bindings.len);
     try std.testing.expect(no_spouse.role_bindings.get(.spouse) == null);
-    try std.testing.expectEqual(@as(u8, 7), no_spouse.snapshot().len);
+    try std.testing.expectEqual(@as(u8, 8), no_spouse.snapshot().len);
 
     var spouse = try exampleIndividualRevision(.{
         .profile_id = "profile-spouse",
@@ -593,7 +593,22 @@ test "1701Q accepts an omitted spouse and captures an optional named spouse" {
     const with_spouse = with_spouse_result.accepted;
     try std.testing.expectEqual(@as(u8, 2), with_spouse.role_bindings.len);
     try std.testing.expect(with_spouse.role_bindings.get(.spouse) != null);
-    try std.testing.expectEqual(@as(u8, 10), with_spouse.snapshot().len);
+    try std.testing.expectEqual(@as(u8, 12), with_spouse.snapshot().len);
+    const spouse_citizenship = with_spouse.snapshot().get(
+        ids.FieldId.initComptime(
+            "1701Q.2018-01-ENCS.input.spouse_citizenship",
+        ),
+    ).?;
+    try std.testing.expectEqual(ids.Role.spouse, spouse_citizenship.role);
+    try std.testing.expectEqualStrings(
+        "Filipino",
+        spouse_citizenship.value.citizenship.asSlice(),
+    );
+    try std.testing.expect(with_spouse.snapshot().get(
+        ids.FieldId.initComptime(
+            "1701Q.2018-01-ENCS.input.spouse_foreign_tax_number",
+        ),
+    ) == null);
 }
 
 test "1701Q rejects the same profile in filer and spouse roles" {

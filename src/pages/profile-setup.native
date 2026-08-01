@@ -1,66 +1,58 @@
+<template name="profile-field" args="label grow=0">
+  <column grow="{grow}" gap="6">
+    <text>{label}</text>
+    <slot/>
+  </column>
+</template>
+
 <template name="profile-setup-content">
   <column gap="24">
-    <column gap="6">
-      <text size="heading">{profileEditorTitle}</text>
-      <text wrap="true" foreground="text_muted">
-        Reusable tax facts are versioned once and projected into each qualified
-        form. Existing filing snapshots never change when a profile is revised.
-      </text>
-    </column>
-
-    <if test="{profileNoticeVisible}">
-      <badge variant="{profileNoticeTone}">{profileNotice}</badge>
+    <if test="{profileInlineBackVisible}">
+      <row gap="10" cross="start">
+        <button
+          width="44"
+          height="44"
+          size="icon"
+          variant="ghost"
+          radius="xl"
+          icon="chevron-left"
+          label="{profileBackLabel}"
+          on-press="cancel_profile_edit">
+        </button>
+        <column grow="1" gap="6">
+          <text size="heading">{profileEditorTitle}</text>
+          <text wrap="true" foreground="text_muted">
+            Reusable tax facts are versioned once and projected into each qualified
+            form. Existing filing snapshots never change when a profile is revised.
+          </text>
+        </column>
+      </row>
     </if>
 
-    <if test="{constrainedLayout}">
-      <column gap="4" label="Profile setup sections">
-        <button
-          variant="ghost"
-          selected="{profileTaxActive}"
-          on-press="show_profile_tax">
-          Tax Profile
-        </button>
-        <button
-          variant="ghost"
-          selected="{profileCertificateActive}"
-          on-press="show_profile_certificate">
-          COR
-        </button>
-        <button
-          variant="ghost"
-          selected="{profileEmailActive}"
-          on-press="show_profile_email">
-          Email Settings
-        </button>
-      </column>
-    </if>
-    <else>
-      <tabs gap="4" label="Profile setup sections">
-        <button
-          variant="ghost"
-          selected="{profileTaxActive}"
-          on-press="show_profile_tax">
-          Tax Profile
-        </button>
-        <button
-          variant="ghost"
-          selected="{profileCertificateActive}"
-          on-press="show_profile_certificate">
-          COR
-        </button>
-        <button
-          variant="ghost"
-          selected="{profileEmailActive}"
-          on-press="show_profile_email">
-          Email Settings
-        </button>
-      </tabs>
-    </else>
+    <tabs label="Profile setup sections">
+      <button
+        height="44"
+        selected="{profileTaxActive}"
+        on-press="show_profile_tax">
+        Tax Profile
+      </button>
+      <button
+        height="44"
+        selected="{profileCertificateActive}"
+        on-press="show_profile_certificate">
+        COR
+      </button>
+      <button
+        height="44"
+        selected="{profileEmailActive}"
+        on-press="show_profile_email">
+        Email Settings
+      </button>
+    </tabs>
 
     <if test="{profileTaxActive}">
       <column gap="24">
-        <card>
-          <column padding="24" gap="16">
+        <column gap="16">
             <column gap="4">
               <text><span weight="bold">Identity and registration</span></text>
               <text wrap="true" foreground="text_muted">
@@ -71,124 +63,140 @@
 
             <if test="{constrainedLayout}">
               <column gap="12">
-                <input
-                  text="{profileTinValue}"
-                  placeholder="000-000-000-000"
-                  label="Taxpayer Identification Number (TIN)"
-                  on-input="profile_tin_input"/>
-                <input
-                  text="{profileRdoValue}"
-                  placeholder="RDO code"
-                  label="Revenue District Office (RDO) code"
-                  on-input="profile_rdo_input"/>
+                <use template="profile-field" label="Taxpayer Identification Number (TIN)">
+                  <input
+                    height="44"
+                    text="{profileTinValue}"
+                    placeholder="000-000-000-000"
+                    label="Taxpayer Identification Number (TIN)"
+                    on-input="profile_tin_input"/>
+                </use>
+                <use template="profile-field" label="Revenue District Office (RDO) code">
+                  <input
+                    height="44"
+                    text="{profileRdoValue}"
+                    placeholder="RDO code"
+                    label="Revenue District Office (RDO) code"
+                    on-input="profile_rdo_input"/>
+                </use>
               </column>
             </if>
             <else>
               <row gap="12">
-                <input
-                  grow="1"
-                  text="{profileTinValue}"
-                  placeholder="000-000-000-000"
-                  label="Taxpayer Identification Number (TIN)"
-                  on-input="profile_tin_input"/>
-                <input
-                  grow="1"
-                  text="{profileRdoValue}"
-                  placeholder="RDO code"
-                  label="Revenue District Office (RDO) code"
-                  on-input="profile_rdo_input"/>
+                <use template="profile-field" label="Taxpayer Identification Number (TIN)" grow="1">
+                  <input
+                    height="44"
+                    text="{profileTinValue}"
+                    placeholder="000-000-000-000"
+                    label="Taxpayer Identification Number (TIN)"
+                    on-input="profile_tin_input"/>
+                </use>
+                <use template="profile-field" label="Revenue District Office (RDO) code" grow="1">
+                  <input
+                    height="44"
+                    text="{profileRdoValue}"
+                    placeholder="RDO code"
+                    label="Revenue District Office (RDO) code"
+                    on-input="profile_rdo_input"/>
+                </use>
               </row>
             </else>
 
             <column gap="8">
-              <text foreground="text_muted">Taxpayer subject kind</text>
+              <text>Taxpayer subject kind</text>
               <if test="{constrainedLayout}">
-                <column gap="8">
-                  <button variant="outline" selected="{profileIndividualSelected}" on-press="profile_subject_individual">Individual</button>
-                  <button variant="outline" selected="{profileSoleProprietorSelected}" on-press="profile_subject_sole_proprietor">Sole proprietor</button>
-                  <button variant="outline" selected="{profileCorporationSelected}" on-press="profile_subject_corporation">Corporation</button>
-                  <button variant="outline" selected="{profilePartnershipSelected}" on-press="profile_subject_partnership">Partnership</button>
-                  <button variant="outline" selected="{profileEstateSelected}" on-press="profile_subject_estate">Estate</button>
-                  <button variant="outline" selected="{profileTrustSelected}" on-press="profile_subject_trust">Trust</button>
-                  <button variant="outline" selected="{profileOtherLegalSelected}" on-press="profile_subject_other_legal">Other legal entity</button>
-                </column>
+                <stack>
+                  <select
+                    height="44"
+                    label="Taxpayer subject kind"
+                    on-press="toggle_profile_subject_picker">{profileSubjectKindLabel}</select>
+                  <if test="{profileSubjectPickerOpen}">
+                    <dropdown-menu
+                      anchor="below"
+                      anchor-alignment="stretch"
+                      on-dismiss="close_profile_subject_picker">
+                      <menu-item height="44" selected="{profileIndividualSelected}" on-press="profile_subject_individual">Individual</menu-item>
+                      <menu-item height="44" selected="{profileSoleProprietorSelected}" on-press="profile_subject_sole_proprietor">Sole proprietor</menu-item>
+                      <menu-item height="44" selected="{profileCorporationSelected}" on-press="profile_subject_corporation">Corporation</menu-item>
+                      <menu-item height="44" selected="{profilePartnershipSelected}" on-press="profile_subject_partnership">Partnership</menu-item>
+                      <menu-item height="44" selected="{profileEstateSelected}" on-press="profile_subject_estate">Estate</menu-item>
+                      <menu-item height="44" selected="{profileTrustSelected}" on-press="profile_subject_trust">Trust</menu-item>
+                      <menu-item height="44" selected="{profileOtherLegalSelected}" on-press="profile_subject_other_legal">Other legal entity</menu-item>
+                    </dropdown-menu>
+                  </if>
+                </stack>
               </if>
               <else>
                 <column gap="8">
                   <row gap="8">
-                    <button variant="outline" selected="{profileIndividualSelected}" on-press="profile_subject_individual">Individual</button>
-                    <button variant="outline" selected="{profileSoleProprietorSelected}" on-press="profile_subject_sole_proprietor">Sole proprietor</button>
-                    <button variant="outline" selected="{profileCorporationSelected}" on-press="profile_subject_corporation">Corporation</button>
-                    <button variant="outline" selected="{profilePartnershipSelected}" on-press="profile_subject_partnership">Partnership</button>
+                    <button height="44" variant="outline" selected="{profileIndividualSelected}" on-press="profile_subject_individual">Individual</button>
+                    <button height="44" variant="outline" selected="{profileSoleProprietorSelected}" on-press="profile_subject_sole_proprietor">Sole proprietor</button>
+                    <button height="44" variant="outline" selected="{profileCorporationSelected}" on-press="profile_subject_corporation">Corporation</button>
+                    <button height="44" variant="outline" selected="{profilePartnershipSelected}" on-press="profile_subject_partnership">Partnership</button>
                   </row>
                   <row gap="8">
-                    <button variant="outline" selected="{profileEstateSelected}" on-press="profile_subject_estate">Estate</button>
-                    <button variant="outline" selected="{profileTrustSelected}" on-press="profile_subject_trust">Trust</button>
-                    <button variant="outline" selected="{profileOtherLegalSelected}" on-press="profile_subject_other_legal">Other legal entity</button>
+                    <button height="44" variant="outline" selected="{profileEstateSelected}" on-press="profile_subject_estate">Estate</button>
+                    <button height="44" variant="outline" selected="{profileTrustSelected}" on-press="profile_subject_trust">Trust</button>
+                    <button height="44" variant="outline" selected="{profileOtherLegalSelected}" on-press="profile_subject_other_legal">Other legal entity</button>
                   </row>
                 </column>
               </else>
             </column>
 
-            <input
-              text="{profileNameValue}"
-              placeholder="Registered taxpayer name"
-              label="Taxpayer or registered name"
-              on-input="profile_name_input"/>
-            <if test="{profileTradeNameVisible}">
+            <use template="profile-field" label="Taxpayer or registered name">
               <input
-                text="{profileTradeNameValue}"
-                placeholder="Optional DTI or registered trade name"
-                label="Trade name"
-                on-input="profile_trade_name_input"/>
+                height="44"
+                text="{profileNameValue}"
+                placeholder="Registered taxpayer name"
+                label="Taxpayer or registered name"
+                on-input="profile_name_input"/>
+            </use>
+            <if test="{profileTradeNameVisible}">
+              <use template="profile-field" label="Trade name">
+                <input
+                  height="44"
+                  text="{profileTradeNameValue}"
+                  placeholder="Optional DTI or registered trade name"
+                  label="Trade name"
+                  on-input="profile_trade_name_input"/>
+              </use>
             </if>
-            <input
-              text="{profileAddressValue}"
-              placeholder="Registered address"
-              label="Registered address"
-              on-input="profile_address_input"/>
+            <use template="profile-field" label="Registered address">
+              <input
+                height="44"
+                text="{profileAddressValue}"
+                placeholder="Registered address"
+                label="Registered address"
+                on-input="profile_address_input"/>
+            </use>
 
             <if test="{constrainedLayout}">
               <column gap="12">
-                <input
-                  text="{profileZipValue}"
-                  placeholder="ZIP code"
-                  label="ZIP code"
-                  on-input="profile_zip_input"/>
-                <input
-                  text="{profilePhoneValue}"
-                  placeholder="+63 900 000 0000"
-                  label="Contact number"
-                  on-input="profile_phone_input"/>
+                <use template="profile-field" label="ZIP code">
+                  <input height="44" text="{profileZipValue}" placeholder="ZIP code" label="ZIP code" on-input="profile_zip_input"/>
+                </use>
+                <use template="profile-field" label="Contact number">
+                  <input height="44" text="{profilePhoneValue}" placeholder="+63 900 000 0000" label="Contact number" on-input="profile_phone_input"/>
+                </use>
               </column>
             </if>
             <else>
               <row gap="12">
-                <input
-                  grow="1"
-                  text="{profileZipValue}"
-                  placeholder="ZIP code"
-                  label="ZIP code"
-                  on-input="profile_zip_input"/>
-                <input
-                  grow="1"
-                  text="{profilePhoneValue}"
-                  placeholder="+63 900 000 0000"
-                  label="Contact number"
-                  on-input="profile_phone_input"/>
+                <use template="profile-field" label="ZIP code" grow="1">
+                  <input height="44" text="{profileZipValue}" placeholder="ZIP code" label="ZIP code" on-input="profile_zip_input"/>
+                </use>
+                <use template="profile-field" label="Contact number" grow="1">
+                  <input height="44" text="{profilePhoneValue}" placeholder="+63 900 000 0000" label="Contact number" on-input="profile_phone_input"/>
+                </use>
               </row>
             </else>
 
-            <input
-              text="{profileEmailValue}"
-              placeholder="name@example.com"
-              label="Registered email address"
-              on-input="profile_email_input"/>
-          </column>
-        </card>
+            <use template="profile-field" label="Registered email address">
+              <input height="44" text="{profileEmailValue}" placeholder="name@example.com" label="Registered email address" on-input="profile_email_input"/>
+            </use>
+        </column>
 
-        <card>
-          <column padding="24" gap="16">
+        <column gap="16">
             <column gap="4">
               <text><span weight="bold">Individual capabilities</span></text>
               <text wrap="true" foreground="text_muted">
@@ -198,49 +206,48 @@
             </column>
             <if test="{constrainedLayout}">
               <column gap="12">
-                <input
-                  text="{profileBirthDateValue}"
-                  placeholder="YYYY-MM-DD"
-                  label="Birth date"
-                  disabled="{profilePersonalFieldsDisabled}"
-                  on-input="profile_birth_date_input"/>
-                <input
-                  text="{profileCitizenshipValue}"
-                  placeholder="Citizenship"
-                  label="Citizenship"
-                  disabled="{profilePersonalFieldsDisabled}"
-                  on-input="profile_citizenship_input"/>
+                <use template="profile-field" label="Birth date">
+                  <input
+                    height="44"
+                    text="{profileBirthDateValue}"
+                    placeholder="YYYY-MM-DD"
+                    label="Birth date"
+                    disabled="{profilePersonalFieldsDisabled}"
+                    on-input="profile_birth_date_input"/>
+                </use>
+                <use template="profile-field" label="Citizenship">
+                  <input
+                    height="44"
+                    text="{profileCitizenshipValue}"
+                    placeholder="Citizenship"
+                    label="Citizenship"
+                    disabled="{profilePersonalFieldsDisabled}"
+                    on-input="profile_citizenship_input"/>
+                </use>
               </column>
             </if>
             <else>
               <row gap="12">
-                <input
-                  grow="1"
-                  text="{profileBirthDateValue}"
-                  placeholder="YYYY-MM-DD"
-                  label="Birth date"
-                  disabled="{profilePersonalFieldsDisabled}"
-                  on-input="profile_birth_date_input"/>
-                <input
-                  grow="1"
-                  text="{profileCitizenshipValue}"
-                  placeholder="Citizenship"
-                  label="Citizenship"
-                  disabled="{profilePersonalFieldsDisabled}"
-                  on-input="profile_citizenship_input"/>
+                <use template="profile-field" label="Birth date" grow="1">
+                  <input height="44" text="{profileBirthDateValue}" placeholder="YYYY-MM-DD" label="Birth date" disabled="{profilePersonalFieldsDisabled}" on-input="profile_birth_date_input"/>
+                </use>
+                <use template="profile-field" label="Citizenship" grow="1">
+                  <input height="44" text="{profileCitizenshipValue}" placeholder="Citizenship" label="Citizenship" disabled="{profilePersonalFieldsDisabled}" on-input="profile_citizenship_input"/>
+                </use>
               </row>
             </else>
-            <input
-              text="{profileForeignTaxNumberValue}"
-              placeholder="Optional foreign tax identifier"
-              label="Foreign tax number"
-              disabled="{profilePersonalFieldsDisabled}"
-              on-input="profile_foreign_tax_number_input"/>
-          </column>
-        </card>
+            <use template="profile-field" label="Foreign tax number">
+              <input
+                height="44"
+                text="{profileForeignTaxNumberValue}"
+                placeholder="Optional foreign tax identifier"
+                label="Foreign tax number"
+                disabled="{profilePersonalFieldsDisabled}"
+                on-input="profile_foreign_tax_number_input"/>
+            </use>
+        </column>
 
-        <card>
-          <column padding="24" gap="16">
+        <column gap="16">
             <column gap="4">
               <text><span weight="bold">Business registration</span></text>
               <text wrap="true" foreground="text_muted">
@@ -249,59 +256,43 @@
                 registration facts. Transaction schedules remain on the form.
               </text>
             </column>
-            <input
-              text="{profileBusinessLineValue}"
-              placeholder="Line of business"
-              label="Line of business"
-              on-input="profile_business_line_input"/>
+            <use template="profile-field" label="Line of business">
+              <input height="44" text="{profileBusinessLineValue}" placeholder="Line of business" label="Line of business" on-input="profile_business_line_input"/>
+            </use>
             <if test="{constrainedLayout}">
               <column gap="12">
-                <input
-                  text="{profileAtcValue}"
-                  placeholder="PT010"
-                  label="Alphanumeric Tax Code (ATC)"
-                  on-input="profile_atc_input"/>
-                <input
-                  text="{profileTaxTypeValue}"
-                  placeholder="Percentage tax"
-                  label="Registered tax type"
-                  on-input="profile_tax_type_input"/>
+                <use template="profile-field" label="Alphanumeric Tax Code (ATC)">
+                  <input height="44" text="{profileAtcValue}" placeholder="PT010" label="Alphanumeric Tax Code (ATC)" on-input="profile_atc_input"/>
+                </use>
+                <use template="profile-field" label="Registered tax type">
+                  <input height="44" text="{profileTaxTypeValue}" placeholder="Percentage tax" label="Registered tax type" on-input="profile_tax_type_input"/>
+                </use>
               </column>
             </if>
             <else>
               <row gap="12">
-                <input
-                  grow="1"
-                  text="{profileAtcValue}"
-                  placeholder="PT010"
-                  label="Alphanumeric Tax Code (ATC)"
-                  on-input="profile_atc_input"/>
-                <input
-                  grow="1"
-                  text="{profileTaxTypeValue}"
-                  placeholder="Percentage tax"
-                  label="Registered tax type"
-                  on-input="profile_tax_type_input"/>
+                <use template="profile-field" label="Alphanumeric Tax Code (ATC)" grow="1">
+                  <input height="44" text="{profileAtcValue}" placeholder="PT010" label="Alphanumeric Tax Code (ATC)" on-input="profile_atc_input"/>
+                </use>
+                <use template="profile-field" label="Registered tax type" grow="1">
+                  <input height="44" text="{profileTaxTypeValue}" placeholder="Percentage tax" label="Registered tax type" on-input="profile_tax_type_input"/>
+                </use>
                 </row>
               </else>
             <column gap="8">
               <text foreground="text_muted">Government withholding agent</text>
               <row gap="8">
-                <button variant="outline" selected="{profileGwaUnsetSelected}" on-press="profile_gwa_unset">Not recorded</button>
-                <button variant="outline" selected="{profileGwaNoSelected}" on-press="profile_gwa_no">No</button>
-                <button variant="outline" selected="{profileGwaYesSelected}" on-press="profile_gwa_yes">Yes</button>
+                <button height="44" variant="outline" selected="{profileGwaUnsetSelected}" on-press="profile_gwa_unset">Not recorded</button>
+                <button height="44" variant="outline" selected="{profileGwaNoSelected}" on-press="profile_gwa_no">No</button>
+                <button height="44" variant="outline" selected="{profileGwaYesSelected}" on-press="profile_gwa_yes">Yes</button>
               </row>
             </column>
-            <input
-              text="{profileSpecialRateBasisValue}"
-              placeholder="Treaty article, special law, or registration basis"
-              label="Special-rate basis"
-              on-input="profile_special_rate_basis_input"/>
-          </column>
-        </card>
+            <use template="profile-field" label="Special-rate basis">
+              <input height="44" text="{profileSpecialRateBasisValue}" placeholder="Treaty article, special law, or registration basis" label="Special-rate basis" on-input="profile_special_rate_basis_input"/>
+            </use>
+        </column>
 
-        <card>
-          <column padding="24" gap="16">
+        <column gap="16">
             <column gap="4">
               <text><span weight="bold">Revision and registered Forms Set</span></text>
               <text wrap="true" foreground="text_muted">
@@ -312,79 +303,69 @@
             </column>
             <if test="{constrainedLayout}">
               <column gap="12">
-                <input
-                  text="{profileEffectiveFromValue}"
-                  placeholder="YYYY-MM-DD"
-                  label="Revision effective from"
-                  on-input="profile_effective_from_input"/>
-                <input
-                  text="{profileEffectiveUntilValue}"
-                  placeholder="YYYY-MM-DD or empty"
-                  label="Revision effective until"
-                  on-input="profile_effective_until_input"/>
-                <input
-                  text="{profileTaxYearValue}"
-                  placeholder="YYYY"
-                  label="Forms Set tax year"
-                  on-input="profile_tax_year_input"/>
+                <use template="profile-field" label="Revision effective from">
+                  <input height="44" text="{profileEffectiveFromValue}" placeholder="YYYY-MM-DD" label="Revision effective from" on-input="profile_effective_from_input"/>
+                </use>
+                <use template="profile-field" label="Revision effective until">
+                  <input height="44" text="{profileEffectiveUntilValue}" placeholder="YYYY-MM-DD or empty" label="Revision effective until" on-input="profile_effective_until_input"/>
+                </use>
+                <use template="profile-field" label="Forms Set tax year">
+                  <input height="44" text="{profileTaxYearValue}" placeholder="YYYY" label="Forms Set tax year" on-input="profile_tax_year_input"/>
+                </use>
               </column>
             </if>
             <else>
               <row gap="12">
-                <input
-                  grow="1"
-                  text="{profileEffectiveFromValue}"
-                  placeholder="YYYY-MM-DD"
-                  label="Revision effective from"
-                  on-input="profile_effective_from_input"/>
-                <input
-                  grow="1"
-                  text="{profileEffectiveUntilValue}"
-                  placeholder="YYYY-MM-DD or empty"
-                  label="Revision effective until"
-                  on-input="profile_effective_until_input"/>
-                <input
-                  grow="1"
-                  text="{profileTaxYearValue}"
-                  placeholder="YYYY"
-                  label="Forms Set tax year"
-                  on-input="profile_tax_year_input"/>
+                <use template="profile-field" label="Revision effective from" grow="1">
+                  <input height="44" text="{profileEffectiveFromValue}" placeholder="YYYY-MM-DD" label="Revision effective from" on-input="profile_effective_from_input"/>
+                </use>
+                <use template="profile-field" label="Revision effective until" grow="1">
+                  <input height="44" text="{profileEffectiveUntilValue}" placeholder="YYYY-MM-DD or empty" label="Revision effective until" on-input="profile_effective_until_input"/>
+                </use>
+                <use template="profile-field" label="Forms Set tax year" grow="1">
+                  <input height="44" text="{profileTaxYearValue}" placeholder="YYYY" label="Forms Set tax year" on-input="profile_tax_year_input"/>
+                </use>
               </row>
             </else>
             <column gap="8">
               <text foreground="text_muted">Revision source</text>
               <if test="{constrainedLayout}">
                 <column gap="8">
-                  <button variant="outline" selected="{profileSourceManualSelected}" on-press="profile_source_manual">Manual entry</button>
-                  <button variant="outline" selected="{profileSourceImportedSelected}" on-press="profile_source_imported">Imported</button>
-                  <button variant="outline" selected="{profileSourceMigratedSelected}" on-press="profile_source_migrated">Migrated</button>
+                  <button height="44" variant="outline" selected="{profileSourceManualSelected}" on-press="profile_source_manual">Manual entry</button>
+                  <button height="44" variant="outline" selected="{profileSourceImportedSelected}" on-press="profile_source_imported">Imported</button>
+                  <button height="44" variant="outline" selected="{profileSourceMigratedSelected}" on-press="profile_source_migrated">Migrated</button>
                 </column>
               </if>
               <else>
                 <row gap="8">
-                  <button variant="outline" selected="{profileSourceManualSelected}" on-press="profile_source_manual">Manual entry</button>
-                  <button variant="outline" selected="{profileSourceImportedSelected}" on-press="profile_source_imported">Imported</button>
-                  <button variant="outline" selected="{profileSourceMigratedSelected}" on-press="profile_source_migrated">Migrated</button>
+                  <button height="44" variant="outline" selected="{profileSourceManualSelected}" on-press="profile_source_manual">Manual entry</button>
+                  <button height="44" variant="outline" selected="{profileSourceImportedSelected}" on-press="profile_source_imported">Imported</button>
+                  <button height="44" variant="outline" selected="{profileSourceMigratedSelected}" on-press="profile_source_migrated">Migrated</button>
                 </row>
               </else>
             </column>
-            <input
-              text="{profileSourceReferenceValue}"
-              placeholder="Import batch, COR reference, or migration record"
-              label="Source reference"
-              disabled="{profileSourceReferenceDisabled}"
-              on-input="profile_source_reference_input"/>
+            <use template="profile-field" label="Source reference">
+              <input
+                height="44"
+                text="{profileSourceReferenceValue}"
+                placeholder="Import batch, COR reference, or migration record"
+                label="Source reference"
+                disabled="{profileSourceReferenceDisabled}"
+                on-input="profile_source_reference_input"/>
+            </use>
             <column gap="8">
               <text foreground="text_muted">Forms Set policy</text>
               <if test="{constrainedLayout}">
                 <column gap="8">
                   <button
+                    height="44"
                     variant="outline"
                     selected="{profileFormsSetFallbackSelected}"
                     on-press="profile_forms_set_fallback">
                     Catalog fallback
                   </button>
                   <button
+                    height="44"
                     variant="outline"
                     selected="{profileFormsSetRegisteredSelected}"
                     on-press="profile_forms_set_registered">
@@ -395,12 +376,14 @@
               <else>
                 <row gap="8">
                   <button
+                    height="44"
                     variant="outline"
                     selected="{profileFormsSetFallbackSelected}"
                     on-press="profile_forms_set_fallback">
                     Catalog fallback
                   </button>
                   <button
+                    height="44"
                     variant="outline"
                     selected="{profileFormsSetRegisteredSelected}"
                     on-press="profile_forms_set_registered">
@@ -409,48 +392,47 @@
                 </row>
               </else>
             </column>
-            <input
-              text="{profileFormsSetValue}"
-              placeholder="2551Q, 1701Q"
-              label="Registered Forms Set"
-              disabled="{profileFormsSetInputDisabled}"
-              on-input="profile_forms_set_input"/>
-          </column>
-        </card>
+            <use template="profile-field" label="Registered Forms Set">
+              <input
+                height="44"
+                text="{profileFormsSetValue}"
+                placeholder="2551Q, 1701Q"
+                label="Registered Forms Set"
+                disabled="{profileFormsSetInputDisabled}"
+                on-input="profile_forms_set_input"/>
+            </use>
+        </column>
       </column>
     </if>
 
     <if test="{profileCertificateActive}">
-      <card>
-        <column padding="24" gap="12">
+      <column gap="12">
           <text><span weight="bold">Certificate of Registration evidence</span></text>
           <text wrap="true" foreground="text_muted">
             COR attachments and extraction evidence are intentionally stored
             separately from reusable tax facts. This surface will attach
             evidence without changing a filed form snapshot.
           </text>
-          <button variant="outline" icon="folder-open" disabled="true">Attach COR evidence</button>
-        </column>
-      </card>
+          <button height="44" variant="outline" icon="folder-open" disabled="true">Attach COR evidence</button>
+      </column>
     </if>
 
     <if test="{profileEmailActive}">
-      <card>
-        <column padding="24" gap="12">
+      <column gap="12">
           <text><span weight="bold">Email monitoring credentials</span></text>
           <text wrap="true" foreground="text_muted">
             Mailbox credentials are operational secrets, not reusable tax
             facts. They are not stored in the tax-profile revision tables.
           </text>
-          <button variant="outline" icon="send" disabled="true">Configure secure mailbox connection</button>
-        </column>
-      </card>
+          <button height="44" variant="outline" icon="send" disabled="true">Configure secure mailbox connection</button>
+      </column>
     </if>
 
     <if test="{constrainedLayout}">
       <column gap="10">
-        <button variant="outline" on-press="cancel_profile_edit">Cancel</button>
+        <button height="44" variant="outline" on-press="cancel_profile_edit">Cancel</button>
         <button
+          height="44"
           variant="primary"
           icon="save"
           disabled="{profileSaveDisabled}"
@@ -461,8 +443,9 @@
     </if>
     <else>
       <row main="end" gap="12">
-        <button variant="outline" on-press="cancel_profile_edit">Cancel</button>
+        <button height="44" variant="outline" on-press="cancel_profile_edit">Cancel</button>
         <button
+          height="44"
           variant="primary"
           icon="save"
           disabled="{profileSaveDisabled}"

@@ -58,7 +58,7 @@ const profile_roles_0605_1999_07_encs = [_]ProfileRoleDefinition{
         .role = .filer,
         .cardinality = .exactly_one,
         .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .estate, .trust, .other_legal_entity },
-        .distinct_from = &.{  },
+        .distinct_from = &.{},
     },
 };
 
@@ -351,7 +351,7 @@ const profile_roles_1601c_2018_01_encs = [_]ProfileRoleDefinition{
         .role = .filer,
         .cardinality = .exactly_one,
         .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .estate, .trust, .other_legal_entity },
-        .distinct_from = &.{  },
+        .distinct_from = &.{},
     },
 };
 
@@ -827,7 +827,7 @@ const profile_roles_0619f_2018_01_encs = [_]ProfileRoleDefinition{
         .role = .filer,
         .cardinality = .exactly_one,
         .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .estate, .trust, .other_legal_entity },
-        .distinct_from = &.{  },
+        .distinct_from = &.{},
     },
 };
 
@@ -1160,13 +1160,13 @@ const profile_roles_1701q_2018_01_encs = [_]ProfileRoleDefinition{
         .role = .filer,
         .cardinality = .exactly_one,
         .allowed_subjects = &.{ .individual, .sole_proprietor, .estate, .trust },
-        .distinct_from = &.{  },
+        .distinct_from = &.{},
     },
     .{
         .role = .spouse,
         .cardinality = .zero_or_one,
         .allowed_subjects = &.{ .individual, .sole_proprietor },
-        .distinct_from = &.{ .filer },
+        .distinct_from = &.{.filer},
     },
 };
 
@@ -1276,6 +1276,19 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .control = .input,
     },
     .{
+        .id = "1701Q.2018-01-ENCS.input.zip_code",
+        .label = "ZIP Code",
+        .provenance = .profile,
+        .role = .filer,
+        .value_type = .postal_code,
+        .status = .unbound_input,
+        .profile_key = "zip_code",
+        .profile_presence = .required,
+        .source_path = "src/pages/forms/1701q.native",
+        .source_line = 68,
+        .control = .input,
+    },
+    .{
         .id = "1701Q.2018-01-ENCS.input.date_of_birth",
         .label = "Date of Birth",
         .provenance = .profile,
@@ -1285,7 +1298,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = "date_of_birth",
         .profile_presence = .optional,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 69,
+        .source_line = 72,
         .control = .input,
     },
     .{
@@ -1298,7 +1311,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = "email_address",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 73,
+        .source_line = 76,
         .control = .input,
     },
     .{
@@ -1311,7 +1324,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = "citizenship",
         .profile_presence = .optional,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 77,
+        .source_line = 80,
         .control = .input,
     },
     .{
@@ -1324,7 +1337,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = "foreign_tax_number",
         .profile_presence = .optional,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 81,
+        .source_line = 84,
         .control = .input,
     },
     .{
@@ -1337,7 +1350,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 85,
+        .source_line = 88,
         .control = .input,
     },
     .{
@@ -1350,7 +1363,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = "tin",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 110,
+        .source_line = 113,
         .control = .input,
     },
     .{
@@ -1363,7 +1376,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = "rdo_code",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 114,
+        .source_line = 117,
         .control = .input,
     },
     .{
@@ -1376,7 +1389,33 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = "taxpayer_name",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 118,
+        .source_line = 121,
+        .control = .input,
+    },
+    .{
+        .id = "1701Q.2018-01-ENCS.input.spouse_citizenship",
+        .label = "Spouse Citizenship",
+        .provenance = .profile,
+        .role = .spouse,
+        .value_type = .text,
+        .status = .unbound_input,
+        .profile_key = "citizenship",
+        .profile_presence = .optional,
+        .source_path = "src/pages/forms/1701q.native",
+        .source_line = 124,
+        .control = .input,
+    },
+    .{
+        .id = "1701Q.2018-01-ENCS.input.spouse_foreign_tax_number",
+        .label = "Spouse Foreign Tax Number",
+        .provenance = .profile,
+        .role = .spouse,
+        .value_type = .tax_identifier,
+        .status = .unbound_input,
+        .profile_key = "foreign_tax_number",
+        .profile_presence = .optional,
+        .source_path = "src/pages/forms/1701q.native",
+        .source_line = 127,
         .control = .input,
     },
     .{
@@ -1389,7 +1428,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 127,
+        .source_line = 136,
         .control = .input,
     },
     .{
@@ -1402,7 +1441,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 135,
+        .source_line = 144,
         .control = .input,
     },
     .{
@@ -1415,7 +1454,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 143,
+        .source_line = 152,
         .control = .input,
     },
     .{
@@ -1428,7 +1467,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 151,
+        .source_line = 160,
         .control = .input,
     },
     .{
@@ -1441,7 +1480,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 159,
+        .source_line = 168,
         .control = .input,
     },
     .{
@@ -1454,7 +1493,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 172,
+        .source_line = 181,
         .control = .input,
     },
     .{
@@ -1467,7 +1506,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 180,
+        .source_line = 189,
         .control = .input,
     },
     .{
@@ -1480,7 +1519,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 188,
+        .source_line = 197,
         .control = .input,
     },
     .{
@@ -1493,7 +1532,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 201,
+        .source_line = 210,
         .control = .input,
     },
     .{
@@ -1506,7 +1545,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 209,
+        .source_line = 218,
         .control = .input,
     },
     .{
@@ -1519,7 +1558,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 217,
+        .source_line = 226,
         .control = .input,
     },
     .{
@@ -1532,7 +1571,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 230,
+        .source_line = 239,
         .control = .input,
     },
     .{
@@ -1545,7 +1584,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 238,
+        .source_line = 247,
         .control = .input,
     },
     .{
@@ -1558,7 +1597,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 246,
+        .source_line = 255,
         .control = .input,
     },
     .{
@@ -1571,7 +1610,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 254,
+        .source_line = 263,
         .control = .input,
     },
     .{
@@ -1584,7 +1623,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 358,
+        .source_line = 367,
         .control = .input,
     },
     .{
@@ -1597,7 +1636,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 366,
+        .source_line = 375,
         .control = .input,
     },
     .{
@@ -1610,7 +1649,7 @@ const fields_1701q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701q.native",
-        .source_line = 374,
+        .source_line = 383,
         .control = .input,
     },
     .{
@@ -1683,13 +1722,13 @@ const profile_roles_1701_2018_01_encs = [_]ProfileRoleDefinition{
         .role = .filer,
         .cardinality = .exactly_one,
         .allowed_subjects = &.{ .individual, .sole_proprietor, .estate, .trust },
-        .distinct_from = &.{  },
+        .distinct_from = &.{},
     },
     .{
         .role = .spouse,
         .cardinality = .zero_or_one,
         .allowed_subjects = &.{ .individual, .sole_proprietor },
-        .distinct_from = &.{ .filer },
+        .distinct_from = &.{.filer},
     },
 };
 
@@ -2541,7 +2580,7 @@ const profile_roles_1702rt_2018_01_encs = [_]ProfileRoleDefinition{
         .role = .filer,
         .cardinality = .exactly_one,
         .allowed_subjects = &.{ .corporation, .partnership, .other_legal_entity },
-        .distinct_from = &.{  },
+        .distinct_from = &.{},
     },
 };
 
@@ -3029,7 +3068,7 @@ const profile_roles_1702mx_2018_01_encs = [_]ProfileRoleDefinition{
         .role = .filer,
         .cardinality = .exactly_one,
         .allowed_subjects = &.{ .corporation, .partnership, .other_legal_entity },
-        .distinct_from = &.{  },
+        .distinct_from = &.{},
     },
 };
 
@@ -3493,7 +3532,7 @@ const profile_roles_2550q_2024_04_encs = [_]ProfileRoleDefinition{
         .role = .filer,
         .cardinality = .exactly_one,
         .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .estate, .trust, .other_legal_entity },
-        .distinct_from = &.{  },
+        .distinct_from = &.{},
     },
 };
 
@@ -4111,7 +4150,7 @@ const profile_roles_2551q_2018_01_encs = [_]ProfileRoleDefinition{
         .role = .filer,
         .cardinality = .exactly_one,
         .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .estate, .trust, .other_legal_entity },
-        .distinct_from = &.{  },
+        .distinct_from = &.{},
     },
 };
 
@@ -4639,7 +4678,7 @@ const profile_roles_0619e_2018_01_encs = [_]ProfileRoleDefinition{
         .role = .filer,
         .cardinality = .exactly_one,
         .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .estate, .trust, .other_legal_entity },
-        .distinct_from = &.{  },
+        .distinct_from = &.{},
     },
 };
 
@@ -5397,10 +5436,10 @@ pub const forms = [_]FormDefinition{
 pub const registry_count: usize = 51;
 pub const editor_count: usize = 10;
 pub const calendar_only_count: usize = 41;
-pub const native_input_count: usize = 296;
+pub const native_input_count: usize = 299;
 pub const table_field_count: usize = 63;
-pub const profile_target_count: usize = 69;
-pub const optional_profile_target_count: usize = 7;
+pub const profile_target_count: usize = 72;
+pub const optional_profile_target_count: usize = 9;
 
 pub fn findForm(code: []const u8) ?*const FormDefinition {
     for (&forms) |*form| {

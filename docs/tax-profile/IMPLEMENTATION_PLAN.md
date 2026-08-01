@@ -9,7 +9,7 @@ All seven phases are implemented in the isolated
 `codex/tax-profile-architecture` worktree.
 
 - The generated catalog covers 51 codes, 10 exact editors, 41 explicit
-  `calendar_only` entries, 296 Native inputs, and 69 profile targets.
+  `calendar_only` entries, 299 Native inputs, and 72 profile targets.
 - Persisted profile revisions, Forms Set, named role bindings, immutable
   snapshots, lifecycle guards, and transaction values are integrated.
 - All ten editors project their declared profile subset. The recurring 2551Q
@@ -110,7 +110,7 @@ values; no ATC or rate is smuggled into the singleton header.
   other eight current editors.
 - Keep 41 registry-only forms explicitly unavailable as editors.
 
-Acceptance: all 69 catalog profile targets resolve through the same canonical
+Acceptance: all 72 catalog profile targets resolve through the same canonical
 vocabulary, are intentionally omitted by optional role/target policy, or
 produce a truthful qualification issue.
 

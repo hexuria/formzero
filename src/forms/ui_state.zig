@@ -5,8 +5,10 @@
 //! - SQLite revisions are reconstructed through the validated profile
 //!   persistence adapter.
 //! - Every live form prefill is projected through the generated catalog.
-//! - Once a recurring original draft exists, its persisted snapshot becomes
-//!   authoritative and profile-role selectors are locked.
+//! - Draft-backed opens resume a recurring original's immutable snapshot and
+//!   lock profile-role selectors.
+//! - Exact 1701Q uses an explicit projection-only open boundary which never
+//!   looks up or persists the older coarse recurring-draft representation.
 //!
 //! Transaction controls live in separate form-specific states. This module
 //! never invents a 2551Q ATC schedule row or rate, but it can atomically carry
@@ -116,6 +118,7 @@ pub const ActivityCandidate = struct {
 pub const Error = error{
     CacheConflict,
     CalendarOnlyForm,
+    DraftPersistenceDisabled,
     DraftProfileSnapshotLocked,
     ExistingDraftMismatch,
     InvalidQuarter,
@@ -129,6 +132,11 @@ pub const Error = error{
     UnsupportedRecurringForm,
     UnknownForm,
     WrongFormRevision,
+};
+
+const OpenPolicy = enum {
+    draft_backed,
+    exact_1701q_projection_only,
 };
 
 const RoleValueCache = struct {
@@ -212,6 +220,7 @@ pub const State = struct {
     projection_is_accepted: bool = false,
     projection_issue_count: u16 = 0,
     save_is_disabled: bool = true,
+    open_policy: OpenPolicy = .draft_backed,
 
     filer_cache: RoleValueCache = .{},
     spouse_cache: RoleValueCache = .{},
@@ -257,7 +266,7 @@ pub const State = struct {
     }
 
     pub fn open(self: *State, request: OpenRequest) !void {
-        self.openImpl(request) catch |err| {
+        self.openWithPolicy(request, .draft_backed) catch |err| {
             self.clearOwnedRevisions();
             self.resetOpenData();
             self.setErrorNotice(err);
@@ -265,14 +274,44 @@ pub const State = struct {
         };
     }
 
-    fn openImpl(self: *State, request: OpenRequest) !void {
+    /// Projects exact 1701Q exclusively from the effective profile revisions
+    /// requested by the caller. This boundary never derives or probes the
+    /// deterministic ID used by the retired coarse recurring-draft model, and
+    /// generic recurring-draft persistence remains disabled for the lifetime
+    /// of this open state.
+    pub fn openExact1701QProjectionOnly(
+        self: *State,
+        request: OpenRequest,
+    ) !void {
+        self.openWithPolicy(
+            request,
+            .exact_1701q_projection_only,
+        ) catch |err| {
+            self.clearOwnedRevisions();
+            self.resetOpenData();
+            self.setErrorNotice(err);
+            return err;
+        };
+    }
+
+    fn openWithPolicy(
+        self: *State,
+        request: OpenRequest,
+        open_policy: OpenPolicy,
+    ) !void {
         _ = self.allocator orelse return error.NotAttached;
         _ = self.store orelse return error.NotAttached;
         try validateEditorRevision(request.form);
         try validateQuarter(request.form, request.tax_year, request.quarter);
+        if (open_policy == .exact_1701q_projection_only and
+            !request.form.eql(&form_1701q.revision))
+        {
+            return error.WrongFormRevision;
+        }
 
         self.clearOwnedRevisions();
         self.resetOpenData();
+        self.open_policy = open_policy;
         self.opened_form = request.form;
         self.opened_tax_year = request.tax_year;
         self.opened_quarter = request.quarter;
@@ -281,7 +320,9 @@ pub const State = struct {
         self.selected_filer_id = request.filer_profile_id;
         self.selected_spouse_id = request.spouse_profile_id;
 
-        if (try self.openExistingOriginal()) {
+        if (open_policy == .draft_backed and
+            try self.openExistingOriginal())
+        {
             try self.refreshCandidateCaches();
             self.setNotice(
                 .info,
@@ -343,22 +384,24 @@ pub const State = struct {
         const allocator = self.allocator orelse return error.NotAttached;
         const store = self.store orelse return error.NotAttached;
 
+        if (profile_id) |selected| {
+            const filer_id = self.selected_filer_id orelse
+                return error.NotOpen;
+            if (filer_id.eql(&selected)) {
+                self.setNotice(
+                    .failure,
+                    "Filer and spouse must use different tax profiles.",
+                );
+                return error.FilerAndSpouseMustDiffer;
+            }
+        }
+
         if (self.spouse_revision) |*owned| owned.deinit(allocator);
         self.spouse_revision = null;
         self.selected_spouse_activity_id = null;
         self.selected_spouse_id = profile_id;
 
         if (profile_id) |selected| {
-            const filer_id = self.selected_filer_id orelse return error.NotOpen;
-            if (filer_id.eql(&selected)) {
-                self.invalidateProjection();
-                self.setNotice(
-                    .failure,
-                    "Filer and spouse must use different tax profiles.",
-                );
-                try self.refreshCandidateCaches();
-                return;
-            }
             self.spouse_revision =
                 (try profile_persistence.loadEffectiveRevision(
                     store,
@@ -439,6 +482,10 @@ pub const State = struct {
         transaction_values: []const store_module.DraftValueWrite,
         replace_resumed_values: bool,
     ) !DraftSaveResult {
+        if (self.open_policy == .exact_1701q_projection_only) {
+            self.setErrorNotice(error.DraftPersistenceDisabled);
+            return error.DraftPersistenceDisabled;
+        }
         const allocator = self.allocator orelse return error.NotAttached;
         const store = self.store orelse return error.NotAttached;
         const form = self.opened_form orelse return error.NotOpen;
@@ -594,6 +641,15 @@ pub const State = struct {
 
     pub fn draftStatus(self: *const State) ?DraftStatus {
         return self.persisted_draft_status;
+    }
+
+    /// Mints only an opaque exact-workspace identity through the attached
+    /// Store's CSPRNG. The caller receives no Store or persistence capability.
+    pub fn generateExactWorkspaceId(
+        self: *const State,
+    ) !store_module.DraftWorkspaceId {
+        const store = self.store orelse return error.NotAttached;
+        return store.generateDraftWorkspaceId();
     }
 
     /// Loads the currently opened persisted draft for a form-specific
@@ -810,7 +866,9 @@ pub const State = struct {
                     try runtime.RoleBindings.from(bindings);
                 try self.cacheSnapshot(&built_snapshot);
                 self.projection_is_accepted = true;
-                self.save_is_disabled = !isRecurring(form);
+                self.save_is_disabled =
+                    !isRecurring(form) or
+                    self.open_policy == .exact_1701q_projection_only;
                 self.setNoticeFmt(
                     .success,
                     "Loaded {d} reusable tax-profile field{s}.",
@@ -927,6 +985,7 @@ pub const State = struct {
     }
 
     fn resetOpenData(self: *State) void {
+        self.open_policy = .draft_backed;
         self.opened_form = null;
         self.opened_tax_year = 0;
         self.opened_quarter = 0;
@@ -1502,8 +1561,12 @@ test "1701Q optional spouse persists named role and same profile is rejected for
         .tax_year = 2026,
         .quarter = 3,
     });
-    try rejected.setSpouseProfile(filer);
-    try std.testing.expect(!rejected.projectionAccepted());
+    try std.testing.expectError(
+        error.FilerAndSpouseMustDiffer,
+        rejected.setSpouseProfile(filer),
+    );
+    try std.testing.expect(rejected.projectionAccepted());
+    try std.testing.expect(rejected.roleBinding(.spouse) == null);
     try std.testing.expectEqual(NoticeKind.failure, rejected.noticeKind());
 
     try rejected.open(.{

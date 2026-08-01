@@ -69,6 +69,7 @@ const sourceGroups = [
 
 const sourceFiles = sourceGroups.flatMap((group) => group.files);
 const generatedTemplateIncludes = new Set([
+  "multi-select-combobox",
   "tax-profile-form-context",
 ]);
 
@@ -96,14 +97,23 @@ function compactGeneratedMarkup(source) {
  */
 function expandGeneratedTemplateIncludes(source, relativePath) {
   return source.replace(
-    /<!--\s*@include-template\s+([A-Za-z][A-Za-z0-9-]*)\s*-->/gu,
-    (_, templateName) => {
+    /<!--\s*@include-template\s+([A-Za-z][A-Za-z0-9-]*)([\s\S]*?)-->/gu,
+    (_, templateName, rawAttributes) => {
       if (!generatedTemplateIncludes.has(templateName)) {
         throw new Error(
           `Unknown generated template include ${templateName} in ${relativePath}`,
+          );
+      }
+      const attributes = rawAttributes.trim();
+      if (/[<>]/u.test(attributes)) {
+        throw new Error(
+          `Invalid generated template attributes for ${templateName} in ${relativePath}`,
         );
       }
-      return `<use template="${templateName}"/>`;
+      return attributes.length === 0
+        ? `<use template="${templateName}"/>`
+        : `<use template="${templateName}"
+${attributes}/>`;
     },
   );
 }

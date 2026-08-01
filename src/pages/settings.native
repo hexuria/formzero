@@ -258,6 +258,14 @@
           <text wrap="true" foreground="text_muted">Create a portable archive of application data.</text>
         </column>
         <separator/>
+        <row gap="14" cross="start">
+          <icon name="alert" foreground="warning" width="22" height="22"/>
+          <column grow="1" gap="4">
+            <text><span weight="bold">Storage status</span></text>
+            <text wrap="true" foreground="warning">{artifactStorageClassification}</text>
+          </column>
+        </row>
+        <separator/>
         <use
           template="settings-action-row"
           icon="download"

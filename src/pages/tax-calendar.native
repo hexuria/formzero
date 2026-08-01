@@ -1,20 +1,28 @@
 <template name="tax-calendar-deadlines-section">
   <column gap="12">
-    <row cross="center" gap="12">
-      <column grow="1" gap="4">
-        <text><span weight="bold">{currentCalendarMonth} {currentCalendarYear} Deadlines</span></text>
-        <text wrap="true" foreground="text_muted">
-          The complete year is resolved and exported together. The explorer renders
-          one month at a time to keep the native schedule fast and accessible.
-        </text>
-      </column>
-      <badge variant="secondary">{calendarVisibleDeadlineCount}</badge>
-    </row>
+    <if test="{constrainedLayout}">
+      <row cross="center" gap="10">
+        <text grow="1"><span weight="bold">Deadlines</span></text>
+        <badge variant="secondary">{calendarVisibleDeadlineCount}</badge>
+      </row>
+    </if>
+    <else>
+      <row cross="center" gap="12">
+        <column grow="1" gap="4">
+          <text><span weight="bold">{currentCalendarMonth} {currentCalendarYear} Deadlines</span></text>
+          <text wrap="true" foreground="text_muted">
+            The complete year is resolved and exported together. The explorer renders
+            one month at a time to keep the native schedule fast and accessible.
+          </text>
+        </column>
+        <badge variant="secondary">{calendarVisibleDeadlineCount}</badge>
+      </row>
 
-    <card>
-      <row padding="12" gap="12" cross="center">
+      <row gap="12" cross="center">
         <button
-          size="sm"
+          width="44"
+          height="44"
+          size="icon"
           variant="outline"
           icon="chevron-left"
           label="Previous calendar month"
@@ -24,13 +32,15 @@
           <text foreground="text_muted">{calendarVisibleDeadlineCount}</text>
         </column>
         <button
-          size="sm"
+          width="44"
+          height="44"
+          size="icon"
           variant="outline"
           icon="chevron-right"
           label="Next calendar month"
           on-press="calendar_next_month"/>
       </row>
-    </card>
+    </else>
 
     <for each="calendarDeadlines" key="id" as="deadline">
       <card>
@@ -156,8 +166,8 @@
         <column gap="10">
           <input
             text="{overrideRegionsValue}"
-            placeholder="Optional, e.g. NCR"
-            label="Regions"
+            placeholder="Optional RDO codes, e.g. 040; 041"
+            label="Affected RDO codes"
             on-input="calendar_override_regions_input"/>
           <input
             text="{overrideTaxpayerTypesValue}"
@@ -171,8 +181,8 @@
           <input
             grow="1"
             text="{overrideRegionsValue}"
-            placeholder="Optional, e.g. NCR"
-            label="Regions"
+            placeholder="Optional RDO codes, e.g. 040; 041"
+            label="Affected RDO codes"
             on-input="calendar_override_regions_input"/>
           <input
             grow="1"
@@ -236,9 +246,9 @@
     <column padding="20" gap="14">
       <text><span weight="bold">{nonWorkingDayEditorTitle}</span></text>
       <text wrap="true" foreground="text_muted">
-        Kind must be regular, local, special, or closure. Only nationwide
-        entries adjust the global explorer; regional entries remain stored
-        for a future profile/region projection.
+        Kind must be regular, local, special, or closure. Entries without an
+        RDO scope adjust the global explorer; scoped entries apply only to
+        matching tax-profile dashboards and calendar handoffs.
       </text>
       <if test="{constrainedLayout}">
         <column gap="10">
@@ -282,8 +292,8 @@
         on-input="calendar_non_working_source_input"/>
       <input
         text="{nonWorkingRegionsValue}"
-        placeholder="Optional, e.g. NCR, Region IV-A"
-        label="Regions"
+        placeholder="Optional RDO codes, e.g. 040; 041"
+        label="Affected RDO codes"
         on-input="calendar_non_working_regions_input"/>
       <row gap="10">
         <button variant="primary" icon="check" on-press="calendar_save_non_working_day">{nonWorkingDaySaveLabel}</button>
@@ -296,7 +306,9 @@
 <template name="tax-calendar-overrides-section">
   <column gap="20">
     <if test="{calendarNoticeVisible}">
-      <badge variant="{calendarNoticeTone}">{calendarNotice}</badge>
+      <row cross="center">
+        <badge variant="{calendarNoticeTone}">{calendarNotice}</badge>
+      </row>
     </if>
 
     <column gap="10">
@@ -304,8 +316,7 @@
       <text wrap="true" foreground="text_muted">
         Matching follows the reference resolver: form code plus original or
         already business-day-adjusted deadline; later matching overrides win.
-        Region- or taxpayer-scoped overrides remain stored until profile facts
-        are available to resolve them safely.
+        RDO- or taxpayer-scoped overrides apply only to matching tax profiles.
         Effective-range and expiry metadata are preserved separately in SQLite;
         like the reference resolver, they do not limit global matching yet.
       </text>
@@ -388,19 +399,35 @@
 </template>
 
 <template name="tax-calendar-content" args="padding">
-  <column padding="{padding}" gap="24">
+  <column padding="{padding}" gap="{dashboardContentGap}">
     <if test="{constrainedLayout}">
-      <column gap="12">
-        <column gap="6">
-          <text size="heading">Tax Calendar Explorer</text>
-          <text wrap="true" foreground="text_muted">
-            Review calendar-year rules, source-cited changes, and SQLite overrides.
-          </text>
-        </column>
-        <column gap="8">
-          <button variant="outline" icon="refresh-cw" on-press="calendar_refresh">Refresh from SQLite</button>
-        </column>
-      </column>
+      <row gap="8" cross="center">
+        <tabs grow="1" gap="2" label="Tax calendar sections">
+          <button
+            height="44"
+            variant="ghost"
+            selected="{calendarDeadlinesActive}"
+            on-press="show_calendar_deadlines">Deadlines</button>
+          <button
+            height="44"
+            variant="ghost"
+            selected="{calendarRulesActive}"
+            on-press="show_calendar_rules">Rules</button>
+          <button
+            height="44"
+            variant="ghost"
+            selected="{calendarOverridesActive}"
+            on-press="show_calendar_overrides">Overrides</button>
+        </tabs>
+        <button
+          width="44"
+          height="44"
+          size="icon"
+          variant="outline"
+          icon="refresh-cw"
+          label="Refresh calendar from SQLite"
+          on-press="calendar_refresh"/>
+      </row>
     </if>
     <else>
       <row gap="16" cross="center">
@@ -414,25 +441,90 @@
       </row>
     </else>
 
-    <tabs gap="4" label="Tax calendar sections">
-      <button
-        variant="ghost"
-        selected="{calendarDeadlinesActive}"
-        on-press="show_calendar_deadlines">Deadlines</button>
-      <button
-        variant="ghost"
-        selected="{calendarRulesActive}"
-        on-press="show_calendar_rules">Rules</button>
-      <button
-        variant="ghost"
-        selected="{calendarOverridesActive}"
-        on-press="show_calendar_overrides">Overrides</button>
-    </tabs>
-
-    <card>
-      <row padding="14" gap="12" cross="center">
+    <if test="{constrainedLayout}">
+      <if test="{calendarDeadlinesActive}">
+        <row gap="4" cross="center">
+          <button
+            width="44"
+            height="44"
+            size="icon"
+            variant="outline"
+            icon="chevron-left"
+            label="Previous calendar year"
+            on-press="calendar_previous_year"/>
+          <button
+            width="44"
+            height="44"
+            size="icon"
+            variant="ghost"
+            icon="chevron-left"
+            label="Previous calendar month"
+            on-press="calendar_previous_month"/>
+          <column grow="1" gap="2" cross="center">
+            <text><span weight="bold">{currentCalendarMonth} {currentCalendarYear}</span></text>
+            <text foreground="text_muted">{calendarVisibleDeadlineCount}</text>
+          </column>
+          <button
+            width="44"
+            height="44"
+            size="icon"
+            variant="ghost"
+            icon="chevron-right"
+            label="Next calendar month"
+            on-press="calendar_next_month"/>
+          <button
+            width="44"
+            height="44"
+            size="icon"
+            variant="outline"
+            icon="chevron-right"
+            label="Next calendar year"
+            on-press="calendar_next_year"/>
+        </row>
+      </if>
+      <else>
+        <row gap="8" cross="center">
+          <button
+            width="44"
+            height="44"
+            size="icon"
+            variant="outline"
+            icon="chevron-left"
+            label="Previous calendar year"
+            on-press="calendar_previous_year"/>
+          <text grow="1" text-alignment="center"><span weight="bold">Calendar Year {currentCalendarYear}</span></text>
+          <button
+            width="44"
+            height="44"
+            size="icon"
+            variant="outline"
+            icon="chevron-right"
+            label="Next calendar year"
+            on-press="calendar_next_year"/>
+        </row>
+      </else>
+    </if>
+    <else>
+      <tabs gap="4" label="Tax calendar sections">
         <button
-          size="sm"
+          variant="ghost"
+          selected="{calendarDeadlinesActive}"
+          on-press="show_calendar_deadlines">Deadlines</button>
+        <button
+          variant="ghost"
+          selected="{calendarRulesActive}"
+          on-press="show_calendar_rules">Rules</button>
+        <button
+          variant="ghost"
+          selected="{calendarOverridesActive}"
+          on-press="show_calendar_overrides">Overrides</button>
+      </tabs>
+
+      <row gap="12" cross="center">
+        <button
+          width="44"
+          height="44"
+          size="icon"
           variant="outline"
           icon="chevron-left"
           label="Previous calendar year"
@@ -442,13 +534,15 @@
           <text foreground="text_muted">{calendarDeadlineCount} in the full export</text>
         </column>
         <button
-          size="sm"
+          width="44"
+          height="44"
+          size="icon"
           variant="outline"
           icon="chevron-right"
           label="Next calendar year"
           on-press="calendar_next_year"/>
       </row>
-    </card>
+    </else>
 
     <if test="{calendarDeadlinesActive}">
       <use template="tax-calendar-deadlines-section"/>

@@ -258,7 +258,7 @@ pub const OverrideRow = struct {
 
     pub fn scopeLabel(self: *const OverrideRow, arena: std.mem.Allocator) []const u8 {
         const region = if (self.region_count == 0)
-            "All regions"
+            "All RDOs"
         else
             joinFixedTexts(arena, self.regions[0..self.region_count], ", ");
         const taxpayer = if (self.taxpayer_type_count == 0)
@@ -333,8 +333,13 @@ pub const NonWorkingDayRow = struct {
     }
 
     pub fn regionsLabel(self: *const NonWorkingDayRow, arena: std.mem.Allocator) []const u8 {
-        if (self.region_count == 0) return "Nationwide";
-        return joinFixedTexts(arena, self.regions[0..self.region_count], ", ");
+        if (self.region_count == 0) return "All RDOs";
+        const codes = joinFixedTexts(
+            arena,
+            self.regions[0..self.region_count],
+            ", ",
+        );
+        return std.fmt.allocPrint(arena, "RDOs: {s}", .{codes}) catch codes;
     }
 };
 
@@ -345,11 +350,11 @@ pub const NoticeKind = enum {
 };
 
 pub const ProfileFormScope = union(enum) {
-    /// Temporary shipping mode while the tax-profile repository has no
-    /// authoritative, per-year registered Forms Set.
+    /// Temporary shipping mode when no profile-level calendar preference is
+    /// available and the caller intentionally chooses the full catalog.
     catalog_fallback,
-    /// Canonical form codes from a persisted profile Forms Set. An empty,
-    /// configured set intentionally exports no deadlines.
+    /// Effective canonical form codes selected for this profile's calendar.
+    /// An empty configured selection intentionally exports no deadlines.
     registered: []const []const u8,
 };
 
@@ -358,6 +363,15 @@ pub const ProfileExport = struct {
     key: []const u8,
     name: []const u8,
     form_scope: ProfileFormScope,
+};
+
+/// Taxpayer attributes used to project the already-loaded global calendar
+/// policy for one profile. Region-scoped records may name either a geographic
+/// region or an RDO, so both values participate in the same scope match.
+pub const TaxpayerContext = struct {
+    region: ?[]const u8 = null,
+    rdo: ?[]const u8 = null,
+    taxpayer_type: ?[]const u8 = null,
 };
 
 pub const State = struct {
@@ -458,6 +472,23 @@ pub const State = struct {
     }
 
     pub fn recompute(self: *State) !void {
+        try self.recomputeProjection(null);
+    }
+
+    /// Rebuilds the selected calendar year for one taxpayer without reading
+    /// SQLite. The caller must first load records through `attach`/`reload`, or
+    /// otherwise populate the in-memory rows (as deterministic tests do).
+    pub fn recomputeForTaxpayer(
+        self: *State,
+        context: TaxpayerContext,
+    ) !void {
+        try self.recomputeProjection(context);
+    }
+
+    fn recomputeProjection(
+        self: *State,
+        taxpayer_context: ?TaxpayerContext,
+    ) !void {
         const allocator = self.allocator orelse return error.NotAttached;
 
         var override_form_slices: [max_overrides][max_forms_per_override][]const u8 = undefined;
@@ -471,7 +502,7 @@ pub const State = struct {
             // The explorer/export is a global projection with no taxpayer
             // profile or region. Keep scoped policy visible and editable,
             // but never leak it into the nationwide schedule.
-            if (row.region_count != 0 or row.taxpayer_type_count != 0) continue;
+            if (!overrideAppliesToContext(row, taxpayer_context)) continue;
             const index = domain_override_count;
             for (row.form_codes[0..row.form_count], 0..) |*code, code_index| {
                 override_form_slices[index][code_index] = code.text();
@@ -515,7 +546,9 @@ pub const State = struct {
             // closures can adjust its single authoritative projection. A
             // legacy local-holiday row with no region is invalid and remains
             // visible for cleanup, but must never become nationwide.
-            if (row.region_count != 0 or kind == .local_holiday) continue;
+            if (!nonWorkingDayAppliesToContext(row, kind, taxpayer_context)) {
+                continue;
+            }
             const index = domain_day_count;
             for (row.regions[0..row.region_count], 0..) |*region, scope_index| {
                 day_region_slices[index][scope_index] = region.text();
@@ -915,10 +948,12 @@ pub const State = struct {
             event_count += 1;
         }
 
-        // TODO(tax-profile-forms-set): once profile persistence is available,
-        // callers must pass `.registered` from that profile's per-year Forms
-        // Set. Profile region, taxpayer type, fiscal year, and eFPS group must
-        // also be applied before this can be treated as a filing plan.
+        if (event_count == 0) return error.NoCalendarEvents;
+
+        // The caller supplies the profile's persisted calendar selection.
+        // When Forms Sets become the authoritative profile-form source, pass
+        // the intersection here together with region, taxpayer type, fiscal
+        // year, and eFPS group before treating this as a filing plan.
         return ics.generate(
             allocator,
             events[0..event_count],
@@ -1091,11 +1126,77 @@ pub const State = struct {
     }
 };
 
+fn overrideAppliesToContext(
+    row: *const OverrideRow,
+    taxpayer_context: ?TaxpayerContext,
+) bool {
+    const context = taxpayer_context orelse
+        return row.region_count == 0 and row.taxpayer_type_count == 0;
+
+    if (row.region_count != 0 and
+        !scopeMatchesRegionOrRdo(row.regions[0..row.region_count], context))
+    {
+        return false;
+    }
+    if (row.taxpayer_type_count != 0 and
+        !scopeMatchesValue(
+            row.taxpayer_types[0..row.taxpayer_type_count],
+            context.taxpayer_type,
+        ))
+    {
+        return false;
+    }
+    return true;
+}
+
+fn nonWorkingDayAppliesToContext(
+    row: *const NonWorkingDayRow,
+    kind: domain.NonWorkingDayKind,
+    taxpayer_context: ?TaxpayerContext,
+) bool {
+    const context = taxpayer_context orelse
+        return row.region_count == 0 and kind != .local_holiday;
+
+    // A local holiday is meaningful only with an explicit stored scope and a
+    // matching taxpayer region/RDO. This also quarantines legacy unscoped
+    // local rows that predate the store validation.
+    if (kind == .local_holiday and row.region_count == 0) return false;
+    if (row.region_count == 0) return true;
+    return scopeMatchesRegionOrRdo(
+        row.regions[0..row.region_count],
+        context,
+    );
+}
+
+fn scopeMatchesRegionOrRdo(
+    scopes: []const ScopeText,
+    context: TaxpayerContext,
+) bool {
+    return scopeMatchesValue(scopes, context.region) or
+        scopeMatchesValue(scopes, context.rdo);
+}
+
+fn scopeMatchesValue(
+    scopes: []const ScopeText,
+    candidate: ?[]const u8,
+) bool {
+    const raw_value = candidate orelse return false;
+    const value = trimmed(raw_value);
+    if (value.len == 0) return false;
+    for (scopes) |*scope| {
+        if (std.ascii.eqlIgnoreCase(scope.text(), value)) return true;
+    }
+    return false;
+}
+
 fn profileIncludesForm(scope: ProfileFormScope, form_code: []const u8) bool {
     return switch (scope) {
         .catalog_fallback => true,
         .registered => |registered| for (registered) |candidate| {
-            if (std.mem.eql(u8, candidate, form_code)) break true;
+            if (std.mem.eql(u8, candidate, form_code) or
+                (std.mem.eql(u8, candidate, "1604CF") and
+                    (std.mem.eql(u8, form_code, "1604C") or
+                        std.mem.eql(u8, form_code, "1604F")))) break true;
         } else false,
     };
 }
@@ -1345,6 +1446,60 @@ fn setOptionalDateBuffer(buffer: anytype, date: ?domain.Date) void {
     }
 }
 
+fn testOverrideRow(
+    id: i64,
+    adjusted_deadline: domain.Date,
+    regions: []const []const u8,
+    taxpayer_types: []const []const u8,
+) !OverrideRow {
+    var row = OverrideRow{
+        .id = id,
+        .original_deadline = try domain.Date.init(2026, 5, 15),
+        .adjusted_deadline = adjusted_deadline,
+    };
+    try row.title.set("Scoped override fixture");
+    try row.source.set("Official test source");
+    try row.form_codes[0].set("1701Q");
+    row.form_count = 1;
+    for (regions, 0..) |region, index| try row.regions[index].set(region);
+    row.region_count = regions.len;
+    for (taxpayer_types, 0..) |taxpayer_type, index| {
+        try row.taxpayer_types[index].set(taxpayer_type);
+    }
+    row.taxpayer_type_count = taxpayer_types.len;
+    return row;
+}
+
+fn testNonWorkingDayRow(
+    id: i64,
+    date: domain.Date,
+    kind: []const u8,
+    regions: []const []const u8,
+) !NonWorkingDayRow {
+    var row = NonWorkingDayRow{ .id = id, .date = date };
+    try row.name.set("Scoped non-working day fixture");
+    try row.kind.set(kind);
+    try row.source.set("Official test source");
+    for (regions, 0..) |region, index| try row.regions[index].set(region);
+    row.region_count = regions.len;
+    return row;
+}
+
+fn findDatedDeadline(
+    state: *const State,
+    form_code: []const u8,
+    original_deadline: domain.Date,
+) ?*const DeadlineRow {
+    for (state.deadlines[0..state.deadline_count]) |*row| {
+        if (std.mem.eql(u8, row.form_code, form_code) and
+            domain.Date.compare(row.original_deadline, original_deadline) == .eq)
+        {
+            return row;
+        }
+    }
+    return null;
+}
+
 test "state persists overrides and recomputes the calendar" {
     const allocator = std.testing.allocator;
     var store = try persistence.Store.openMemory(allocator);
@@ -1481,6 +1636,196 @@ test "legacy unscoped local holiday never becomes nationwide" {
     return error.TestExpectedEqual;
 }
 
+test "taxpayer recompute applies loaded override scopes case-insensitively" {
+    var state = State{
+        .allocator = std.testing.allocator,
+        .selected_year = 2026,
+        .selected_month = 5,
+    };
+    state.overrides[0] = try testOverrideRow(
+        1,
+        try domain.Date.init(2026, 5, 20),
+        &.{},
+        &.{},
+    );
+    state.overrides[1] = try testOverrideRow(
+        2,
+        try domain.Date.init(2026, 6, 15),
+        &.{"NCR"},
+        &.{},
+    );
+    state.overrides[2] = try testOverrideRow(
+        3,
+        try domain.Date.init(2026, 7, 15),
+        &.{},
+        &.{"Corporation"},
+    );
+    state.overrides[3] = try testOverrideRow(
+        4,
+        try domain.Date.init(2026, 8, 14),
+        &.{"NCR"},
+        &.{"Corporation"},
+    );
+    state.override_count = 4;
+    const original = try domain.Date.init(2026, 5, 15);
+
+    // The existing global projection still admits only the unscoped record.
+    try state.recompute();
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 5, 20),
+        findDatedDeadline(&state, "1701Q", original).?.final_deadline,
+    );
+
+    // A mismatched taxpayer still receives the unscoped policy.
+    try state.recomputeForTaxpayer(.{
+        .region = "Region VII",
+        .taxpayer_type = "Individual",
+    });
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 5, 20),
+        findDatedDeadline(&state, "1701Q", original).?.final_deadline,
+    );
+
+    // RDO and taxpayer-type scopes are both ASCII case-insensitive.
+    try state.recomputeForTaxpayer(.{
+        .rdo = "ncr",
+        .taxpayer_type = "Individual",
+    });
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 6, 15),
+        findDatedDeadline(&state, "1701Q", original).?.final_deadline,
+    );
+    try state.recomputeForTaxpayer(.{
+        .region = "Region VII",
+        .taxpayer_type = "CORPORATION",
+    });
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 7, 15),
+        findDatedDeadline(&state, "1701Q", original).?.final_deadline,
+    );
+
+    // A record carrying both scopes requires both to match. The later matching
+    // record wins using the same deterministic precedence as global reloads.
+    try state.recomputeForTaxpayer(.{
+        .region = "nCr",
+        .taxpayer_type = "corporation",
+    });
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 8, 14),
+        findDatedDeadline(&state, "1701Q", original).?.final_deadline,
+    );
+}
+
+test "taxpayer recompute applies scoped days and quarantines unscoped local holidays" {
+    var state = State{
+        .allocator = std.testing.allocator,
+        .selected_year = 2026,
+        .selected_month = 5,
+    };
+    state.non_working_days[0] = try testNonWorkingDayRow(
+        1,
+        try domain.Date.init(2026, 4, 15),
+        "regular",
+        &.{},
+    );
+    state.non_working_days[1] = try testNonWorkingDayRow(
+        2,
+        try domain.Date.init(2026, 5, 15),
+        "special",
+        &.{"NCR"},
+    );
+    state.non_working_days[2] = try testNonWorkingDayRow(
+        3,
+        try domain.Date.init(2026, 6, 10),
+        "local",
+        &.{"NCR"},
+    );
+    state.non_working_days[3] = try testNonWorkingDayRow(
+        4,
+        try domain.Date.init(2026, 7, 10),
+        "local",
+        &.{},
+    );
+    state.non_working_day_count = 4;
+
+    try state.recomputeForTaxpayer(.{
+        .region = "Region VII",
+        .taxpayer_type = "Individual",
+    });
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 4, 16),
+        findDatedDeadline(
+            &state,
+            "1701",
+            try domain.Date.init(2026, 4, 15),
+        ).?.final_deadline,
+    );
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 5, 15),
+        findDatedDeadline(
+            &state,
+            "1701Q",
+            try domain.Date.init(2026, 5, 15),
+        ).?.final_deadline,
+    );
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 6, 10),
+        findDatedDeadline(
+            &state,
+            "0619E",
+            try domain.Date.init(2026, 6, 10),
+        ).?.final_deadline,
+    );
+
+    try state.recomputeForTaxpayer(.{ .region = "ncr" });
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 5, 18),
+        findDatedDeadline(
+            &state,
+            "1701Q",
+            try domain.Date.init(2026, 5, 15),
+        ).?.final_deadline,
+    );
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 6, 11),
+        findDatedDeadline(
+            &state,
+            "0619E",
+            try domain.Date.init(2026, 6, 10),
+        ).?.final_deadline,
+    );
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 7, 10),
+        findDatedDeadline(
+            &state,
+            "1600VT",
+            try domain.Date.init(2026, 7, 10),
+        ).?.final_deadline,
+    );
+
+    const first_count = state.deadline_count;
+    var first_projection: [max_deadlines]DeadlineRow = undefined;
+    @memcpy(
+        first_projection[0..first_count],
+        state.deadlines[0..first_count],
+    );
+    try state.recomputeForTaxpayer(.{ .region = "Region VII" });
+    try state.recomputeForTaxpayer(.{ .rdo = "NCR" });
+    try std.testing.expectEqual(first_count, state.deadline_count);
+    for (
+        first_projection[0..first_count],
+        state.deadlines[0..state.deadline_count],
+    ) |expected, actual| {
+        try std.testing.expectEqual(expected.id, actual.id);
+        try std.testing.expectEqualStrings(expected.rule_id, actual.rule_id);
+        try std.testing.expectEqualStrings(expected.form_code, actual.form_code);
+        try std.testing.expectEqual(expected.original_deadline, actual.original_deadline);
+        try std.testing.expectEqual(expected.final_deadline, actual.final_deadline);
+        try std.testing.expectEqual(expected.status, actual.status);
+        try std.testing.expectEqualStrings(expected.sourceLabel(), actual.sourceLabel());
+    }
+}
+
 test "ICS export contains the complete selected calendar year" {
     const allocator = std.testing.allocator;
     var store = try persistence.Store.openMemory(allocator);
@@ -1560,7 +1905,7 @@ test "ICS export contains the complete selected calendar year" {
     try std.testing.expectEqual(uid_count, unique_uids.count());
 }
 
-test "profile Forms Set scope is explicit and filters canonical forms" {
+test "profile calendar selection filters canonical forms and grouped codes" {
     const allocator = std.testing.allocator;
     var store = try persistence.Store.openMemory(allocator);
     defer store.close();
@@ -1590,20 +1935,39 @@ test "profile Forms Set scope is explicit and filters canonical forms" {
     try std.testing.expect(std.mem.indexOf(u8, vat_bytes, ":2550Q:") != null);
     try std.testing.expect(std.mem.indexOf(u8, vat_bytes, ":1701Q:") == null);
 
-    const no_forms = [_][]const u8{};
-    const empty_bytes = try state.buildProfileIcs(
+    const withholding_forms = [_][]const u8{"1604CF"};
+    const withholding_bytes = try state.buildProfileIcs(
         allocator,
         "20260729T010203Z",
         .{
-            .key = "profile-empty",
-            .name = "Empty Forms Set",
-            .form_scope = .{ .registered = &no_forms },
+            .key = "profile-withholding",
+            .name = "Withholding Profile",
+            .form_scope = .{ .registered = &withholding_forms },
         },
     );
-    defer allocator.free(empty_bytes);
-    try std.testing.expectEqual(
-        @as(usize, 0),
-        std.mem.count(u8, empty_bytes, "BEGIN:VEVENT"),
+    defer allocator.free(withholding_bytes);
+    try std.testing.expect(
+        std.mem.indexOf(u8, withholding_bytes, ":1604-C:") != null,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(u8, withholding_bytes, ":1604-F:") != null,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(u8, withholding_bytes, ":1621:") == null,
+    );
+
+    const no_forms = [_][]const u8{};
+    try std.testing.expectError(
+        error.NoCalendarEvents,
+        state.buildProfileIcs(
+            allocator,
+            "20260729T010203Z",
+            .{
+                .key = "profile-empty",
+                .name = "Empty Forms Set",
+                .form_scope = .{ .registered = &no_forms },
+            },
+        ),
     );
 }
 

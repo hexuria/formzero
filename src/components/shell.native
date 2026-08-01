@@ -1,7 +1,7 @@
 <template name="sidebar-profile" args="name tin profile active=false">
   <list-item
     width="255"
-    height="64"
+    height="72"
     padding="8"
     radius="md"
     selected="{active}"
@@ -10,6 +10,9 @@
     <column grow="1" gap="2">
       <text><span weight="bold">{name}</span></text>
       <text foreground="text_muted">{tin}</text>
+      <if test="{active}">
+        <text foreground="text_muted">RDO: {selectedTaxpayerRdo}</text>
+      </if>
     </column>
   </list-item>
 </template>
@@ -20,7 +23,7 @@
       <list-item
         key="{sidebarActionEpoch}"
         width="232"
-        height="40"
+        height="44"
         padding="12"
         radius="md"
         icon="download"
@@ -35,7 +38,7 @@
         <list-item
           key="{sidebarActionEpoch}"
           width="232"
-          height="40"
+          height="44"
           padding="12"
           radius="md"
           icon="sun"
@@ -49,7 +52,7 @@
         <list-item
           key="{sidebarActionEpoch}"
           width="232"
-          height="40"
+          height="44"
           padding="12"
           radius="md"
           icon="moon"
@@ -65,7 +68,7 @@
       <list-item
         key="{sidebarActionEpoch}"
         width="232"
-        height="40"
+        height="44"
         padding="12"
         radius="md"
         icon="clock"
@@ -79,7 +82,7 @@
       <list-item
         key="{sidebarActionEpoch}"
         width="232"
-        height="40"
+        height="44"
         padding="12"
         radius="md"
         icon="file-text"
@@ -93,7 +96,7 @@
       <list-item
         key="{sidebarActionEpoch}"
         width="232"
-        height="40"
+        height="44"
         padding="12"
         radius="md"
         icon="settings"
@@ -195,11 +198,11 @@
       <column width="279" grow="1" cross="center">
       <spacer height="12"/>
 
-      <row width="255" height="40" main="end" cross="center">
+      <row width="255" height="44" main="end" cross="center">
         <if test="{overlay}">
           <list-item
-            width="40"
-            height="40"
+            width="44"
+            height="44"
             padding="0"
             main="center"
             cross="center"
@@ -212,8 +215,8 @@
         </if>
         <else>
           <list-item
-            width="40"
-            height="40"
+            width="44"
+            height="44"
             padding="0"
             main="center"
             cross="center"
@@ -242,8 +245,8 @@
           <span weight="bold">TAXPAYER PROFILES</span>
         </text>
         <button
-          width="40"
-          height="40"
+          width="44"
+          height="44"
           size="icon"
           variant="ghost"
           radius="xl"
@@ -253,44 +256,42 @@
         </button>
       </row>
 
-      <row width="232" height="64" main="center" cross="center">
-        <search-field
-          width="232"
-          placeholder="Search profiles"
-          label="Search taxpayer profiles"
-          autofocus="{overlay}"/>
-      </row>
+      <search-field
+        width="232"
+        text="{sidebarProfileSearchValue}"
+        placeholder="Search profiles"
+        label="Search taxpayer profiles"
+        autofocus="{overlay}"
+        on-input="sidebar_profile_search_changed"/>
 
       <spacer height="16"/>
       <separator/>
 
       <scroll grow="1" width="255" overscroll="none" label="Sidebar navigation">
-        <column width="255" cross="center" gap="8">
+        <column width="255" grow="1" cross="center" gap="8">
           <spacer height="4"/>
-          <if test="{profileRowsEmpty}">
-            <card width="232">
-              <column padding="16" gap="6" cross="center">
-                <text><span weight="bold">No tax profiles yet</span></text>
-                <text wrap="true" text-alignment="center" foreground="text_muted">
-                  Add a profile once, then reuse its qualified fields on recurring forms.
-                </text>
-              </column>
-            </card>
+          <if test="{visibleProfileRowsEmpty}">
+            <column width="232" padding="12" gap="6" cross="center">
+              <text><span weight="bold">{profileRowsEmptyTitle}</span></text>
+              <text wrap="true" text-alignment="center" foreground="text_muted">
+                {profileRowsEmptyMessage}
+              </text>
+            </column>
           </if>
-          <for each="profileRows" key="idLabel" as="profile">
+          <for each="visibleProfileRows" key="idLabel" as="profile">
             <use
               template="sidebar-profile"
               name="{profile.nameLabel}"
               tin="{profile.tinLabel}"
               profile="{profile.slot}"
-              active="{profile.active}"/>
+              active="{profile.active and taxpayerNavigationSelectionVisible}"/>
           </for>
 
           <row width="232" height="48" cross="center">
             <list-item
               key="{sidebarActionEpoch}"
               width="232"
-              height="40"
+              height="44"
               padding="12"
               radius="md"
               icon="folder-open"
@@ -299,13 +300,14 @@
               Screen Gallery
             </list-item>
           </row>
+
+          <spacer grow="1"/>
+          <separator/>
+          <spacer height="8"/>
+          <use template="sidebar-dock-full"/>
+          <spacer height="12"/>
         </column>
       </scroll>
-
-      <separator/>
-      <spacer height="8"/>
-      <use template="sidebar-dock-full"/>
-      <spacer height="12"/>
       </column>
       <separator/>
     </row>
@@ -348,10 +350,10 @@
     <column width="71" grow="1" cross="center">
       <spacer height="12"/>
 
-      <row width="48" height="40" main="center" cross="center">
+      <row width="48" height="44" main="center" cross="center">
         <list-item
-          width="40"
-          height="40"
+          width="44"
+          height="44"
           padding="0"
           main="center"
           cross="center"
@@ -376,8 +378,8 @@
 
       <row width="48" height="56" main="center" cross="center">
         <button
-          width="40"
-          height="40"
+          width="44"
+          height="44"
           size="icon"
           variant="ghost"
           radius="xl"
@@ -409,7 +411,7 @@
         width="70"
         overscroll="none"
         label="Compact sidebar navigation">
-        <column width="70" cross="center" gap="8">
+        <column width="70" grow="1" cross="center" gap="8">
           <spacer height="4"/>
           <for each="profileRows" key="idLabel" as="profile">
             <use
@@ -417,7 +419,7 @@
               initials="{profile.initialsLabel}"
               name="{profile.nameLabel}"
               profile="{profile.slot}"
-              active="{profile.active}"/>
+              active="{profile.active and taxpayerNavigationSelectionVisible}"/>
           </for>
 
           <row width="48" height="64" main="center" cross="center">
@@ -432,32 +434,46 @@
               on-press="show_screen_gallery">
             </button>
           </row>
+
+          <spacer grow="1"/>
+          <separator/>
+          <spacer height="8"/>
+          <use template="sidebar-dock-rail"/>
+          <spacer height="12"/>
         </column>
       </scroll>
-
-      <separator/>
-      <spacer height="8"/>
-      <use template="sidebar-dock-rail"/>
-      <spacer height="12"/>
     </column>
     <separator/>
   </row>
 </template>
 
-<template name="app-mobile-header" args="app_icon">
+<template name="app-mobile-header">
   <column>
     <row height="56" padding="8" gap="10" cross="center" background="background">
-      <button
-        width="40"
-        height="40"
-        size="icon"
-        variant="ghost"
-        radius="xl"
-        icon="menu"
-        label="Open navigation"
-        on-press="toggle_navigation">
-      </button>
-      <image image="{app_icon}" width="38" height="38" label="eBIRForms"/>
+      <if test="{page == 'profile_setup'}">
+        <button
+          width="44"
+          height="44"
+          size="icon"
+          variant="ghost"
+          radius="xl"
+          icon="chevron-left"
+          label="{profileBackLabel}"
+          on-press="cancel_profile_edit">
+        </button>
+      </if>
+      <else>
+        <button
+          width="44"
+          height="44"
+          size="icon"
+          variant="ghost"
+          radius="xl"
+          icon="menu"
+          label="Open navigation"
+          on-press="toggle_navigation">
+        </button>
+      </else>
       <text grow="1"><span weight="bold">{currentPageTitle}</span></text>
     </row>
     <separator/>
@@ -570,6 +586,72 @@
   </card>
 </template>
 
+<template name="profile-notice-toast">
+  <alert
+    width="320"
+    global-key="profile-notice-toast"
+    label="Tax profile notification">
+    <row gap="12" cross="start">
+      <if test="{profileNoticeFailure}">
+        <icon name="alert" foreground="destructive" width="20" height="20"/>
+      </if>
+      <else>
+        <if test="{profileNoticeSuccess}">
+          <icon name="check-circle" foreground="success" width="20" height="20"/>
+        </if>
+        <else>
+          <icon name="info" foreground="info" width="20" height="20"/>
+        </else>
+      </else>
+      <text grow="1" wrap="true">{profileNotice}</text>
+      <button
+        width="44"
+        height="44"
+        size="icon"
+        variant="ghost"
+        radius="xl"
+        icon="x"
+        label="Dismiss tax profile notification"
+        on-press="dismiss_profile_notice">
+      </button>
+    </row>
+  </alert>
+</template>
+
+<template name="profile-calendar-export-toast">
+  <alert
+    width="320"
+    global-key="profile-calendar-export-toast"
+    label="Calendar export notification">
+    <row gap="12" cross="start">
+      <if test="{profileCalendarExportNoticeFailure}">
+        <icon name="alert" foreground="destructive" width="20" height="20"/>
+      </if>
+      <else>
+        <if test="{profileCalendarExportNoticeSuccess}">
+          <icon name="check-circle" foreground="success" width="20" height="20"/>
+        </if>
+        <else>
+          <icon name="info" foreground="info" width="20" height="20"/>
+        </else>
+      </else>
+      <text grow="1" wrap="true">{profileCalendarExportNotice}</text>
+      <if test="{profileCalendarExportNoticeDismissible}">
+        <button
+          width="44"
+          height="44"
+          size="icon"
+          variant="ghost"
+          radius="xl"
+          icon="x"
+          label="Dismiss calendar export notification"
+          on-press="dismiss_profile_calendar_export_notice">
+        </button>
+      </if>
+    </row>
+  </alert>
+</template>
+
 <template name="app-shell" args="brand_logo app_icon bagong_logo bir_logo goldcoders_logo">
   <stack grow="1">
     <!--
@@ -593,7 +675,7 @@
         <column grow="1" min-width="0">
           <column grow="1" min-width="0">
             <if test="{sidebarLauncherVisible}">
-              <use template="app-mobile-header" app_icon="{app_icon}"/>
+              <use template="app-mobile-header"/>
             </if>
             <slot/>
           </column>
@@ -605,6 +687,7 @@
             goldcoders_logo="{goldcoders_logo}"/>
         </column>
       </row>
+
     </column>
 
     <!--
@@ -627,6 +710,20 @@
             label="Close navigation">
           </status-bar>
         </row>
+      </column>
+    </if>
+
+    <if test="{profileToastRegionVisible}">
+      <column grow="1" padding="16" cross="end" gap="8">
+        <if test="{sidebarLauncherVisible}">
+          <spacer height="56"/>
+        </if>
+        <if test="{profileNoticeVisible}">
+          <use template="profile-notice-toast"/>
+        </if>
+        <if test="{profileCalendarExportNoticeVisible}">
+          <use template="profile-calendar-export-toast"/>
+        </if>
       </column>
     </if>
   </stack>

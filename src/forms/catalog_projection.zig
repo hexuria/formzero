@@ -738,12 +738,12 @@ test "closed generated key vocabulary maps exhaustively to ReusableField" {
         );
     }
     try std.testing.expectEqual(
-        @as(usize, 7),
+        @as(usize, 9),
         catalog.optional_profile_target_count,
     );
 }
 
-test "all ten editor revisions project all sixty-nine profile targets" {
+test "all ten editor revisions project all seventy-two profile targets" {
     const allocator = std.testing.allocator;
     const on = try model.Date.parseIso("2026-03-31");
     const activities = [_]model.BusinessActivity{.{
@@ -871,7 +871,7 @@ test "all ten editor revisions project all sixty-nine profile targets" {
 
     try std.testing.expectEqual(@as(usize, 10), editor_count);
     try std.testing.expectEqual(catalog.editor_count, editor_count);
-    try std.testing.expectEqual(@as(usize, 69), target_count);
+    try std.testing.expectEqual(@as(usize, 72), target_count);
     try std.testing.expectEqual(catalog.profile_target_count, target_count);
 }
 

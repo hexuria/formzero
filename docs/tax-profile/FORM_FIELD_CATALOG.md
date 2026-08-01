@@ -12,10 +12,10 @@ exists yet; it does not imply filing support.
 - Registry codes: 51
 - Native editor revisions: 10
 - Calendar-only codes: 41
-- Native input controls inventoried: 296
+- Native input controls inventoried: 299
 - Meaningful static-table fields inventoried: 63
-- Direct profile projection targets: 69
-- Optional profile projection targets: 7
+- Direct profile projection targets: 72
+- Optional profile projection targets: 9
 
 | Code | Revision | Status | Inputs | Table fields | Source |
 |---|---|---|---:|---:|---|
@@ -39,7 +39,7 @@ exists yet; it does not imply filing support.
 | 0620 | — | calendar_only | 0 | 0 | — |
 | 2316 | — | calendar_only | 0 | 0 | — |
 | 1700 | — | calendar_only | 0 | 0 | — |
-| 1701Q | 2018-01-ENCS | static_layout | 34 | 4 | src/pages/forms/1701q.native |
+| 1701Q | 2018-01-ENCS | static_layout | 37 | 4 | src/pages/forms/1701q.native |
 | 1701 | 2018-01-ENCS | static_layout | 49 | 15 | src/pages/forms/1701.native |
 | 1701A | — | calendar_only | 0 | 0 | — |
 | 1702Q | — | calendar_only | 0 | 0 | — |
@@ -111,6 +111,7 @@ excluded even when a selected registration may help compose a row.
 | 1701Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, estate, trust | required | `rdo_code` | `1701Q.2018-01-ENCS.input.rdo_code` |
 | 1701Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, estate, trust | required | `taxpayer_name` | `1701Q.2018-01-ENCS.input.taxpayer_filer_name` |
 | 1701Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, estate, trust | required | `registered_address` | `1701Q.2018-01-ENCS.input.registered_address` |
+| 1701Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, estate, trust | required | `zip_code` | `1701Q.2018-01-ENCS.input.zip_code` |
 | 1701Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, estate, trust | optional | `date_of_birth` | `1701Q.2018-01-ENCS.input.date_of_birth` |
 | 1701Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, estate, trust | required | `email_address` | `1701Q.2018-01-ENCS.input.email_address` |
 | 1701Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, estate, trust | optional | `citizenship` | `1701Q.2018-01-ENCS.input.citizenship` |
@@ -118,6 +119,8 @@ excluded even when a selected registration may help compose a row.
 | 1701Q 2018-01-ENCS | spouse | zero_or_one | individual, sole_proprietor | required | `tin` | `1701Q.2018-01-ENCS.input.spouse_tin` |
 | 1701Q 2018-01-ENCS | spouse | zero_or_one | individual, sole_proprietor | required | `rdo_code` | `1701Q.2018-01-ENCS.input.spouse_rdo_code` |
 | 1701Q 2018-01-ENCS | spouse | zero_or_one | individual, sole_proprietor | required | `taxpayer_name` | `1701Q.2018-01-ENCS.input.spouse_name` |
+| 1701Q 2018-01-ENCS | spouse | zero_or_one | individual, sole_proprietor | optional | `citizenship` | `1701Q.2018-01-ENCS.input.spouse_citizenship` |
+| 1701Q 2018-01-ENCS | spouse | zero_or_one | individual, sole_proprietor | optional | `foreign_tax_number` | `1701Q.2018-01-ENCS.input.spouse_foreign_tax_number` |
 | 1701 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, estate, trust | required | `tin` | `1701.2018-01-ENCS.input.tin` |
 | 1701 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, estate, trust | required | `rdo_code` | `1701.2018-01-ENCS.input.rdo_code` |
 | 1701 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, estate, trust | required | `taxpayer_name` | `1701.2018-01-ENCS.input.taxpayer_name` |
@@ -306,32 +309,35 @@ Profile binding policy:
 | `1701Q.2018-01-ENCS.input.rdo_code` | 6 RDO Code | profile | rdo_code | required | filer | rdo_code | unbound_input | `src/pages/forms/1701q.native:57` |
 | `1701Q.2018-01-ENCS.input.taxpayer_filer_name` | 7 Taxpayer / Filer Name | profile | taxpayer_name | required | filer | text | unbound_input | `src/pages/forms/1701q.native:61` |
 | `1701Q.2018-01-ENCS.input.registered_address` | Registered Address | profile | registered_address | required | filer | text | unbound_input | `src/pages/forms/1701q.native:65` |
-| `1701Q.2018-01-ENCS.input.date_of_birth` | Date of Birth | profile | date_of_birth | optional | filer | date | unbound_input | `src/pages/forms/1701q.native:69` |
-| `1701Q.2018-01-ENCS.input.email_address` | Email Address | profile | email_address | required | filer | email | unbound_input | `src/pages/forms/1701q.native:73` |
-| `1701Q.2018-01-ENCS.input.citizenship` | Citizenship | profile | citizenship | optional | filer | text | unbound_input | `src/pages/forms/1701q.native:77` |
-| `1701Q.2018-01-ENCS.input.foreign_tax_number` | Foreign Tax Number | profile | foreign_tax_number | optional | filer | tax_identifier | unbound_input | `src/pages/forms/1701q.native:81` |
-| `1701Q.2018-01-ENCS.input.income_tax_rate_election` | Income-tax-rate election | transaction | — | — | filing | choice | unbound_input | `src/pages/forms/1701q.native:85` |
-| `1701Q.2018-01-ENCS.input.spouse_tin` | Spouse TIN | profile | tin | required | spouse | tin | unbound_input | `src/pages/forms/1701q.native:110` |
-| `1701Q.2018-01-ENCS.input.spouse_rdo_code` | Spouse RDO Code | profile | rdo_code | required | spouse | rdo_code | unbound_input | `src/pages/forms/1701q.native:114` |
-| `1701Q.2018-01-ENCS.input.spouse_name` | Spouse Name | profile | taxpayer_name | required | spouse | text | unbound_input | `src/pages/forms/1701q.native:118` |
-| `1701Q.2018-01-ENCS.input.sales_revenues_receipts` | Sales / Revenues / Receipts | transaction | — | — | filing | money | unbound_input | `src/pages/forms/1701q.native:127` |
-| `1701Q.2018-01-ENCS.input.cost_of_sales_services` | Cost of Sales / Services | transaction | — | — | filing | money | unbound_input | `src/pages/forms/1701q.native:135` |
-| `1701Q.2018-01-ENCS.input.allowable_deductions` | Allowable Deductions | transaction | — | — | filing | money | unbound_input | `src/pages/forms/1701q.native:143` |
-| `1701Q.2018-01-ENCS.input.taxable_income_external_policy_result` | Taxable Income (external policy result) | derived | — | — | system | money | unbound_input | `src/pages/forms/1701q.native:151` |
-| `1701Q.2018-01-ENCS.input.income_tax_due_external_policy_result` | Income Tax Due (external policy result) | derived | — | — | system | money | unbound_input | `src/pages/forms/1701q.native:159` |
-| `1701Q.2018-01-ENCS.input.gross_sales_receipts` | Gross Sales / Receipts | transaction | — | — | filing | money | unbound_input | `src/pages/forms/1701q.native:172` |
-| `1701Q.2018-01-ENCS.input.less_non_operating_income` | Less: Non-Operating Income | transaction | — | — | filing | money | unbound_input | `src/pages/forms/1701q.native:180` |
-| `1701Q.2018-01-ENCS.input.tax_due_at_8_percent_external_policy_result` | Tax Due at 8 percent (external policy result) | derived | — | — | system | money | unbound_input | `src/pages/forms/1701q.native:188` |
-| `1701Q.2018-01-ENCS.input.prior_quarter_income_tax_payments` | Prior-quarter income tax payments | external | — | — | evidence | money | unbound_input | `src/pages/forms/1701q.native:201` |
-| `1701Q.2018-01-ENCS.input.creditable_tax_withheld_bir_form_2307` | Creditable tax withheld (BIR Form 2307) | external | — | — | evidence | money | unbound_input | `src/pages/forms/1701q.native:209` |
-| `1701Q.2018-01-ENCS.input.other_tax_credits_payments` | Other Tax Credits / Payments | transaction | — | — | filing | money | unbound_input | `src/pages/forms/1701q.native:217` |
-| `1701Q.2018-01-ENCS.input.tax_payable_overpayment_external_policy_result` | 63 Tax Payable / (Overpayment) (external policy result) | derived | — | — | system | money | unbound_input | `src/pages/forms/1701q.native:230` |
-| `1701Q.2018-01-ENCS.input.surcharge_external_policy_result` | 64 Surcharge (external policy result) | derived | — | — | system | money | unbound_input | `src/pages/forms/1701q.native:238` |
-| `1701Q.2018-01-ENCS.input.interest_external_policy_result` | 65 Interest (external policy result) | derived | — | — | system | money | unbound_input | `src/pages/forms/1701q.native:246` |
-| `1701Q.2018-01-ENCS.input.compromise_external_policy_result` | 66 Compromise (external policy result) | derived | — | — | system | money | unbound_input | `src/pages/forms/1701q.native:254` |
-| `1701Q.2018-01-ENCS.input.bank_agency` | Bank / Agency | transaction | — | — | filing | text | unbound_input | `src/pages/forms/1701q.native:358` |
-| `1701Q.2018-01-ENCS.input.reference` | Reference | external | — | — | evidence | text | unbound_input | `src/pages/forms/1701q.native:366` |
-| `1701Q.2018-01-ENCS.input.amount` | Amount | transaction | — | — | filing | money | unbound_input | `src/pages/forms/1701q.native:374` |
+| `1701Q.2018-01-ENCS.input.zip_code` | ZIP Code | profile | zip_code | required | filer | postal_code | unbound_input | `src/pages/forms/1701q.native:68` |
+| `1701Q.2018-01-ENCS.input.date_of_birth` | Date of Birth | profile | date_of_birth | optional | filer | date | unbound_input | `src/pages/forms/1701q.native:72` |
+| `1701Q.2018-01-ENCS.input.email_address` | Email Address | profile | email_address | required | filer | email | unbound_input | `src/pages/forms/1701q.native:76` |
+| `1701Q.2018-01-ENCS.input.citizenship` | Citizenship | profile | citizenship | optional | filer | text | unbound_input | `src/pages/forms/1701q.native:80` |
+| `1701Q.2018-01-ENCS.input.foreign_tax_number` | Foreign Tax Number | profile | foreign_tax_number | optional | filer | tax_identifier | unbound_input | `src/pages/forms/1701q.native:84` |
+| `1701Q.2018-01-ENCS.input.income_tax_rate_election` | Income-tax-rate election | transaction | — | — | filing | choice | unbound_input | `src/pages/forms/1701q.native:88` |
+| `1701Q.2018-01-ENCS.input.spouse_tin` | Spouse TIN | profile | tin | required | spouse | tin | unbound_input | `src/pages/forms/1701q.native:113` |
+| `1701Q.2018-01-ENCS.input.spouse_rdo_code` | Spouse RDO Code | profile | rdo_code | required | spouse | rdo_code | unbound_input | `src/pages/forms/1701q.native:117` |
+| `1701Q.2018-01-ENCS.input.spouse_name` | Spouse Name | profile | taxpayer_name | required | spouse | text | unbound_input | `src/pages/forms/1701q.native:121` |
+| `1701Q.2018-01-ENCS.input.spouse_citizenship` | Spouse Citizenship | profile | citizenship | optional | spouse | text | unbound_input | `src/pages/forms/1701q.native:124` |
+| `1701Q.2018-01-ENCS.input.spouse_foreign_tax_number` | Spouse Foreign Tax Number | profile | foreign_tax_number | optional | spouse | tax_identifier | unbound_input | `src/pages/forms/1701q.native:127` |
+| `1701Q.2018-01-ENCS.input.sales_revenues_receipts` | Sales / Revenues / Receipts | transaction | — | — | filing | money | unbound_input | `src/pages/forms/1701q.native:136` |
+| `1701Q.2018-01-ENCS.input.cost_of_sales_services` | Cost of Sales / Services | transaction | — | — | filing | money | unbound_input | `src/pages/forms/1701q.native:144` |
+| `1701Q.2018-01-ENCS.input.allowable_deductions` | Allowable Deductions | transaction | — | — | filing | money | unbound_input | `src/pages/forms/1701q.native:152` |
+| `1701Q.2018-01-ENCS.input.taxable_income_external_policy_result` | Taxable Income (external policy result) | derived | — | — | system | money | unbound_input | `src/pages/forms/1701q.native:160` |
+| `1701Q.2018-01-ENCS.input.income_tax_due_external_policy_result` | Income Tax Due (external policy result) | derived | — | — | system | money | unbound_input | `src/pages/forms/1701q.native:168` |
+| `1701Q.2018-01-ENCS.input.gross_sales_receipts` | Gross Sales / Receipts | transaction | — | — | filing | money | unbound_input | `src/pages/forms/1701q.native:181` |
+| `1701Q.2018-01-ENCS.input.less_non_operating_income` | Less: Non-Operating Income | transaction | — | — | filing | money | unbound_input | `src/pages/forms/1701q.native:189` |
+| `1701Q.2018-01-ENCS.input.tax_due_at_8_percent_external_policy_result` | Tax Due at 8 percent (external policy result) | derived | — | — | system | money | unbound_input | `src/pages/forms/1701q.native:197` |
+| `1701Q.2018-01-ENCS.input.prior_quarter_income_tax_payments` | Prior-quarter income tax payments | external | — | — | evidence | money | unbound_input | `src/pages/forms/1701q.native:210` |
+| `1701Q.2018-01-ENCS.input.creditable_tax_withheld_bir_form_2307` | Creditable tax withheld (BIR Form 2307) | external | — | — | evidence | money | unbound_input | `src/pages/forms/1701q.native:218` |
+| `1701Q.2018-01-ENCS.input.other_tax_credits_payments` | Other Tax Credits / Payments | transaction | — | — | filing | money | unbound_input | `src/pages/forms/1701q.native:226` |
+| `1701Q.2018-01-ENCS.input.tax_payable_overpayment_external_policy_result` | 63 Tax Payable / (Overpayment) (external policy result) | derived | — | — | system | money | unbound_input | `src/pages/forms/1701q.native:239` |
+| `1701Q.2018-01-ENCS.input.surcharge_external_policy_result` | 64 Surcharge (external policy result) | derived | — | — | system | money | unbound_input | `src/pages/forms/1701q.native:247` |
+| `1701Q.2018-01-ENCS.input.interest_external_policy_result` | 65 Interest (external policy result) | derived | — | — | system | money | unbound_input | `src/pages/forms/1701q.native:255` |
+| `1701Q.2018-01-ENCS.input.compromise_external_policy_result` | 66 Compromise (external policy result) | derived | — | — | system | money | unbound_input | `src/pages/forms/1701q.native:263` |
+| `1701Q.2018-01-ENCS.input.bank_agency` | Bank / Agency | transaction | — | — | filing | text | unbound_input | `src/pages/forms/1701q.native:367` |
+| `1701Q.2018-01-ENCS.input.reference` | Reference | external | — | — | evidence | text | unbound_input | `src/pages/forms/1701q.native:375` |
+| `1701Q.2018-01-ENCS.input.amount` | Amount | transaction | — | — | filing | money | unbound_input | `src/pages/forms/1701q.native:383` |
 | `1701Q.2018-01-ENCS.table.payment.method` | Payment method | external | — | — | payment | choice | static_table | `src/pages/forms/1701q.native (table schema)` |
 | `1701Q.2018-01-ENCS.table.payment.bank_agency` | Drawee bank or collecting agency | external | — | — | payment | text | static_table | `src/pages/forms/1701q.native (table schema)` |
 | `1701Q.2018-01-ENCS.table.payment.reference_number` | Payment reference number | external | — | — | payment | text | static_table | `src/pages/forms/1701q.native (table schema)` |

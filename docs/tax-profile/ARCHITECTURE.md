@@ -141,7 +141,8 @@ eight-percent input sets cannot disagree.
 
 Date of birth, citizenship, and foreign tax number are optional profile
 targets for the filer because they do not apply to estate or trust filers.
-All other 1701Q profile targets remain required when their role is bound.
+Citizenship and foreign tax number are also optional for the spouse. All other
+1701Q profile targets remain required when their role is bound.
 
 The filing state keeps the graduated and eight-percent branches mutually
 exclusive, preserves policy-produced results without inventing a rate, and
@@ -180,8 +181,11 @@ Forms Set configuration is profile- and tax-year-specific:
 - a configured non-empty set is authoritative; and
 - a configured empty set means zero forms, not fallback.
 
-The same policy feeds calendar generation and form availability so the two
-projections cannot drift.
+Forms Set currently feeds the Tax Form Library and editor availability. The
+profile calendar ships with a separate per-profile selection over all 51
+catalog forms. Follow-up work must intersect the calendar picker and export
+with the authoritative tax-year Forms Set once profile form entitlement is
+complete; the Global Dashboard and Global Tax Calendar remain unfiltered.
 
 ## Catalog coverage
 
@@ -190,7 +194,7 @@ The generated catalog is the source of truth for current UI coverage:
 - 51 registered form codes;
 - 10 exact Native editor revisions;
 - 41 codes explicitly marked `calendar_only`;
-- 296 Native input controls;
+- 299 Native input controls;
 - 63 meaningful static-table fields; and
 - 16 canonical reusable profile keys.
 
