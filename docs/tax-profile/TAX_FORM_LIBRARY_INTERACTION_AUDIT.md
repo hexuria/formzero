@@ -2,7 +2,7 @@
 
 Date: 2026-08-01  
 Branch: `codex/tax-form-library-forms-set`  
-Commit under review: `b9dea48` plus the compact-action fix in this branch
+Commit under review: `3af467c` (feature base: `b9dea48`)
 
 ## Outcome
 
