@@ -1609,7 +1609,16 @@ on-change="toggle_profile_form:{form.id}"/>
 </row>
 <if test="{form.launchActionVisible and managingProfileForms == false}">
 <badge variant="outline">{form.launchStatus}</badge>
-<button height="40" variant="secondary" icon="file-text" disabled="{form.launchDisabled}" on-press="open_library_form:{form.id}">{form.launchLabel}</button>
+<button
+width="44"
+height="44"
+size="icon"
+variant="secondary"
+icon="file-text"
+label="{form.launchLabel}"
+disabled="{form.launchDisabled}"
+on-press="open_library_form:{form.id}">
+</button>
 </if>
 </column>
 </if>
