@@ -18,6 +18,9 @@ The selected tax year is also now displayed directly between the previous- and
 next-year chevrons on both compact and desktop headers. The count remains with
 the Tax Form Library title, making the year-navigation relationship explicit.
 
+On compact cards, the launch-status badge now shares an intrinsic-width row
+with the icon action instead of expanding across the card.
+
 ## Evidence and limitation
 
 The control wiring, state transitions, and persistence paths were inspected in
@@ -120,6 +123,7 @@ editor. Historical drafts are not deleted when a form is later deactivated.
 | F-03 | Search matches form code only, not title/category/frequency. | Working as labeled; consider broader search only if product requirements call for it. |
 | F-04 | In Manage Forms, Active/Inactive filtering follows staged checkbox state while each row's Active/Inactive badge still describes the persisted set. | Potential wording ambiguity. Consider changing the management labels to Selected/Not selected or adding a Pending badge. |
 | F-05 | The capability selector is a compact menu on small screens and inline controls on wide screens. | Source layout is intentional; verify focus and dismissal on a live device. |
+| F-06 | The compact launch-status badge previously stretched to the card width. | Fixed by grouping the badge and icon action in an intrinsic-width row. |
 
 F-04 does not change persistence correctness: the staged state is what Save
 would commit, and the persisted state remains authoritative until Save succeeds.
