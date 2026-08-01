@@ -80,7 +80,8 @@ SQLite row IDs never escape the persistence layer.
 - Route save/load through the domain builder and adapter.
 - Make revision creation explicit; never edit the current revision in place.
 - Keep COR evidence and operational email credentials separate from tax facts.
-- Configure per-year Forms Set, preserving unconfigured versus explicit empty.
+- Configure per-year Forms Set, preserving `needs_configuration`, explicit
+  empty, and the legacy catalog-default compatibility state.
 - Feed the same stored policy to calendar and form availability.
 
 Acceptance: restarting with the same data directory reloads profiles and

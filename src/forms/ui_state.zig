@@ -93,6 +93,45 @@ pub const OpenRequest = struct {
     profile_as_of: ?model.Date = null,
 };
 
+/// Read-only result used by the profile-scoped Tax Form Library before an
+/// editor is mounted.  The application owns Forms Set membership; this type
+/// only answers whether the selected profile can satisfy the editor's
+/// generated profile projection for the requested period.
+pub const LaunchStatus = enum {
+    ready_new,
+    ready_resume,
+    needs_profile,
+    needs_activity_selection,
+    profile_not_eligible,
+    unavailable,
+};
+
+pub const LaunchBlocker = enum {
+    none,
+    missing_profile_data,
+    missing_effective_revision,
+    missing_binding,
+    ambiguous_business_activity,
+    unknown_business_activity,
+    inactive_business_activity,
+    subject_not_allowed,
+    invalid_revision,
+    revision_not_effective,
+    persistence_error,
+};
+
+pub const LaunchAssessment = struct {
+    status: LaunchStatus = .unavailable,
+    blocker: LaunchBlocker = .persistence_error,
+    issue_count: u16 = 0,
+    first_missing_field: ?field.ReusableField = null,
+
+    pub fn ready(self: *const LaunchAssessment) bool {
+        return self.status == .ready_new or
+            self.status == .ready_resume;
+    }
+};
+
 pub const DraftSaveResult = struct {
     id: ids.DraftId,
     disposition: DraftDisposition,
@@ -672,6 +711,90 @@ pub const State = struct {
         draft.deinit(allocator);
     }
 
+    /// Performs the same profile-revision and catalog-projection checks used
+    /// by an editor open without mutating the live editor state.  View code
+    /// should consume a cached result from the application model rather than
+    /// calling this method while rendering.
+    pub fn assessLaunch(
+        self: *const State,
+        request: OpenRequest,
+    ) LaunchAssessment {
+        const allocator = self.allocator orelse return .{};
+        const store = self.store orelse return .{};
+
+        validateEditorRevision(request.form) catch |err| {
+            return .{
+                .status = .unavailable,
+                .blocker = launchBlockerForError(err),
+            };
+        };
+        validateQuarter(request.form, request.tax_year, request.quarter) catch |err| {
+            return .{
+                .status = .unavailable,
+                .blocker = launchBlockerForError(err),
+            };
+        };
+
+        if (request.form.eql(&form_2551q.revision) and
+            existingOriginalIsUsable(
+                allocator,
+                store,
+                request,
+            ) catch false)
+        {
+            return .{
+                .status = .ready_resume,
+                .blocker = .none,
+            };
+        }
+
+        const effective_on = request.profile_as_of orelse
+            (quarterEnd(request.tax_year, request.quarter) catch return .{});
+        var filer = (profile_persistence.loadEffectiveRevision(
+            store,
+            allocator,
+            request.filer_profile_id,
+            effective_on,
+        ) catch {
+            return .{
+                .status = .unavailable,
+                .blocker = .persistence_error,
+            };
+        }) orelse {
+            return .{
+                .status = .needs_profile,
+                .blocker = .missing_effective_revision,
+            };
+        };
+        defer filer.deinit(allocator);
+
+        const bindings = [_]projection.Binding{.{
+            .role = .filer,
+            .revision = &filer.revision,
+            .selection = .{},
+        }};
+        var result = catalog_projection.project(
+            allocator,
+            request.form,
+            &bindings,
+            effective_on,
+        ) catch {
+            return .{
+                .status = .unavailable,
+                .blocker = .persistence_error,
+            };
+        };
+        defer result.deinit(allocator);
+
+        return switch (result) {
+            .accepted => .{
+                .status = .ready_new,
+                .blocker = .none,
+            },
+            .rejected => |rejected| assessmentForIssues(rejected.slice()),
+        };
+    }
+
     pub fn spouseCandidates(self: *const State) []const SpouseCandidate {
         return self.spouse_candidate_items[0..self.spouse_candidate_len];
     }
@@ -699,6 +822,117 @@ pub const State = struct {
             .filer => self.filer_activity_candidates.truncated,
             .spouse => self.spouse_activity_candidates.truncated,
             else => false,
+        };
+    }
+
+    fn existingOriginalIsUsable(
+        allocator: std.mem.Allocator,
+        store: *store_module.Store,
+        request: OpenRequest,
+    ) !bool {
+        const period: runtime.RecurringQuarter = .{
+            .form = request.form,
+            .tax_year = request.tax_year,
+            .quarter = request.quarter,
+        };
+        const id = try form_persistence.originalDraftId(
+            request.filer_profile_id,
+            period,
+        );
+        var draft = (try store.getDraft(allocator, id.asSlice())) orelse
+            return false;
+        defer draft.deinit(allocator);
+
+        if (!std.mem.eql(u8, draft.intent, "original") or
+            draft.amendment_of != null)
+        {
+            return false;
+        }
+        const rehydrated = form_persistence.rehydrate(&draft) catch
+            return false;
+        if (!rehydrated.period.form.eql(&request.form) or
+            rehydrated.period.tax_year != request.tax_year or
+            rehydrated.period.quarter != request.quarter)
+        {
+            return false;
+        }
+        const filer = rehydrated.role_bindings.get(.filer) orelse
+            return false;
+        return filer.profile_id.eql(&request.filer_profile_id);
+    }
+
+    fn assessmentForIssues(
+        issues: []const catalog_projection.Issue,
+    ) LaunchAssessment {
+        var assessment = LaunchAssessment{
+            .status = .unavailable,
+            .blocker = .persistence_error,
+            .issue_count = @intCast(@min(
+                issues.len,
+                std.math.maxInt(u16),
+            )),
+        };
+        for (issues) |issue| {
+            switch (issue) {
+                .missing_capability => |target| {
+                    if (assessment.status == .unavailable) {
+                        assessment.status = .needs_profile;
+                        assessment.blocker = .missing_profile_data;
+                    }
+                    if (assessment.first_missing_field == null) {
+                        assessment.first_missing_field = target.reusable_field;
+                    }
+                },
+                .missing_binding => {
+                    if (assessment.status == .unavailable) {
+                        assessment.status = .needs_profile;
+                        assessment.blocker = .missing_binding;
+                    }
+                },
+                .ambiguous_business_activity => {
+                    if (assessment.status == .unavailable) {
+                        assessment.status = .needs_activity_selection;
+                        assessment.blocker = .ambiguous_business_activity;
+                    }
+                },
+                .unknown_business_activity => {
+                    if (assessment.status == .unavailable) {
+                        assessment.status = .needs_activity_selection;
+                        assessment.blocker = .unknown_business_activity;
+                    }
+                },
+                .inactive_business_activity => {
+                    if (assessment.status == .unavailable) {
+                        assessment.status = .needs_activity_selection;
+                        assessment.blocker = .inactive_business_activity;
+                    }
+                },
+                .subject_not_allowed => {
+                    if (assessment.status == .unavailable) {
+                        assessment.status = .profile_not_eligible;
+                        assessment.blocker = .subject_not_allowed;
+                    }
+                },
+                .duplicate_binding,
+                .unexpected_binding,
+                .same_profile_binding,
+                .invalid_revision,
+                .revision_not_effective,
+                => {},
+            }
+        }
+        return assessment;
+    }
+
+    fn launchBlockerForError(err: anyerror) LaunchBlocker {
+        return switch (err) {
+            error.NoEffectiveFilerRevision => .missing_effective_revision,
+            error.CalendarOnlyForm,
+            error.UnknownForm,
+            error.WrongFormRevision,
+            => .invalid_revision,
+            error.InvalidQuarter => .invalid_revision,
+            else => .persistence_error,
         };
     }
 

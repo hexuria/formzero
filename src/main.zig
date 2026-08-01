@@ -430,6 +430,97 @@ pub const FormProfileChoiceRow = struct {
     }
 };
 
+pub const TaxFormLibraryRow = struct {
+    id: usize,
+    definition: *const form_catalog.FormDefinition,
+    active: bool,
+    selected: bool,
+    launch_disabled: bool,
+    launch_assessment: form_ui.LaunchAssessment = .{},
+
+    pub fn key(self: *const TaxFormLibraryRow) canvas.UiKey {
+        return canvas.uiKey(self.id);
+    }
+
+    pub fn code(self: *const TaxFormLibraryRow) []const u8 {
+        return self.definition.code;
+    }
+
+    pub fn title(
+        self: *const TaxFormLibraryRow,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "BIR Form {s}",
+            .{self.definition.code},
+        ) catch self.definition.code;
+    }
+
+    pub fn capability(self: *const TaxFormLibraryRow) []const u8 {
+        return if (self.definition.status == .static_layout)
+            "Editor available"
+        else
+            "Calendar only";
+    }
+
+    pub fn activeLabel(self: *const TaxFormLibraryRow) []const u8 {
+        return if (self.active) "Active" else "Inactive";
+    }
+
+    pub fn editorAvailable(self: *const TaxFormLibraryRow) bool {
+        return self.definition.status == .static_layout;
+    }
+
+    pub fn selectionLabel(
+        self: *const TaxFormLibraryRow,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "{s} BIR Form {s}",
+            .{
+                if (self.selected) "Deselect" else "Select",
+                self.definition.code,
+            },
+        ) catch "Toggle form selection";
+    }
+
+    pub fn launchLabel(self: *const TaxFormLibraryRow) []const u8 {
+        if (!self.active) return "Inactive";
+        if (!self.editorAvailable()) return "Calendar only";
+        return switch (self.launch_assessment.status) {
+            .ready_new => "Open Form",
+            .ready_resume => "Resume Draft",
+            .needs_profile => "Complete profile",
+            .needs_activity_selection => "Choose activity",
+            .profile_not_eligible => "Profile not eligible",
+            .unavailable => "Unavailable",
+        };
+    }
+
+    pub fn launchStatus(self: *const TaxFormLibraryRow) []const u8 {
+        if (!self.active) return "Inactive";
+        if (!self.editorAvailable()) return "Calendar only";
+        return switch (self.launch_assessment.status) {
+            .ready_new => "Ready",
+            .ready_resume => "Draft available",
+            .needs_profile => "Profile data required",
+            .needs_activity_selection => "Activity selection required",
+            .profile_not_eligible => "Profile not eligible",
+            .unavailable => "Unavailable",
+        };
+    }
+
+    pub fn launchActionVisible(self: *const TaxFormLibraryRow) bool {
+        return self.active and self.editorAvailable();
+    }
+
+    pub fn launchDisabled(self: *const TaxFormLibraryRow) bool {
+        return self.launch_disabled;
+    }
+};
+
 pub const Model = struct {
     page: Page = .global_dashboard,
     profileEditorOrigin: Page = .global_dashboard,
@@ -469,6 +560,11 @@ pub const Model = struct {
     profileCalendarExportTimerKey: u64 = 0,
     profileActionsOpen: bool = false,
     profileSubjectPickerVisible: bool = false,
+    profileCompletionTarget: ?profile_fields.ReusableField = null,
+    profileCompletionFormIndex: ?usize = null,
+    profileFormLaunchAssessments: [form_catalog.registry_count]form_ui.LaunchAssessment = undefined,
+    profileFormLaunchAssessmentsReady: bool = false,
+    profileFormsCapabilityPickerVisible: bool = false,
     profileCalendarSelectedDate: ?calendar_domain.Date = null,
     profileNoticeTimerKey: u64 = 0,
     calendarToday: calendar_domain.Date = .{
@@ -502,6 +598,11 @@ pub const Model = struct {
         "newsNotices",
         "calendarToday",
         "profileSubjectPickerVisible",
+        "profileCompletionTarget",
+        "profileCompletionFormIndex",
+        "profileFormLaunchAssessments",
+        "profileFormLaunchAssessmentsReady",
+        "profileFormsCapabilityPickerVisible",
         "profileCalendarDeadlines",
         "profileCalendarHasDeadlines",
         "profileCalendarDeadlineCount",
@@ -995,43 +1096,43 @@ pub const Model = struct {
         );
     }
 
-    pub fn taxpayerForm0605Disabled(self: *const Model) bool {
+    fn taxpayerForm0605Disabled(self: *const Model) bool {
         return self.taxpayerFormDisabled("0605");
     }
 
-    pub fn taxpayerForm0619EDisabled(self: *const Model) bool {
+    fn taxpayerForm0619EDisabled(self: *const Model) bool {
         return self.taxpayerFormDisabled("0619E");
     }
 
-    pub fn taxpayerForm0619FDisabled(self: *const Model) bool {
+    fn taxpayerForm0619FDisabled(self: *const Model) bool {
         return self.taxpayerFormDisabled("0619F");
     }
 
-    pub fn taxpayerForm1601CDisabled(self: *const Model) bool {
+    fn taxpayerForm1601CDisabled(self: *const Model) bool {
         return self.taxpayerFormDisabled("1601C");
     }
 
-    pub fn taxpayerForm1701Disabled(self: *const Model) bool {
+    fn taxpayerForm1701Disabled(self: *const Model) bool {
         return self.taxpayerFormDisabled("1701");
     }
 
-    pub fn taxpayerForm1701QDisabled(self: *const Model) bool {
+    fn taxpayerForm1701QDisabled(self: *const Model) bool {
         return self.taxpayerFormDisabled("1701Q");
     }
 
-    pub fn taxpayerForm1702RTDisabled(self: *const Model) bool {
+    fn taxpayerForm1702RTDisabled(self: *const Model) bool {
         return self.taxpayerFormDisabled("1702RT");
     }
 
-    pub fn taxpayerForm1702MXDisabled(self: *const Model) bool {
+    fn taxpayerForm1702MXDisabled(self: *const Model) bool {
         return self.taxpayerFormDisabled("1702MX");
     }
 
-    pub fn taxpayerForm2550QDisabled(self: *const Model) bool {
+    fn taxpayerForm2550QDisabled(self: *const Model) bool {
         return self.taxpayerFormDisabled("2550Q");
     }
 
-    pub fn taxpayerForm2551QDisabled(self: *const Model) bool {
+    fn taxpayerForm2551QDisabled(self: *const Model) bool {
         return self.taxpayerFormDisabled("2551Q");
     }
 
@@ -1878,6 +1979,10 @@ pub const Model = struct {
             "Revise Taxpayer Profile";
     }
 
+    pub fn editingNewProfile(self: *const Model) bool {
+        return self.taxProfiles.editing_new;
+    }
+
     pub fn profileInlineBackVisible(self: *const Model) bool {
         return self.page == .profile_setup and
             !self.sidebarLauncherVisible();
@@ -2010,18 +2115,6 @@ pub const Model = struct {
         return self.taxProfiles.government_withholding_agent == .yes;
     }
 
-    pub fn profileFormsSetFallbackSelected(self: *const Model) bool {
-        return !self.taxProfiles.forms_set_configured;
-    }
-
-    pub fn profileFormsSetRegisteredSelected(self: *const Model) bool {
-        return self.taxProfiles.forms_set_configured;
-    }
-
-    pub fn profileFormsSetInputDisabled(self: *const Model) bool {
-        return !self.taxProfiles.forms_set_configured;
-    }
-
     pub fn profileTinValue(self: *const Model) []const u8 {
         return self.taxProfiles.tin.text();
     }
@@ -2100,6 +2193,213 @@ pub const Model = struct {
 
     pub fn profileFormsSetValue(self: *const Model) []const u8 {
         return self.taxProfiles.forms_set.text();
+    }
+
+    pub fn managingProfileForms(self: *const Model) bool {
+        return self.taxProfiles.managing_forms;
+    }
+
+    pub fn profileFormsSaveDisabled(self: *const Model) bool {
+        return !self.taxProfiles.formsDirty();
+    }
+
+    pub fn profileFormsSearchValue(self: *const Model) []const u8 {
+        return self.taxProfiles.formsQuery();
+    }
+
+    pub fn profileFormsCountLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "{d} of {d} active",
+            .{ self.taxProfiles.activeFormCount(), form_catalog.registry_count },
+        ) catch "Forms Set unavailable";
+    }
+
+    pub fn profileCompletionVisible(self: *const Model) bool {
+        return self.profileCompletionTarget != null;
+    }
+
+    pub fn profileCompletionMessage(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const field_label = if (self.profileCompletionTarget) |target|
+            profileCompletionFieldLabel(target)
+        else
+            "the required profile data";
+        const form_code = if (self.profileCompletionFormIndex) |index|
+            if (index < form_catalog.registry_count)
+                form_catalog.forms[index].code
+            else
+                "the selected form"
+        else
+            "the selected form";
+        return std.fmt.allocPrint(
+            arena,
+            "Complete {s} in Tax Profile before opening BIR Form {s}.",
+            .{ field_label, form_code },
+        ) catch "Complete the missing Tax Profile data before opening the form.";
+    }
+
+    pub fn profileTinAutofocus(self: *const Model) bool {
+        return self.profileCompletionTarget == .tin;
+    }
+
+    pub fn profileRdoAutofocus(self: *const Model) bool {
+        return self.profileCompletionTarget == .rdo_code;
+    }
+
+    pub fn profileNameAutofocus(self: *const Model) bool {
+        return self.profileCompletionTarget == .taxpayer_name or
+            self.profileCompletionTarget == .registered_name;
+    }
+
+    pub fn profileAddressAutofocus(self: *const Model) bool {
+        return self.profileCompletionTarget == .registered_address;
+    }
+
+    pub fn profileZipAutofocus(self: *const Model) bool {
+        return self.profileCompletionTarget == .zip_code;
+    }
+
+    pub fn profilePhoneAutofocus(self: *const Model) bool {
+        return self.profileCompletionTarget == .contact_number;
+    }
+
+    pub fn profileEmailAutofocus(self: *const Model) bool {
+        return self.profileCompletionTarget == .email_address;
+    }
+
+    pub fn profileBirthDateAutofocus(self: *const Model) bool {
+        return self.profileCompletionTarget == .date_of_birth;
+    }
+
+    pub fn profileCitizenshipAutofocus(self: *const Model) bool {
+        return self.profileCompletionTarget == .citizenship;
+    }
+
+    pub fn profileForeignTaxNumberAutofocus(self: *const Model) bool {
+        return self.profileCompletionTarget == .foreign_tax_number;
+    }
+
+    pub fn profileBusinessLineAutofocus(self: *const Model) bool {
+        return self.profileCompletionTarget == .line_of_business;
+    }
+
+    pub fn profileAtcAutofocus(self: *const Model) bool {
+        return self.profileCompletionTarget == .atc;
+    }
+
+    pub fn profileTaxTypeAutofocus(self: *const Model) bool {
+        return self.profileCompletionTarget == .tax_type;
+    }
+
+    pub fn profileFormsLegacyResetVisible(self: *const Model) bool {
+        return self.taxProfiles.legacy_form_set_reset_allowed;
+    }
+
+    pub fn profileFormsHeaderStacked(self: *const Model) bool {
+        return self.constrainedLayout();
+    }
+
+    pub fn profileFormsCapabilityPickerOpen(self: *const Model) bool {
+        return self.profileFormsCapabilityPickerVisible;
+    }
+
+    pub fn profileFormsCapabilityFilterLabel(self: *const Model) []const u8 {
+        return switch (self.taxProfiles.form_capability_filter) {
+            .all => "All capabilities",
+            .editor => "Editor available",
+            .calendar_only => "Calendar only",
+        };
+    }
+
+    pub fn profileFormsFilterActiveSelected(self: *const Model) bool {
+        return self.taxProfiles.form_activity_filter == .active;
+    }
+
+    pub fn profileFormsFilterInactiveSelected(self: *const Model) bool {
+        return self.taxProfiles.form_activity_filter == .inactive;
+    }
+
+    pub fn profileFormsFilterAllSelected(self: *const Model) bool {
+        return self.taxProfiles.form_activity_filter == .all;
+    }
+
+    pub fn profileFormsCapabilityAllSelected(self: *const Model) bool {
+        return self.taxProfiles.form_capability_filter == .all;
+    }
+
+    pub fn profileFormsCapabilityEditorSelected(self: *const Model) bool {
+        return self.taxProfiles.form_capability_filter == .editor;
+    }
+
+    pub fn profileFormsCapabilityCalendarSelected(self: *const Model) bool {
+        return self.taxProfiles.form_capability_filter == .calendar_only;
+    }
+
+    pub fn profileFormRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const TaxFormLibraryRow {
+        const rows = arena.alloc(
+            TaxFormLibraryRow,
+            form_catalog.registry_count,
+        ) catch return &.{};
+        var count: usize = 0;
+        for (&form_catalog.forms, 0..) |*definition, index| {
+            const active = self.taxProfiles.formAvailable(
+                self.calendar.selected_year,
+                definition.code,
+            );
+            const selected = self.taxProfiles.displayedFormSelected(index);
+            const filter_selected = if (self.taxProfiles.managing_forms)
+                selected
+            else
+                active;
+            switch (self.taxProfiles.form_activity_filter) {
+                .active => if (!filter_selected) continue,
+                .inactive => if (filter_selected) continue,
+                .all => {},
+            }
+            switch (self.taxProfiles.form_capability_filter) {
+                .editor => if (definition.status != .static_layout) continue,
+                .calendar_only => if (definition.status != .calendar_only) continue,
+                .all => {},
+            }
+            if (!multi_select.containsAsciiInsensitive(
+                definition.code,
+                self.taxProfiles.formsQuery(),
+            )) continue;
+            const launch_assessment = if (self.profileFormLaunchAssessmentsReady)
+                self.profileFormLaunchAssessments[index]
+            else
+                form_ui.LaunchAssessment{};
+            rows[count] = .{
+                .id = index,
+                .definition = definition,
+                .active = active,
+                .selected = selected,
+                .launch_assessment = launch_assessment,
+                .launch_disabled = definition.status != .static_layout or
+                    !active or
+                    !launchActionEnabled(
+                        launch_assessment.status,
+                    ),
+            };
+            count += 1;
+        }
+        return rows[0..count];
+    }
+
+    pub fn profileFormRowsEmpty(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) bool {
+        return self.profileFormRows(arena).len == 0;
     }
 
     pub fn dashboardCalendarActive(self: *const Model) bool {
@@ -3506,8 +3806,6 @@ pub const Msg = union(enum) {
     profile_gwa_unset,
     profile_gwa_no,
     profile_gwa_yes,
-    profile_forms_set_fallback,
-    profile_forms_set_registered,
     profile_tin_input: canvas.TextInputEvent,
     profile_rdo_input: canvas.TextInputEvent,
     profile_name_input: canvas.TextInputEvent,
@@ -3527,7 +3825,23 @@ pub const Msg = union(enum) {
     profile_effective_until_input: canvas.TextInputEvent,
     profile_source_reference_input: canvas.TextInputEvent,
     profile_tax_year_input: canvas.TextInputEvent,
-    profile_forms_set_input: canvas.TextInputEvent,
+    manage_profile_forms,
+    profile_forms_search_input: canvas.TextInputEvent,
+    toggle_profile_form: usize,
+    profile_forms_select_all,
+    profile_forms_clear_all,
+    profile_forms_save,
+    profile_forms_cancel,
+    profile_forms_reset_legacy,
+    profile_forms_filter_active,
+    profile_forms_filter_inactive,
+    profile_forms_filter_all,
+    profile_forms_filter_editor,
+    profile_forms_filter_calendar_only,
+    profile_forms_filter_capability_all,
+    profile_forms_toggle_capability_picker,
+    profile_forms_close_capability_picker,
+    open_library_form: usize,
     save_profile,
     cancel_profile_edit,
     dismiss_profile_notice,
@@ -3692,6 +4006,9 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
                 return;
             }
             model.profileSetupSection = .tax_profile;
+            model.profileCompletionTarget = null;
+            model.profileCompletionFormIndex = null;
+            model.profileFormsCapabilityPickerVisible = false;
             model.taxProfiles.startNew();
             openProfileEditor(model);
         },
@@ -4018,6 +4335,9 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             }
             model.taxProfiles.select(slot);
             model.profileCalendarSelectedDate = null;
+            model.profileFormsCapabilityPickerVisible = false;
+            model.profileCompletionTarget = null;
+            model.profileCompletionFormIndex = null;
             refreshSelectedProfileFormSet(model);
             resetProfileCalendarExportNotice(model);
             model.dashboardSection = .calendar;
@@ -4081,12 +4401,68 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .profile_gwa_yes => {
             model.taxProfiles.setGovernmentWithholdingAgent(.yes);
         },
-        .profile_forms_set_fallback => {
-            model.taxProfiles.setFormsSetConfigured(false);
+        .manage_profile_forms => {
+            if (!model.taxProfiles.beginManageForms()) return;
+            model.profileFormsCapabilityPickerVisible = false;
+            model.dashboardSection = .forms;
+            model.profileActionsOpen = false;
+            navigate(model, .taxpayer_dashboard);
         },
-        .profile_forms_set_registered => {
-            model.taxProfiles.setFormsSetConfigured(true);
+        .profile_forms_search_input => |edit| {
+            model.taxProfiles.applyFormsQuery(edit);
         },
+        .toggle_profile_form => |index| {
+            model.taxProfiles.toggleStagedForm(index);
+        },
+        .profile_forms_select_all => model.taxProfiles.selectAllStagedForms(),
+        .profile_forms_clear_all => model.taxProfiles.clearAllStagedForms(),
+        .profile_forms_save => {
+            if (model.taxProfiles.saveManagedForms()) {
+                model.profileFormsCapabilityPickerVisible = false;
+                refreshSelectedProfileFormSet(model);
+                refreshSelectedProfileCalendar(model);
+            }
+        },
+        .profile_forms_cancel => {
+            model.taxProfiles.cancelManageForms();
+            model.profileFormsCapabilityPickerVisible = false;
+        },
+        .profile_forms_reset_legacy => {
+            if (model.taxProfiles.resetManagedFormsToLegacyDefault()) {
+                model.profileFormsCapabilityPickerVisible = false;
+                refreshSelectedProfileFormSet(model);
+                refreshSelectedProfileCalendar(model);
+            }
+        },
+        .profile_forms_filter_active => {
+            model.taxProfiles.setFormActivityFilter(.active);
+        },
+        .profile_forms_filter_inactive => {
+            model.taxProfiles.setFormActivityFilter(.inactive);
+        },
+        .profile_forms_filter_all => {
+            model.taxProfiles.setFormActivityFilter(.all);
+        },
+        .profile_forms_filter_editor => {
+            model.taxProfiles.setFormCapabilityFilter(.editor);
+            model.profileFormsCapabilityPickerVisible = false;
+        },
+        .profile_forms_filter_calendar_only => {
+            model.taxProfiles.setFormCapabilityFilter(.calendar_only);
+            model.profileFormsCapabilityPickerVisible = false;
+        },
+        .profile_forms_filter_capability_all => {
+            model.taxProfiles.setFormCapabilityFilter(.all);
+            model.profileFormsCapabilityPickerVisible = false;
+        },
+        .profile_forms_toggle_capability_picker => {
+            model.profileFormsCapabilityPickerVisible =
+                !model.profileFormsCapabilityPickerVisible;
+        },
+        .profile_forms_close_capability_picker => {
+            model.profileFormsCapabilityPickerVisible = false;
+        },
+        .open_library_form => |index| openLibraryForm(model, index),
         .profile_tin_input => |edit| {
             model.taxProfiles.tin.apply(edit);
             model.taxProfiles.captureInputTruncation();
@@ -4164,10 +4540,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.taxProfiles.captureInputTruncation();
             model.taxProfiles.taxYearInputChanged();
         },
-        .profile_forms_set_input => |edit| {
-            model.taxProfiles.forms_set.apply(edit);
-            model.taxProfiles.captureInputTruncation();
-        },
         .save_profile => {
             const exact_material =
                 model.exact1701Q.ready() and
@@ -4212,33 +4584,43 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .show_calendar_rules => model.taxCalendarSection = .rules,
         .show_calendar_overrides => model.taxCalendarSection = .overrides,
         .calendar_previous_year => {
+            if (model.taxProfiles.rejectIfFormsDirty()) return;
             model.profileCalendarSelectedDate = null;
             model.calendar.previousYear();
+            _ = model.taxProfiles.loadFormsForYear(model.calendar.selected_year);
             refreshSelectedProfileFormSet(model);
         },
         .calendar_next_year => {
+            if (model.taxProfiles.rejectIfFormsDirty()) return;
             model.profileCalendarSelectedDate = null;
             model.calendar.nextYear();
+            _ = model.taxProfiles.loadFormsForYear(model.calendar.selected_year);
             refreshSelectedProfileFormSet(model);
         },
         .calendar_previous_month => {
+            if (model.taxProfiles.rejectIfFormsDirty()) return;
             model.profileCalendarSelectedDate = null;
             const previous_year = model.calendar.selected_year;
             model.calendar.previousMonth();
             if (model.calendar.selected_year != previous_year) {
+                _ = model.taxProfiles.loadFormsForYear(model.calendar.selected_year);
                 refreshSelectedProfileFormSet(model);
             } else {
                 syncSelectedProfileCalendar(model);
+                refreshProfileFormLaunchAssessments(model);
             }
         },
         .calendar_next_month => {
+            if (model.taxProfiles.rejectIfFormsDirty()) return;
             model.profileCalendarSelectedDate = null;
             const previous_year = model.calendar.selected_year;
             model.calendar.nextMonth();
             if (model.calendar.selected_year != previous_year) {
+                _ = model.taxProfiles.loadFormsForYear(model.calendar.selected_year);
                 refreshSelectedProfileFormSet(model);
             } else {
                 syncSelectedProfileCalendar(model);
+                refreshProfileFormLaunchAssessments(model);
             }
         },
         .global_calendar_previous_month => {
@@ -4462,7 +4844,43 @@ fn refreshSelectedProfileFormSet(model: *Model) void {
     model.taxProfiles.refreshDraftSummariesForYear(
         model.calendar.selected_year,
     ) catch |err| model.calendar.setError(err);
+    refreshProfileFormLaunchAssessments(model);
     syncSelectedProfileCalendar(model);
+}
+
+fn refreshProfileFormLaunchAssessments(model: *Model) void {
+    model.profileFormLaunchAssessmentsReady = false;
+    if (model.formProfiles.allocator == null or
+        model.formProfiles.store == null) return;
+    const profile_id = model.taxProfiles.selectedProfileDomainId() orelse return;
+    const year_value = model.calendar.selected_year;
+    if (year_value < 1 or year_value > 9999) return;
+    const year: u16 = @intCast(year_value);
+    for (&form_catalog.forms, 0..) |*definition, index| {
+        model.profileFormLaunchAssessments[index] = .{};
+        if (definition.status != .static_layout) continue;
+        if (!model.taxProfiles.formAvailable(year_value, definition.code)) {
+            continue;
+        }
+        const revision = editorRevision(definition.code) orelse continue;
+        const quarter = selectedFormQuarter(model, definition.code);
+        const request: form_ui.OpenRequest = .{
+            .form = revision,
+            .filer_profile_id = profile_id,
+            .tax_year = year,
+            .quarter = quarter,
+            .profile_as_of = profileAsOfForForm(
+                model,
+                definition.code,
+                year,
+                quarter,
+                null,
+            ),
+        };
+        model.profileFormLaunchAssessments[index] =
+            model.formProfiles.assessLaunch(request);
+    }
+    model.profileFormLaunchAssessmentsReady = true;
 }
 
 fn selectedTaxpayerCalendarContext(
@@ -4686,6 +5104,14 @@ fn selectedCalendarQuarter(model: *const Model) u8 {
     return @intCast((month - 1) / 3 + 1);
 }
 
+fn selectedFormQuarter(model: *const Model, form_code: []const u8) u8 {
+    const quarter = selectedCalendarQuarter(model);
+    // 1701Q has Q1-Q3 filing periods. December remains a valid dashboard
+    // context; use the last valid quarter until a specific quarter is chosen.
+    if (std.mem.eql(u8, form_code, "1701Q") and quarter == 4) return 3;
+    return quarter;
+}
+
 fn monthEndDate(year: u16, month: u8) profile_model.Date {
     const day: u8 = switch (month) {
         1, 3, 5, 7, 8, 10, 12 => 31,
@@ -4730,6 +5156,7 @@ fn openProfileBoundForm(
     page: Page,
     form_code: []const u8,
 ) void {
+    if (model.taxpayerFormDisabled(form_code)) return;
     if (model.exact1701Q.ready() and
         model.exact1701Q.hasDirtyOrMaterialWork())
     {
@@ -4737,6 +5164,14 @@ fn openProfileBoundForm(
             model.exact1701Q.rejectContextChange();
         }
         navigate(model, .form_1701q);
+        return;
+    }
+    if (std.mem.eql(u8, form_code, "1701Q") and
+        selectedCalendarQuarter(model) == 4)
+    {
+        // Preserve the existing quarter-picker entry behavior: December has
+        // no Q4 1701Q workspace, so show the page until the user chooses Q1-Q3.
+        navigate(model, page);
         return;
     }
     _ = openProfileBoundFormForQuarter(
@@ -4772,6 +5207,79 @@ fn profileFormRoute(form_code: []const u8) ?ProfileFormRoute {
         if (formCodesEquivalent(route.form_code, form_code)) return route;
     }
     return null;
+}
+
+fn formCatalogIndex(form_code: []const u8) ?usize {
+    for (form_catalog.forms, 0..) |form, index| {
+        if (formCodesEquivalent(form.code, form_code)) return index;
+    }
+    return null;
+}
+
+fn openLibraryForm(model: *Model, index: usize) void {
+    if (index >= form_catalog.forms.len) return;
+    const definition = &form_catalog.forms[index];
+    if (definition.status != .static_layout) return;
+    if (!model.taxProfiles.formAvailable(
+        model.calendar.selected_year,
+        definition.code,
+    )) return;
+    const launch = assessProfileFormLaunch(
+        model,
+        definition.code,
+        model.calendar.selected_year,
+        selectedFormQuarter(model, definition.code),
+        null,
+    );
+    switch (launch.status) {
+        .needs_profile => {
+            openProfileCompletion(model, index, launch);
+            return;
+        },
+        .profile_not_eligible, .unavailable => return,
+        .ready_new, .ready_resume, .needs_activity_selection => {},
+    }
+    const route = profileFormRoute(definition.code) orelse return;
+    openProfileBoundForm(model, route.page, route.form_code);
+}
+
+fn assessProfileFormLaunch(
+    model: *const Model,
+    form_code: []const u8,
+    tax_year: i32,
+    quarter: u8,
+    period_month: ?u8,
+) form_ui.LaunchAssessment {
+    const profile_id = model.taxProfiles.selectedProfileDomainId() orelse
+        return .{};
+    if (tax_year < 1 or tax_year > 9999) return .{};
+    const revision = editorRevision(form_code) orelse return .{};
+    const year: u16 = @intCast(tax_year);
+    return model.formProfiles.assessLaunch(.{
+        .form = revision,
+        .filer_profile_id = profile_id,
+        .tax_year = year,
+        .quarter = quarter,
+        .profile_as_of = profileAsOfForForm(
+            model,
+            form_code,
+            year,
+            quarter,
+            period_month,
+        ),
+    });
+}
+
+fn openProfileCompletion(
+    model: *Model,
+    form_index: usize,
+    assessment: form_ui.LaunchAssessment,
+) void {
+    model.profileCompletionTarget = assessment.first_missing_field;
+    model.profileCompletionFormIndex = form_index;
+    model.profileSetupSection = .tax_profile;
+    model.taxProfiles.editSelected();
+    openProfileEditor(model);
 }
 
 fn openProfileDeadlineById(model: *Model, id: u64) void {
@@ -4835,6 +5343,22 @@ fn openProfileBoundFormForQuarter(
     if (year_value < 1 or year_value > 9999) return false;
     const year: u16 = @intCast(year_value);
     const revision = editorRevision(form_code) orelse return false;
+    const launch = assessProfileFormLaunch(
+        model,
+        form_code,
+        tax_year,
+        quarter,
+        period_month,
+    );
+    switch (launch.status) {
+        .needs_profile => {
+            const form_index = formCatalogIndex(form_code) orelse return false;
+            openProfileCompletion(model, form_index, launch);
+            return false;
+        },
+        .profile_not_eligible, .unavailable => return false,
+        .ready_new, .ready_resume, .needs_activity_selection => {},
+    }
     const profile_as_of = profileAsOfForForm(
         model,
         form_code,
@@ -5045,7 +5569,46 @@ fn openProfileEditor(model: *Model) void {
 fn closeProfileEditor(model: *Model) void {
     const destination = model.profileEditorOrigin;
     model.profileEditorOrigin = .global_dashboard;
+    model.profileCompletionTarget = null;
+    model.profileCompletionFormIndex = null;
     navigate(model, destination);
+}
+
+fn launchActionEnabled(status: form_ui.LaunchStatus) bool {
+    return switch (status) {
+        .ready_new,
+        .ready_resume,
+        .needs_profile,
+        .needs_activity_selection,
+        => true,
+        .profile_not_eligible,
+        .unavailable,
+        => false,
+    };
+}
+
+fn profileCompletionFieldLabel(
+    reusable_field: profile_fields.ReusableField,
+) []const u8 {
+    return switch (reusable_field) {
+        .tin => "the Taxpayer Identification Number (TIN)",
+        .rdo_code => "the Revenue District Office (RDO) code",
+        .taxpayer_name,
+        .registered_name,
+        => "the registered taxpayer name",
+        .registered_address => "the registered address",
+        .zip_code => "the ZIP code",
+        .contact_number => "the contact number",
+        .email_address => "the registered email address",
+        .date_of_birth => "the date of birth",
+        .citizenship => "the citizenship",
+        .foreign_tax_number => "the foreign tax number",
+        .line_of_business => "the line of business",
+        .atc => "the alphanumeric tax code",
+        .tax_type => "the registered tax type",
+        .government_withholding_agent => "the government withholding-agent choice",
+        .special_rate_basis => "the special-rate basis",
+    };
 }
 
 fn isAuxiliaryPage(page: Page) bool {
@@ -5665,6 +6228,7 @@ pub fn main(init: std.process.Init) !void {
         init.gpa,
         &tax_profile_store,
     );
+    refreshProfileFormLaunchAssessments(&app_state.model);
     defer app_state.model.formProfiles.deinit();
     app_state.model.exact1701Q.attach(
         init.gpa,
@@ -5795,6 +6359,17 @@ fn addTestProfileWithRdo(
         .active,
         &revision,
     );
+    var forms: [form_catalog.registry_count]profile_store.FormRegistrationWrite =
+        undefined;
+    for (&form_catalog.forms, 0..) |*form, index| {
+        forms[index] = .{
+            .form_code = form.code,
+            .form_revision = form.revision orelse "calendar-only",
+        };
+    }
+    for ([_]i32{ 2025, 2026, 2027 }) |year| {
+        try store.replaceFormSet(id, year, &forms);
+    }
 }
 
 fn persistTestSoleProprietorRevision(
@@ -5854,6 +6429,17 @@ fn persistTestSoleProprietorRevision(
             .active,
             &revision,
         );
+        var forms: [form_catalog.registry_count]profile_store.FormRegistrationWrite =
+            undefined;
+        for (&form_catalog.forms, 0..) |*form, index| {
+            forms[index] = .{
+                .form_code = form.code,
+                .form_revision = form.revision orelse "calendar-only",
+            };
+        }
+        for ([_]i32{ 2025, 2026, 2027 }) |year| {
+            try store.replaceFormSet(profile_id, year, &forms);
+        }
     } else {
         try profile_persistence.appendRevision(
             store,
@@ -6292,6 +6878,9 @@ test "Forms Set explicit empty disables editors while fallback enables them" {
     try std.testing.expect(model.taxpayerForm0605Disabled());
     try std.testing.expect(model.taxpayerForm1701QDisabled());
     try std.testing.expect(model.taxpayerForm2551QDisabled());
+    model.page = .taxpayer_dashboard;
+    update(&model, .show_form_2551q);
+    try std.testing.expectEqual(Page.taxpayer_dashboard, model.page);
 
     model.calendar.selected_year = 2027;
     refreshSelectedProfileFormSet(&model);
@@ -6309,6 +6898,60 @@ test "Forms Set explicit empty disables editors while fallback enables them" {
     try std.testing.expect(model.taxpayerForm0605Disabled());
     try std.testing.expect(model.taxpayerForm1701QDisabled());
     try std.testing.expect(!model.taxpayerForm2551QDisabled());
+}
+
+test "library launch assessment routes incomplete profile to completion" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addTestProfile(
+        &store,
+        "11111111111111111111111111111111",
+        "Juan Dela Cruz",
+        "123-456-789-000",
+        .individual,
+    );
+
+    var model = Model{};
+    model.calendar.selected_year = 2026;
+    model.calendar.selected_month = 3;
+    try model.taxProfiles.attach(allocator, &store, "2026-07-29", 2026);
+    model.formProfiles.attach(allocator, &store);
+    defer model.formProfiles.deinit();
+
+    const profile_id = model.taxProfiles.selectedProfileDomainId().?;
+    try store.replaceFormSet(profile_id.asSlice(), 2026, &.{.{
+        .form_code = "2551Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+    model.taxProfiles.editSelected();
+    model.taxProfiles.phone.clear();
+    model.taxProfiles.email.clear();
+    try std.testing.expect(model.taxProfiles.save());
+    refreshSelectedProfileFormSet(&model);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const rows = model.profileFormRows(arena.allocator());
+    var found = false;
+    for (rows) |*row| {
+        if (!std.mem.eql(u8, row.code(), "2551Q")) continue;
+        found = true;
+        try std.testing.expectEqual(
+            form_ui.LaunchStatus.needs_profile,
+            row.launch_assessment.status,
+        );
+        try std.testing.expectEqualStrings("Complete profile", row.launchLabel());
+        try std.testing.expect(!row.launchDisabled());
+    }
+    try std.testing.expect(found);
+
+    update(&model, .show_form_2551q);
+    try std.testing.expectEqual(Page.profile_setup, model.page);
+    try std.testing.expectEqual(
+        profile_fields.ReusableField.contact_number,
+        model.profileCompletionTarget.?,
+    );
 }
 
 test "month navigation refreshes the Forms Set across a year boundary" {

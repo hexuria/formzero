@@ -12,12 +12,14 @@ const editor = @import("editor.zig");
 const fields = @import("field.zig");
 const model = @import("model.zig");
 const catalog = @import("../forms/generated/catalog.zig");
+const multi_select = @import("../components/multi_select.zig");
 
 const canvas = native_sdk.canvas;
 
 pub const max_profiles: usize = 64;
 pub const max_registered_forms: usize = catalog.registry_count;
 pub const max_draft_summaries: usize = 64;
+const FormSelectionState = multi_select.State(catalog.registry_count, 96);
 
 pub const Error = error{
     FieldTooLong,
@@ -33,6 +35,8 @@ pub const Error = error{
     ProfileCapacityExceeded,
     NotAttached,
     NoSelectedProfile,
+    FormsRequireSavedProfile,
+    UnsavedFormSetChanges,
 } || persistence.Error;
 
 pub const NoticeKind = enum {
@@ -52,6 +56,9 @@ pub const GovernmentWithholdingChoice = enum {
     no,
     yes,
 };
+
+pub const FormActivityFilter = enum { active, inactive, all };
+pub const FormCapabilityFilter = enum { all, editor, calendar_only };
 
 fn FixedText(comptime capacity: usize) type {
     return struct {
@@ -226,6 +233,13 @@ pub const State = struct {
     tax_year: canvas.TextBuffer(4) = .{},
     forms_set: canvas.TextBuffer(1024) = .{},
     forms_set_configured: bool = false,
+    form_set_state: persistence.FormSetState = .needs_configuration,
+    legacy_form_set_reset_allowed: bool = false,
+    saved_forms: FormSelectionState = .{},
+    staged_forms: FormSelectionState = .{},
+    managing_forms: bool = false,
+    form_activity_filter: FormActivityFilter = .active,
+    form_capability_filter: FormCapabilityFilter = .all,
     input_was_truncated: bool = false,
 
     default_effective_from: FixedText(10) = .{},
@@ -387,6 +401,7 @@ pub const State = struct {
 
     pub fn selectSlot(self: *State, slot: usize) !void {
         if (slot >= self.profile_count) return persistence.Error.NotFound;
+        if (self.formsDirty()) return error.UnsavedFormSetChanges;
         // Invalidate before changing identity or performing any fallible load.
         // A failed profile switch must not expose the prior profile's forms.
         self.invalidateCalendarFormSetCache(self.default_tax_year);
@@ -410,12 +425,22 @@ pub const State = struct {
     }
 
     pub fn startNew(self: *State) void {
+        if (self.formsDirty()) {
+            self.setError(error.UnsavedFormSetChanges);
+            return;
+        }
         self.editing_new = true;
         self.loaded_shape_supported = true;
         self.clearEditor();
         setEditorBuffer(&self.effective_from, self.default_effective_from.text());
         setTaxYearBuffer(&self.tax_year, self.default_tax_year);
         self.forms_set_configured = false;
+        self.form_set_state = .needs_configuration;
+        self.legacy_form_set_reset_allowed = false;
+        self.saved_forms = .{};
+        self.staged_forms = .{};
+        self.managing_forms = false;
+        self.updateFormSetSummary() catch |err| self.setError(err);
         self.setNotice(
             .neutral,
             "New profile. Saving creates revision 1 and opaque stable IDs.",
@@ -472,17 +497,6 @@ pub const State = struct {
         self.government_withholding_agent = value;
     }
 
-    pub fn setFormsSetConfigured(self: *State, configured: bool) void {
-        self.forms_set_configured = configured;
-        self.setNotice(
-            .neutral,
-            if (configured)
-                "The registered Forms Set is authoritative, including when empty."
-            else
-                "This tax year will use the catalog fallback.",
-        );
-    }
-
     pub fn save(self: *State) bool {
         const was_new = self.editing_new;
         self.saveFallible() catch |err| {
@@ -509,14 +523,7 @@ pub const State = struct {
             return error.FieldTooLong;
         }
 
-        // Validate the Forms Set before any profile persistence occurs.
         const year = try parseTaxYear(self.tax_year.text());
-        var form_writes: [max_registered_forms]persistence.FormRegistrationWrite =
-            undefined;
-        const form_count = if (self.forms_set_configured)
-            try parseFormsSet(self.forms_set.text(), &form_writes)
-        else
-            0;
 
         const tin = try fields.Tin.parse(trimmed(self.tin.text()));
         const rdo = try fields.RdoCode.parse(trimmed(self.rdo.text()));
@@ -659,16 +666,6 @@ pub const State = struct {
             );
         }
 
-        if (self.forms_set_configured) {
-            try store.replaceFormSet(
-                profile_id.asSlice(),
-                year,
-                form_writes[0..form_count],
-            );
-        } else {
-            _ = try store.clearFormSet(profile_id.asSlice(), year);
-        }
-
         try self.selected_id.set(profile_id.asSlice());
         self.has_selection = true;
         try self.reloadRows();
@@ -728,6 +725,160 @@ pub const State = struct {
         if (self.editing_new or !self.has_selection) return;
         const year = parseTaxYear(self.tax_year.text()) catch return;
         self.loadEditorFormSet(year) catch |err| self.setError(err);
+    }
+
+    pub fn rejectIfFormsDirty(self: *State) bool {
+        if (!self.formsDirty()) return false;
+        self.setError(error.UnsavedFormSetChanges);
+        return true;
+    }
+
+    pub fn loadFormsForYear(self: *State, year: i32) bool {
+        if (self.rejectIfFormsDirty()) return false;
+        setTaxYearBuffer(&self.tax_year, year);
+        self.loadEditorFormSet(year) catch |err| {
+            self.setError(err);
+            return false;
+        };
+        return true;
+    }
+
+    pub fn beginManageForms(self: *State) bool {
+        if (self.editing_new or !self.has_selection) {
+            self.setError(error.FormsRequireSavedProfile);
+            return false;
+        }
+        self.staged_forms.copySelectionFrom(&self.saved_forms);
+        self.staged_forms.resetInteraction();
+        self.managing_forms = true;
+        self.form_activity_filter = .all;
+        return true;
+    }
+
+    pub fn applyFormsQuery(self: *State, edit: canvas.TextInputEvent) void {
+        self.staged_forms.applyQuery(edit);
+    }
+
+    pub fn formsQuery(self: *const State) []const u8 {
+        return self.staged_forms.query();
+    }
+
+    pub fn setFormActivityFilter(
+        self: *State,
+        filter: FormActivityFilter,
+    ) void {
+        self.form_activity_filter = filter;
+    }
+
+    pub fn setFormCapabilityFilter(
+        self: *State,
+        filter: FormCapabilityFilter,
+    ) void {
+        self.form_capability_filter = filter;
+    }
+
+    pub fn cancelManageForms(self: *State) void {
+        self.staged_forms.copySelectionFrom(&self.saved_forms);
+        self.staged_forms.resetInteraction();
+        self.managing_forms = false;
+        self.form_activity_filter = .active;
+        self.form_capability_filter = .all;
+    }
+
+    pub fn toggleStagedForm(self: *State, index: usize) void {
+        if (!self.managing_forms) return;
+        _ = self.staged_forms.toggle(index);
+    }
+
+    pub fn selectAllStagedForms(self: *State) void {
+        if (self.managing_forms) _ = self.staged_forms.setAll(true);
+    }
+
+    pub fn clearAllStagedForms(self: *State) void {
+        if (self.managing_forms) _ = self.staged_forms.clear();
+    }
+
+    pub fn formsDirty(self: *const State) bool {
+        return self.managing_forms and
+            !self.staged_forms.selectionEql(&self.saved_forms);
+    }
+
+    pub fn displayedFormSelected(self: *const State, index: usize) bool {
+        if (index >= catalog.registry_count) return false;
+        return if (self.managing_forms)
+            self.staged_forms.isSelected(index)
+        else
+            self.saved_forms.isSelected(index);
+    }
+
+    pub fn activeFormCount(self: *const State) usize {
+        return self.saved_forms.selectedCount();
+    }
+
+    pub fn saveManagedForms(self: *State) bool {
+        self.saveManagedFormsFallible() catch |err| {
+            self.setError(err);
+            return false;
+        };
+        self.setNotice(.success, "Forms Set saved for this profile and tax year.");
+        return true;
+    }
+
+    fn saveManagedFormsFallible(self: *State) !void {
+        const store = self.store orelse return error.NotAttached;
+        if (self.editing_new) return error.FormsRequireSavedProfile;
+        const profile_id = self.selectedProfileId() orelse
+            return error.NoSelectedProfile;
+        const year = try parseTaxYear(self.tax_year.text());
+        var writes: [max_registered_forms]persistence.FormRegistrationWrite =
+            undefined;
+        var count: usize = 0;
+        for (&catalog.forms, 0..) |*form, index| {
+            if (!self.staged_forms.isSelected(index)) continue;
+            writes[count] = .{
+                .form_code = form.code,
+                .form_revision = form.revision orelse "calendar-only",
+            };
+            count += 1;
+        }
+        try store.replaceFormSet(profile_id, year, writes[0..count]);
+        self.saved_forms.copySelectionFrom(&self.staged_forms);
+        self.staged_forms.resetInteraction();
+        self.form_set_state = if (count == 0) .active_empty else .active_nonempty;
+        self.forms_set_configured = true;
+        self.managing_forms = false;
+        self.form_activity_filter = .active;
+        self.form_capability_filter = .all;
+        try self.updateFormSetSummary();
+        try self.refreshCalendarFormSet(year);
+    }
+
+    pub fn resetManagedFormsToLegacyDefault(self: *State) bool {
+        self.resetManagedFormsToLegacyDefaultFallible() catch |err| {
+            self.setError(err);
+            return false;
+        };
+        self.setNotice(.success, "Legacy catalog default restored.");
+        return true;
+    }
+
+    fn resetManagedFormsToLegacyDefaultFallible(self: *State) !void {
+        const store = self.store orelse return error.NotAttached;
+        if (self.editing_new) return error.FormsRequireSavedProfile;
+        const profile_id = self.selectedProfileId() orelse
+            return error.NoSelectedProfile;
+        const year = try parseTaxYear(self.tax_year.text());
+        try store.resetToLegacyCatalogDefault(profile_id, year);
+        self.saved_forms = FormSelectionState.allSelected();
+        self.staged_forms.copySelectionFrom(&self.saved_forms);
+        self.staged_forms.resetInteraction();
+        self.form_set_state = .legacy_catalog_default;
+        self.forms_set_configured = false;
+        self.managing_forms = false;
+        self.form_activity_filter = .active;
+        self.form_capability_filter = .all;
+        try self.updateFormSetSummary();
+        try self.refreshCalendarFormSet(year);
     }
 
     fn buildSource(self: *const State) !model.RevisionSource {
@@ -826,24 +977,23 @@ pub const State = struct {
         if (self.selectedProfileId()) |profile_id| {
             for (&refreshed) |*cache| {
                 if (cache.tax_year == 0) continue;
-                var maybe_set = try store.getFormSet(
+                var resolved = try store.resolveFormSet(
                     allocator,
                     profile_id,
                     cache.tax_year,
                 );
-                if (maybe_set) |*form_set| {
-                    defer form_set.deinit(allocator);
-                    cache.resolution = .configured;
-                    if (form_set.items.len > cache.codes.len) {
-                        return error.TooManyForms;
-                    }
-                    for (form_set.items, 0..) |item, index| {
-                        try cache.codes[index].set(item.form_code);
-                    }
-                    cache.count = form_set.items.len;
-                } else {
-                    cache.resolution = .catalog_fallback;
+                defer resolved.deinit(allocator);
+                cache.resolution = if (resolved.state == .legacy_catalog_default)
+                    .catalog_fallback
+                else
+                    .configured;
+                if (resolved.forms.items.len > cache.codes.len) {
+                    return error.TooManyForms;
                 }
+                for (resolved.forms.items, 0..) |item, index| {
+                    try cache.codes[index].set(item.form_code);
+                }
+                cache.count = resolved.forms.items.len;
             }
         }
 
@@ -1258,28 +1408,47 @@ pub const State = struct {
         const store = self.store orelse return error.NotAttached;
         const profile_id = self.selectedProfileId() orelse
             return error.NoSelectedProfile;
-        var maybe_set = try store.getFormSet(allocator, profile_id, tax_year);
-        clearEditorBuffer(&self.forms_set);
-        self.forms_set_configured = maybe_set != null;
-        if (maybe_set) |*form_set| {
-            defer form_set.deinit(allocator);
-            var joined: [1024]u8 = undefined;
-            var length: usize = 0;
-            for (form_set.items, 0..) |item, index| {
-                if (index != 0) {
-                    if (length + 2 > joined.len) return error.FieldTooLong;
-                    joined[length] = ',';
-                    joined[length + 1] = ' ';
-                    length += 2;
-                }
-                if (length + item.form_code.len > joined.len) {
-                    return error.FieldTooLong;
-                }
-                @memcpy(joined[length..][0..item.form_code.len], item.form_code);
-                length += item.form_code.len;
+        var resolved = try store.resolveFormSet(allocator, profile_id, tax_year);
+        defer resolved.deinit(allocator);
+        self.form_set_state = resolved.state;
+        self.legacy_form_set_reset_allowed = resolved.legacy_reset_allowed;
+        self.forms_set_configured = switch (resolved.state) {
+            .active_empty, .active_nonempty => true,
+            .needs_configuration, .legacy_catalog_default => false,
+        };
+        self.saved_forms = if (resolved.state == .legacy_catalog_default)
+            FormSelectionState.allSelected()
+        else
+            FormSelectionState{};
+        for (resolved.forms.items) |item| {
+            for (&catalog.forms, 0..) |*form, index| {
+                if (!std.ascii.eqlIgnoreCase(item.form_code, form.code)) continue;
+                _ = self.saved_forms.set(index, true);
+                break;
             }
-            setEditorBuffer(&self.forms_set, joined[0..length]);
         }
+        self.staged_forms.copySelectionFrom(&self.saved_forms);
+        self.staged_forms.resetInteraction();
+        self.managing_forms = false;
+        self.form_activity_filter = .active;
+        self.form_capability_filter = .all;
+        try self.updateFormSetSummary();
+    }
+
+    fn updateFormSetSummary(self: *State) !void {
+        var summary: [128]u8 = undefined;
+        const state_label = switch (self.form_set_state) {
+            .needs_configuration => "Needs configuration",
+            .legacy_catalog_default => "Legacy catalog default",
+            .active_empty => "Active empty",
+            .active_nonempty => "Active",
+        };
+        const text = try std.fmt.bufPrint(
+            &summary,
+            "{s} - {d} of {d} active",
+            .{ state_label, self.saved_forms.selectedCount(), catalog.registry_count },
+        );
+        setEditorBuffer(&self.forms_set, text);
     }
 
     fn selectedRow(self: *const State) ?*const ProfileRow {
@@ -1329,6 +1498,13 @@ pub const State = struct {
         self.source_kind = .manual_entry;
         self.government_withholding_agent = .unset;
         self.forms_set_configured = false;
+        self.form_set_state = .needs_configuration;
+        self.legacy_form_set_reset_allowed = false;
+        self.saved_forms = .{};
+        self.staged_forms = .{};
+        self.managing_forms = false;
+        self.form_activity_filter = .active;
+        self.form_capability_filter = .all;
         self.input_was_truncated = false;
     }
 
@@ -1384,6 +1560,8 @@ pub const State = struct {
             error.SourceReferenceRequired => "Imported and migrated revisions require a source reference.",
             error.ManualSourceHasReference => "Manual entry has no external source reference. Choose Imported or Migrated.",
             error.UnsupportedRepeatedComponents => "This repeated-component revision is preserved, but cannot be rewritten by the single-activity editor.",
+            error.UnsavedFormSetChanges => "Save or cancel the staged Forms Set before switching profiles or creating another profile.",
+            error.FormsRequireSavedProfile => "Create this profile before managing its Forms Set.",
             error.FieldTooLong => "One or more profile fields exceed their supported length.",
             else => "Profile was not saved. Check required fields and field formats.",
         };
@@ -1730,8 +1908,10 @@ test "profile state builds domain revision and explicit empty Forms Set" {
     state.email.set("maria@example.ph");
     state.effective_from.set("2026-01-01");
     state.tax_type.set("Percentage Tax");
-    state.forms_set_configured = true;
     try std.testing.expect(state.save());
+    _ = state.beginManageForms();
+    state.clearAllStagedForms();
+    try std.testing.expect(state.saveManagedForms());
 
     try std.testing.expectEqual(NoticeKind.success, state.notice_kind);
     const profile_id = state.selectedProfileDomainId().?;
@@ -1758,10 +1938,10 @@ test "profile state builds domain revision and explicit empty Forms Set" {
     defer form_set.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), form_set.items.len);
 
-    // The preceding year was queried successfully and has no configuration,
-    // so catalog fallback remains intentional for that resolved cache entry.
-    try std.testing.expect(!state.calendarFormSetConfigured(2025));
-    try std.testing.expect(state.formAvailable(2025, "2551Q"));
+    // A newly-created profile never widens an unconfigured year to the
+    // catalog. The preceding year is authoritative-empty until configured.
+    try std.testing.expect(state.calendarFormSetConfigured(2025));
+    try std.testing.expect(!state.formAvailable(2025, "2551Q"));
 
     try store.replaceFormSet(profile_id.asSlice(), 2025, &.{.{
         .form_code = "1701Q",
@@ -1782,6 +1962,84 @@ test "profile state builds domain revision and explicit empty Forms Set" {
     );
     try std.testing.expectEqual(@as(usize, 1), prior_codes.len);
     try std.testing.expectEqualStrings("1701Q", prior_codes[0]);
+}
+
+test "staged Forms Set is isolated until save and blocks context switches" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try state.attach(allocator, &store, "2026-07-29", 2026);
+    state.tin.set("123-456-789-000");
+    state.rdo.set("040");
+    state.display_name.set("Staged Forms Taxpayer");
+    state.registered_address.set("Quezon City");
+    state.effective_from.set("2026-01-01");
+    try std.testing.expect(state.save());
+    try std.testing.expectEqual(
+        persistence.FormSetState.needs_configuration,
+        state.form_set_state,
+    );
+    try std.testing.expect(!state.formAvailable(2026, "2551Q"));
+
+    var form_index: ?usize = null;
+    for (&catalog.forms, 0..) |*form, index| {
+        if (std.mem.eql(u8, form.code, "2551Q")) form_index = index;
+    }
+    const index = form_index.?;
+    _ = state.beginManageForms();
+    state.toggleStagedForm(index);
+    try std.testing.expect(state.formsDirty());
+    try std.testing.expect(!state.formAvailable(2026, "2551Q"));
+    try std.testing.expectError(error.UnsavedFormSetChanges, state.selectSlot(0));
+
+    state.cancelManageForms();
+    try std.testing.expect(!state.formsDirty());
+    try std.testing.expect(!state.displayedFormSelected(index));
+
+    _ = state.beginManageForms();
+    state.toggleStagedForm(index);
+    try std.testing.expect(state.saveManagedForms());
+    try std.testing.expect(state.formAvailable(2026, "2551Q"));
+    try std.testing.expect(!state.formAvailable(2026, "1701Q"));
+    try std.testing.expectEqual(@as(usize, 1), state.activeFormCount());
+}
+
+test "new profile cannot manage or save the prior profile Forms Set" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try state.attach(allocator, &store, "2026-07-29", 2026);
+    state.tin.set("123-456-789-000");
+    state.rdo.set("040");
+    state.display_name.set("Existing Taxpayer");
+    state.registered_address.set("Quezon City");
+    state.effective_from.set("2026-01-01");
+    try std.testing.expect(state.save());
+
+    const existing_id = state.selectedProfileDomainId().?;
+    _ = state.beginManageForms();
+    state.clearAllStagedForms();
+    try std.testing.expect(state.saveManagedForms());
+
+    state.startNew();
+    try std.testing.expectEqualStrings(
+        "Needs configuration - 0 of 51 active",
+        state.forms_set.text(),
+    );
+    try std.testing.expect(!state.beginManageForms());
+    try std.testing.expect(!state.saveManagedForms());
+
+    var persisted = (try store.getFormSet(
+        allocator,
+        existing_id.asSlice(),
+        2026,
+    )).?;
+    defer persisted.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), persisted.items.len);
 }
 
 test "profile state appends immutable source-aware revision" {

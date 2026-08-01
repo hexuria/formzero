@@ -1490,24 +1490,156 @@ body="No unpaid deadline has passed for this tax profile."/>
 </template>
 <template name="taxpayer-form-library-section">
 <column gap="16">
-<column gap="4">
+<if test="{profileFormsHeaderStacked}">
+<column gap="8">
+<row gap="10" cross="center">
+<column grow="1" gap="4">
 <text><span weight="bold">Tax Form Library</span></text>
-<text wrap="true" foreground="text_muted">
-Available forms follow this profile's Forms Set for the selected tax
-year. An unconfigured Forms Set uses the catalog fallback.
-</text>
+<text wrap="true" foreground="text_muted">{profileFormsCountLabel} · Tax Year {currentCalendarYear}</text>
 </column>
-<if test="{constrainedLayout}">
-<column gap="12">
-<use template="taxpayer-form-library-column-a"/>
-<use template="taxpayer-form-library-column-b"/>
+<button width="44" height="44" size="icon" variant="ghost" icon="chevron-left" label="Previous tax year" on-press="calendar_previous_year"></button>
+<button width="44" height="44" size="icon" variant="ghost" icon="chevron-right" label="Next tax year" on-press="calendar_next_year"></button>
+</row>
+<if test="{managingProfileForms}">
+<row gap="8" cross="center">
+<spacer/>
+<button height="44" variant="outline" on-press="profile_forms_cancel">Cancel</button>
+<button height="44" icon="check" disabled="{profileFormsSaveDisabled}" on-press="profile_forms_save">Save</button>
+</row>
+</if>
 </column>
 </if>
 <else>
-<row gap="20" cross="start">
-<use template="taxpayer-form-library-column-a"/>
-<use template="taxpayer-form-library-column-b"/>
+<row gap="10" cross="center">
+<column grow="1" gap="4">
+<text><span weight="bold">Tax Form Library</span></text>
+<text wrap="true" foreground="text_muted">{profileFormsCountLabel} · Tax Year {currentCalendarYear}</text>
+</column>
+<button width="44" height="44" size="icon" variant="ghost" icon="chevron-left" label="Previous tax year" on-press="calendar_previous_year"></button>
+<button width="44" height="44" size="icon" variant="ghost" icon="chevron-right" label="Next tax year" on-press="calendar_next_year"></button>
+<if test="{managingProfileForms}">
+<button height="44" variant="outline" on-press="profile_forms_cancel">Cancel</button>
+<button height="44" icon="check" disabled="{profileFormsSaveDisabled}" on-press="profile_forms_save">Save</button>
+</if>
+<else>
+<button height="44" icon="settings" on-press="manage_profile_forms">Manage Forms</button>
+</else>
 </row>
+</else>
+<input
+height="44"
+text="{profileFormsSearchValue}"
+placeholder="Search by form code"
+label="Search Tax Form Library"
+on-input="profile_forms_search_input"/>
+<if test="{profileFormsHeaderStacked}">
+<column gap="8">
+<row gap="8">
+<button height="36" variant="outline" selected="{profileFormsFilterActiveSelected}" on-press="profile_forms_filter_active">Active</button>
+<button height="36" variant="outline" selected="{profileFormsFilterInactiveSelected}" on-press="profile_forms_filter_inactive">Inactive</button>
+<button height="36" variant="outline" selected="{profileFormsFilterAllSelected}" on-press="profile_forms_filter_all">All</button>
+</row>
+<stack>
+<select height="40" label="Capability filter" on-press="profile_forms_toggle_capability_picker">{profileFormsCapabilityFilterLabel}</select>
+<if test="{profileFormsCapabilityPickerOpen}">
+<dropdown-menu anchor="below" anchor-alignment="stretch" on-dismiss="profile_forms_close_capability_picker">
+<menu-item height="40" selected="{profileFormsCapabilityAllSelected}" on-press="profile_forms_filter_capability_all">All capabilities</menu-item>
+<menu-item height="40" selected="{profileFormsCapabilityEditorSelected}" on-press="profile_forms_filter_editor">Editor available</menu-item>
+<menu-item height="40" selected="{profileFormsCapabilityCalendarSelected}" on-press="profile_forms_filter_calendar_only">Calendar only</menu-item>
+</dropdown-menu>
+</if>
+</stack>
+</column>
+</if>
+<else>
+<row gap="8">
+<button height="36" variant="outline" selected="{profileFormsFilterActiveSelected}" on-press="profile_forms_filter_active">Active</button>
+<button height="36" variant="outline" selected="{profileFormsFilterInactiveSelected}" on-press="profile_forms_filter_inactive">Inactive</button>
+<button height="36" variant="outline" selected="{profileFormsFilterAllSelected}" on-press="profile_forms_filter_all">All</button>
+<button height="36" variant="outline" selected="{profileFormsCapabilityAllSelected}" on-press="profile_forms_filter_capability_all">All capabilities</button>
+<button height="36" variant="outline" selected="{profileFormsCapabilityEditorSelected}" on-press="profile_forms_filter_editor">Editor available</button>
+<button height="36" variant="outline" selected="{profileFormsCapabilityCalendarSelected}" on-press="profile_forms_filter_calendar_only">Calendar only</button>
+</row>
+</else>
+<if test="{managingProfileForms}">
+<if test="{profileFormsHeaderStacked}">
+<column gap="8">
+<button height="40" variant="outline" on-press="profile_forms_select_all">Select all 51</button>
+<button height="40" variant="outline" on-press="profile_forms_clear_all">Clear all</button>
+<if test="{profileFormsLegacyResetVisible}">
+<button height="40" variant="ghost" on-press="profile_forms_reset_legacy">Reset to catalog default</button>
+</if>
+</column>
+</if>
+<else>
+<row gap="8">
+<button height="40" variant="outline" on-press="profile_forms_select_all">Select all 51</button>
+<button height="40" variant="outline" on-press="profile_forms_clear_all">Clear all</button>
+<if test="{profileFormsLegacyResetVisible}">
+<button height="40" variant="ghost" on-press="profile_forms_reset_legacy">Reset to catalog default</button>
+</if>
+</row>
+</else>
+<text wrap="true" foreground="text_muted">Changes remain staged until Save. Saving zero forms creates an explicitly empty library and profile calendar.</text>
+</if>
+<if test="{profileFormRowsEmpty}">
+<use template="taxpayer-calendar-empty" icon="search" title="No matching forms" body="Change the search or filters, or manage this profile's Forms Set."/>
+</if>
+<else>
+<column gap="10">
+<for each="profileFormRows" key="id" as="form">
+<card padding="0">
+<if test="{profileFormsHeaderStacked}">
+<column padding="14" gap="10">
+<row gap="12" cross="center">
+<if test="{managingProfileForms}">
+<checkbox
+checked="{form.selected}"
+label="{form.selectionLabel}"
+on-change="toggle_profile_form:{form.id}"/>
+</if>
+<column grow="1" gap="5">
+<row gap="8" cross="center">
+<badge variant="secondary">{form.code}</badge>
+<badge variant="outline">{form.activeLabel}</badge>
+<badge variant="outline">{form.capability}</badge>
+</row>
+<text><span weight="bold">{form.title}</span></text>
+</column>
+</row>
+<if test="{form.launchActionVisible and managingProfileForms == false}">
+<badge variant="outline">{form.launchStatus}</badge>
+<button height="40" variant="secondary" icon="file-text" disabled="{form.launchDisabled}" on-press="open_library_form:{form.id}">{form.launchLabel}</button>
+</if>
+</column>
+</if>
+<else>
+<row padding="14" gap="12" cross="center">
+<if test="{managingProfileForms}">
+<checkbox
+checked="{form.selected}"
+label="{form.selectionLabel}"
+on-change="toggle_profile_form:{form.id}"/>
+</if>
+<column grow="1" gap="5">
+<row gap="8" cross="center">
+<badge variant="secondary">{form.code}</badge>
+<badge variant="outline">{form.activeLabel}</badge>
+<badge variant="outline">{form.capability}</badge>
+<if test="{form.launchActionVisible and managingProfileForms == false}">
+<badge variant="outline">{form.launchStatus}</badge>
+</if>
+</row>
+<text><span weight="bold">{form.title}</span></text>
+</column>
+<if test="{form.launchActionVisible and managingProfileForms == false}">
+<button height="40" variant="secondary" icon="file-text" disabled="{form.launchDisabled}" on-press="open_library_form:{form.id}">{form.launchLabel}</button>
+</if>
+</row>
+</else>
+</card>
+</for>
+</column>
 </else>
 </column>
 </template>
@@ -1539,6 +1671,7 @@ anchor-alignment="end"
 anchor-offset="8"
 on-dismiss="close_profile_actions">
 <menu-item height="44" icon="settings" on-press="show_profile_setup">Profile Settings</menu-item>
+<menu-item height="44" icon="file-text" on-press="manage_profile_forms">Manage Forms</menu-item>
 <menu-item
 height="44"
 icon="app:calendar"
@@ -1664,6 +1797,14 @@ on-press="show_profile_email">
 Email Settings
 </button>
 </tabs>
+<if test="{profileCompletionVisible}">
+<card padding="0">
+<row padding="12" gap="10" cross="center">
+<badge variant="outline">Profile data required</badge>
+<text wrap="true" foreground="text_muted">{profileCompletionMessage}</text>
+</row>
+</card>
+</if>
 <if test="{profileTaxActive}">
 <column gap="24">
 <column gap="16">
@@ -1682,6 +1823,7 @@ height="44"
 text="{profileTinValue}"
 placeholder="000-000-000-000"
 label="Taxpayer Identification Number (TIN)"
+autofocus="{profileTinAutofocus}"
 on-input="profile_tin_input"/>
 </use>
 <use template="profile-field" label="Revenue District Office (RDO) code">
@@ -1690,6 +1832,7 @@ height="44"
 text="{profileRdoValue}"
 placeholder="RDO code"
 label="Revenue District Office (RDO) code"
+autofocus="{profileRdoAutofocus}"
 on-input="profile_rdo_input"/>
 </use>
 </column>
@@ -1702,6 +1845,7 @@ height="44"
 text="{profileTinValue}"
 placeholder="000-000-000-000"
 label="Taxpayer Identification Number (TIN)"
+autofocus="{profileTinAutofocus}"
 on-input="profile_tin_input"/>
 </use>
 <use template="profile-field" label="Revenue District Office (RDO) code" grow="1">
@@ -1710,6 +1854,7 @@ height="44"
 text="{profileRdoValue}"
 placeholder="RDO code"
 label="Revenue District Office (RDO) code"
+autofocus="{profileRdoAutofocus}"
 on-input="profile_rdo_input"/>
 </use>
 </row>
@@ -1760,6 +1905,7 @@ height="44"
 text="{profileNameValue}"
 placeholder="Registered taxpayer name"
 label="Taxpayer or registered name"
+autofocus="{profileNameAutofocus}"
 on-input="profile_name_input"/>
 </use>
 <if test="{profileTradeNameVisible}">
@@ -1778,30 +1924,31 @@ height="44"
 text="{profileAddressValue}"
 placeholder="Registered address"
 label="Registered address"
+autofocus="{profileAddressAutofocus}"
 on-input="profile_address_input"/>
 </use>
 <if test="{constrainedLayout}">
 <column gap="12">
 <use template="profile-field" label="ZIP code">
-<input height="44" text="{profileZipValue}" placeholder="ZIP code" label="ZIP code" on-input="profile_zip_input"/>
+<input height="44" text="{profileZipValue}" placeholder="ZIP code" label="ZIP code" autofocus="{profileZipAutofocus}" on-input="profile_zip_input"/>
 </use>
 <use template="profile-field" label="Contact number">
-<input height="44" text="{profilePhoneValue}" placeholder="+63 900 000 0000" label="Contact number" on-input="profile_phone_input"/>
+<input height="44" text="{profilePhoneValue}" placeholder="+63 900 000 0000" label="Contact number" autofocus="{profilePhoneAutofocus}" on-input="profile_phone_input"/>
 </use>
 </column>
 </if>
 <else>
 <row gap="12">
 <use template="profile-field" label="ZIP code" grow="1">
-<input height="44" text="{profileZipValue}" placeholder="ZIP code" label="ZIP code" on-input="profile_zip_input"/>
+<input height="44" text="{profileZipValue}" placeholder="ZIP code" label="ZIP code" autofocus="{profileZipAutofocus}" on-input="profile_zip_input"/>
 </use>
 <use template="profile-field" label="Contact number" grow="1">
-<input height="44" text="{profilePhoneValue}" placeholder="+63 900 000 0000" label="Contact number" on-input="profile_phone_input"/>
+<input height="44" text="{profilePhoneValue}" placeholder="+63 900 000 0000" label="Contact number" autofocus="{profilePhoneAutofocus}" on-input="profile_phone_input"/>
 </use>
 </row>
 </else>
 <use template="profile-field" label="Registered email address">
-<input height="44" text="{profileEmailValue}" placeholder="name@example.com" label="Registered email address" on-input="profile_email_input"/>
+<input height="44" text="{profileEmailValue}" placeholder="name@example.com" label="Registered email address" autofocus="{profileEmailAutofocus}" on-input="profile_email_input"/>
 </use>
 </column>
 <column gap="16">
@@ -1821,6 +1968,7 @@ text="{profileBirthDateValue}"
 placeholder="YYYY-MM-DD"
 label="Birth date"
 disabled="{profilePersonalFieldsDisabled}"
+autofocus="{profileBirthDateAutofocus}"
 on-input="profile_birth_date_input"/>
 </use>
 <use template="profile-field" label="Citizenship">
@@ -1830,6 +1978,7 @@ text="{profileCitizenshipValue}"
 placeholder="Citizenship"
 label="Citizenship"
 disabled="{profilePersonalFieldsDisabled}"
+autofocus="{profileCitizenshipAutofocus}"
 on-input="profile_citizenship_input"/>
 </use>
 </column>
@@ -1837,10 +1986,10 @@ on-input="profile_citizenship_input"/>
 <else>
 <row gap="12">
 <use template="profile-field" label="Birth date" grow="1">
-<input height="44" text="{profileBirthDateValue}" placeholder="YYYY-MM-DD" label="Birth date" disabled="{profilePersonalFieldsDisabled}" on-input="profile_birth_date_input"/>
+<input height="44" text="{profileBirthDateValue}" placeholder="YYYY-MM-DD" label="Birth date" disabled="{profilePersonalFieldsDisabled}" autofocus="{profileBirthDateAutofocus}" on-input="profile_birth_date_input"/>
 </use>
 <use template="profile-field" label="Citizenship" grow="1">
-<input height="44" text="{profileCitizenshipValue}" placeholder="Citizenship" label="Citizenship" disabled="{profilePersonalFieldsDisabled}" on-input="profile_citizenship_input"/>
+<input height="44" text="{profileCitizenshipValue}" placeholder="Citizenship" label="Citizenship" disabled="{profilePersonalFieldsDisabled}" autofocus="{profileCitizenshipAutofocus}" on-input="profile_citizenship_input"/>
 </use>
 </row>
 </else>
@@ -1851,6 +2000,7 @@ text="{profileForeignTaxNumberValue}"
 placeholder="Optional foreign tax identifier"
 label="Foreign tax number"
 disabled="{profilePersonalFieldsDisabled}"
+autofocus="{profileForeignTaxNumberAutofocus}"
 on-input="profile_foreign_tax_number_input"/>
 </use>
 </column>
@@ -1864,25 +2014,25 @@ registration facts. Transaction schedules remain on the form.
 </text>
 </column>
 <use template="profile-field" label="Line of business">
-<input height="44" text="{profileBusinessLineValue}" placeholder="Line of business" label="Line of business" on-input="profile_business_line_input"/>
+<input height="44" text="{profileBusinessLineValue}" placeholder="Line of business" label="Line of business" autofocus="{profileBusinessLineAutofocus}" on-input="profile_business_line_input"/>
 </use>
 <if test="{constrainedLayout}">
 <column gap="12">
 <use template="profile-field" label="Alphanumeric Tax Code (ATC)">
-<input height="44" text="{profileAtcValue}" placeholder="PT010" label="Alphanumeric Tax Code (ATC)" on-input="profile_atc_input"/>
+<input height="44" text="{profileAtcValue}" placeholder="PT010" label="Alphanumeric Tax Code (ATC)" autofocus="{profileAtcAutofocus}" on-input="profile_atc_input"/>
 </use>
 <use template="profile-field" label="Registered tax type">
-<input height="44" text="{profileTaxTypeValue}" placeholder="Percentage tax" label="Registered tax type" on-input="profile_tax_type_input"/>
+<input height="44" text="{profileTaxTypeValue}" placeholder="Percentage tax" label="Registered tax type" autofocus="{profileTaxTypeAutofocus}" on-input="profile_tax_type_input"/>
 </use>
 </column>
 </if>
 <else>
 <row gap="12">
 <use template="profile-field" label="Alphanumeric Tax Code (ATC)" grow="1">
-<input height="44" text="{profileAtcValue}" placeholder="PT010" label="Alphanumeric Tax Code (ATC)" on-input="profile_atc_input"/>
+<input height="44" text="{profileAtcValue}" placeholder="PT010" label="Alphanumeric Tax Code (ATC)" autofocus="{profileAtcAutofocus}" on-input="profile_atc_input"/>
 </use>
 <use template="profile-field" label="Registered tax type" grow="1">
-<input height="44" text="{profileTaxTypeValue}" placeholder="Percentage tax" label="Registered tax type" on-input="profile_tax_type_input"/>
+<input height="44" text="{profileTaxTypeValue}" placeholder="Percentage tax" label="Registered tax type" autofocus="{profileTaxTypeAutofocus}" on-input="profile_tax_type_input"/>
 </use>
 </row>
 </else>
@@ -1902,9 +2052,10 @@ registration facts. Transaction schedules remain on the form.
 <column gap="4">
 <text><span weight="bold">Revision and registered Forms Set</span></text>
 <text wrap="true" foreground="text_muted">
-Form codes are comma-separated and effective for the selected
-tax year. An explicitly empty Forms Set means no obligations;
-an unconfigured year uses the catalog fallback.
+Forms are managed in the Tax Form Library for the selected tax
+year. New profiles start with Needs configuration. Saving zero
+forms creates an explicitly empty library and calendar; only
+legacy-compatible profiles can use catalog fallback.
 </text>
 </column>
 <if test="{constrainedLayout}">
@@ -1959,54 +2110,20 @@ label="Source reference"
 disabled="{profileSourceReferenceDisabled}"
 on-input="profile_source_reference_input"/>
 </use>
-<column gap="8">
-<text foreground="text_muted">Forms Set policy</text>
-<if test="{constrainedLayout}">
-<column gap="8">
-<button
-height="44"
-variant="outline"
-selected="{profileFormsSetFallbackSelected}"
-on-press="profile_forms_set_fallback">
-Catalog fallback
-</button>
-<button
-height="44"
-variant="outline"
-selected="{profileFormsSetRegisteredSelected}"
-on-press="profile_forms_set_registered">
-Registered Forms Set
-</button>
+<card padding="0">
+<row padding="14" gap="12" cross="center">
+<column grow="1" gap="4">
+<text><span weight="bold">Forms Set</span></text>
+<text wrap="true" foreground="text_muted">{profileFormsSetValue}</text>
 </column>
+<if test="{editingNewProfile}">
+<button height="44" variant="outline" icon="settings" disabled="true">Save profile to manage forms</button>
 </if>
 <else>
-<row gap="8">
-<button
-height="44"
-variant="outline"
-selected="{profileFormsSetFallbackSelected}"
-on-press="profile_forms_set_fallback">
-Catalog fallback
-</button>
-<button
-height="44"
-variant="outline"
-selected="{profileFormsSetRegisteredSelected}"
-on-press="profile_forms_set_registered">
-Registered Forms Set
-</button>
-</row>
+<button height="44" variant="outline" icon="settings" on-press="manage_profile_forms">Manage Forms</button>
 </else>
-</column>
-<use template="profile-field" label="Registered Forms Set">
-<input
-height="44"
-text="{profileFormsSetValue}"
-placeholder="2551Q, 1701Q"
-label="Registered Forms Set"
-disabled="{profileFormsSetInputDisabled}"
-on-input="profile_forms_set_input"/>
-</use>
+</row>
+</card>
 </column>
 </column>
 </if>

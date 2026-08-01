@@ -35,7 +35,7 @@ const sqlite = @cImport({
     @cInclude("sqlite3.h");
 });
 
-pub const latest_schema_version: u32 = 5;
+pub const latest_schema_version: u32 = 6;
 const migration_component = "tax_profile";
 pub const storage_classification =
     repository_opening.legacy_plaintext_repository_classification;
@@ -319,6 +319,17 @@ pub const IdentityCorrectionWrite = struct {
 pub const FormRegistrationWrite = struct {
     form_code: []const u8,
     form_revision: []const u8,
+};
+
+pub const FormSetState = enum {
+    needs_configuration,
+    legacy_catalog_default,
+    active_empty,
+    active_nonempty,
+
+    fn text(self: FormSetState) []const u8 {
+        return @tagName(self);
+    }
 };
 
 pub const DraftWrite = struct {
@@ -796,6 +807,17 @@ pub const FormRegistrationList = struct {
     }
 };
 
+pub const ResolvedFormSet = struct {
+    state: FormSetState,
+    legacy_reset_allowed: bool,
+    forms: FormRegistrationList,
+
+    pub fn deinit(self: *ResolvedFormSet, allocator: std.mem.Allocator) void {
+        self.forms.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
 /// Owned profile-level calendar filter. A missing selection parent means the
 /// catalog default (all forms); a present value with no codes is an explicit
 /// empty selection.
@@ -1255,6 +1277,17 @@ pub const Store = struct {
             try version.bindText(1, migration_component);
             try version.expectDone();
         }
+        if (current < 6) {
+            try self.exec(schema_v6);
+            var version = try self.prepare(
+                \\UPDATE app_component_migrations
+                \\SET version = 6, updated_at = unixepoch()
+                \\WHERE component = ?;
+            );
+            defer version.deinit();
+            try version.bindText(1, migration_component);
+            try version.expectDone();
+        }
         try self.commit();
         committed = true;
     }
@@ -1372,6 +1405,21 @@ pub const Store = struct {
         return id;
     }
 
+    pub fn localOwnerId(self: *Store) !OpaqueId {
+        var statement = try self.prepare(
+            "SELECT id FROM tax_profile_local_owner WHERE singleton = 1;",
+        );
+        defer statement.deinit();
+        if (try statement.step() != .row) return Error.NotFound;
+        const raw = columnText(statement.raw, 0) orelse
+            return Error.SqliteFailure;
+        if (raw.len != 32) return Error.SqliteFailure;
+        var id: OpaqueId = undefined;
+        @memcpy(&id, raw);
+        if (try statement.step() != .done) return Error.SqliteFailure;
+        return id;
+    }
+
     /// Generates the independent random identifier used for an exact draft
     /// workspace. Filing duplicate detection uses the canonical business key,
     /// never this random value.
@@ -1391,10 +1439,11 @@ pub const Store = struct {
 
     pub fn createProfile(self: *Store, value: ProfileCreate) !void {
         try validateProfileCreate(value);
-        var statement = try self.prepare(
-            \\INSERT INTO tax_profiles(id, status)
-            \\VALUES (?, ?);
-        );
+        const sql: []const u8 = if (try self.schemaVersion() >= 6)
+            "INSERT INTO tax_profiles(id, status, owner_id) VALUES (?, ?, (SELECT id FROM tax_profile_local_owner WHERE singleton = 1));"
+        else
+            "INSERT INTO tax_profiles(id, status) VALUES (?, ?);";
+        var statement = try self.prepare(sql);
         defer statement.deinit();
         try statement.bindText(1, value.id);
         try statement.bindText(2, value.status.text());
@@ -1425,10 +1474,11 @@ pub const Store = struct {
         var committed = false;
         errdefer if (!committed) self.rollbackNoFail();
 
-        var add_profile = try self.prepare(
-            \\INSERT INTO tax_profiles(id, status)
-            \\VALUES (?, ?);
-        );
+        const profile_sql: []const u8 = if (try self.schemaVersion() >= 6)
+            "INSERT INTO tax_profiles(id, status, owner_id) VALUES (?, ?, (SELECT id FROM tax_profile_local_owner WHERE singleton = 1));"
+        else
+            "INSERT INTO tax_profiles(id, status) VALUES (?, ?);";
+        var add_profile = try self.prepare(profile_sql);
         defer add_profile.deinit();
         try add_profile.bindText(1, profile.id);
         try add_profile.bindText(2, profile.status.text());
@@ -2171,14 +2221,19 @@ pub const Store = struct {
         errdefer if (!committed) self.rollbackNoFail();
 
         var configure = try self.prepare(
-            \\INSERT INTO tax_profile_form_sets(profile_id, tax_year)
-            \\VALUES (?, ?)
+            \\INSERT INTO tax_profile_form_sets(profile_id, tax_year, state)
+            \\VALUES (?, ?, ?)
             \\ON CONFLICT(profile_id, tax_year) DO UPDATE SET
+            \\    state = excluded.state,
             \\    configured_at = unixepoch();
         );
         defer configure.deinit();
         try configure.bindText(1, profile_id);
         try configure.bindInt64(2, tax_year);
+        try configure.bindText(
+            3,
+            if (forms.len == 0) "active_empty" else "active_nonempty",
+        );
         try configure.expectDone();
 
         var clear = try self.prepare(
@@ -2255,6 +2310,78 @@ pub const Store = struct {
             });
         }
         return .{ .items = try items.toOwnedSlice(allocator) };
+    }
+
+    /// Resolves all four product states without relying on a UI fallback.
+    /// A missing row is legacy-only when the migrated profile is explicitly
+    /// eligible; newly created profiles resolve to needs-configuration.
+    pub fn resolveFormSet(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        tax_year: i32,
+    ) !ResolvedFormSet {
+        try validateOpaqueText(profile_id);
+        try validateTaxYear(tax_year);
+
+        var state_query = try self.prepare(
+            \\SELECT fs.state, p.legacy_catalog_eligible
+            \\FROM tax_profiles AS p
+            \\LEFT JOIN tax_profile_form_sets AS fs
+            \\  ON fs.profile_id = p.id AND fs.tax_year = ?
+            \\WHERE p.id = ?;
+        );
+        defer state_query.deinit();
+        try state_query.bindInt64(1, tax_year);
+        try state_query.bindText(2, profile_id);
+        if (try state_query.step() == .done) return Error.NotFound;
+
+        const stored_state = columnText(state_query.raw, 0);
+        const legacy_eligible = sqlite.sqlite3_column_int(
+            state_query.raw,
+            1,
+        ) == 1;
+        const resolved_state: FormSetState = if (stored_state) |value|
+            std.meta.stringToEnum(FormSetState, value) orelse
+                return Error.InvalidValue
+        else if (legacy_eligible)
+            .legacy_catalog_default
+        else
+            .needs_configuration;
+
+        if (stored_state == null) {
+            return .{
+                .state = resolved_state,
+                .legacy_reset_allowed = legacy_eligible,
+                .forms = .{ .items = try allocator.alloc(OwnedFormRegistration, 0) },
+            };
+        }
+        return .{
+            .state = resolved_state,
+            .legacy_reset_allowed = legacy_eligible,
+            .forms = (try self.getFormSet(allocator, profile_id, tax_year)).?,
+        };
+    }
+
+    /// Restores the catalog compatibility state only for profiles migrated
+    /// from the former implicit-fallback behavior.
+    pub fn resetToLegacyCatalogDefault(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: i32,
+    ) !void {
+        try validateOpaqueText(profile_id);
+        try validateTaxYear(tax_year);
+        var eligibility = try self.prepare(
+            \\SELECT legacy_catalog_eligible FROM tax_profiles WHERE id = ?;
+        );
+        defer eligibility.deinit();
+        try eligibility.bindText(1, profile_id);
+        if (try eligibility.step() == .done) return Error.NotFound;
+        if (sqlite.sqlite3_column_int(eligibility.raw, 0) != 1) {
+            return Error.InvalidValue;
+        }
+        _ = try self.clearFormSet(profile_id, tax_year);
     }
 
     /// Removes the configuration marker so `getFormSet` returns null again.
@@ -8112,6 +8239,52 @@ const schema_v5 =
     \\);
 ;
 
+/// Existing profiles retain the historical catalog fallback explicitly.
+/// Profiles created after this migration default to needs-configuration.
+/// Existing configured rows are classified without changing their entries.
+const schema_v6 =
+    \\CREATE TABLE tax_profile_local_owner (
+    \\    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    \\    id TEXT NOT NULL UNIQUE CHECK (
+    \\        length(id) = 32 AND id = lower(id)
+    \\    ),
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    \\);
+    \\INSERT INTO tax_profile_local_owner(singleton, id)
+    \\VALUES (1, lower(hex(randomblob(16))));
+    \\ALTER TABLE tax_profiles ADD COLUMN owner_id TEXT;
+    \\UPDATE tax_profiles
+    \\SET owner_id = (SELECT id FROM tax_profile_local_owner
+    \\                WHERE singleton = 1);
+    \\CREATE INDEX tax_profiles_owner_idx ON tax_profiles(owner_id, id);
+    \\CREATE TRIGGER tax_profiles_owner_insert_guard
+    \\BEFORE INSERT ON tax_profiles
+    \\WHEN NEW.owner_id IS NULL OR NEW.owner_id <> (
+    \\    SELECT id FROM tax_profile_local_owner WHERE singleton = 1
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'profile owner is outside local scope');
+    \\END;
+    \\CREATE TRIGGER tax_profiles_owner_update_guard
+    \\BEFORE UPDATE OF owner_id ON tax_profiles
+    \\WHEN NEW.owner_id IS NULL OR NEW.owner_id <> OLD.owner_id
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'profile owner is immutable');
+    \\END;
+    \\ALTER TABLE tax_profiles ADD COLUMN
+    \\    legacy_catalog_eligible INTEGER NOT NULL DEFAULT 0
+    \\    CHECK (legacy_catalog_eligible IN (0, 1));
+    \\UPDATE tax_profiles SET legacy_catalog_eligible = 1;
+    \\ALTER TABLE tax_profile_form_sets ADD COLUMN
+    \\    state TEXT NOT NULL DEFAULT 'active_nonempty';
+    \\UPDATE tax_profile_form_sets
+    \\SET state = CASE WHEN EXISTS (
+    \\    SELECT 1 FROM tax_profile_form_set_entries AS entry
+    \\    WHERE entry.profile_id = tax_profile_form_sets.profile_id
+    \\      AND entry.tax_year = tax_profile_form_sets.tax_year
+    \\) THEN 'active_nonempty' ELSE 'active_empty' END;
+;
+
 test "tax profile migration is namespaced idempotent and preserves user_version" {
     var store = try Store.openMemory(std.testing.allocator);
     defer store.close();
@@ -8128,6 +8301,40 @@ test "tax profile migration is namespaced idempotent and preserves user_version"
     try std.testing.expectEqual(
         @as(i64, 73),
         sqlite.sqlite3_column_int64(user_version.raw, 0),
+    );
+}
+
+test "local owner is opaque stable and attached to new profiles" {
+    var store = try Store.openMemory(std.testing.allocator);
+    defer store.close();
+    const before = try store.localOwnerId();
+    try store.migrate();
+    const after = try store.localOwnerId();
+    try std.testing.expectEqualSlices(u8, &before, &after);
+
+    const profile_id = "tax-profile-owned";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Owned Profile", "2026-01-01"),
+        .{},
+    );
+    var owner = try store.prepare(
+        "SELECT owner_id FROM tax_profiles WHERE id = ?;",
+    );
+    defer owner.deinit();
+    try owner.bindText(1, profile_id);
+    try std.testing.expectEqual(StepResult.row, try owner.step());
+    try std.testing.expectEqualStrings(
+        &before,
+        columnText(owner.raw, 0).?,
+    );
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\INSERT INTO tax_profiles(id, status, owner_id)
+            \\VALUES ('foreign-owner-profile', 'active',
+            \\        'ffffffffffffffffffffffffffffffff');
+        ),
     );
 }
 
@@ -8993,6 +9200,89 @@ test "Forms Set distinguishes unconfigured configured-empty and populated" {
     );
 }
 
+test "Forms Set resolution distinguishes new legacy empty and nonempty" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    const profile_id = "tax-profile-form-state";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "New Forms Profile", "2026-01-01"),
+        .{},
+    );
+    var needs = try store.resolveFormSet(allocator, profile_id, 2026);
+    defer needs.deinit(allocator);
+    try std.testing.expectEqual(FormSetState.needs_configuration, needs.state);
+    try std.testing.expectEqual(@as(usize, 0), needs.forms.items.len);
+    try std.testing.expectError(
+        Error.InvalidValue,
+        store.resetToLegacyCatalogDefault(profile_id, 2026),
+    );
+
+    try store.replaceFormSet(profile_id, 2026, &.{});
+    var empty = try store.resolveFormSet(allocator, profile_id, 2026);
+    defer empty.deinit(allocator);
+    try std.testing.expectEqual(FormSetState.active_empty, empty.state);
+
+    const forms = [_]FormRegistrationWrite{.{
+        .form_code = "2551Q",
+        .form_revision = "2018-01-ENCS",
+    }};
+    try store.replaceFormSet(profile_id, 2026, &forms);
+    var active = try store.resolveFormSet(allocator, profile_id, 2026);
+    defer active.deinit(allocator);
+    try std.testing.expectEqual(FormSetState.active_nonempty, active.state);
+    try std.testing.expectEqual(@as(usize, 1), active.forms.items.len);
+}
+
+test "schema v5 missing Forms Sets migrate to explicit legacy fallback" {
+    const allocator = std.testing.allocator;
+    var store = try openLegacyStoreForTest(5);
+    defer store.close();
+    const profile_id = "tax-profile-legacy-forms";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Legacy Forms Profile", "2026-01-01"),
+        .{},
+    );
+    try store.exec(
+        \\INSERT INTO tax_profile_form_sets(profile_id, tax_year)
+        \\VALUES ('tax-profile-legacy-forms', 2025),
+        \\       ('tax-profile-legacy-forms', 2024);
+        \\INSERT INTO tax_profile_form_set_entries(
+        \\    profile_id, tax_year, form_code, form_revision
+        \\) VALUES (
+        \\    'tax-profile-legacy-forms', 2024, '2551Q', '2018-01-ENCS'
+        \\);
+    );
+
+    try store.migrate();
+    var legacy = try store.resolveFormSet(allocator, profile_id, 2026);
+    defer legacy.deinit(allocator);
+    try std.testing.expectEqual(
+        FormSetState.legacy_catalog_default,
+        legacy.state,
+    );
+    var migrated_empty = try store.resolveFormSet(allocator, profile_id, 2025);
+    defer migrated_empty.deinit(allocator);
+    try std.testing.expectEqual(FormSetState.active_empty, migrated_empty.state);
+    var migrated_active = try store.resolveFormSet(allocator, profile_id, 2024);
+    defer migrated_active.deinit(allocator);
+    try std.testing.expectEqual(
+        FormSetState.active_nonempty,
+        migrated_active.state,
+    );
+    try store.replaceFormSet(profile_id, 2026, &.{});
+    try store.resetToLegacyCatalogDefault(profile_id, 2026);
+    var reset = try store.resolveFormSet(allocator, profile_id, 2026);
+    defer reset.deinit(allocator);
+    try std.testing.expectEqual(
+        FormSetState.legacy_catalog_default,
+        reset.state,
+    );
+}
+
 test "profile calendar selection distinguishes all none and subsets" {
     const allocator = std.testing.allocator;
     var store = try Store.openMemory(allocator);
@@ -9540,6 +9830,7 @@ test "file store reopens with revisions Forms Set and drafts intact" {
 
     const profile_id = "tax-profile-reopen";
     const draft_id = "draft-reopen-2551q";
+    var owner_before: OpaqueId = undefined;
     {
         var store = try Store.openDevelopmentPlaintext(
             developmentPlaintextStorageCapability(),
@@ -9547,6 +9838,7 @@ test "file store reopens with revisions Forms Set and drafts intact" {
             database_path,
         );
         defer store.close();
+        owner_before = try store.localOwnerId();
         try store.createProfileWithRevision(
             .{ .id = profile_id },
             testRevision(profile_id, 0, "Reopen Profile", "2026-01-01"),
@@ -9602,6 +9894,8 @@ test "file store reopens with revisions Forms Set and drafts intact" {
             latest_schema_version,
             try reopened.schemaVersion(),
         );
+        const owner_after = try reopened.localOwnerId();
+        try std.testing.expectEqualSlices(u8, &owner_before, &owner_after);
         var revision = (try reopened.getCurrentRevision(
             allocator,
             profile_id,
@@ -11929,7 +12223,7 @@ fn expectAllZero(bytes: []const u8) !void {
 }
 
 fn openLegacyStoreForTest(version: u32) !Store {
-    std.debug.assert(version >= 1 and version <= 4);
+    std.debug.assert(version >= 1 and version <= 5);
     var raw: ?*sqlite.sqlite3 = null;
     const flags = sqlite.SQLITE_OPEN_READWRITE |
         sqlite.SQLITE_OPEN_CREATE |
@@ -11958,6 +12252,7 @@ fn openLegacyStoreForTest(version: u32) !Store {
         try store.backfillIdentityAnchors();
     }
     if (version >= 4) try store.exec(schema_v4);
+    if (version >= 5) try store.exec(schema_v5);
     var set_version = try store.prepare(
         \\INSERT INTO app_component_migrations(component, version)
         \\VALUES ('tax_profile', ?);

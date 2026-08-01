@@ -381,24 +381,156 @@
 
 <template name="taxpayer-form-library-section">
   <column gap="16">
-    <column gap="4">
-      <text><span weight="bold">Tax Form Library</span></text>
-      <text wrap="true" foreground="text_muted">
-        Available forms follow this profile's Forms Set for the selected tax
-        year. An unconfigured Forms Set uses the catalog fallback.
-      </text>
-    </column>
-    <if test="{constrainedLayout}">
-      <column gap="12">
-        <use template="taxpayer-form-library-column-a"/>
-        <use template="taxpayer-form-library-column-b"/>
+    <if test="{profileFormsHeaderStacked}">
+      <column gap="8">
+        <row gap="10" cross="center">
+          <column grow="1" gap="4">
+            <text><span weight="bold">Tax Form Library</span></text>
+            <text wrap="true" foreground="text_muted">{profileFormsCountLabel} · Tax Year {currentCalendarYear}</text>
+          </column>
+          <button width="44" height="44" size="icon" variant="ghost" icon="chevron-left" label="Previous tax year" on-press="calendar_previous_year"></button>
+          <button width="44" height="44" size="icon" variant="ghost" icon="chevron-right" label="Next tax year" on-press="calendar_next_year"></button>
+        </row>
+        <if test="{managingProfileForms}">
+          <row gap="8" cross="center">
+            <spacer/>
+            <button height="44" variant="outline" on-press="profile_forms_cancel">Cancel</button>
+            <button height="44" icon="check" disabled="{profileFormsSaveDisabled}" on-press="profile_forms_save">Save</button>
+          </row>
+        </if>
       </column>
     </if>
     <else>
-      <row gap="20" cross="start">
-        <use template="taxpayer-form-library-column-a"/>
-        <use template="taxpayer-form-library-column-b"/>
+      <row gap="10" cross="center">
+        <column grow="1" gap="4">
+          <text><span weight="bold">Tax Form Library</span></text>
+          <text wrap="true" foreground="text_muted">{profileFormsCountLabel} · Tax Year {currentCalendarYear}</text>
+        </column>
+        <button width="44" height="44" size="icon" variant="ghost" icon="chevron-left" label="Previous tax year" on-press="calendar_previous_year"></button>
+        <button width="44" height="44" size="icon" variant="ghost" icon="chevron-right" label="Next tax year" on-press="calendar_next_year"></button>
+        <if test="{managingProfileForms}">
+          <button height="44" variant="outline" on-press="profile_forms_cancel">Cancel</button>
+          <button height="44" icon="check" disabled="{profileFormsSaveDisabled}" on-press="profile_forms_save">Save</button>
+        </if>
+        <else>
+          <button height="44" icon="settings" on-press="manage_profile_forms">Manage Forms</button>
+        </else>
       </row>
+    </else>
+    <input
+      height="44"
+      text="{profileFormsSearchValue}"
+      placeholder="Search by form code"
+      label="Search Tax Form Library"
+      on-input="profile_forms_search_input"/>
+    <if test="{profileFormsHeaderStacked}">
+      <column gap="8">
+        <row gap="8">
+          <button height="36" variant="outline" selected="{profileFormsFilterActiveSelected}" on-press="profile_forms_filter_active">Active</button>
+          <button height="36" variant="outline" selected="{profileFormsFilterInactiveSelected}" on-press="profile_forms_filter_inactive">Inactive</button>
+          <button height="36" variant="outline" selected="{profileFormsFilterAllSelected}" on-press="profile_forms_filter_all">All</button>
+        </row>
+        <stack>
+          <select height="40" label="Capability filter" on-press="profile_forms_toggle_capability_picker">{profileFormsCapabilityFilterLabel}</select>
+          <if test="{profileFormsCapabilityPickerOpen}">
+            <dropdown-menu anchor="below" anchor-alignment="stretch" on-dismiss="profile_forms_close_capability_picker">
+              <menu-item height="40" selected="{profileFormsCapabilityAllSelected}" on-press="profile_forms_filter_capability_all">All capabilities</menu-item>
+              <menu-item height="40" selected="{profileFormsCapabilityEditorSelected}" on-press="profile_forms_filter_editor">Editor available</menu-item>
+              <menu-item height="40" selected="{profileFormsCapabilityCalendarSelected}" on-press="profile_forms_filter_calendar_only">Calendar only</menu-item>
+            </dropdown-menu>
+          </if>
+        </stack>
+      </column>
+    </if>
+    <else>
+      <row gap="8">
+        <button height="36" variant="outline" selected="{profileFormsFilterActiveSelected}" on-press="profile_forms_filter_active">Active</button>
+        <button height="36" variant="outline" selected="{profileFormsFilterInactiveSelected}" on-press="profile_forms_filter_inactive">Inactive</button>
+        <button height="36" variant="outline" selected="{profileFormsFilterAllSelected}" on-press="profile_forms_filter_all">All</button>
+        <button height="36" variant="outline" selected="{profileFormsCapabilityAllSelected}" on-press="profile_forms_filter_capability_all">All capabilities</button>
+        <button height="36" variant="outline" selected="{profileFormsCapabilityEditorSelected}" on-press="profile_forms_filter_editor">Editor available</button>
+        <button height="36" variant="outline" selected="{profileFormsCapabilityCalendarSelected}" on-press="profile_forms_filter_calendar_only">Calendar only</button>
+      </row>
+    </else>
+    <if test="{managingProfileForms}">
+      <if test="{profileFormsHeaderStacked}">
+        <column gap="8">
+          <button height="40" variant="outline" on-press="profile_forms_select_all">Select all 51</button>
+          <button height="40" variant="outline" on-press="profile_forms_clear_all">Clear all</button>
+          <if test="{profileFormsLegacyResetVisible}">
+            <button height="40" variant="ghost" on-press="profile_forms_reset_legacy">Reset to catalog default</button>
+          </if>
+        </column>
+      </if>
+      <else>
+        <row gap="8">
+          <button height="40" variant="outline" on-press="profile_forms_select_all">Select all 51</button>
+          <button height="40" variant="outline" on-press="profile_forms_clear_all">Clear all</button>
+          <if test="{profileFormsLegacyResetVisible}">
+            <button height="40" variant="ghost" on-press="profile_forms_reset_legacy">Reset to catalog default</button>
+          </if>
+        </row>
+      </else>
+      <text wrap="true" foreground="text_muted">Changes remain staged until Save. Saving zero forms creates an explicitly empty library and profile calendar.</text>
+    </if>
+    <if test="{profileFormRowsEmpty}">
+      <use template="taxpayer-calendar-empty" icon="search" title="No matching forms" body="Change the search or filters, or manage this profile's Forms Set."/>
+    </if>
+    <else>
+      <column gap="10">
+        <for each="profileFormRows" key="id" as="form">
+          <card padding="0">
+            <if test="{profileFormsHeaderStacked}">
+              <column padding="14" gap="10">
+                <row gap="12" cross="center">
+                  <if test="{managingProfileForms}">
+                    <checkbox
+                      checked="{form.selected}"
+                      label="{form.selectionLabel}"
+                      on-change="toggle_profile_form:{form.id}"/>
+                  </if>
+                  <column grow="1" gap="5">
+                    <row gap="8" cross="center">
+                      <badge variant="secondary">{form.code}</badge>
+                      <badge variant="outline">{form.activeLabel}</badge>
+                      <badge variant="outline">{form.capability}</badge>
+                    </row>
+                    <text><span weight="bold">{form.title}</span></text>
+                  </column>
+                </row>
+                <if test="{form.launchActionVisible and managingProfileForms == false}">
+                  <badge variant="outline">{form.launchStatus}</badge>
+                  <button height="40" variant="secondary" icon="file-text" disabled="{form.launchDisabled}" on-press="open_library_form:{form.id}">{form.launchLabel}</button>
+                </if>
+              </column>
+            </if>
+            <else>
+              <row padding="14" gap="12" cross="center">
+                <if test="{managingProfileForms}">
+                  <checkbox
+                    checked="{form.selected}"
+                    label="{form.selectionLabel}"
+                    on-change="toggle_profile_form:{form.id}"/>
+                </if>
+                <column grow="1" gap="5">
+                  <row gap="8" cross="center">
+                    <badge variant="secondary">{form.code}</badge>
+                    <badge variant="outline">{form.activeLabel}</badge>
+                    <badge variant="outline">{form.capability}</badge>
+                    <if test="{form.launchActionVisible and managingProfileForms == false}">
+                      <badge variant="outline">{form.launchStatus}</badge>
+                    </if>
+                  </row>
+                  <text><span weight="bold">{form.title}</span></text>
+                </column>
+                <if test="{form.launchActionVisible and managingProfileForms == false}">
+                  <button height="40" variant="secondary" icon="file-text" disabled="{form.launchDisabled}" on-press="open_library_form:{form.id}">{form.launchLabel}</button>
+                </if>
+              </row>
+            </else>
+          </card>
+        </for>
+      </column>
     </else>
   </column>
 </template>
@@ -431,6 +563,7 @@
               anchor-offset="8"
               on-dismiss="close_profile_actions">
               <menu-item height="44" icon="settings" on-press="show_profile_setup">Profile Settings</menu-item>
+              <menu-item height="44" icon="file-text" on-press="manage_profile_forms">Manage Forms</menu-item>
               <menu-item
                 height="44"
                 icon="app:calendar"
