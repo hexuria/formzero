@@ -1614,6 +1614,7 @@ on-change="toggle_profile_form:{form.id}"/>
 </column>
 </row>
 <if test="{form.launchActionVisible and managingProfileForms == false}">
+<row gap="8" cross="center">
 <badge variant="outline">{form.launchStatus}</badge>
 <button
 width="44"
@@ -1625,6 +1626,7 @@ label="{form.launchLabel}"
 disabled="{form.launchDisabled}"
 on-press="open_library_form:{form.id}">
 </button>
+</row>
 </if>
 </column>
 </if>
