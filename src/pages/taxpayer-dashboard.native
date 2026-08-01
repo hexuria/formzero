@@ -432,9 +432,9 @@
     <if test="{profileFormsHeaderStacked}">
       <column gap="8">
         <row gap="8">
-          <button height="36" variant="outline" selected="{profileFormsFilterActiveSelected}" on-press="profile_forms_filter_active">Active</button>
-          <button height="36" variant="outline" selected="{profileFormsFilterInactiveSelected}" on-press="profile_forms_filter_inactive">Inactive</button>
-          <button height="36" variant="outline" selected="{profileFormsFilterAllSelected}" on-press="profile_forms_filter_all">All</button>
+          <button height="36" variant="{profileFormsFilterActiveVariant}" selected="{profileFormsFilterActiveSelected}" on-press="profile_forms_filter_active">Active</button>
+          <button height="36" variant="{profileFormsFilterInactiveVariant}" selected="{profileFormsFilterInactiveSelected}" on-press="profile_forms_filter_inactive">Inactive</button>
+          <button height="36" variant="{profileFormsFilterAllVariant}" selected="{profileFormsFilterAllSelected}" on-press="profile_forms_filter_all">All</button>
         </row>
         <stack>
           <select height="40" label="Capability filter" on-press="profile_forms_toggle_capability_picker">{profileFormsCapabilityFilterLabel}</select>
@@ -450,12 +450,12 @@
     </if>
     <else>
       <row gap="8">
-        <button height="36" variant="outline" selected="{profileFormsFilterActiveSelected}" on-press="profile_forms_filter_active">Active</button>
-        <button height="36" variant="outline" selected="{profileFormsFilterInactiveSelected}" on-press="profile_forms_filter_inactive">Inactive</button>
-        <button height="36" variant="outline" selected="{profileFormsFilterAllSelected}" on-press="profile_forms_filter_all">All</button>
-        <button height="36" variant="outline" selected="{profileFormsCapabilityAllSelected}" on-press="profile_forms_filter_capability_all">All capabilities</button>
-        <button height="36" variant="outline" selected="{profileFormsCapabilityEditorSelected}" on-press="profile_forms_filter_editor">Editor available</button>
-        <button height="36" variant="outline" selected="{profileFormsCapabilityCalendarSelected}" on-press="profile_forms_filter_calendar_only">Calendar only</button>
+        <button height="36" variant="{profileFormsFilterActiveVariant}" selected="{profileFormsFilterActiveSelected}" on-press="profile_forms_filter_active">Active</button>
+        <button height="36" variant="{profileFormsFilterInactiveVariant}" selected="{profileFormsFilterInactiveSelected}" on-press="profile_forms_filter_inactive">Inactive</button>
+        <button height="36" variant="{profileFormsFilterAllVariant}" selected="{profileFormsFilterAllSelected}" on-press="profile_forms_filter_all">All</button>
+        <button height="36" variant="{profileFormsCapabilityAllVariant}" selected="{profileFormsCapabilityAllSelected}" on-press="profile_forms_filter_capability_all">All capabilities</button>
+        <button height="36" variant="{profileFormsCapabilityEditorVariant}" selected="{profileFormsCapabilityEditorSelected}" on-press="profile_forms_filter_editor">Editor available</button>
+        <button height="36" variant="{profileFormsCapabilityCalendarVariant}" selected="{profileFormsCapabilityCalendarSelected}" on-press="profile_forms_filter_calendar_only">Calendar only</button>
       </row>
     </else>
     <if test="{managingProfileForms}">

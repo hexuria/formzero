@@ -2327,24 +2327,66 @@ pub const Model = struct {
         return self.taxProfiles.form_activity_filter == .active;
     }
 
+    pub fn profileFormsFilterActiveVariant(self: *const Model) []const u8 {
+        return if (self.profileFormsFilterActiveSelected())
+            "primary"
+        else
+            "outline";
+    }
+
     pub fn profileFormsFilterInactiveSelected(self: *const Model) bool {
         return self.taxProfiles.form_activity_filter == .inactive;
+    }
+
+    pub fn profileFormsFilterInactiveVariant(self: *const Model) []const u8 {
+        return if (self.profileFormsFilterInactiveSelected())
+            "primary"
+        else
+            "outline";
     }
 
     pub fn profileFormsFilterAllSelected(self: *const Model) bool {
         return self.taxProfiles.form_activity_filter == .all;
     }
 
+    pub fn profileFormsFilterAllVariant(self: *const Model) []const u8 {
+        return if (self.profileFormsFilterAllSelected())
+            "primary"
+        else
+            "outline";
+    }
+
     pub fn profileFormsCapabilityAllSelected(self: *const Model) bool {
         return self.taxProfiles.form_capability_filter == .all;
+    }
+
+    pub fn profileFormsCapabilityAllVariant(self: *const Model) []const u8 {
+        return if (self.profileFormsCapabilityAllSelected())
+            "primary"
+        else
+            "outline";
     }
 
     pub fn profileFormsCapabilityEditorSelected(self: *const Model) bool {
         return self.taxProfiles.form_capability_filter == .editor;
     }
 
+    pub fn profileFormsCapabilityEditorVariant(self: *const Model) []const u8 {
+        return if (self.profileFormsCapabilityEditorSelected())
+            "primary"
+        else
+            "outline";
+    }
+
     pub fn profileFormsCapabilityCalendarSelected(self: *const Model) bool {
         return self.taxProfiles.form_capability_filter == .calendar_only;
+    }
+
+    pub fn profileFormsCapabilityCalendarVariant(self: *const Model) []const u8 {
+        return if (self.profileFormsCapabilityCalendarSelected())
+            "primary"
+        else
+            "outline";
     }
 
     pub fn profileFormRows(
@@ -6576,6 +6618,55 @@ test "tax form library uses icon actions through narrow tablet widths" {
 
     update(&model, .{ .viewport_width_changed = 900 });
     try std.testing.expect(!model.profileFormsIconAction());
+}
+
+test "tax form library filters expose a visible selected variant" {
+    var model = Model{};
+
+    try std.testing.expectEqualStrings(
+        "primary",
+        model.profileFormsFilterActiveVariant(),
+    );
+    try std.testing.expectEqualStrings(
+        "outline",
+        model.profileFormsFilterInactiveVariant(),
+    );
+    try std.testing.expectEqualStrings(
+        "outline",
+        model.profileFormsFilterAllVariant(),
+    );
+    try std.testing.expectEqualStrings(
+        "primary",
+        model.profileFormsCapabilityAllVariant(),
+    );
+    try std.testing.expectEqualStrings(
+        "outline",
+        model.profileFormsCapabilityEditorVariant(),
+    );
+    try std.testing.expectEqualStrings(
+        "outline",
+        model.profileFormsCapabilityCalendarVariant(),
+    );
+
+    update(&model, .profile_forms_filter_inactive);
+    try std.testing.expectEqualStrings(
+        "outline",
+        model.profileFormsFilterActiveVariant(),
+    );
+    try std.testing.expectEqualStrings(
+        "primary",
+        model.profileFormsFilterInactiveVariant(),
+    );
+
+    update(&model, .profile_forms_filter_editor);
+    try std.testing.expectEqualStrings(
+        "primary",
+        model.profileFormsCapabilityEditorVariant(),
+    );
+    try std.testing.expectEqualStrings(
+        "outline",
+        model.profileFormsCapabilityAllVariant(),
+    );
 }
 
 test "sidebar can be collapsed hidden and restored without losing its route" {

@@ -2,7 +2,7 @@
 
 Date: 2026-08-01  
 Branch: `codex/tax-form-library-forms-set`  
-Commit under review: `3af467c` (feature base: `b9dea48`)
+Commit under review: current branch (feature base: `b9dea48`)
 
 ## Outcome
 
@@ -22,6 +22,11 @@ On compact cards, the launch-status badge now follows the capability badge in
 the same intrinsic-width metadata row (`065 · Active · Editor available ·
 Ready`). The icon-only launch action remains in a separate right-aligned row
 below the title, so it cannot displace or misread the status badges.
+
+The Forms Library filter controls now make the selected state visible: the
+active activity filter and capability filter use the filled primary variant,
+while unselected choices remain outlined. The compact capability menu keeps
+the current choice in its select label and marks the selected menu item.
 
 ## Evidence and limitation
 
@@ -126,6 +131,7 @@ editor. Historical drafts are not deleted when a form is later deactivated.
 | F-04 | In Manage Forms, Active/Inactive filtering follows staged checkbox state while each row's Active/Inactive badge still describes the persisted set. | Potential wording ambiguity. Consider changing the management labels to Selected/Not selected or adding a Pending badge. |
 | F-05 | The capability selector is a compact menu on small screens and inline controls on wide screens. | Source layout is intentional; verify focus and dismissal on a live device. |
 | F-06 | The compact launch-status badge previously appeared below the form title beside the launch icon. | Fixed by placing it after the capability badge in the metadata row and keeping the icon action right-aligned below the title. |
+| F-07 | Filter buttons exposed `selected` semantics but the outline variant did not provide a visible selected fill. | Fixed with explicit primary/outline variants for activity and capability filters; added model coverage for the variant state. |
 
 F-04 does not change persistence correctness: the staged state is what Save
 would commit, and the persisted state remains authoritative until Save succeeds.
@@ -140,7 +146,7 @@ npm run generate
 npx native check . --strict
   27 markup files checked; all ok
 npx native test --yes -Dplatform=null
-  877/877 tests passed
+  878/878 tests passed
 npx native build . --yes
   ReleaseFast build succeeded
 git diff --check
