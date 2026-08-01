@@ -11,7 +11,8 @@ rendered the full `Open Form`/`Complete profile` text button beside the card
 content. It now renders a 44 x 44 icon-only `file-text` button. The dynamic
 launch label remains on the button as its accessible name, so the action is
 compact visually without becoming unnamed for keyboard or screen-reader users.
-The desktop row keeps the text action because its available width is larger.
+The action is icon-only through phone, compact, and narrow-tablet widths; wider
+desktop layouts retain the text action because their available width is larger.
 
 The selected tax year is also now displayed directly between the previous- and
 next-year chevrons on both compact and desktop headers. The count remains with

@@ -2305,6 +2305,12 @@ pub const Model = struct {
         return self.constrainedLayout();
     }
 
+    pub fn profileFormsIconAction(self: *const Model) bool {
+        return self.viewportClass == .phone or
+            self.viewportClass == .compact or
+            self.viewportClass == .rail_narrow;
+    }
+
     pub fn profileFormsCapabilityPickerOpen(self: *const Model) bool {
         return self.profileFormsCapabilityPickerVisible;
     }
@@ -6557,6 +6563,19 @@ test "sidebar derives full rail and floating modes from viewport width" {
     update(&model, .show_settings);
     try std.testing.expect(!model.sidebarOverlayVisible());
     try std.testing.expectEqual(Page.settings, model.page);
+}
+
+test "tax form library uses icon actions through narrow tablet widths" {
+    var model = Model{};
+
+    update(&model, .{ .viewport_width_changed = 408 });
+    try std.testing.expect(model.profileFormsIconAction());
+
+    update(&model, .{ .viewport_width_changed = 768 });
+    try std.testing.expect(model.profileFormsIconAction());
+
+    update(&model, .{ .viewport_width_changed = 900 });
+    try std.testing.expect(!model.profileFormsIconAction());
 }
 
 test "sidebar can be collapsed hidden and restored without losing its route" {

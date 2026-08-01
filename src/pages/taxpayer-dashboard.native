@@ -539,7 +539,21 @@
                   <text><span weight="bold">{form.title}</span></text>
                 </column>
                 <if test="{form.launchActionVisible and managingProfileForms == false}">
-                  <button height="40" variant="secondary" icon="file-text" disabled="{form.launchDisabled}" on-press="open_library_form:{form.id}">{form.launchLabel}</button>
+                  <if test="{profileFormsIconAction}">
+                    <button
+                      width="44"
+                      height="44"
+                      size="icon"
+                      variant="secondary"
+                      icon="file-text"
+                      label="{form.launchLabel}"
+                      disabled="{form.launchDisabled}"
+                      on-press="open_library_form:{form.id}">
+                    </button>
+                  </if>
+                  <else>
+                    <button height="40" variant="secondary" icon="file-text" disabled="{form.launchDisabled}" on-press="open_library_form:{form.id}">{form.launchLabel}</button>
+                  </else>
                 </if>
               </row>
             </else>
