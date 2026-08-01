@@ -1609,13 +1609,16 @@ on-change="toggle_profile_form:{form.id}"/>
 <badge variant="secondary">{form.code}</badge>
 <badge variant="outline">{form.activeLabel}</badge>
 <badge variant="outline">{form.capability}</badge>
+<if test="{form.launchActionVisible and managingProfileForms == false}">
+<badge variant="outline">{form.launchStatus}</badge>
+</if>
 </row>
 <text><span weight="bold">{form.title}</span></text>
 </column>
 </row>
 <if test="{form.launchActionVisible and managingProfileForms == false}">
 <row gap="8" cross="center">
-<badge variant="outline">{form.launchStatus}</badge>
+<spacer grow="1"/>
 <button
 width="44"
 height="44"
