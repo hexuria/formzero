@@ -129,6 +129,20 @@ pub fn State(comptime option_count: usize, comptime query_capacity: usize) type 
         pub fn clear(self: *Self) bool {
             return self.setAll(false);
         }
+
+        /// Copies only authoritative selection values. Transient query/open
+        /// state stays local to the receiving surface.
+        pub fn copySelectionFrom(self: *Self, other: *const Self) void {
+            self.selected = other.selected;
+        }
+
+        pub fn selectionEql(self: *const Self, other: *const Self) bool {
+            return std.mem.eql(bool, &self.selected, &other.selected);
+        }
+
+        pub fn resetInteraction(self: *Self) void {
+            self.closePicker();
+        }
     };
 }
 
@@ -178,6 +192,20 @@ test "bulk selection and clearing report whether state changed" {
     try std.testing.expect(state.clear());
     try std.testing.expectEqual(@as(usize, 0), state.selectedCount());
     try std.testing.expect(!state.clear());
+}
+
+test "selection snapshots copy without leaking transient interaction" {
+    const TestState = State(3, 16);
+    var saved = TestState.allSelected();
+    var staged = TestState{};
+    staged.openPicker();
+    staged.copySelectionFrom(&saved);
+    try std.testing.expect(staged.selectionEql(&saved));
+    try std.testing.expect(staged.isOpen());
+    _ = saved.toggle(0);
+    try std.testing.expect(!staged.selectionEql(&saved));
+    staged.resetInteraction();
+    try std.testing.expect(!staged.isOpen());
 }
 
 test "query lifecycle is mirrored and matches without allocation" {

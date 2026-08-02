@@ -17,59 +17,59 @@ exists yet; it does not imply filing support.
 - Direct profile projection targets: 72
 - Optional profile projection targets: 9
 
-| Code | Revision | Status | Inputs | Table fields | Source |
-|---|---|---|---:|---:|---|
-| 0605 | 1999-07-ENCS | static_layout | 17 | 4 | src/pages/forms/0605.native |
-| 1905 | — | calendar_only | 0 | 0 | — |
-| 1600 | — | calendar_only | 0 | 0 | — |
-| 1600PT | — | calendar_only | 0 | 0 | — |
-| 1600VT | — | calendar_only | 0 | 0 | — |
-| 1600WP | — | calendar_only | 0 | 0 | — |
-| 1601C | 2018-01-ENCS | static_layout | 28 | 7 | src/pages/forms/1601-c.native |
-| 1601E | — | calendar_only | 0 | 0 | — |
-| 1601F | — | calendar_only | 0 | 0 | — |
-| 0619F | 2018-01-ENCS | static_layout | 20 | 4 | src/pages/forms/0619-f.native |
-| 1601FQ | — | calendar_only | 0 | 0 | — |
-| 1602 | — | calendar_only | 0 | 0 | — |
-| 1602Q | — | calendar_only | 0 | 0 | — |
-| 1603 | — | calendar_only | 0 | 0 | — |
-| 1603Q | — | calendar_only | 0 | 0 | — |
-| 1604CF | — | calendar_only | 0 | 0 | — |
-| 1604E | — | calendar_only | 0 | 0 | — |
-| 0620 | — | calendar_only | 0 | 0 | — |
-| 2316 | — | calendar_only | 0 | 0 | — |
-| 1700 | — | calendar_only | 0 | 0 | — |
-| 1701Q | 2018-01-ENCS | static_layout | 37 | 4 | src/pages/forms/1701q.native |
-| 1701 | 2018-01-ENCS | static_layout | 49 | 15 | src/pages/forms/1701.native |
-| 1701A | — | calendar_only | 0 | 0 | — |
-| 1702Q | — | calendar_only | 0 | 0 | — |
-| 1702 | — | calendar_only | 0 | 0 | — |
-| 1702RT | 2018-01-ENCS | static_layout | 33 | 3 | src/pages/forms/1702-rt.native |
-| 1702EX | — | calendar_only | 0 | 0 | — |
-| 1702MX | 2018-01-ENCS | static_layout | 29 | 5 | src/pages/forms/1702-mx.native |
-| 1704 | — | calendar_only | 0 | 0 | — |
-| 2550M | — | calendar_only | 0 | 0 | — |
-| 2550Q | 2024-04-ENCS | static_layout | 33 | 13 | src/pages/forms/2550q.native |
-| 2551Q | 2018-01-ENCS | static_layout | 35 | 4 | src/pages/forms/2551q.native |
-| 2551M | — | calendar_only | 0 | 0 | — |
-| 2552 | — | calendar_only | 0 | 0 | — |
-| 2553 | — | calendar_only | 0 | 0 | — |
-| 2000 | — | calendar_only | 0 | 0 | — |
-| 2000OT | — | calendar_only | 0 | 0 | — |
-| 2200A | — | calendar_only | 0 | 0 | — |
-| 2200AN | — | calendar_only | 0 | 0 | — |
-| 2200M | — | calendar_only | 0 | 0 | — |
-| 2200P | — | calendar_only | 0 | 0 | — |
-| 2200T | — | calendar_only | 0 | 0 | — |
-| 2200C | — | calendar_only | 0 | 0 | — |
-| 2200S | — | calendar_only | 0 | 0 | — |
-| 0619E | 2018-01-ENCS | static_layout | 18 | 4 | src/pages/forms/0619-e.native |
-| 1601EQ | — | calendar_only | 0 | 0 | — |
-| 1701MS | — | calendar_only | 0 | 0 | — |
-| 1706 | — | calendar_only | 0 | 0 | — |
-| 1707A | — | calendar_only | 0 | 0 | — |
-| 1800 | — | calendar_only | 0 | 0 | — |
-| 1801 | — | calendar_only | 0 | 0 | — |
+| Code | Title | Tax category | Revision | Status | Cadence | Periods | Inputs | Table fields | Source |
+|---|---|---|---|---|---|---|---:|---:|---|
+| 0605 | Payment Form | payment | 1999-07-ENCS | static_layout | on_demand | — | 17 | 4 | src/pages/forms/0605.native |
+| 1905 | Application for Registration Information Update / Correction / Cancellation | registration | — | calendar_only | on_demand | — | 0 | 0 | — |
+| 1600 | Monthly Remittance Return of VAT and Other Percentage Taxes Withheld | withholding_tax | — | calendar_only | monthly | 1-12 | 0 | 0 | — |
+| 1600PT | Monthly Remittance Return of Other Percentage Taxes Withheld | withholding_tax | — | calendar_only | monthly | 1-12 | 0 | 0 | — |
+| 1600VT | Monthly Remittance Return of Value-Added Tax Withheld | withholding_tax | — | calendar_only | monthly | 1-12 | 0 | 0 | — |
+| 1600WP | Remittance Return of Percentage Tax on Winnings and Prizes | withholding_tax | — | calendar_only | monthly | 1-12 | 0 | 0 | — |
+| 1601C | Monthly Remittance Return of Income Taxes Withheld on Compensation | withholding_tax | 2018-01-ENCS | static_layout | monthly | 1-12 | 28 | 7 | src/pages/forms/1601-c.native |
+| 1601E | Monthly Remittance Return of Creditable Income Taxes Withheld (Expanded) | withholding_tax | — | calendar_only | monthly | 1-12 | 0 | 0 | — |
+| 1601F | Monthly Remittance Return of Final Income Tax Withheld | withholding_tax | — | calendar_only | monthly | 1-12 | 0 | 0 | — |
+| 0619F | Monthly Remittance Form for Final Income Taxes Withheld | withholding_tax | 2018-01-ENCS | static_layout | monthly | 1-12 | 20 | 4 | src/pages/forms/0619-f.native |
+| 1601FQ | Quarterly Remittance Return of Final Income Taxes Withheld | withholding_tax | — | calendar_only | quarterly | 1-4 | 0 | 0 | — |
+| 1602 | Monthly Remittance Return of Final Income Taxes Withheld | withholding_tax | — | calendar_only | monthly | 1-12 | 0 | 0 | — |
+| 1602Q | Quarterly Remittance Return of Final Taxes Withheld on Interest Paid on Deposits and Yield on Deposit Substitutes / Trusts / Etc. | withholding_tax | — | calendar_only | quarterly | 1-4 | 0 | 0 | — |
+| 1603 | Quarterly Remittance Return of Final Income Taxes Withheld | withholding_tax | — | calendar_only | quarterly | 1-4 | 0 | 0 | — |
+| 1603Q | Quarterly Remittance Return of Final Income Taxes Withheld on Fringe Benefits Paid to Employees Other Than Rank and File | withholding_tax | — | calendar_only | quarterly | 1-4 | 0 | 0 | — |
+| 1604CF | Annual Information Return of Income Taxes Withheld on Compensation | withholding_tax | — | calendar_only | annual | — | 0 | 0 | — |
+| 1604E | Annual Information Return of Creditable Income Taxes Withheld | withholding_tax | — | calendar_only | annual | — | 0 | 0 | — |
+| 0620 | Monthly Remittance Form of Tax Withheld on the Amount Withdrawn from the Decedent's Deposit Account | withholding_tax | — | calendar_only | monthly | 1-12 | 0 | 0 | — |
+| 2316 | Certificate of Compensation Payment / Tax Withheld | withholding_tax | — | calendar_only | annual | — | 0 | 0 | — |
+| 1700 | Annual Income Tax Return (Purely Compensation) | income_tax | — | calendar_only | annual | — | 0 | 0 | — |
+| 1701Q | Quarterly Income Tax Return for Individuals, Estates and Trusts | income_tax | 2018-01-ENCS | static_layout | quarterly | 1-3 | 37 | 4 | src/pages/forms/1701q.native |
+| 1701 | Annual Income Tax Return for Individuals, Estates and Trusts | income_tax | 2018-01-ENCS | static_layout | annual | — | 49 | 15 | src/pages/forms/1701.native |
+| 1701A | Annual Income Tax Return (8% / OSD) | income_tax | — | calendar_only | annual | — | 0 | 0 | — |
+| 1702Q | Quarterly Income Tax Return for Corporations, Partnerships and Cooperatives | income_tax | — | calendar_only | quarterly | 1-4 | 0 | 0 | — |
+| 1702 | Annual Income Tax Return for Corporations, Partnerships and Cooperatives | income_tax | — | calendar_only | annual | — | 0 | 0 | — |
+| 1702RT | Annual Income Tax Return — Regular Taxable | income_tax | 2018-01-ENCS | static_layout | annual | — | 33 | 3 | src/pages/forms/1702-rt.native |
+| 1702EX | Annual Income Tax Return — Tax-Exempt | income_tax | — | calendar_only | annual | — | 0 | 0 | — |
+| 1702MX | Annual Income Tax Return — Mixed Income | income_tax | 2018-01-ENCS | static_layout | annual | — | 29 | 5 | src/pages/forms/1702-mx.native |
+| 1704 | Improperly Accumulated Earnings Tax Return | income_tax | — | calendar_only | annual | — | 0 | 0 | — |
+| 2550M | Monthly Value-Added Tax Declaration | value_added_tax | — | calendar_only | monthly | 1-12 | 0 | 0 | — |
+| 2550Q | Quarterly Value-Added Tax Return | value_added_tax | 2024-04-ENCS | static_layout | quarterly | 1-4 | 33 | 13 | src/pages/forms/2550q.native |
+| 2551Q | Quarterly Percentage Tax Return | percentage_tax | 2018-01-ENCS | static_layout | quarterly | 1-4 | 35 | 4 | src/pages/forms/2551q.native |
+| 2551M | Monthly Percentage Tax Return | percentage_tax | — | calendar_only | monthly | 1-12 | 0 | 0 | — |
+| 2552 | Percentage Tax Return on Transactions Involving Shares of Stock | percentage_tax | — | calendar_only | on_demand | — | 0 | 0 | — |
+| 2553 | Percentage Tax Payable Under Special Laws | percentage_tax | — | calendar_only | on_demand | — | 0 | 0 | — |
+| 2000 | Documentary Stamp Tax Declaration/Return | documentary_stamp_tax | — | calendar_only | on_demand | — | 0 | 0 | — |
+| 2000OT | Documentary Stamp Tax Declaration/Return (One-Time Transactions) | documentary_stamp_tax | — | calendar_only | on_demand | — | 0 | 0 | — |
+| 2200A | Excise Tax Return for Alcohol Products | excise_tax | — | calendar_only | monthly | 1-12 | 0 | 0 | — |
+| 2200AN | Excise Tax Return for Automobiles and Non-Essential Goods | excise_tax | — | calendar_only | monthly | 1-12 | 0 | 0 | — |
+| 2200M | Excise Tax Return for Mineral Products | excise_tax | — | calendar_only | monthly | 1-12 | 0 | 0 | — |
+| 2200P | Excise Tax Return for Petroleum Products | excise_tax | — | calendar_only | monthly | 1-12 | 0 | 0 | — |
+| 2200T | Excise Tax Return for Tobacco Products | excise_tax | — | calendar_only | monthly | 1-12 | 0 | 0 | — |
+| 2200C | Excise Tax Return for Coal and Coke | excise_tax | — | calendar_only | monthly | 1-12 | 0 | 0 | — |
+| 2200S | Excise Tax Return for Sweetened Beverages | excise_tax | — | calendar_only | monthly | 1-12 | 0 | 0 | — |
+| 0619E | Monthly Remittance Form for Creditable Income Taxes Withheld (Expanded) | withholding_tax | 2018-01-ENCS | static_layout | monthly | 1-12 | 18 | 4 | src/pages/forms/0619-e.native |
+| 1601EQ | Quarterly Remittance Return of Creditable Income Taxes Withheld (Expanded) | withholding_tax | — | calendar_only | quarterly | 1-4 | 0 | 0 | — |
+| 1701MS | Annual Income Tax Return for Micro and Small Taxpayers | income_tax | — | calendar_only | annual | — | 0 | 0 | — |
+| 1706 | Capital Gains Tax Return (Real Properties) | capital_gains_tax | — | calendar_only | on_demand | — | 0 | 0 | — |
+| 1707A | Annual Capital Gains Tax Return (Shares of Stock Not Traded) | capital_gains_tax | — | calendar_only | on_demand | — | 0 | 0 | — |
+| 1800 | Donor's Tax Return | estate_and_donors_tax | — | calendar_only | on_demand | — | 0 | 0 | — |
+| 1801 | Estate Tax Return | estate_and_donors_tax | — | calendar_only | on_demand | — | 0 | 0 | — |
 
 ## Classification
 

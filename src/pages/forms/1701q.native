@@ -2,7 +2,7 @@
 <template name="form-1701q-tax-catalog-source-a">
   <column>
     <text>1 Taxable Year</text>
-    <input placeholder="YYYY" disabled="true"/>
+    <input text="{formFilingYear}" placeholder="YYYY" disabled="true"/>
 
 
     <text>2 Quarter</text>

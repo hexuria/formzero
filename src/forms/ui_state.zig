@@ -22,6 +22,7 @@ const form_1701q = @import("form_1701q.zig");
 const form_2551q = @import("form_2551q.zig");
 const ids = @import("id.zig");
 const runtime = @import("runtime.zig");
+const filing_period = @import("filing_period.zig");
 const field = @import("../tax_profile/field.zig");
 const model = @import("../tax_profile/model.zig");
 const profile_persistence = @import("../tax_profile/persistence_adapter.zig");
@@ -89,8 +90,51 @@ pub const OpenRequest = struct {
     spouse_profile_id: ?model.ProfileId = null,
     tax_year: u16,
     quarter: u8,
+    /// Optional cadence-aware identity supplied by the Tax Form Library. The
+    /// quarter field remains for compatibility with the two existing
+    /// recurring editors and is derived from this value when present.
+    filing_period: ?filing_period.FilingPeriod = null,
     /// When omitted, the inclusive calendar-quarter end is used.
     profile_as_of: ?model.Date = null,
+};
+
+/// Read-only result used by the profile-scoped Tax Form Library before an
+/// editor is mounted.  The application owns Forms Set membership; this type
+/// only answers whether the selected profile can satisfy the editor's
+/// generated profile projection for the requested period.
+pub const LaunchStatus = enum {
+    ready_new,
+    ready_resume,
+    needs_profile,
+    needs_activity_selection,
+    profile_not_eligible,
+    unavailable,
+};
+
+pub const LaunchBlocker = enum {
+    none,
+    missing_profile_data,
+    missing_effective_revision,
+    missing_binding,
+    ambiguous_business_activity,
+    unknown_business_activity,
+    inactive_business_activity,
+    subject_not_allowed,
+    invalid_revision,
+    revision_not_effective,
+    persistence_error,
+};
+
+pub const LaunchAssessment = struct {
+    status: LaunchStatus = .unavailable,
+    blocker: LaunchBlocker = .persistence_error,
+    issue_count: u16 = 0,
+    first_missing_field: ?field.ReusableField = null,
+
+    pub fn ready(self: *const LaunchAssessment) bool {
+        return self.status == .ready_new or
+            self.status == .ready_resume;
+    }
 };
 
 pub const DraftSaveResult = struct {
@@ -121,6 +165,7 @@ pub const Error = error{
     DraftPersistenceDisabled,
     DraftProfileSnapshotLocked,
     ExistingDraftMismatch,
+    InvalidPeriod,
     InvalidQuarter,
     NoAcceptedProjection,
     NoEffectiveFilerRevision,
@@ -206,6 +251,7 @@ pub const State = struct {
     opened_form: ?ids.FormRevision = null,
     opened_tax_year: u16 = 0,
     opened_quarter: u8 = 0,
+    opened_filing_period: ?filing_period.FilingPeriod = null,
     opened_profile_as_of: ?model.Date = null,
     selected_filer_id: ?model.ProfileId = null,
     selected_spouse_id: ?model.ProfileId = null,
@@ -302,7 +348,7 @@ pub const State = struct {
         _ = self.allocator orelse return error.NotAttached;
         _ = self.store orelse return error.NotAttached;
         try validateEditorRevision(request.form);
-        try validateQuarter(request.form, request.tax_year, request.quarter);
+        const request_quarter = try validateRequestPeriod(request);
         if (open_policy == .exact_1701q_projection_only and
             !request.form.eql(&form_1701q.revision))
         {
@@ -314,13 +360,21 @@ pub const State = struct {
         self.open_policy = open_policy;
         self.opened_form = request.form;
         self.opened_tax_year = request.tax_year;
-        self.opened_quarter = request.quarter;
-        self.opened_profile_as_of = request.profile_as_of orelse
-            try quarterEnd(request.tax_year, request.quarter);
+        self.opened_quarter = request_quarter;
+        self.opened_filing_period = request.filing_period orelse .{ .quarterly = .{
+            .tax_year = request.tax_year,
+            .quarter = request_quarter,
+        } };
+        self.opened_profile_as_of = request.profile_as_of orelse if
+            (request.filing_period) |period|
+            try filingPeriodEnd(period)
+        else
+            try quarterEnd(request.tax_year, request_quarter);
         self.selected_filer_id = request.filer_profile_id;
         self.selected_spouse_id = request.spouse_profile_id;
 
         if (open_policy == .draft_backed and
+            (request.filing_period != null or isRecurring(request.form)) and
             try self.openExistingOriginal())
         {
             try self.refreshCandidateCaches();
@@ -489,10 +543,6 @@ pub const State = struct {
         const allocator = self.allocator orelse return error.NotAttached;
         const store = self.store orelse return error.NotAttached;
         const form = self.opened_form orelse return error.NotOpen;
-        if (!isRecurring(form)) {
-            self.setErrorNotice(error.UnsupportedRecurringForm);
-            return error.UnsupportedRecurringForm;
-        }
         if (!self.projection_is_accepted or self.projected_snapshot == null) {
             self.setErrorNotice(error.NoAcceptedProjection);
             return error.NoAcceptedProjection;
@@ -508,6 +558,7 @@ pub const State = struct {
             store,
             .{
                 .period = period,
+                .filing_period = self.opened_filing_period,
                 .role_bindings = &self.projected_bindings,
                 .snapshot = &self.projected_snapshot.?,
                 .transaction_values = transaction_values,
@@ -552,6 +603,10 @@ pub const State = struct {
 
     pub fn quarter(self: *const State) u8 {
         return self.opened_quarter;
+    }
+
+    pub fn filingPeriod(self: *const State) ?filing_period.FilingPeriod {
+        return self.opened_filing_period;
     }
 
     pub fn snapshot(self: *const State) ?*const projection.Snapshot {
@@ -672,6 +727,93 @@ pub const State = struct {
         draft.deinit(allocator);
     }
 
+    /// Performs the same profile-revision and catalog-projection checks used
+    /// by an editor open without mutating the live editor state.  View code
+    /// should consume a cached result from the application model rather than
+    /// calling this method while rendering.
+    pub fn assessLaunch(
+        self: *const State,
+        request: OpenRequest,
+    ) LaunchAssessment {
+        const allocator = self.allocator orelse return .{};
+        const store = self.store orelse return .{};
+
+        validateEditorRevision(request.form) catch |err| {
+            return .{
+                .status = .unavailable,
+                .blocker = launchBlockerForError(err),
+            };
+        };
+        _ = validateRequestPeriod(request) catch |err| {
+            return .{
+                .status = .unavailable,
+                .blocker = launchBlockerForError(err),
+            };
+        };
+
+        if ((request.filing_period != null or isRecurring(request.form)) and
+            existingOriginalIsUsable(
+                allocator,
+                store,
+                request,
+            ) catch false)
+        {
+            return .{
+                .status = .ready_resume,
+                .blocker = .none,
+            };
+        }
+
+        const effective_on = request.profile_as_of orelse
+            (if (request.filing_period) |period|
+                filingPeriodEnd(period) catch return .{}
+            else
+                quarterEnd(request.tax_year, request.quarter) catch return .{});
+        var filer = (profile_persistence.loadEffectiveRevision(
+            store,
+            allocator,
+            request.filer_profile_id,
+            effective_on,
+        ) catch {
+            return .{
+                .status = .unavailable,
+                .blocker = .persistence_error,
+            };
+        }) orelse {
+            return .{
+                .status = .needs_profile,
+                .blocker = .missing_effective_revision,
+            };
+        };
+        defer filer.deinit(allocator);
+
+        const bindings = [_]projection.Binding{.{
+            .role = .filer,
+            .revision = &filer.revision,
+            .selection = .{},
+        }};
+        var result = catalog_projection.project(
+            allocator,
+            request.form,
+            &bindings,
+            effective_on,
+        ) catch {
+            return .{
+                .status = .unavailable,
+                .blocker = .persistence_error,
+            };
+        };
+        defer result.deinit(allocator);
+
+        return switch (result) {
+            .accepted => .{
+                .status = .ready_new,
+                .blocker = .none,
+            },
+            .rejected => |rejected| assessmentForIssues(rejected.slice()),
+        };
+    }
+
     pub fn spouseCandidates(self: *const State) []const SpouseCandidate {
         return self.spouse_candidate_items[0..self.spouse_candidate_len];
     }
@@ -702,18 +844,132 @@ pub const State = struct {
         };
     }
 
+    fn existingOriginalIsUsable(
+        allocator: std.mem.Allocator,
+        store: *store_module.Store,
+        request: OpenRequest,
+    ) !bool {
+        const period: filing_period.FilingPeriod = request.filing_period orelse .{ .quarterly = .{
+            .tax_year = request.tax_year,
+            .quarter = request.quarter,
+        } };
+        const id = try form_persistence.originalDraftIdForFilingPeriod(
+            request.filer_profile_id,
+            &request.form,
+            period,
+        );
+        var draft = (try store.getDraft(allocator, id.asSlice())) orelse
+            return false;
+        defer draft.deinit(allocator);
+
+        if (!std.mem.eql(u8, draft.intent, "original") or
+            draft.amendment_of != null)
+        {
+            return false;
+        }
+        const rehydrated = form_persistence.rehydrate(&draft) catch
+            return false;
+        if (!rehydrated.form.eql(&request.form) or
+            rehydrated.period.taxYear() != request.tax_year or
+            !rehydrated.period.eql(period))
+        {
+            return false;
+        }
+        const filer = rehydrated.role_bindings.get(.filer) orelse
+            return false;
+        return filer.profile_id.eql(&request.filer_profile_id);
+    }
+
+    fn assessmentForIssues(
+        issues: []const catalog_projection.Issue,
+    ) LaunchAssessment {
+        var assessment = LaunchAssessment{
+            .status = .unavailable,
+            .blocker = .persistence_error,
+            .issue_count = @intCast(@min(
+                issues.len,
+                std.math.maxInt(u16),
+            )),
+        };
+        for (issues) |issue| {
+            switch (issue) {
+                .missing_capability => |target| {
+                    if (assessment.status == .unavailable) {
+                        assessment.status = .needs_profile;
+                        assessment.blocker = .missing_profile_data;
+                    }
+                    if (assessment.first_missing_field == null) {
+                        assessment.first_missing_field = target.reusable_field;
+                    }
+                },
+                .missing_binding => {
+                    if (assessment.status == .unavailable) {
+                        assessment.status = .needs_profile;
+                        assessment.blocker = .missing_binding;
+                    }
+                },
+                .ambiguous_business_activity => {
+                    if (assessment.status == .unavailable) {
+                        assessment.status = .needs_activity_selection;
+                        assessment.blocker = .ambiguous_business_activity;
+                    }
+                },
+                .unknown_business_activity => {
+                    if (assessment.status == .unavailable) {
+                        assessment.status = .needs_activity_selection;
+                        assessment.blocker = .unknown_business_activity;
+                    }
+                },
+                .inactive_business_activity => {
+                    if (assessment.status == .unavailable) {
+                        assessment.status = .needs_activity_selection;
+                        assessment.blocker = .inactive_business_activity;
+                    }
+                },
+                .subject_not_allowed => {
+                    if (assessment.status == .unavailable) {
+                        assessment.status = .profile_not_eligible;
+                        assessment.blocker = .subject_not_allowed;
+                    }
+                },
+                .duplicate_binding,
+                .unexpected_binding,
+                .same_profile_binding,
+                .invalid_revision,
+                .revision_not_effective,
+                => {},
+            }
+        }
+        return assessment;
+    }
+
+    fn launchBlockerForError(err: anyerror) LaunchBlocker {
+        return switch (err) {
+            error.NoEffectiveFilerRevision => .missing_effective_revision,
+            error.CalendarOnlyForm,
+            error.UnknownForm,
+            error.WrongFormRevision,
+            error.InvalidPeriod,
+            => .invalid_revision,
+            error.InvalidQuarter => .invalid_revision,
+            else => .persistence_error,
+        };
+    }
+
     fn openExistingOriginal(self: *State) !bool {
         const form = self.opened_form orelse return false;
-        if (!isRecurring(form)) return false;
         const allocator = self.allocator.?;
         const store = self.store.?;
         const filer_id = self.selected_filer_id orelse return false;
-        const period: runtime.RecurringQuarter = .{
-            .form = form,
+        const period: filing_period.FilingPeriod = self.opened_filing_period orelse .{ .quarterly = .{
             .tax_year = self.opened_tax_year,
             .quarter = self.opened_quarter,
-        };
-        const id = try form_persistence.originalDraftId(filer_id, period);
+        } };
+        const id = try form_persistence.originalDraftIdForFilingPeriod(
+            filer_id,
+            &form,
+            period,
+        );
         var draft = (try store.getDraft(
             allocator,
             id.asSlice(),
@@ -739,9 +995,9 @@ pub const State = struct {
         const rehydrated = try form_persistence.rehydrate(draft);
         const requested_form = self.opened_form orelse return error.NotOpen;
         const requested_filer = self.selected_filer_id orelse return error.NotOpen;
-        if (!rehydrated.period.form.eql(&requested_form) or
-            rehydrated.period.tax_year != self.opened_tax_year or
-            rehydrated.period.quarter != self.opened_quarter)
+        if (!rehydrated.form.eql(&requested_form) or
+            rehydrated.period.taxYear() != self.opened_tax_year or
+            !rehydrated.period.eql(self.opened_filing_period.?))
         {
             return error.ExistingDraftMismatch;
         }
@@ -788,6 +1044,7 @@ pub const State = struct {
             self.selected_spouse_activity_id = null;
         }
         self.opened_profile_as_of = rehydrated.snapshot.effective_on;
+        self.opened_filing_period = rehydrated.period;
         self.projected_snapshot = rehydrated.snapshot;
         self.projected_bindings = rehydrated.role_bindings;
         self.projection_is_accepted = true;
@@ -867,7 +1124,6 @@ pub const State = struct {
                 try self.cacheSnapshot(&built_snapshot);
                 self.projection_is_accepted = true;
                 self.save_is_disabled =
-                    !isRecurring(form) or
                     self.open_policy == .exact_1701q_projection_only;
                 self.setNoticeFmt(
                     .success,
@@ -989,6 +1245,7 @@ pub const State = struct {
         self.opened_form = null;
         self.opened_tax_year = 0;
         self.opened_quarter = 0;
+        self.opened_filing_period = null;
         self.opened_profile_as_of = null;
         self.selected_filer_id = null;
         self.selected_spouse_id = null;
@@ -1110,6 +1367,35 @@ fn validateQuarter(
     }
 }
 
+fn validateRequestPeriod(request: OpenRequest) Error!u8 {
+    const period = request.filing_period orelse {
+        try validateQuarter(request.form, request.tax_year, request.quarter);
+        return request.quarter;
+    };
+    period.validate() catch return error.InvalidPeriod;
+    if (period.taxYear() != request.tax_year) return error.InvalidPeriod;
+
+    const definition = catalog.findForm(request.form.code.asSlice()) orelse
+        return error.UnknownForm;
+    if (period.cadence() != definition.cadence) return error.InvalidPeriod;
+
+    const slot = switch (period) {
+        .monthly => |value| value.month,
+        .quarterly => |value| value.quarter,
+        .annual, .on_demand => null,
+    };
+    if (slot) |value| {
+        if (definition.min_period) |minimum| if (value < minimum)
+            return error.InvalidPeriod;
+        if (definition.max_period) |maximum| if (value > maximum)
+            return error.InvalidPeriod;
+    }
+
+    const quarter = period.quarter() orelse request.quarter;
+    try validateQuarter(request.form, request.tax_year, quarter);
+    return quarter;
+}
+
 fn quarterEnd(tax_year: u16, quarter: u8) !model.Date {
     return switch (quarter) {
         1 => model.Date.init(tax_year, 3, 31),
@@ -1117,6 +1403,27 @@ fn quarterEnd(tax_year: u16, quarter: u8) !model.Date {
         3 => model.Date.init(tax_year, 9, 30),
         4 => model.Date.init(tax_year, 12, 31),
         else => error.InvalidQuarter,
+    };
+}
+
+fn filingPeriodEnd(period: filing_period.FilingPeriod) !model.Date {
+    return switch (period) {
+        .monthly => |value| model.Date.init(
+            value.tax_year,
+            value.month,
+            switch (value.month) {
+                1, 3, 5, 7, 8, 10, 12 => 31,
+                4, 6, 9, 11 => 30,
+                2 => if (value.tax_year % 4 == 0 and
+                    (value.tax_year % 100 != 0 or value.tax_year % 400 == 0))
+                    29
+                else
+                    28,
+                else => return error.InvalidPeriod,
+            },
+        ),
+        .quarterly => |value| quarterEnd(value.tax_year, value.quarter),
+        .annual, .on_demand => model.Date.init(period.taxYear(), 12, 31),
     };
 }
 
@@ -1363,6 +1670,75 @@ test "all ten static editors project catalog profile targets and cache values" {
     try std.testing.expectEqualStrings(
         "JUAN SANTOS",
         state.spouseCandidates()[0].name.asSlice(),
+    );
+}
+
+test "typed catalog periods save and resume generic editor workspaces" {
+    const allocator = std.testing.allocator;
+    var store = try store_module.Store.openMemory(allocator);
+    defer store.close();
+    try persistFullTestRevision(
+        &store,
+        "profile-generic-periods",
+        "revision-generic-periods-1",
+        1,
+        .sole_proprietor,
+        "GENERIC PERIOD FILER",
+        "567-890-123-000",
+    );
+    const profile_id = try model.ProfileId.parse("profile-generic-periods");
+
+    var annual = State.init(allocator, &store);
+    try annual.open(.{
+        .form = ids.FormRevision.initComptime("1701", "2018-01-ENCS"),
+        .filer_profile_id = profile_id,
+        .tax_year = 2026,
+        .quarter = 4,
+        .filing_period = .{ .annual = .{ .tax_year = 2026 } },
+    });
+    try std.testing.expect(annual.projectionAccepted());
+    try std.testing.expectEqual(
+        filing_period.FilingPeriod{ .annual = .{ .tax_year = 2026 } },
+        annual.filingPeriod().?,
+    );
+    const annual_saved = try annual.saveRecurringDraft();
+    try std.testing.expectEqual(DraftDisposition.created, annual_saved.disposition);
+    annual.deinit();
+
+    var monthly = State.init(allocator, &store);
+    defer monthly.deinit();
+    try monthly.open(.{
+        .form = ids.FormRevision.initComptime("0619E", "2018-01-ENCS"),
+        .filer_profile_id = profile_id,
+        .tax_year = 2026,
+        .quarter = 1,
+        .filing_period = .{ .monthly = .{ .tax_year = 2026, .month = 2 } },
+    });
+    try std.testing.expect(monthly.projectionAccepted());
+    try std.testing.expectEqual(
+        filing_period.FilingPeriod{ .monthly = .{ .tax_year = 2026, .month = 2 } },
+        monthly.filingPeriod().?,
+    );
+    const monthly_saved = try monthly.saveRecurringDraft();
+    try std.testing.expectEqual(DraftDisposition.created, monthly_saved.disposition);
+
+    var resumed = State.init(allocator, &store);
+    defer resumed.deinit();
+    try resumed.open(.{
+        .form = ids.FormRevision.initComptime("1701", "2018-01-ENCS"),
+        .filer_profile_id = profile_id,
+        .tax_year = 2026,
+        .quarter = 4,
+        .filing_period = .{ .annual = .{ .tax_year = 2026 } },
+    });
+    try std.testing.expectEqual(
+        DraftDisposition.resumed,
+        resumed.draftDisposition().?,
+    );
+    var label_buffer: [32]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "2026 Annual",
+        try resumed.filingPeriod().?.label(&label_buffer),
     );
 }
 

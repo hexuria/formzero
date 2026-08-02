@@ -50,6 +50,15 @@
       </button>
     </tabs>
 
+    <if test="{profileCompletionVisible}">
+      <card padding="0">
+        <row padding="12" gap="10" cross="center">
+          <badge variant="outline">Profile data required</badge>
+          <text wrap="true" foreground="text_muted">{profileCompletionMessage}</text>
+        </row>
+      </card>
+    </if>
+
     <if test="{profileTaxActive}">
       <column gap="24">
         <column gap="16">
@@ -69,6 +78,7 @@
                     text="{profileTinValue}"
                     placeholder="000-000-000-000"
                     label="Taxpayer Identification Number (TIN)"
+                    autofocus="{profileTinAutofocus}"
                     on-input="profile_tin_input"/>
                 </use>
                 <use template="profile-field" label="Revenue District Office (RDO) code">
@@ -77,6 +87,7 @@
                     text="{profileRdoValue}"
                     placeholder="RDO code"
                     label="Revenue District Office (RDO) code"
+                    autofocus="{profileRdoAutofocus}"
                     on-input="profile_rdo_input"/>
                 </use>
               </column>
@@ -89,6 +100,7 @@
                     text="{profileTinValue}"
                     placeholder="000-000-000-000"
                     label="Taxpayer Identification Number (TIN)"
+                    autofocus="{profileTinAutofocus}"
                     on-input="profile_tin_input"/>
                 </use>
                 <use template="profile-field" label="Revenue District Office (RDO) code" grow="1">
@@ -97,6 +109,7 @@
                     text="{profileRdoValue}"
                     placeholder="RDO code"
                     label="Revenue District Office (RDO) code"
+                    autofocus="{profileRdoAutofocus}"
                     on-input="profile_rdo_input"/>
                 </use>
               </row>
@@ -149,6 +162,7 @@
                 text="{profileNameValue}"
                 placeholder="Registered taxpayer name"
                 label="Taxpayer or registered name"
+                autofocus="{profileNameAutofocus}"
                 on-input="profile_name_input"/>
             </use>
             <if test="{profileTradeNameVisible}">
@@ -167,32 +181,33 @@
                 text="{profileAddressValue}"
                 placeholder="Registered address"
                 label="Registered address"
+                autofocus="{profileAddressAutofocus}"
                 on-input="profile_address_input"/>
             </use>
 
             <if test="{constrainedLayout}">
               <column gap="12">
                 <use template="profile-field" label="ZIP code">
-                  <input height="44" text="{profileZipValue}" placeholder="ZIP code" label="ZIP code" on-input="profile_zip_input"/>
+                  <input height="44" text="{profileZipValue}" placeholder="ZIP code" label="ZIP code" autofocus="{profileZipAutofocus}" on-input="profile_zip_input"/>
                 </use>
                 <use template="profile-field" label="Contact number">
-                  <input height="44" text="{profilePhoneValue}" placeholder="+63 900 000 0000" label="Contact number" on-input="profile_phone_input"/>
+                  <input height="44" text="{profilePhoneValue}" placeholder="+63 900 000 0000" label="Contact number" autofocus="{profilePhoneAutofocus}" on-input="profile_phone_input"/>
                 </use>
               </column>
             </if>
             <else>
               <row gap="12">
                 <use template="profile-field" label="ZIP code" grow="1">
-                  <input height="44" text="{profileZipValue}" placeholder="ZIP code" label="ZIP code" on-input="profile_zip_input"/>
+                  <input height="44" text="{profileZipValue}" placeholder="ZIP code" label="ZIP code" autofocus="{profileZipAutofocus}" on-input="profile_zip_input"/>
                 </use>
                 <use template="profile-field" label="Contact number" grow="1">
-                  <input height="44" text="{profilePhoneValue}" placeholder="+63 900 000 0000" label="Contact number" on-input="profile_phone_input"/>
+                  <input height="44" text="{profilePhoneValue}" placeholder="+63 900 000 0000" label="Contact number" autofocus="{profilePhoneAutofocus}" on-input="profile_phone_input"/>
                 </use>
               </row>
             </else>
 
             <use template="profile-field" label="Registered email address">
-              <input height="44" text="{profileEmailValue}" placeholder="name@example.com" label="Registered email address" on-input="profile_email_input"/>
+              <input height="44" text="{profileEmailValue}" placeholder="name@example.com" label="Registered email address" autofocus="{profileEmailAutofocus}" on-input="profile_email_input"/>
             </use>
         </column>
 
@@ -213,6 +228,7 @@
                     placeholder="YYYY-MM-DD"
                     label="Birth date"
                     disabled="{profilePersonalFieldsDisabled}"
+                    autofocus="{profileBirthDateAutofocus}"
                     on-input="profile_birth_date_input"/>
                 </use>
                 <use template="profile-field" label="Citizenship">
@@ -222,6 +238,7 @@
                     placeholder="Citizenship"
                     label="Citizenship"
                     disabled="{profilePersonalFieldsDisabled}"
+                    autofocus="{profileCitizenshipAutofocus}"
                     on-input="profile_citizenship_input"/>
                 </use>
               </column>
@@ -229,10 +246,10 @@
             <else>
               <row gap="12">
                 <use template="profile-field" label="Birth date" grow="1">
-                  <input height="44" text="{profileBirthDateValue}" placeholder="YYYY-MM-DD" label="Birth date" disabled="{profilePersonalFieldsDisabled}" on-input="profile_birth_date_input"/>
+                  <input height="44" text="{profileBirthDateValue}" placeholder="YYYY-MM-DD" label="Birth date" disabled="{profilePersonalFieldsDisabled}" autofocus="{profileBirthDateAutofocus}" on-input="profile_birth_date_input"/>
                 </use>
                 <use template="profile-field" label="Citizenship" grow="1">
-                  <input height="44" text="{profileCitizenshipValue}" placeholder="Citizenship" label="Citizenship" disabled="{profilePersonalFieldsDisabled}" on-input="profile_citizenship_input"/>
+                  <input height="44" text="{profileCitizenshipValue}" placeholder="Citizenship" label="Citizenship" disabled="{profilePersonalFieldsDisabled}" autofocus="{profileCitizenshipAutofocus}" on-input="profile_citizenship_input"/>
                 </use>
               </row>
             </else>
@@ -243,6 +260,7 @@
                 placeholder="Optional foreign tax identifier"
                 label="Foreign tax number"
                 disabled="{profilePersonalFieldsDisabled}"
+                autofocus="{profileForeignTaxNumberAutofocus}"
                 on-input="profile_foreign_tax_number_input"/>
             </use>
         </column>
@@ -257,26 +275,26 @@
               </text>
             </column>
             <use template="profile-field" label="Line of business">
-              <input height="44" text="{profileBusinessLineValue}" placeholder="Line of business" label="Line of business" on-input="profile_business_line_input"/>
+              <input height="44" text="{profileBusinessLineValue}" placeholder="Line of business" label="Line of business" autofocus="{profileBusinessLineAutofocus}" on-input="profile_business_line_input"/>
             </use>
             <if test="{constrainedLayout}">
               <column gap="12">
                 <use template="profile-field" label="Alphanumeric Tax Code (ATC)">
-                  <input height="44" text="{profileAtcValue}" placeholder="PT010" label="Alphanumeric Tax Code (ATC)" on-input="profile_atc_input"/>
+                  <input height="44" text="{profileAtcValue}" placeholder="PT010" label="Alphanumeric Tax Code (ATC)" autofocus="{profileAtcAutofocus}" on-input="profile_atc_input"/>
                 </use>
                 <use template="profile-field" label="Registered tax type">
-                  <input height="44" text="{profileTaxTypeValue}" placeholder="Percentage tax" label="Registered tax type" on-input="profile_tax_type_input"/>
+                  <input height="44" text="{profileTaxTypeValue}" placeholder="Percentage tax" label="Registered tax type" autofocus="{profileTaxTypeAutofocus}" on-input="profile_tax_type_input"/>
                 </use>
               </column>
-            </if>
-            <else>
-              <row gap="12">
-                <use template="profile-field" label="Alphanumeric Tax Code (ATC)" grow="1">
-                  <input height="44" text="{profileAtcValue}" placeholder="PT010" label="Alphanumeric Tax Code (ATC)" on-input="profile_atc_input"/>
-                </use>
-                <use template="profile-field" label="Registered tax type" grow="1">
-                  <input height="44" text="{profileTaxTypeValue}" placeholder="Percentage tax" label="Registered tax type" on-input="profile_tax_type_input"/>
-                </use>
+              </if>
+              <else>
+                <row gap="12">
+                  <use template="profile-field" label="Alphanumeric Tax Code (ATC)" grow="1">
+                    <input height="44" text="{profileAtcValue}" placeholder="PT010" label="Alphanumeric Tax Code (ATC)" autofocus="{profileAtcAutofocus}" on-input="profile_atc_input"/>
+                  </use>
+                  <use template="profile-field" label="Registered tax type" grow="1">
+                    <input height="44" text="{profileTaxTypeValue}" placeholder="Percentage tax" label="Registered tax type" autofocus="{profileTaxTypeAutofocus}" on-input="profile_tax_type_input"/>
+                  </use>
                 </row>
               </else>
             <column gap="8">
@@ -296,9 +314,10 @@
             <column gap="4">
               <text><span weight="bold">Revision and registered Forms Set</span></text>
               <text wrap="true" foreground="text_muted">
-                Form codes are comma-separated and effective for the selected
-                tax year. An explicitly empty Forms Set means no obligations;
-                an unconfigured year uses the catalog fallback.
+                Forms are managed in the Tax Form Library for the selected tax
+                year. New profiles start with Needs configuration. Saving zero
+                forms creates an explicitly empty library and calendar; only
+                legacy-compatible profiles can use catalog fallback.
               </text>
             </column>
             <if test="{constrainedLayout}">
@@ -353,54 +372,20 @@
                 disabled="{profileSourceReferenceDisabled}"
                 on-input="profile_source_reference_input"/>
             </use>
-            <column gap="8">
-              <text foreground="text_muted">Forms Set policy</text>
-              <if test="{constrainedLayout}">
-                <column gap="8">
-                  <button
-                    height="44"
-                    variant="outline"
-                    selected="{profileFormsSetFallbackSelected}"
-                    on-press="profile_forms_set_fallback">
-                    Catalog fallback
-                  </button>
-                  <button
-                    height="44"
-                    variant="outline"
-                    selected="{profileFormsSetRegisteredSelected}"
-                    on-press="profile_forms_set_registered">
-                    Registered Forms Set
-                  </button>
+            <card padding="0">
+              <row padding="14" gap="12" cross="center">
+                <column grow="1" gap="4">
+                  <text><span weight="bold">Forms Set</span></text>
+                  <text wrap="true" foreground="text_muted">{profileFormsSetValue}</text>
                 </column>
-              </if>
-              <else>
-                <row gap="8">
-                  <button
-                    height="44"
-                    variant="outline"
-                    selected="{profileFormsSetFallbackSelected}"
-                    on-press="profile_forms_set_fallback">
-                    Catalog fallback
-                  </button>
-                  <button
-                    height="44"
-                    variant="outline"
-                    selected="{profileFormsSetRegisteredSelected}"
-                    on-press="profile_forms_set_registered">
-                    Registered Forms Set
-                  </button>
-                </row>
-              </else>
-            </column>
-            <use template="profile-field" label="Registered Forms Set">
-              <input
-                height="44"
-                text="{profileFormsSetValue}"
-                placeholder="2551Q, 1701Q"
-                label="Registered Forms Set"
-                disabled="{profileFormsSetInputDisabled}"
-                on-input="profile_forms_set_input"/>
-            </use>
+                <if test="{editingNewProfile}">
+                  <button height="44" variant="outline" icon="settings" disabled="true">Save profile to manage forms</button>
+                </if>
+                <else>
+                  <button height="44" variant="outline" icon="settings" on-press="manage_profile_forms">Manage Forms</button>
+                </else>
+              </row>
+            </card>
         </column>
       </column>
     </if>

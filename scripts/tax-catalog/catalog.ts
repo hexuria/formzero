@@ -81,6 +81,42 @@ export type FieldStatus =
 
 export type FormStatus = "calendar_only" | "static_layout";
 
+/** Filing cadence is independent from editor capability. */
+export const filingCadenceValues = [
+  "monthly",
+  "quarterly",
+  "annual",
+  "on_demand",
+] as const;
+export type FilingCadence = (typeof filingCadenceValues)[number];
+
+/** Closed, UI-facing tax category vocabulary for catalog filtering. */
+export const taxCategoryValues = [
+  "payment",
+  "registration",
+  "withholding_tax",
+  "income_tax",
+  "value_added_tax",
+  "percentage_tax",
+  "documentary_stamp_tax",
+  "excise_tax",
+  "capital_gains_tax",
+  "estate_and_donors_tax",
+] as const;
+export type TaxCategory = (typeof taxCategoryValues)[number];
+
+export interface FormDisplayMetadata {
+  readonly displayTitle: string;
+  readonly taxCategory: TaxCategory;
+}
+
+export interface FilingPeriodPolicy {
+  readonly cadence: FilingCadence;
+  /** Inclusive 1-based period bounds for monthly/quarterly forms. */
+  readonly minPeriod: number | null;
+  readonly maxPeriod: number | null;
+}
+
 export const profileFieldKeyValues = [
   "tin",
   "rdo_code",
@@ -820,6 +856,317 @@ export const registryCodes = [
   "1800",
   "1801",
 ] as const;
+
+export type RegistryCode = (typeof registryCodes)[number];
+
+/**
+ * Build-time display authority for the 51-code catalog.
+ *
+ * Titles are form-specific rather than inherited from grouped calendar rules,
+ * while categories use the closed vocabulary above so UI filters cannot drift
+ * into spelling variants.
+ */
+export const formDisplayMetadataByCode = {
+  "0605": {
+    displayTitle: "Payment Form",
+    taxCategory: "payment",
+  },
+  "1905": {
+    displayTitle:
+      "Application for Registration Information Update / Correction / Cancellation",
+    taxCategory: "registration",
+  },
+  "1600": {
+    displayTitle:
+      "Monthly Remittance Return of VAT and Other Percentage Taxes Withheld",
+    taxCategory: "withholding_tax",
+  },
+  "1600PT": {
+    displayTitle: "Monthly Remittance Return of Other Percentage Taxes Withheld",
+    taxCategory: "withholding_tax",
+  },
+  "1600VT": {
+    displayTitle: "Monthly Remittance Return of Value-Added Tax Withheld",
+    taxCategory: "withholding_tax",
+  },
+  "1600WP": {
+    displayTitle: "Remittance Return of Percentage Tax on Winnings and Prizes",
+    taxCategory: "withholding_tax",
+  },
+  "1601C": {
+    displayTitle:
+      "Monthly Remittance Return of Income Taxes Withheld on Compensation",
+    taxCategory: "withholding_tax",
+  },
+  "1601E": {
+    displayTitle:
+      "Monthly Remittance Return of Creditable Income Taxes Withheld (Expanded)",
+    taxCategory: "withholding_tax",
+  },
+  "1601F": {
+    displayTitle: "Monthly Remittance Return of Final Income Tax Withheld",
+    taxCategory: "withholding_tax",
+  },
+  "0619F": {
+    displayTitle: "Monthly Remittance Form for Final Income Taxes Withheld",
+    taxCategory: "withholding_tax",
+  },
+  "1601FQ": {
+    displayTitle: "Quarterly Remittance Return of Final Income Taxes Withheld",
+    taxCategory: "withholding_tax",
+  },
+  "1602": {
+    displayTitle: "Monthly Remittance Return of Final Income Taxes Withheld",
+    taxCategory: "withholding_tax",
+  },
+  "1602Q": {
+    displayTitle:
+      "Quarterly Remittance Return of Final Taxes Withheld on Interest Paid on Deposits and Yield on Deposit Substitutes / Trusts / Etc.",
+    taxCategory: "withholding_tax",
+  },
+  "1603": {
+    displayTitle: "Quarterly Remittance Return of Final Income Taxes Withheld",
+    taxCategory: "withholding_tax",
+  },
+  "1603Q": {
+    displayTitle:
+      "Quarterly Remittance Return of Final Income Taxes Withheld on Fringe Benefits Paid to Employees Other Than Rank and File",
+    taxCategory: "withholding_tax",
+  },
+  "1604CF": {
+    displayTitle: "Annual Information Return of Income Taxes Withheld on Compensation",
+    taxCategory: "withholding_tax",
+  },
+  "1604E": {
+    displayTitle: "Annual Information Return of Creditable Income Taxes Withheld",
+    taxCategory: "withholding_tax",
+  },
+  "0620": {
+    displayTitle:
+      "Monthly Remittance Form of Tax Withheld on the Amount Withdrawn from the Decedent's Deposit Account",
+    taxCategory: "withholding_tax",
+  },
+  "2316": {
+    displayTitle: "Certificate of Compensation Payment / Tax Withheld",
+    taxCategory: "withholding_tax",
+  },
+  "1700": {
+    displayTitle: "Annual Income Tax Return (Purely Compensation)",
+    taxCategory: "income_tax",
+  },
+  "1701Q": {
+    displayTitle: "Quarterly Income Tax Return for Individuals, Estates and Trusts",
+    taxCategory: "income_tax",
+  },
+  "1701": {
+    displayTitle: "Annual Income Tax Return for Individuals, Estates and Trusts",
+    taxCategory: "income_tax",
+  },
+  "1701A": {
+    displayTitle: "Annual Income Tax Return (8% / OSD)",
+    taxCategory: "income_tax",
+  },
+  "1702Q": {
+    displayTitle:
+      "Quarterly Income Tax Return for Corporations, Partnerships and Cooperatives",
+    taxCategory: "income_tax",
+  },
+  "1702": {
+    displayTitle:
+      "Annual Income Tax Return for Corporations, Partnerships and Cooperatives",
+    taxCategory: "income_tax",
+  },
+  "1702RT": {
+    displayTitle: "Annual Income Tax Return — Regular Taxable",
+    taxCategory: "income_tax",
+  },
+  "1702EX": {
+    displayTitle: "Annual Income Tax Return — Tax-Exempt",
+    taxCategory: "income_tax",
+  },
+  "1702MX": {
+    displayTitle: "Annual Income Tax Return — Mixed Income",
+    taxCategory: "income_tax",
+  },
+  "1704": {
+    displayTitle: "Improperly Accumulated Earnings Tax Return",
+    taxCategory: "income_tax",
+  },
+  "2550M": {
+    displayTitle: "Monthly Value-Added Tax Declaration",
+    taxCategory: "value_added_tax",
+  },
+  "2550Q": {
+    displayTitle: "Quarterly Value-Added Tax Return",
+    taxCategory: "value_added_tax",
+  },
+  "2551Q": {
+    displayTitle: "Quarterly Percentage Tax Return",
+    taxCategory: "percentage_tax",
+  },
+  "2551M": {
+    displayTitle: "Monthly Percentage Tax Return",
+    taxCategory: "percentage_tax",
+  },
+  "2552": {
+    displayTitle: "Percentage Tax Return on Transactions Involving Shares of Stock",
+    taxCategory: "percentage_tax",
+  },
+  "2553": {
+    displayTitle: "Percentage Tax Payable Under Special Laws",
+    taxCategory: "percentage_tax",
+  },
+  "2000": {
+    displayTitle: "Documentary Stamp Tax Declaration/Return",
+    taxCategory: "documentary_stamp_tax",
+  },
+  "2000OT": {
+    displayTitle:
+      "Documentary Stamp Tax Declaration/Return (One-Time Transactions)",
+    taxCategory: "documentary_stamp_tax",
+  },
+  "2200A": {
+    displayTitle: "Excise Tax Return for Alcohol Products",
+    taxCategory: "excise_tax",
+  },
+  "2200AN": {
+    displayTitle: "Excise Tax Return for Automobiles and Non-Essential Goods",
+    taxCategory: "excise_tax",
+  },
+  "2200M": {
+    displayTitle: "Excise Tax Return for Mineral Products",
+    taxCategory: "excise_tax",
+  },
+  "2200P": {
+    displayTitle: "Excise Tax Return for Petroleum Products",
+    taxCategory: "excise_tax",
+  },
+  "2200T": {
+    displayTitle: "Excise Tax Return for Tobacco Products",
+    taxCategory: "excise_tax",
+  },
+  "2200C": {
+    displayTitle: "Excise Tax Return for Coal and Coke",
+    taxCategory: "excise_tax",
+  },
+  "2200S": {
+    displayTitle: "Excise Tax Return for Sweetened Beverages",
+    taxCategory: "excise_tax",
+  },
+  "0619E": {
+    displayTitle:
+      "Monthly Remittance Form for Creditable Income Taxes Withheld (Expanded)",
+    taxCategory: "withholding_tax",
+  },
+  "1601EQ": {
+    displayTitle:
+      "Quarterly Remittance Return of Creditable Income Taxes Withheld (Expanded)",
+    taxCategory: "withholding_tax",
+  },
+  "1701MS": {
+    displayTitle: "Annual Income Tax Return for Micro and Small Taxpayers",
+    taxCategory: "income_tax",
+  },
+  "1706": {
+    displayTitle: "Capital Gains Tax Return (Real Properties)",
+    taxCategory: "capital_gains_tax",
+  },
+  "1707A": {
+    displayTitle: "Annual Capital Gains Tax Return (Shares of Stock Not Traded)",
+    taxCategory: "capital_gains_tax",
+  },
+  "1800": {
+    displayTitle: "Donor's Tax Return",
+    taxCategory: "estate_and_donors_tax",
+  },
+  "1801": {
+    displayTitle: "Estate Tax Return",
+    taxCategory: "estate_and_donors_tax",
+  },
+} as const satisfies Readonly<Record<RegistryCode, FormDisplayMetadata>>;
+
+export function formDisplayMetadata(code: string): FormDisplayMetadata {
+  const metadata = (
+    formDisplayMetadataByCode as Readonly<
+      Record<string, FormDisplayMetadata | undefined>
+    >
+  )[code];
+  if (!metadata) throw new Error(`Missing display metadata for ${code}`);
+  return metadata;
+}
+
+/** Build-time filing cadence authority for the 51-code catalog. */
+export const filingCadenceByCode: Readonly<Record<string, FilingCadence>> = {
+  "0605": "on_demand",
+  "1905": "on_demand",
+  "1600": "monthly",
+  "1600PT": "monthly",
+  "1600VT": "monthly",
+  "1600WP": "monthly",
+  "1601C": "monthly",
+  "1601E": "monthly",
+  "1601F": "monthly",
+  "0619F": "monthly",
+  "1601FQ": "quarterly",
+  "1602": "monthly",
+  "1602Q": "quarterly",
+  "1603": "quarterly",
+  "1603Q": "quarterly",
+  "1604CF": "annual",
+  "1604E": "annual",
+  "0620": "monthly",
+  "2316": "annual",
+  "1700": "annual",
+  "1701Q": "quarterly",
+  "1701": "annual",
+  "1701A": "annual",
+  "1702Q": "quarterly",
+  "1702": "annual",
+  "1702RT": "annual",
+  "1702EX": "annual",
+  "1702MX": "annual",
+  "1704": "annual",
+  "2550M": "monthly",
+  "2550Q": "quarterly",
+  "2551Q": "quarterly",
+  "2551M": "monthly",
+  "2552": "on_demand",
+  "2553": "on_demand",
+  "2000": "on_demand",
+  "2000OT": "on_demand",
+  "2200A": "monthly",
+  "2200AN": "monthly",
+  "2200M": "monthly",
+  "2200P": "monthly",
+  "2200T": "monthly",
+  "2200C": "monthly",
+  "2200S": "monthly",
+  "0619E": "monthly",
+  "1601EQ": "quarterly",
+  "1701MS": "annual",
+  "1706": "on_demand",
+  "1707A": "on_demand",
+  "1800": "on_demand",
+  "1801": "on_demand",
+};
+
+export function filingPeriodPolicy(code: string): FilingPeriodPolicy {
+  const cadence = filingCadenceByCode[code];
+  if (!cadence) throw new Error(`Missing filing cadence for ${code}`);
+  switch (cadence) {
+    case "monthly":
+      return { cadence, minPeriod: 1, maxPeriod: 12 };
+    case "quarterly":
+      return {
+        cadence,
+        minPeriod: 1,
+        maxPeriod: code === "1701Q" ? 3 : 4,
+      };
+    case "annual":
+    case "on_demand":
+      return { cadence, minPeriod: null, maxPeriod: null };
+  }
+}
 
 const profilePatterns = [
   /\btin\b/i,

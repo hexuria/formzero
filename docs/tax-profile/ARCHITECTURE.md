@@ -177,9 +177,19 @@ drift.
 
 Forms Set configuration is profile- and tax-year-specific:
 
-- no configured row means the caller may use the catalog fallback;
-- a configured non-empty set is authoritative; and
-- a configured empty set means zero forms, not fallback.
+- `needs_configuration` means a newly created profile has not confirmed any
+  Forms Set yet;
+- `proposal_pending` is reserved for staged or imported suggestions that are
+  not authoritative;
+- `active_nonempty` is an explicitly confirmed non-empty set;
+- `active_empty` is an explicitly confirmed zero-form set; and
+- `legacy_catalog_default` is the compatibility state for existing profiles
+  that still depend on the historical catalog fallback.
+
+New profiles must remain `needs_configuration` until the user confirms a
+Forms Set. Selecting zero forms creates `active_empty` and must never widen
+back to the catalog. The legacy catalog fallback is an explicit compatibility
+behavior, not the default for newly created profiles.
 
 Forms Set currently feeds the Tax Form Library and editor availability. The
 profile calendar ships with a separate per-profile selection over all 51

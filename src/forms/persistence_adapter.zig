@@ -12,6 +12,9 @@ const runtime = @import("runtime.zig");
 const spec = @import("spec.zig");
 const form_1701q = @import("form_1701q.zig");
 const form_2551q = @import("form_2551q.zig");
+const form_catalog = @import("generated/catalog.zig");
+const filing_period = @import("filing_period.zig");
+const catalog_projection = @import("catalog_projection.zig");
 const field = @import("../tax_profile/field.zig");
 const model = @import("../tax_profile/model.zig");
 const projection = @import("../tax_profile/projection.zig");
@@ -21,6 +24,7 @@ const store_module = @import("../tax_profile/store.zig");
 pub const mapping_revision_v1 = "tax-profile-snapshot-v1";
 pub const max_serialized_value_len = 255;
 pub const canonical_period_key_len = 7;
+pub const filing_period_key_capacity = filing_period.key_capacity;
 
 pub const Error = error{
     DuplicateSnapshotTarget,
@@ -77,7 +81,8 @@ pub const OpenedDraft = struct {
 /// Transaction values remain in `OwnedDraft.values` and are intentionally not
 /// folded into this profile projection.
 pub const RehydratedDraft = struct {
-    period: runtime.RecurringQuarter,
+    form: ids.FormRevision,
+    period: filing_period.FilingPeriod,
     role_bindings: runtime.RoleBindings,
     snapshot: projection.Snapshot,
 };
@@ -85,6 +90,10 @@ pub const RehydratedDraft = struct {
 pub const OpenInput = struct {
     mode: DraftMode = .original,
     period: runtime.RecurringQuarter,
+    /// Set for monthly, annual, and on-demand opens. When omitted, the
+    /// legacy recurring-quarter value above is converted to a quarterly
+    /// FilingPeriod.
+    filing_period: ?filing_period.FilingPeriod = null,
     role_bindings: *const runtime.RoleBindings,
     snapshot: *const projection.Snapshot,
     mapping_revision: []const u8 = mapping_revision_v1,
@@ -111,6 +120,37 @@ pub fn canonicalPeriodKey(
     ) catch unreachable;
 }
 
+/// Canonical key for every catalog cadence. The store already allows period
+/// keys up to 64 bytes; this bounded representation keeps the identity stable
+/// and leaves room for future period policies without truncation.
+pub fn canonicalFilingPeriodKey(
+    form: *const ids.FormRevision,
+    period: filing_period.FilingPeriod,
+    output: *[filing_period_key_capacity]u8,
+) Error![]const u8 {
+    const definition = form_catalog.findForm(form.code.asSlice()) orelse
+        return error.UnsupportedFormRevision;
+    const revision = definition.revision orelse
+        return error.UnsupportedFormRevision;
+    if (!std.mem.eql(u8, revision, form.revision.asSlice())) {
+        return error.UnsupportedFormRevision;
+    }
+    if (period.taxYear() == 0) return error.InvalidPeriod;
+    if (period.cadence() != definition.cadence) return error.InvalidPeriod;
+    const slot = switch (period) {
+        .monthly => |value| value.month,
+        .quarterly => |value| value.quarter,
+        .annual, .on_demand => null,
+    };
+    if (slot) |value| {
+        if (definition.min_period) |minimum| if (value < minimum)
+            return error.InvalidPeriod;
+        if (definition.max_period) |maximum| if (value > maximum)
+            return error.InvalidPeriod;
+    }
+    return period.key(output) catch return error.InvalidPeriod;
+}
+
 /// Derives the stable identity for one original recurring draft.
 ///
 /// Length-delimited zero bytes make the hash input unambiguous. The complete
@@ -120,8 +160,24 @@ pub fn originalDraftId(
     filer_profile_id: model.ProfileId,
     period: runtime.RecurringQuarter,
 ) Error!ids.DraftId {
-    var period_buffer: [canonical_period_key_len]u8 = undefined;
-    const period_key = try canonicalPeriodKey(period, &period_buffer);
+    const generic_period: filing_period.FilingPeriod = .{ .quarterly = .{
+        .tax_year = period.tax_year,
+        .quarter = period.quarter,
+    } };
+    return originalDraftIdForFilingPeriod(
+        filer_profile_id,
+        &period.form,
+        generic_period,
+    );
+}
+
+pub fn originalDraftIdForFilingPeriod(
+    filer_profile_id: model.ProfileId,
+    form: *const ids.FormRevision,
+    period: filing_period.FilingPeriod,
+) Error!ids.DraftId {
+    var period_buffer: [filing_period_key_capacity]u8 = undefined;
+    const period_key = try canonicalFilingPeriodKey(form, period, &period_buffer);
 
     var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
@@ -129,9 +185,9 @@ pub fn originalDraftId(
     hash.update(&.{0});
     hash.update(filer_profile_id.asSlice());
     hash.update(&.{0});
-    hash.update(period.form.code.asSlice());
+    hash.update(form.code.asSlice());
     hash.update(&.{0});
-    hash.update(period.form.revision.asSlice());
+    hash.update(form.revision.asSlice());
     hash.update(&.{0});
     hash.update(period_key);
     hash.final(&digest);
@@ -154,6 +210,93 @@ fn supportedProfileSpec(
     if (form.eql(&form_2551q.revision)) return form_2551q.profile_spec;
     if (form.eql(&form_1701q.revision)) return form_1701q.profile_spec;
     return error.UnsupportedFormRevision;
+}
+
+fn catalogDefinition(
+    form: *const ids.FormRevision,
+) Error!*const form_catalog.FormDefinition {
+    const definition = form_catalog.findForm(form.code.asSlice()) orelse
+        return error.UnsupportedFormRevision;
+    const revision = definition.revision orelse
+        return error.UnsupportedFormRevision;
+    if (!std.mem.eql(u8, revision, form.revision.asSlice()) or
+        definition.status != .static_layout)
+    {
+        return error.UnsupportedFormRevision;
+    }
+    return definition;
+}
+
+fn catalogRole(
+    role: ids.Role,
+) ?form_catalog.Role {
+    return std.meta.stringToEnum(form_catalog.Role, @tagName(role));
+}
+
+fn catalogProfileRole(
+    definition: *const form_catalog.FormDefinition,
+    role: ids.Role,
+) ?*const form_catalog.ProfileRoleDefinition {
+    const wanted = catalogRole(role) orelse return null;
+    for (definition.profile_roles) |*policy| {
+        if (policy.role == wanted) return policy;
+    }
+    return null;
+}
+
+fn validateCatalogRoleIdentities(
+    form: *const ids.FormRevision,
+    identities: []const NamedRoleIdentity,
+) Error!void {
+    const definition = try catalogDefinition(form);
+    for (identities, 0..) |identity, index| {
+        for (identities[index + 1 ..]) |other| {
+            if (identity.role == other.role) return error.DuplicateRoleBinding;
+        }
+        if (catalogProfileRole(definition, identity.role) == null) {
+            return error.UnexpectedRoleBinding;
+        }
+    }
+
+    for (definition.profile_roles) |policy| {
+        const role = catalog_projection.domainRole(policy.role) orelse
+            return error.UnsupportedFormRevision;
+        var count: usize = 0;
+        for (identities) |identity| {
+            if (identity.role == role) count += 1;
+        }
+        switch (policy.cardinality) {
+            .exactly_one => if (count != 1) {
+                if (role == .filer) return error.MissingFilerBinding;
+                return error.MissingRequiredRoleBinding;
+            },
+            .zero_or_one => if (count > 1) return error.DuplicateRoleBinding,
+        }
+    }
+
+    for (definition.profile_roles) |policy| {
+        const left = catalog_projection.domainRole(policy.role) orelse
+            return error.UnsupportedFormRevision;
+        const left_identity = findIdentity(identities, left) orelse continue;
+        for (policy.distinct_from) |other_catalog_role| {
+            const right = catalog_projection.domainRole(other_catalog_role) orelse
+                return error.UnsupportedFormRevision;
+            const right_identity = findIdentity(identities, right) orelse continue;
+            if (left_identity.profile_id.eql(&right_identity.profile_id)) {
+                return error.RoleProfilesMustBeDistinct;
+            }
+        }
+    }
+}
+
+fn findIdentity(
+    identities: []const NamedRoleIdentity,
+    role: ids.Role,
+) ?*const NamedRoleIdentity {
+    for (identities) |*identity| {
+        if (identity.role == role) return identity;
+    }
+    return null;
 }
 
 fn validateNamedRoleIdentities(
@@ -211,7 +354,6 @@ fn validateRuntimeRoleBindings(
     if (@as(usize, bindings.len) > bindings.entries.len) {
         return error.InvalidRoleBindingCount;
     }
-    const form_spec = try supportedProfileSpec(form);
     var identities: [runtime.max_role_bindings]NamedRoleIdentity = undefined;
     for (bindings.entries[0..bindings.len], 0..) |*binding, index| {
         identities[index] = .{
@@ -219,10 +361,13 @@ fn validateRuntimeRoleBindings(
             .profile_id = binding.profile_id,
         };
     }
-    try validateNamedRoleIdentities(
-        form_spec,
-        identities[0..bindings.len],
-    );
+    if (supportedProfileSpec(form)) |form_spec| {
+        try validateNamedRoleIdentities(form_spec, identities[0..bindings.len]);
+    } else |err| switch (err) {
+        error.UnsupportedFormRevision =>
+            try validateCatalogRoleIdentities(form, identities[0..bindings.len]),
+        else => return err,
+    }
 }
 
 fn validateOwnedRoleBindings(
@@ -232,7 +377,6 @@ fn validateOwnedRoleBindings(
     if (bindings.len > runtime.max_role_bindings) {
         return error.InvalidRoleBindingCount;
     }
-    const form_spec = try supportedProfileSpec(form);
     var identities: [runtime.max_role_bindings]NamedRoleIdentity = undefined;
     for (bindings, 0..) |*binding, index| {
         identities[index] = .{
@@ -243,15 +387,24 @@ fn validateOwnedRoleBindings(
             .profile_id = try model.ProfileId.parse(binding.profile_id),
         };
     }
-    try validateNamedRoleIdentities(
-        form_spec,
-        identities[0..bindings.len],
-    );
+    if (supportedProfileSpec(form)) |form_spec| {
+        try validateNamedRoleIdentities(form_spec, identities[0..bindings.len]);
+    } else |err| switch (err) {
+        error.UnsupportedFormRevision =>
+            try validateCatalogRoleIdentities(form, identities[0..bindings.len]),
+        else => return err,
+    }
 }
 
 const RequirementMatch = struct {
     role: ids.Role,
     requirement: *const spec.Requirement,
+};
+
+const CatalogRequirementMatch = struct {
+    role: ids.Role,
+    source: field.ReusableField,
+    presence: form_catalog.ProfilePresence,
 };
 
 fn requirementForTarget(
@@ -267,6 +420,27 @@ fn requirementForTarget(
                 };
             }
         }
+    }
+    return null;
+}
+
+fn catalogRequirementForTarget(
+    definition: *const form_catalog.FormDefinition,
+    target: *const ids.FieldId,
+) ?CatalogRequirementMatch {
+    for (definition.fields) |catalog_field| {
+        if (catalog_field.provenance != .profile) continue;
+        if (!std.mem.eql(u8, catalog_field.id, target.asSlice())) continue;
+        const role = catalog_projection.domainRole(catalog_field.role) orelse
+            return null;
+        const source = catalog_projection.reusableField(
+            catalog_field.profile_key orelse return null,
+        ) orelse return null;
+        return .{
+            .role = role,
+            .source = source,
+            .presence = catalog_field.profile_presence orelse return null,
+        };
     }
     return null;
 }
@@ -306,7 +480,14 @@ fn validateSnapshotShape(
     if (@as(usize, snapshot.len) > snapshot.entries.len) {
         return error.InvalidSnapshotEntryCount;
     }
-    const form_spec = try supportedProfileSpec(form);
+    const form_spec = supportedProfileSpec(form) catch |err| switch (err) {
+        error.UnsupportedFormRevision => return validateCatalogSnapshotShape(
+            form,
+            bindings,
+            snapshot,
+        ),
+        else => return err,
+    };
     const entries = snapshot.entries[0..snapshot.len];
 
     for (entries, 0..) |*entry, index| {
@@ -371,6 +552,64 @@ fn validateSnapshotShape(
     }
 }
 
+fn validateCatalogSnapshotShape(
+    form: *const ids.FormRevision,
+    bindings: *const runtime.RoleBindings,
+    snapshot: *const projection.Snapshot,
+) Error!void {
+    const definition = try catalogDefinition(form);
+    const entries = snapshot.entries[0..snapshot.len];
+
+    for (entries, 0..) |*entry, index| {
+        for (entries[index + 1 ..]) |*other| {
+            if (entry.target.eql(&other.target)) {
+                return error.DuplicateSnapshotTarget;
+            }
+        }
+        const matched = catalogRequirementForTarget(definition, &entry.target) orelse
+            return error.UnexpectedSnapshotTarget;
+        if (entry.role != matched.role) return error.SnapshotRoleMismatch;
+        if (bindings.get(entry.role) == null) {
+            return error.SnapshotBindingMismatch;
+        }
+        if (entry.value.field() != matched.source) {
+            return error.SnapshotFieldTypeMismatch;
+        }
+        try validateSnapshotEntryProvenance(bindings, entry);
+    }
+
+    for (definition.fields) |catalog_field| {
+        if (catalog_field.provenance != .profile) continue;
+        const role = catalog_projection.domainRole(catalog_field.role) orelse
+            return error.UnexpectedRoleBinding;
+        const role_policy = catalogProfileRole(definition, role) orelse
+            return error.MissingRequiredRoleBinding;
+        // Optional roles have no projected profile fields when the role is
+        // absent. This mirrors catalog_projection, which only emits fields
+        // for a bound role; required fields become mandatory once that role
+        // is actually selected.
+        if (bindings.get(role) == null) {
+            if (role_policy.cardinality == .zero_or_one) continue;
+            return error.MissingRequiredRoleBinding;
+        }
+        const presence = catalog_field.profile_presence orelse
+            return error.MissingRequiredSnapshotField;
+        const target = catalog_field.id;
+        var count: usize = 0;
+        for (entries) |*entry| {
+            if (entry.role == role and
+                std.mem.eql(u8, entry.target.asSlice(), target))
+            {
+                count += 1;
+            }
+        }
+        switch (presence) {
+            .required => if (count != 1) return error.MissingRequiredSnapshotField,
+            .optional => if (count > 1) return error.DuplicateSnapshotTarget,
+        }
+    }
+}
+
 /// Converts named runtime bindings to store writes. A business activity
 /// resolved implicitly by projection is materialized into the binding so the
 /// persisted snapshot identifies the exact component it used.
@@ -394,18 +633,20 @@ pub fn roleBindingWrites(
             if (binding.business_activity_id) |*id| id.asSlice() else null;
         for (snapshot.slice()) |*entry| {
             if (entry.role != binding.role) continue;
-            const projected_activity = entry.provenance.business_activity_id orelse
-                continue;
-            if (activity_id) |selected| {
-                if (!std.mem.eql(
-                    u8,
-                    selected,
-                    projected_activity.asSlice(),
-                )) {
-                    return error.SnapshotProvenanceMismatch;
+            if (entry.provenance.business_activity_id) |*projected_activity| {
+                if (activity_id) |selected| {
+                    if (!std.mem.eql(
+                        u8,
+                        selected,
+                        projected_activity.asSlice(),
+                    )) {
+                        return error.SnapshotProvenanceMismatch;
+                    }
+                } else {
+                    // Keep the slice backed by the caller-owned snapshot;
+                    // never point at a copied optional payload on the stack.
+                    activity_id = projected_activity.asSlice();
                 }
-            } else {
-                activity_id = projected_activity.asSlice();
             }
         }
 
@@ -481,6 +722,7 @@ pub fn createOrLoad(
 ) !OpenedDraft {
     try validateInput(input);
     const identity = try resolveIdentity(input);
+    const period = try inputFilingPeriod(input);
 
     if (try store.getDraft(allocator, identity.id.asSlice())) |existing| {
         return try resumeChecked(
@@ -508,8 +750,12 @@ pub fn createOrLoad(
         &snapshot_writes,
         &value_buffers,
     );
-    var period_buffer: [canonical_period_key_len]u8 = undefined;
-    const period_key = try canonicalPeriodKey(input.period, &period_buffer);
+    var period_buffer: [filing_period_key_capacity]u8 = undefined;
+    const period_key = try canonicalFilingPeriodKey(
+        &input.period.form,
+        period,
+        &period_buffer,
+    );
     var date_buffer: store_module.DateText = undefined;
     _ = input.snapshot.effective_on.writeIso(&date_buffer);
 
@@ -663,6 +909,7 @@ pub fn rehydrate(
     }
     try validateSnapshotShape(&form, &bindings, &snapshot);
     return .{
+        .form = form,
         .period = period,
         .role_bindings = bindings,
         .snapshot = snapshot,
@@ -676,11 +923,13 @@ const ResolvedIdentity = struct {
 };
 
 fn resolveIdentity(input: OpenInput) Error!ResolvedIdentity {
+    const period = inputFilingPeriod(input) catch return error.InvalidPeriod;
     return switch (input.mode) {
         .original => .{
-            .id = try originalDraftId(
+            .id = try originalDraftIdForFilingPeriod(
                 input.role_bindings.get(.filer).?.profile_id,
-                input.period,
+                &input.period.form,
+                period,
             ),
             .intent = "original",
             .amendment_of = null,
@@ -696,31 +945,24 @@ fn resolveIdentity(input: OpenInput) Error!ResolvedIdentity {
 fn parsePeriodKey(
     form: ids.FormRevision,
     text: []const u8,
-) !runtime.RecurringQuarter {
-    if (text.len != canonical_period_key_len or
-        text[4] != '-' or
-        text[5] != 'Q' or
-        text[6] < '1' or
-        text[6] > '4')
-    {
+) !filing_period.FilingPeriod {
+    const definition = try catalogDefinition(&form);
+    const parsed = filing_period.FilingPeriod.parseKey(definition.cadence, text) catch
         return error.InvalidPeriod;
-    }
-    const year = std.fmt.parseInt(u16, text[0..4], 10) catch
-        return error.InvalidPeriod;
-    const result: runtime.RecurringQuarter = .{
-        .form = form,
-        .tax_year = year,
-        .quarter = text[6] - '0',
-    };
-    var canonical: [canonical_period_key_len]u8 = undefined;
-    const checked = try canonicalPeriodKey(result, &canonical);
+    var canonical: [filing_period_key_capacity]u8 = undefined;
+    const checked = try canonicalFilingPeriodKey(&form, parsed, &canonical);
     if (!std.mem.eql(u8, text, checked)) return error.InvalidPeriod;
-    return result;
+    return parsed;
 }
 
 fn validateInput(input: OpenInput) Error!void {
-    var period_buffer: [canonical_period_key_len]u8 = undefined;
-    _ = try canonicalPeriodKey(input.period, &period_buffer);
+    const period = try inputFilingPeriod(input);
+    var period_buffer: [filing_period_key_capacity]u8 = undefined;
+    _ = try canonicalFilingPeriodKey(
+        &input.period.form,
+        period,
+        &period_buffer,
+    );
     try validateSnapshotShape(
         &input.period.form,
         input.role_bindings,
@@ -737,8 +979,13 @@ fn resumeChecked(
     var draft = existing;
     errdefer draft.deinit(allocator);
 
-    var period_buffer: [canonical_period_key_len]u8 = undefined;
-    const period_key = try canonicalPeriodKey(input.period, &period_buffer);
+    const period = try inputFilingPeriod(input);
+    var period_buffer: [filing_period_key_capacity]u8 = undefined;
+    const period_key = try canonicalFilingPeriodKey(
+        &input.period.form,
+        period,
+        &period_buffer,
+    );
     if (!std.mem.eql(u8, draft.form_code, input.period.form.code.asSlice()) or
         !std.mem.eql(
             u8,
@@ -771,6 +1018,14 @@ fn resumeChecked(
     if (!filer_matches) return error.ExistingDraftMismatch;
 
     return .{ .disposition = .resumed, .draft = draft };
+}
+
+fn inputFilingPeriod(input: OpenInput) Error!filing_period.FilingPeriod {
+    if (input.filing_period) |period| return period;
+    return .{ .quarterly = .{
+        .tax_year = input.period.tax_year,
+        .quarter = input.period.quarter,
+    } };
 }
 
 fn revisionSourceWrite(
@@ -1196,6 +1451,57 @@ fn compose1701Q(
     };
 }
 
+const CatalogComposition = struct {
+    form: ids.FormRevision,
+    legacy_period: runtime.RecurringQuarter,
+    filing_period: filing_period.FilingPeriod,
+    bindings: runtime.RoleBindings,
+    snapshot: projection.Snapshot,
+};
+
+fn composeCatalogForm(
+    allocator: std.mem.Allocator,
+    filer: *const model.ProfileRevision,
+    code: []const u8,
+    revision: []const u8,
+    period: filing_period.FilingPeriod,
+    effective_on: model.Date,
+) !CatalogComposition {
+    const form: ids.FormRevision = .{
+        .code = try ids.FormCode.parse(code),
+        .revision = try ids.RevisionLabel.parse(revision),
+    };
+    const source = [_]projection.Binding{
+        .{ .role = .filer, .revision = filer },
+    };
+    var result = try catalog_projection.project(
+        allocator,
+        form,
+        &source,
+        effective_on,
+    );
+    defer result.deinit(allocator);
+
+    var snapshot = projection.Snapshot.init(form, effective_on);
+    switch (result) {
+        .accepted => |accepted| {
+            for (accepted.slice()) |entry| try snapshot.append(entry);
+        },
+        .rejected => return error.UnexpectedCompositionRejection,
+    }
+    return .{
+        .form = form,
+        .legacy_period = .{
+            .form = form,
+            .tax_year = period.taxYear(),
+            .quarter = period.quarter() orelse 1,
+        },
+        .filing_period = period,
+        .bindings = try runtime.RoleBindings.from(&source),
+        .snapshot = snapshot,
+    };
+}
+
 fn snapshotByField(
     draft: *const store_module.OwnedDraft,
     field_id: []const u8,
@@ -1390,6 +1696,104 @@ test "1701Q named filer and spouse bindings roundtrip independently" {
     try std.testing.expect(typed.role_bindings.get(.filer) != null);
     try std.testing.expect(typed.role_bindings.get(.spouse) != null);
     try std.testing.expectEqual(@as(u8, 12), typed.snapshot.len);
+}
+
+test "catalog editor drafts retain monthly annual and on-demand period identity" {
+    const allocator = std.testing.allocator;
+    var store = try store_module.Store.openMemory(allocator);
+    defer store.close();
+
+    const effective = try model.EffectivePeriod.init(
+        try model.Date.parseIso("2026-01-01"),
+        null,
+    );
+    const activities = [_]model.BusinessActivity{.{
+        .id = try model.BusinessActivityId.parse("activity-catalog-period"),
+        .line_of_business = try field.LineOfBusiness.parse("Retail"),
+        .atc = try field.Atc.parse("PT010"),
+        .effective = effective,
+    }};
+    const facts = [_]model.RegistrationFact{
+        .{
+            .id = try model.RegistrationFactId.parse("fact-catalog-tax-type"),
+            .effective = effective,
+            .value = .{ .tax_type = try field.TaxType.parse("Percentage Tax") },
+        },
+        .{
+            .id = try model.RegistrationFactId.parse("fact-catalog-gwa"),
+            .effective = effective,
+            .value = .{ .government_withholding_agent = .yes },
+        },
+    };
+    var filer = try testRevision(.{
+        .profile_id = "profile-catalog-period",
+        .revision_id = "revision-catalog-period",
+        .name = "CATALOG PERIOD FILER",
+        .tin = "123-456-789-000",
+        .business_activities = &activities,
+        .registration_facts = &facts,
+    });
+    try persistTestRevision(&store, &filer);
+    const filer_id = filer.profile_id;
+    const on = try model.Date.parseIso("2026-01-31");
+
+    const periods = [_]CatalogComposition{
+        try composeCatalogForm(
+            allocator,
+            &filer,
+            "0619E",
+            "2018-01-ENCS",
+            .{ .monthly = .{ .tax_year = 2026, .month = 1 } },
+            on,
+        ),
+        try composeCatalogForm(
+            allocator,
+            &filer,
+            "1701",
+            "2018-01-ENCS",
+            .{ .annual = .{ .tax_year = 2026 } },
+            try model.Date.parseIso("2026-12-31"),
+        ),
+        try composeCatalogForm(
+            allocator,
+            &filer,
+            "0605",
+            "1999-07-ENCS",
+            .{ .on_demand = .{ .tax_year = 2026, .occurrence = 2 } },
+            on,
+        ),
+    };
+
+    const expected_keys = [_][]const u8{ "2026-M01", "2026-A", "2026-O002" };
+    for (periods, expected_keys) |composition, expected_key| {
+        var opened = try createOrLoad(allocator, &store, .{
+            .period = composition.legacy_period,
+            .filing_period = composition.filing_period,
+            .role_bindings = &composition.bindings,
+            .snapshot = &composition.snapshot,
+        });
+        defer opened.deinit(allocator);
+        try std.testing.expectEqual(OpenDisposition.created, opened.disposition);
+        try std.testing.expectEqualStrings(expected_key, opened.draft.period_key);
+        const typed = try rehydrate(&opened.draft);
+        try std.testing.expect(typed.form.eql(&composition.form));
+        try std.testing.expect(typed.period.eql(composition.filing_period));
+        try std.testing.expect(typed.role_bindings.get(.filer) != null);
+        try std.testing.expect(typed.snapshot.len > 0);
+
+        var resumed = try createOrLoad(allocator, &store, .{
+            .period = composition.legacy_period,
+            .filing_period = composition.filing_period,
+            .role_bindings = &composition.bindings,
+            .snapshot = &composition.snapshot,
+        });
+        defer resumed.deinit(allocator);
+        try std.testing.expectEqual(OpenDisposition.resumed, resumed.disposition);
+        try std.testing.expectEqualStrings(
+            filer_id.asSlice(),
+            bindingByRole(&resumed.draft, "filer").?.profile_id,
+        );
+    }
 }
 
 test "input role contract rejects extras aliases and missing filer but keeps optional spouse" {
