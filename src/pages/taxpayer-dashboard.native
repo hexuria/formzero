@@ -379,6 +379,67 @@
   </column>
 </template>
 
+<template name="taxpayer-form-filter-control">
+  <stack>
+    <select
+      height="44"
+      label="{profileFormsFilterAccessibleLabel}"
+      on-press="profile_forms_toggle_filter_picker">{profileFormsFilterSummaryLabel}</select>
+    <if test="{profileFormsFilterPickerOpen}">
+      <dropdown-menu
+        anchor="below"
+        anchor-alignment="stretch"
+        anchor-offset="4"
+        height="430"
+        on-dismiss="profile_forms_close_filter_picker">
+        <column grow="1" padding="8" gap="8">
+          <scroll grow="1" overscroll="none" label="Tax Form Library filters">
+            <column gap="8">
+              <column gap="4" role="group" label="Status">
+                <text><span weight="bold">Status</span></text>
+                <checkbox
+                  height="44"
+                  checked="{profileFormsFilterActiveSelected}"
+                  disabled="{profileFormsFilterActiveLocked}"
+                  text="Active"
+                  on-toggle="profile_forms_toggle_filter_active"/>
+                <checkbox
+                  height="44"
+                  checked="{profileFormsFilterInactiveSelected}"
+                  disabled="{profileFormsFilterInactiveLocked}"
+                  text="Inactive"
+                  on-toggle="profile_forms_toggle_filter_inactive"/>
+              </column>
+              <separator/>
+              <column gap="4" role="group" label="Form type">
+                <text><span weight="bold">Form type</span></text>
+                <checkbox
+                  height="44"
+                  checked="{profileFormsFilterEditorSelected}"
+                  disabled="{profileFormsFilterEditorLocked}"
+                  text="Editor available"
+                  on-toggle="profile_forms_toggle_filter_editor"/>
+                <text wrap="true" foreground="text_muted">Can open a form editor; calendar deadlines appear when applicable.</text>
+                <checkbox
+                  height="44"
+                  checked="{profileFormsFilterCalendarOnlySelected}"
+                  disabled="{profileFormsFilterCalendarOnlyLocked}"
+                  text="Calendar only"
+                  on-toggle="profile_forms_toggle_filter_calendar_only"/>
+                <text wrap="true" foreground="text_muted">Deadlines and exports only; no form editor.</text>
+              </column>
+            </column>
+          </scroll>
+          <separator/>
+          <row gap="8" cross="center">
+            <button grow="1" height="44" variant="ghost" on-press="profile_forms_reset_filters">Reset filters</button>
+          </row>
+        </column>
+      </dropdown-menu>
+    </if>
+  </stack>
+</template>
+
 <template name="taxpayer-form-library-section">
   <column gap="16">
     <if test="{profileFormsHeaderStacked}">
@@ -423,39 +484,29 @@
         </else>
       </row>
     </else>
-    <input
-      height="44"
-      text="{profileFormsSearchValue}"
-      placeholder="Search by form code"
-      label="Search Tax Form Library"
-      on-input="profile_forms_search_input"/>
     <if test="{profileFormsHeaderStacked}">
       <column gap="8">
-        <row gap="8">
-          <button height="36" variant="{profileFormsFilterActiveVariant}" selected="{profileFormsFilterActiveSelected}" on-press="profile_forms_filter_active">Active</button>
-          <button height="36" variant="{profileFormsFilterInactiveVariant}" selected="{profileFormsFilterInactiveSelected}" on-press="profile_forms_filter_inactive">Inactive</button>
-          <button height="36" variant="{profileFormsFilterAllVariant}" selected="{profileFormsFilterAllSelected}" on-press="profile_forms_filter_all">All</button>
-        </row>
-        <stack>
-          <select height="40" label="Capability filter" on-press="profile_forms_toggle_capability_picker">{profileFormsCapabilityFilterLabel}</select>
-          <if test="{profileFormsCapabilityPickerOpen}">
-            <dropdown-menu anchor="below" anchor-alignment="stretch" on-dismiss="profile_forms_close_capability_picker">
-              <menu-item height="40" selected="{profileFormsCapabilityAllSelected}" on-press="profile_forms_filter_capability_all">All capabilities</menu-item>
-              <menu-item height="40" selected="{profileFormsCapabilityEditorSelected}" on-press="profile_forms_filter_editor">Editor available</menu-item>
-              <menu-item height="40" selected="{profileFormsCapabilityCalendarSelected}" on-press="profile_forms_filter_calendar_only">Calendar only</menu-item>
-            </dropdown-menu>
-          </if>
-        </stack>
+        <input
+          height="44"
+          text="{profileFormsSearchValue}"
+          placeholder="Search by form code"
+          label="Search Tax Form Library"
+          on-input="profile_forms_search_input"/>
+        <use template="taxpayer-form-filter-control"/>
       </column>
     </if>
     <else>
-      <row gap="8">
-        <button height="36" variant="{profileFormsFilterActiveVariant}" selected="{profileFormsFilterActiveSelected}" on-press="profile_forms_filter_active">Active</button>
-        <button height="36" variant="{profileFormsFilterInactiveVariant}" selected="{profileFormsFilterInactiveSelected}" on-press="profile_forms_filter_inactive">Inactive</button>
-        <button height="36" variant="{profileFormsFilterAllVariant}" selected="{profileFormsFilterAllSelected}" on-press="profile_forms_filter_all">All</button>
-        <button height="36" variant="{profileFormsCapabilityAllVariant}" selected="{profileFormsCapabilityAllSelected}" on-press="profile_forms_filter_capability_all">All capabilities</button>
-        <button height="36" variant="{profileFormsCapabilityEditorVariant}" selected="{profileFormsCapabilityEditorSelected}" on-press="profile_forms_filter_editor">Editor available</button>
-        <button height="36" variant="{profileFormsCapabilityCalendarVariant}" selected="{profileFormsCapabilityCalendarSelected}" on-press="profile_forms_filter_calendar_only">Calendar only</button>
+      <row gap="8" cross="center">
+        <input
+          grow="1"
+          height="44"
+          text="{profileFormsSearchValue}"
+          placeholder="Search by form code"
+          label="Search Tax Form Library"
+          on-input="profile_forms_search_input"/>
+        <column width="240">
+          <use template="taxpayer-form-filter-control"/>
+        </column>
       </row>
     </else>
     <if test="{managingProfileForms}">

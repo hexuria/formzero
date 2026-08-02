@@ -751,7 +751,7 @@ pub const State = struct {
         self.staged_forms.copySelectionFrom(&self.saved_forms);
         self.staged_forms.resetInteraction();
         self.managing_forms = true;
-        self.form_activity_filter = .all;
+        self.resetFormFilters();
         return true;
     }
 
@@ -763,26 +763,80 @@ pub const State = struct {
         return self.staged_forms.query();
     }
 
-    pub fn setFormActivityFilter(
-        self: *State,
-        filter: FormActivityFilter,
-    ) void {
-        self.form_activity_filter = filter;
+    pub fn formFilterActiveSelected(self: *const State) bool {
+        return self.form_activity_filter != .inactive;
     }
 
-    pub fn setFormCapabilityFilter(
-        self: *State,
-        filter: FormCapabilityFilter,
-    ) void {
-        self.form_capability_filter = filter;
+    pub fn formFilterInactiveSelected(self: *const State) bool {
+        return self.form_activity_filter != .active;
+    }
+
+    pub fn formFilterEditorSelected(self: *const State) bool {
+        return self.form_capability_filter != .calendar_only;
+    }
+
+    pub fn formFilterCalendarOnlySelected(self: *const State) bool {
+        return self.form_capability_filter != .editor;
+    }
+
+    pub fn formFilterActiveLocked(self: *const State) bool {
+        return self.form_activity_filter == .active;
+    }
+
+    pub fn formFilterInactiveLocked(self: *const State) bool {
+        return self.form_activity_filter == .inactive;
+    }
+
+    pub fn formFilterEditorLocked(self: *const State) bool {
+        return self.form_capability_filter == .editor;
+    }
+
+    pub fn formFilterCalendarOnlyLocked(self: *const State) bool {
+        return self.form_capability_filter == .calendar_only;
+    }
+
+    pub fn toggleFormFilterActive(self: *State) void {
+        self.form_activity_filter = switch (self.form_activity_filter) {
+            .active => .active,
+            .inactive => .all,
+            .all => .inactive,
+        };
+    }
+
+    pub fn toggleFormFilterInactive(self: *State) void {
+        self.form_activity_filter = switch (self.form_activity_filter) {
+            .active => .all,
+            .inactive => .inactive,
+            .all => .active,
+        };
+    }
+
+    pub fn toggleFormFilterEditor(self: *State) void {
+        self.form_capability_filter = switch (self.form_capability_filter) {
+            .all => .calendar_only,
+            .editor => .editor,
+            .calendar_only => .all,
+        };
+    }
+
+    pub fn toggleFormFilterCalendarOnly(self: *State) void {
+        self.form_capability_filter = switch (self.form_capability_filter) {
+            .all => .editor,
+            .editor => .all,
+            .calendar_only => .calendar_only,
+        };
+    }
+
+    pub fn resetFormFilters(self: *State) void {
+        self.form_activity_filter = if (self.managing_forms) .all else .active;
+        self.form_capability_filter = .all;
     }
 
     pub fn cancelManageForms(self: *State) void {
         self.staged_forms.copySelectionFrom(&self.saved_forms);
         self.staged_forms.resetInteraction();
         self.managing_forms = false;
-        self.form_activity_filter = .active;
-        self.form_capability_filter = .all;
+        self.resetFormFilters();
     }
 
     pub fn toggleStagedForm(self: *State, index: usize) void {
@@ -847,8 +901,7 @@ pub const State = struct {
         self.form_set_state = if (count == 0) .active_empty else .active_nonempty;
         self.forms_set_configured = true;
         self.managing_forms = false;
-        self.form_activity_filter = .active;
-        self.form_capability_filter = .all;
+        self.resetFormFilters();
         try self.updateFormSetSummary();
         try self.refreshCalendarFormSet(year);
     }
@@ -875,8 +928,7 @@ pub const State = struct {
         self.form_set_state = .legacy_catalog_default;
         self.forms_set_configured = false;
         self.managing_forms = false;
-        self.form_activity_filter = .active;
-        self.form_capability_filter = .all;
+        self.resetFormFilters();
         try self.updateFormSetSummary();
         try self.refreshCalendarFormSet(year);
     }
@@ -1430,8 +1482,7 @@ pub const State = struct {
         self.staged_forms.copySelectionFrom(&self.saved_forms);
         self.staged_forms.resetInteraction();
         self.managing_forms = false;
-        self.form_activity_filter = .active;
-        self.form_capability_filter = .all;
+        self.resetFormFilters();
         try self.updateFormSetSummary();
     }
 
@@ -1503,8 +1554,7 @@ pub const State = struct {
         self.saved_forms = .{};
         self.staged_forms = .{};
         self.managing_forms = false;
-        self.form_activity_filter = .active;
-        self.form_capability_filter = .all;
+        self.resetFormFilters();
         self.input_was_truncated = false;
     }
 
@@ -1769,6 +1819,48 @@ fn trimmed(value: []const u8) []const u8 {
     return std.mem.trim(u8, value, " \t\r\n");
 }
 
+test "form filter checkbox groups stay nonempty and reset by context" {
+    var state = State{};
+
+    try std.testing.expect(state.formFilterActiveSelected());
+    try std.testing.expect(!state.formFilterInactiveSelected());
+    try std.testing.expect(state.formFilterEditorSelected());
+    try std.testing.expect(state.formFilterCalendarOnlySelected());
+    try std.testing.expect(state.formFilterActiveLocked());
+
+    state.toggleFormFilterActive();
+    try std.testing.expectEqual(FormActivityFilter.active, state.form_activity_filter);
+
+    state.toggleFormFilterInactive();
+    try std.testing.expectEqual(FormActivityFilter.all, state.form_activity_filter);
+    try std.testing.expect(state.formFilterActiveSelected());
+    try std.testing.expect(state.formFilterInactiveSelected());
+
+    state.toggleFormFilterActive();
+    try std.testing.expectEqual(FormActivityFilter.inactive, state.form_activity_filter);
+    try std.testing.expect(state.formFilterInactiveLocked());
+
+    state.toggleFormFilterEditor();
+    try std.testing.expectEqual(
+        FormCapabilityFilter.calendar_only,
+        state.form_capability_filter,
+    );
+    try std.testing.expect(state.formFilterCalendarOnlyLocked());
+
+    state.toggleFormFilterEditor();
+    try std.testing.expectEqual(FormCapabilityFilter.all, state.form_capability_filter);
+
+    state.managing_forms = true;
+    state.resetFormFilters();
+    try std.testing.expectEqual(FormActivityFilter.all, state.form_activity_filter);
+    try std.testing.expectEqual(FormCapabilityFilter.all, state.form_capability_filter);
+
+    state.managing_forms = false;
+    state.resetFormFilters();
+    try std.testing.expectEqual(FormActivityFilter.active, state.form_activity_filter);
+    try std.testing.expectEqual(FormCapabilityFilter.all, state.form_capability_filter);
+}
+
 test "forms set parsing canonicalizes codes and preserves explicit revisions" {
     var output: [max_registered_forms]persistence.FormRegistrationWrite =
         undefined;
@@ -1989,6 +2081,8 @@ test "staged Forms Set is isolated until save and blocks context switches" {
     }
     const index = form_index.?;
     _ = state.beginManageForms();
+    try std.testing.expectEqual(FormActivityFilter.all, state.form_activity_filter);
+    try std.testing.expectEqual(FormCapabilityFilter.all, state.form_capability_filter);
     state.toggleStagedForm(index);
     try std.testing.expect(state.formsDirty());
     try std.testing.expect(!state.formAvailable(2026, "2551Q"));
@@ -1997,6 +2091,8 @@ test "staged Forms Set is isolated until save and blocks context switches" {
     state.cancelManageForms();
     try std.testing.expect(!state.formsDirty());
     try std.testing.expect(!state.displayedFormSelected(index));
+    try std.testing.expectEqual(FormActivityFilter.active, state.form_activity_filter);
+    try std.testing.expectEqual(FormCapabilityFilter.all, state.form_capability_filter);
 
     _ = state.beginManageForms();
     state.toggleStagedForm(index);
@@ -2004,6 +2100,8 @@ test "staged Forms Set is isolated until save and blocks context switches" {
     try std.testing.expect(state.formAvailable(2026, "2551Q"));
     try std.testing.expect(!state.formAvailable(2026, "1701Q"));
     try std.testing.expectEqual(@as(usize, 1), state.activeFormCount());
+    try std.testing.expectEqual(FormActivityFilter.active, state.form_activity_filter);
+    try std.testing.expectEqual(FormCapabilityFilter.all, state.form_capability_filter);
 }
 
 test "new profile cannot manage or save the prior profile Forms Set" {

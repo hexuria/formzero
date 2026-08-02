@@ -23,10 +23,12 @@ the same intrinsic-width metadata row (`065 · Active · Editor available ·
 Ready`). The icon-only launch action remains in a separate right-aligned row
 below the title, so it cannot displace or misread the status badges.
 
-The Forms Library filter controls now make the selected state visible: the
-active activity filter and capability filter use the filled primary variant,
-while unselected choices remain outlined. The compact capability menu keeps
-the current choice in its select label and marks the selected menu item.
+The Forms Library now uses one grouped checkbox filter at every viewport width.
+Its closed label summarizes the current selection (for example,
+`Active · Any type`), and its open menu exposes two independently selectable
+groups: Status and Form type. Checked boxes provide the active state directly,
+and the final checked item in either group is disabled so the filter can never
+produce an accidental zero-choice state.
 
 ## Evidence and limitation
 
@@ -55,27 +57,32 @@ not change the global calendar schedule, and it does not move between forms.
 When a Forms Set edit is dirty, either control is rejected with an unsaved
 changes error until the user saves or cancels the staged edit.
 
-### Activity filters
+### Grouped filters
 
-- **Active** shows forms currently selected for the profile and year.
-- **Inactive** shows forms not selected for the profile and year.
-- **All** shows the complete 51-form catalog.
+The Status group contains **Active** and **Inactive** checkboxes:
+
+- Active only shows forms currently selected for the profile and year.
+- Inactive only shows forms not selected for the profile and year.
+- Checking both shows all 51 catalog forms.
 
 Outside Manage Forms, these filters use the persisted Forms Set. During Manage
 Forms, they use the staged checkbox selection so a user can inspect the pending
 result before saving.
 
-### Capability filters
+The Form type group contains **Editor available** and **Calendar only**
+checkboxes:
 
-- **All capabilities** includes both editor-backed and calendar-only catalog
-  entries.
-- **Editor available** shows the ten catalog entries with a Native editor
-  layout.
-- **Calendar only** shows the other 41 entries. They can contribute deadlines
+- Editor available shows the ten catalog entries with a Native editor layout.
+- Calendar only shows the other 41 entries. They can contribute deadlines
   and calendar exports, but they never expose an Open Form editor action.
+- Checking both includes both catalog capabilities.
 
-On constrained layouts the three capability choices are inside the compact
-Capability filter menu; on wider layouts they are inline buttons.
+Selections apply immediately while the menu remains open. **Reset filters**
+restores Active plus both form types while viewing; in Manage Forms it restores
+both statuses plus both form types. The menu closes through the filter trigger,
+an outside click, or Escape; no confirmation action is required. Search remains
+a separate field. On phones the search and filter stack; on wider layouts they
+share one row.
 
 ### Search
 

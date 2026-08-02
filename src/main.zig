@@ -505,10 +505,10 @@ pub const TaxFormLibraryRow = struct {
         return switch (self.launch_assessment.status) {
             .ready_new => "Ready",
             .ready_resume => "Draft available",
-            .needs_profile => "Profile data required",
-            .needs_activity_selection => "Activity selection required",
-            .profile_not_eligible => "Profile not eligible",
-            .unavailable => "Unavailable",
+            .needs_profile => "Needs profile",
+            .needs_activity_selection => "Choose activity",
+            .profile_not_eligible => "Not eligible",
+            .unavailable => "Launch blocked",
         };
     }
 
@@ -564,7 +564,7 @@ pub const Model = struct {
     profileCompletionFormIndex: ?usize = null,
     profileFormLaunchAssessments: [form_catalog.registry_count]form_ui.LaunchAssessment = undefined,
     profileFormLaunchAssessmentsReady: bool = false,
-    profileFormsCapabilityPickerVisible: bool = false,
+    profileFormsFilterPickerVisible: bool = false,
     profileCalendarSelectedDate: ?calendar_domain.Date = null,
     profileNoticeTimerKey: u64 = 0,
     calendarToday: calendar_domain.Date = .{
@@ -602,7 +602,7 @@ pub const Model = struct {
         "profileCompletionFormIndex",
         "profileFormLaunchAssessments",
         "profileFormLaunchAssessmentsReady",
-        "profileFormsCapabilityPickerVisible",
+        "profileFormsFilterPickerVisible",
         "profileCalendarDeadlines",
         "profileCalendarHasDeadlines",
         "profileCalendarDeadlineCount",
@@ -2311,82 +2311,80 @@ pub const Model = struct {
             self.viewportClass == .rail_narrow;
     }
 
-    pub fn profileFormsCapabilityPickerOpen(self: *const Model) bool {
-        return self.profileFormsCapabilityPickerVisible;
+    pub fn profileFormsFilterPickerOpen(self: *const Model) bool {
+        return self.profileFormsFilterPickerVisible;
     }
 
-    pub fn profileFormsCapabilityFilterLabel(self: *const Model) []const u8 {
-        return switch (self.taxProfiles.form_capability_filter) {
-            .all => "All capabilities",
-            .editor => "Editor available",
-            .calendar_only => "Calendar only",
+    pub fn profileFormsFilterSummaryLabel(self: *const Model) []const u8 {
+        return switch (self.taxProfiles.form_activity_filter) {
+            .active => switch (self.taxProfiles.form_capability_filter) {
+                .all => "Active · Any type",
+                .editor => "Active · Editor",
+                .calendar_only => "Active · Calendar only",
+            },
+            .inactive => switch (self.taxProfiles.form_capability_filter) {
+                .all => "Inactive · Any type",
+                .editor => "Inactive · Editor",
+                .calendar_only => "Inactive · Calendar only",
+            },
+            .all => switch (self.taxProfiles.form_capability_filter) {
+                .all => "All forms",
+                .editor => "All statuses · Editor",
+                .calendar_only => "All statuses · Calendar only",
+            },
+        };
+    }
+
+    pub fn profileFormsFilterAccessibleLabel(self: *const Model) []const u8 {
+        return switch (self.taxProfiles.form_activity_filter) {
+            .active => switch (self.taxProfiles.form_capability_filter) {
+                .all => "Filter forms: active, any form type",
+                .editor => "Filter forms: active, editor available",
+                .calendar_only => "Filter forms: active, calendar only",
+            },
+            .inactive => switch (self.taxProfiles.form_capability_filter) {
+                .all => "Filter forms: inactive, any form type",
+                .editor => "Filter forms: inactive, editor available",
+                .calendar_only => "Filter forms: inactive, calendar only",
+            },
+            .all => switch (self.taxProfiles.form_capability_filter) {
+                .all => "Filter forms: all forms",
+                .editor => "Filter forms: all statuses, editor available",
+                .calendar_only => "Filter forms: all statuses, calendar only",
+            },
         };
     }
 
     pub fn profileFormsFilterActiveSelected(self: *const Model) bool {
-        return self.taxProfiles.form_activity_filter == .active;
-    }
-
-    pub fn profileFormsFilterActiveVariant(self: *const Model) []const u8 {
-        return if (self.profileFormsFilterActiveSelected())
-            "primary"
-        else
-            "outline";
+        return self.taxProfiles.formFilterActiveSelected();
     }
 
     pub fn profileFormsFilterInactiveSelected(self: *const Model) bool {
-        return self.taxProfiles.form_activity_filter == .inactive;
+        return self.taxProfiles.formFilterInactiveSelected();
     }
 
-    pub fn profileFormsFilterInactiveVariant(self: *const Model) []const u8 {
-        return if (self.profileFormsFilterInactiveSelected())
-            "primary"
-        else
-            "outline";
+    pub fn profileFormsFilterEditorSelected(self: *const Model) bool {
+        return self.taxProfiles.formFilterEditorSelected();
     }
 
-    pub fn profileFormsFilterAllSelected(self: *const Model) bool {
-        return self.taxProfiles.form_activity_filter == .all;
+    pub fn profileFormsFilterCalendarOnlySelected(self: *const Model) bool {
+        return self.taxProfiles.formFilterCalendarOnlySelected();
     }
 
-    pub fn profileFormsFilterAllVariant(self: *const Model) []const u8 {
-        return if (self.profileFormsFilterAllSelected())
-            "primary"
-        else
-            "outline";
+    pub fn profileFormsFilterActiveLocked(self: *const Model) bool {
+        return self.taxProfiles.formFilterActiveLocked();
     }
 
-    pub fn profileFormsCapabilityAllSelected(self: *const Model) bool {
-        return self.taxProfiles.form_capability_filter == .all;
+    pub fn profileFormsFilterInactiveLocked(self: *const Model) bool {
+        return self.taxProfiles.formFilterInactiveLocked();
     }
 
-    pub fn profileFormsCapabilityAllVariant(self: *const Model) []const u8 {
-        return if (self.profileFormsCapabilityAllSelected())
-            "primary"
-        else
-            "outline";
+    pub fn profileFormsFilterEditorLocked(self: *const Model) bool {
+        return self.taxProfiles.formFilterEditorLocked();
     }
 
-    pub fn profileFormsCapabilityEditorSelected(self: *const Model) bool {
-        return self.taxProfiles.form_capability_filter == .editor;
-    }
-
-    pub fn profileFormsCapabilityEditorVariant(self: *const Model) []const u8 {
-        return if (self.profileFormsCapabilityEditorSelected())
-            "primary"
-        else
-            "outline";
-    }
-
-    pub fn profileFormsCapabilityCalendarSelected(self: *const Model) bool {
-        return self.taxProfiles.form_capability_filter == .calendar_only;
-    }
-
-    pub fn profileFormsCapabilityCalendarVariant(self: *const Model) []const u8 {
-        return if (self.profileFormsCapabilityCalendarSelected())
-            "primary"
-        else
-            "outline";
+    pub fn profileFormsFilterCalendarOnlyLocked(self: *const Model) bool {
+        return self.taxProfiles.formFilterCalendarOnlyLocked();
     }
 
     pub fn profileFormRows(
@@ -3881,14 +3879,13 @@ pub const Msg = union(enum) {
     profile_forms_save,
     profile_forms_cancel,
     profile_forms_reset_legacy,
-    profile_forms_filter_active,
-    profile_forms_filter_inactive,
-    profile_forms_filter_all,
-    profile_forms_filter_editor,
-    profile_forms_filter_calendar_only,
-    profile_forms_filter_capability_all,
-    profile_forms_toggle_capability_picker,
-    profile_forms_close_capability_picker,
+    profile_forms_toggle_filter_active,
+    profile_forms_toggle_filter_inactive,
+    profile_forms_toggle_filter_editor,
+    profile_forms_toggle_filter_calendar_only,
+    profile_forms_reset_filters,
+    profile_forms_toggle_filter_picker,
+    profile_forms_close_filter_picker,
     open_library_form: usize,
     save_profile,
     cancel_profile_edit,
@@ -4056,7 +4053,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.profileSetupSection = .tax_profile;
             model.profileCompletionTarget = null;
             model.profileCompletionFormIndex = null;
-            model.profileFormsCapabilityPickerVisible = false;
+            model.profileFormsFilterPickerVisible = false;
             model.taxProfiles.startNew();
             openProfileEditor(model);
         },
@@ -4383,7 +4380,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             }
             model.taxProfiles.select(slot);
             model.profileCalendarSelectedDate = null;
-            model.profileFormsCapabilityPickerVisible = false;
+            model.profileFormsFilterPickerVisible = false;
             model.profileCompletionTarget = null;
             model.profileCompletionFormIndex = null;
             refreshSelectedProfileFormSet(model);
@@ -4391,7 +4388,10 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.dashboardSection = .calendar;
             navigate(model, .taxpayer_dashboard);
         },
-        .show_dashboard_calendar => model.dashboardSection = .calendar,
+        .show_dashboard_calendar => {
+            model.profileFormsFilterPickerVisible = false;
+            model.dashboardSection = .calendar;
+        },
         .show_dashboard_forms => model.dashboardSection = .forms,
         .show_profile_tax => model.profileSetupSection = .tax_profile,
         .show_profile_certificate => model.profileSetupSection = .certificate,
@@ -4451,7 +4451,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .manage_profile_forms => {
             if (!model.taxProfiles.beginManageForms()) return;
-            model.profileFormsCapabilityPickerVisible = false;
+            model.profileFormsFilterPickerVisible = false;
             model.dashboardSection = .forms;
             model.profileActionsOpen = false;
             navigate(model, .taxpayer_dashboard);
@@ -4466,49 +4466,43 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .profile_forms_clear_all => model.taxProfiles.clearAllStagedForms(),
         .profile_forms_save => {
             if (model.taxProfiles.saveManagedForms()) {
-                model.profileFormsCapabilityPickerVisible = false;
+                model.profileFormsFilterPickerVisible = false;
                 refreshSelectedProfileFormSet(model);
                 refreshSelectedProfileCalendar(model);
             }
         },
         .profile_forms_cancel => {
             model.taxProfiles.cancelManageForms();
-            model.profileFormsCapabilityPickerVisible = false;
+            model.profileFormsFilterPickerVisible = false;
         },
         .profile_forms_reset_legacy => {
             if (model.taxProfiles.resetManagedFormsToLegacyDefault()) {
-                model.profileFormsCapabilityPickerVisible = false;
+                model.profileFormsFilterPickerVisible = false;
                 refreshSelectedProfileFormSet(model);
                 refreshSelectedProfileCalendar(model);
             }
         },
-        .profile_forms_filter_active => {
-            model.taxProfiles.setFormActivityFilter(.active);
+        .profile_forms_toggle_filter_active => {
+            model.taxProfiles.toggleFormFilterActive();
         },
-        .profile_forms_filter_inactive => {
-            model.taxProfiles.setFormActivityFilter(.inactive);
+        .profile_forms_toggle_filter_inactive => {
+            model.taxProfiles.toggleFormFilterInactive();
         },
-        .profile_forms_filter_all => {
-            model.taxProfiles.setFormActivityFilter(.all);
+        .profile_forms_toggle_filter_editor => {
+            model.taxProfiles.toggleFormFilterEditor();
         },
-        .profile_forms_filter_editor => {
-            model.taxProfiles.setFormCapabilityFilter(.editor);
-            model.profileFormsCapabilityPickerVisible = false;
+        .profile_forms_toggle_filter_calendar_only => {
+            model.taxProfiles.toggleFormFilterCalendarOnly();
         },
-        .profile_forms_filter_calendar_only => {
-            model.taxProfiles.setFormCapabilityFilter(.calendar_only);
-            model.profileFormsCapabilityPickerVisible = false;
+        .profile_forms_reset_filters => {
+            model.taxProfiles.resetFormFilters();
         },
-        .profile_forms_filter_capability_all => {
-            model.taxProfiles.setFormCapabilityFilter(.all);
-            model.profileFormsCapabilityPickerVisible = false;
+        .profile_forms_toggle_filter_picker => {
+            model.profileFormsFilterPickerVisible =
+                !model.profileFormsFilterPickerVisible;
         },
-        .profile_forms_toggle_capability_picker => {
-            model.profileFormsCapabilityPickerVisible =
-                !model.profileFormsCapabilityPickerVisible;
-        },
-        .profile_forms_close_capability_picker => {
-            model.profileFormsCapabilityPickerVisible = false;
+        .profile_forms_close_filter_picker => {
+            model.profileFormsFilterPickerVisible = false;
         },
         .open_library_form => |index| openLibraryForm(model, index),
         .profile_tin_input => |edit| {
@@ -4633,6 +4627,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .show_calendar_overrides => model.taxCalendarSection = .overrides,
         .calendar_previous_year => {
             if (model.taxProfiles.rejectIfFormsDirty()) return;
+            model.profileFormsFilterPickerVisible = false;
             model.profileCalendarSelectedDate = null;
             model.calendar.previousYear();
             _ = model.taxProfiles.loadFormsForYear(model.calendar.selected_year);
@@ -4640,6 +4635,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .calendar_next_year => {
             if (model.taxProfiles.rejectIfFormsDirty()) return;
+            model.profileFormsFilterPickerVisible = false;
             model.profileCalendarSelectedDate = null;
             model.calendar.nextYear();
             _ = model.taxProfiles.loadFormsForYear(model.calendar.selected_year);
@@ -4651,6 +4647,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             const previous_year = model.calendar.selected_year;
             model.calendar.previousMonth();
             if (model.calendar.selected_year != previous_year) {
+                model.profileFormsFilterPickerVisible = false;
                 _ = model.taxProfiles.loadFormsForYear(model.calendar.selected_year);
                 refreshSelectedProfileFormSet(model);
             } else {
@@ -4664,6 +4661,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             const previous_year = model.calendar.selected_year;
             model.calendar.nextMonth();
             if (model.calendar.selected_year != previous_year) {
+                model.profileFormsFilterPickerVisible = false;
                 _ = model.taxProfiles.loadFormsForYear(model.calendar.selected_year);
                 refreshSelectedProfileFormSet(model);
             } else {
@@ -4854,8 +4852,10 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.sidebarProfileSearchBuffer.apply(edit);
         },
         .viewport_class_changed => |viewport_class| {
+            const class_changed = model.viewportClass != viewport_class;
             model.viewportClass = viewport_class;
             model.viewportWidth = nominalWidthForClass(viewport_class);
+            if (class_changed) model.profileFormsFilterPickerVisible = false;
             if (!model.isConstrainedViewport()) model.profileActionsOpen = false;
             if (!model.isConstrainedViewport()) {
                 model.profileSubjectPickerVisible = false;
@@ -4868,7 +4868,9 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             if (!std.math.isFinite(width) or width <= 0) return;
             model.viewportWidth = width;
             const viewport_class = viewportClassForWidth(width);
+            const class_changed = model.viewportClass != viewport_class;
             model.viewportClass = viewport_class;
+            if (class_changed) model.profileFormsFilterPickerVisible = false;
             if (!model.isConstrainedViewport()) model.profileActionsOpen = false;
             if (!model.isConstrainedViewport()) {
                 model.profileSubjectPickerVisible = false;
@@ -5586,10 +5588,14 @@ fn reopenIncomeTaxQuarter(model: *Model, quarter: u8) void {
 }
 
 fn navigate(model: *Model, page: Page) void {
+    if (model.page == .taxpayer_dashboard and page != .taxpayer_dashboard) {
+        model.taxProfiles.resetFormFilters();
+    }
     model.page = page;
     model.sidebarOverlayOpen = false;
     model.profileActionsOpen = false;
     model.profileSubjectPickerVisible = false;
+    model.profileFormsFilterPickerVisible = false;
 }
 
 fn bumpSidebarActionEpoch(model: *Model) void {
@@ -6620,53 +6626,174 @@ test "tax form library uses icon actions through narrow tablet widths" {
     try std.testing.expect(!model.profileFormsIconAction());
 }
 
-test "tax form library filters expose a visible selected variant" {
+test "tax form library grouped filters summarize and stay open while toggling" {
     var model = Model{};
 
     try std.testing.expectEqualStrings(
-        "primary",
-        model.profileFormsFilterActiveVariant(),
+        "Active · Any type",
+        model.profileFormsFilterSummaryLabel(),
     );
     try std.testing.expectEqualStrings(
-        "outline",
-        model.profileFormsFilterInactiveVariant(),
+        "Filter forms: active, any form type",
+        model.profileFormsFilterAccessibleLabel(),
     );
+    try std.testing.expect(model.profileFormsFilterActiveSelected());
+    try std.testing.expect(!model.profileFormsFilterInactiveSelected());
+    try std.testing.expect(model.profileFormsFilterEditorSelected());
+    try std.testing.expect(model.profileFormsFilterCalendarOnlySelected());
+
+    update(&model, .profile_forms_toggle_filter_picker);
+    try std.testing.expect(model.profileFormsFilterPickerOpen());
+
+    update(&model, .profile_forms_toggle_filter_inactive);
+    try std.testing.expect(model.profileFormsFilterPickerOpen());
     try std.testing.expectEqualStrings(
-        "outline",
-        model.profileFormsFilterAllVariant(),
-    );
-    try std.testing.expectEqualStrings(
-        "primary",
-        model.profileFormsCapabilityAllVariant(),
-    );
-    try std.testing.expectEqualStrings(
-        "outline",
-        model.profileFormsCapabilityEditorVariant(),
-    );
-    try std.testing.expectEqualStrings(
-        "outline",
-        model.profileFormsCapabilityCalendarVariant(),
+        "All forms",
+        model.profileFormsFilterSummaryLabel(),
     );
 
-    update(&model, .profile_forms_filter_inactive);
+    update(&model, .profile_forms_toggle_filter_calendar_only);
     try std.testing.expectEqualStrings(
-        "outline",
-        model.profileFormsFilterActiveVariant(),
+        "All statuses · Editor",
+        model.profileFormsFilterSummaryLabel(),
     );
     try std.testing.expectEqualStrings(
-        "primary",
-        model.profileFormsFilterInactiveVariant(),
+        "Filter forms: all statuses, editor available",
+        model.profileFormsFilterAccessibleLabel(),
     );
 
-    update(&model, .profile_forms_filter_editor);
+    update(&model, .profile_forms_close_filter_picker);
+    try std.testing.expect(!model.profileFormsFilterPickerOpen());
+
+    update(&model, .profile_forms_reset_filters);
     try std.testing.expectEqualStrings(
-        "primary",
-        model.profileFormsCapabilityEditorVariant(),
+        "Active · Any type",
+        model.profileFormsFilterSummaryLabel(),
     );
+}
+
+test "tax form library capability checkboxes partition the catalog" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var model = Model{};
+    model.taxProfiles.form_activity_filter = .all;
+
+    update(&model, .profile_forms_toggle_filter_calendar_only);
+    const editor_rows = model.profileFormRows(arena);
+    try std.testing.expectEqual(form_catalog.editor_count, editor_rows.len);
+
+    update(&model, .profile_forms_reset_filters);
+    model.taxProfiles.form_activity_filter = .all;
+    update(&model, .profile_forms_toggle_filter_editor);
+    const calendar_rows = model.profileFormRows(arena);
+    try std.testing.expectEqual(
+        form_catalog.calendar_only_count,
+        calendar_rows.len,
+    );
+}
+
+test "tax form library composes status type and search over staged forms" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addTestProfile(
+        &store,
+        "11111111111111111111111111111111",
+        "Juan Dela Cruz",
+        "123-456-789-000",
+        .individual,
+    );
+
+    var model = Model{};
+    model.calendar.selected_year = 2026;
+    try model.taxProfiles.attach(allocator, &store, "2026-08-02", 2026);
+    const profile_id = model.taxProfiles.selectedProfileId().?;
+    try store.replaceFormSet(profile_id, 2026, &.{
+        .{ .form_code = "2551Q", .form_revision = "2018-01-ENCS" },
+        .{ .form_code = "1905", .form_revision = "calendar-only" },
+    });
+    try std.testing.expect(model.taxProfiles.loadFormsForYear(2026));
+    refreshSelectedProfileFormSet(&model);
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try std.testing.expectEqual(@as(usize, 2), model.profileFormRows(arena).len);
+
+    update(&model, .profile_forms_toggle_filter_calendar_only);
+    const editor_rows = model.profileFormRows(arena);
+    try std.testing.expectEqual(@as(usize, 1), editor_rows.len);
+    try std.testing.expectEqualStrings("2551Q", editor_rows[0].code());
+
+    update(&model, .profile_forms_reset_filters);
+    update(&model, .{
+        .profile_forms_search_input = .{ .insert_text = "2551q" },
+    });
+    const search_rows = model.profileFormRows(arena);
+    try std.testing.expectEqual(@as(usize, 1), search_rows.len);
+    try std.testing.expectEqualStrings("2551Q", search_rows[0].code());
+
+    update(&model, .manage_profile_forms);
+    try std.testing.expect(model.taxProfiles.managing_forms);
+    try std.testing.expectEqual(
+        form_catalog.registry_count,
+        model.profileFormRows(arena).len,
+    );
+
+    update(&model, .profile_forms_toggle_filter_inactive);
+    try std.testing.expectEqual(@as(usize, 2), model.profileFormRows(arena).len);
+
+    var editor_index: ?usize = null;
+    for (form_catalog.forms, 0..) |form, index| {
+        if (std.mem.eql(u8, form.code, "2551Q")) {
+            editor_index = index;
+            break;
+        }
+    }
+    update(&model, .{ .toggle_profile_form = editor_index.? });
+    const staged_rows = model.profileFormRows(arena);
+    try std.testing.expectEqual(@as(usize, 1), staged_rows.len);
+    try std.testing.expectEqualStrings("1905", staged_rows[0].code());
+
+    update(&model, .profile_forms_cancel);
+    try std.testing.expectEqual(@as(usize, 2), model.profileFormRows(arena).len);
+}
+
+test "tax form filter picker closes when its dashboard context changes" {
+    var model = Model{
+        .page = .taxpayer_dashboard,
+        .dashboardSection = .forms,
+    };
+
+    update(&model, .profile_forms_toggle_filter_picker);
+    try std.testing.expect(model.profileFormsFilterPickerOpen());
+
+    update(&model, .show_dashboard_calendar);
+    try std.testing.expect(!model.profileFormsFilterPickerOpen());
+
+    update(&model, .show_dashboard_forms);
+    update(&model, .profile_forms_toggle_filter_picker);
+    try std.testing.expect(model.profileFormsFilterPickerOpen());
+    update(&model, .profile_forms_toggle_filter_inactive);
     try std.testing.expectEqualStrings(
-        "outline",
-        model.profileFormsCapabilityAllVariant(),
+        "All forms",
+        model.profileFormsFilterSummaryLabel(),
     );
+
+    navigate(&model, .settings);
+    try std.testing.expect(!model.profileFormsFilterPickerOpen());
+    try std.testing.expectEqualStrings(
+        "Active · Any type",
+        model.profileFormsFilterSummaryLabel(),
+    );
+
+    navigate(&model, .taxpayer_dashboard);
+    update(&model, .profile_forms_toggle_filter_picker);
+    try std.testing.expect(model.profileFormsFilterPickerOpen());
+    update(&model, .{ .viewport_width_changed = 408 });
+    try std.testing.expect(!model.profileFormsFilterPickerOpen());
 }
 
 test "sidebar can be collapsed hidden and restored without losing its route" {
@@ -9050,6 +9177,465 @@ fn findWidgetBySemanticsLabel(
         if (findWidgetBySemanticsLabel(child, label)) |found| return found;
     }
     return null;
+}
+
+fn writeReferenceProofShot(
+    model: *const Model,
+    width: usize,
+    height: usize,
+    path: []const u8,
+) !void {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var ui = canvas.Ui(Msg).init(arena);
+    const tree = try ui.finalize(try view.build(&ui, model));
+    const tokens = canvas.DesignTokens.theme(.{ .color_scheme = .light });
+    const layout_nodes = try arena.alloc(canvas.WidgetLayoutNode, 8192);
+    const bounds = geometry.RectF.init(
+        0,
+        0,
+        @floatFromInt(width),
+        @floatFromInt(height),
+    );
+    const layout = try canvas.layoutWidgetTreeWithTokens(
+        tree.root,
+        bounds,
+        tokens,
+        layout_nodes,
+    );
+
+    const commands = try arena.alloc(canvas.CanvasCommand, 65536);
+    var builder = canvas.Builder.init(commands);
+    try layout.emitDisplayList(&builder, tokens);
+    const display_list = builder.displayList();
+    const render_commands = try arena.alloc(canvas.RenderCommand, 65536);
+    const plan = try (canvas.DisplayList{
+        .commands = display_list.commands,
+    }).renderPlan(render_commands);
+
+    const pixels = try arena.alloc(u8, width * height * 4);
+    @memset(pixels, 0);
+    const surface = try canvas.ReferenceRenderSurface.init(width, height, pixels);
+    try surface.renderPass(.{
+        .commands = plan.commands,
+        .surface_size = geometry.SizeF.init(
+            @floatFromInt(width),
+            @floatFromInt(height),
+        ),
+        .full_repaint = true,
+    }, tokens.colors.background);
+
+    const io = std.testing.io;
+    try std.Io.Dir.cwd().createDirPath(
+        io,
+        std.fs.path.dirname(path) orelse ".",
+    );
+    var file = try std.Io.Dir.cwd().createFile(io, path, .{});
+    defer file.close(io);
+    var write_buffer: [4096]u8 = undefined;
+    var writer = file.writer(io, &write_buffer);
+    try canvas.png.writeRgba8(
+        &writer.interface,
+        width,
+        height,
+        pixels,
+    );
+    try writer.interface.flush();
+}
+
+fn writeFormActivationProofShots(
+    model: *Model,
+    stage: []const u8,
+) !void {
+    const shots = [_]struct {
+        name: []const u8,
+        width: usize,
+        height: usize,
+    }{
+        .{ .name = "desktop", .width = 1176, .height = 768 },
+        .{ .name = "phone", .width = 408, .height = 800 },
+    };
+    for (shots) |shot| {
+        update(model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+        var path_buffer: [192]u8 = undefined;
+        const path = try std.fmt.bufPrint(
+            &path_buffer,
+            "/tmp/ebirforms-form-activation-shots/{s}-{s}.png",
+            .{ stage, shot.name },
+        );
+        try writeReferenceProofShot(model, shot.width, shot.height, path);
+    }
+}
+
+test "render tax form filter menu proof shots when requested" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    if (std.c.getenv("FILTER_MENU_SHOTS") == null) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addThreeTestProfiles(&store);
+
+    var model = Model{
+        .page = .taxpayer_dashboard,
+        .dashboardSection = .forms,
+    };
+    try model.taxProfiles.attach(allocator, &store, "2026-08-02", 2026);
+    model.formProfiles.attach(allocator, &store);
+    defer model.formProfiles.deinit();
+    update(&model, .{ .select_taxpayer = 0 });
+    model.dashboardSection = .forms;
+    model.taxProfiles.dismissNotice();
+    canvas.icons.registerAppIcons(&app_icons);
+
+    const shots = [_]struct {
+        name: []const u8,
+        width: usize,
+        height: usize,
+    }{
+        .{ .name = "phone", .width = 408, .height = 800 },
+        .{ .name = "tablet", .width = 768, .height = 768 },
+        .{ .name = "desktop", .width = 1176, .height = 768 },
+        .{ .name = "desktop-short", .width = 1176, .height = 500 },
+    };
+    for (shots) |shot| {
+        update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+        model.profileFormsFilterPickerVisible = false;
+        var path_buffer: [160]u8 = undefined;
+        const closed_path = try std.fmt.bufPrint(
+            &path_buffer,
+            "/tmp/ebirforms-filter-menu-shots/{s}-closed.png",
+            .{shot.name},
+        );
+        try writeReferenceProofShot(
+            &model,
+            shot.width,
+            shot.height,
+            closed_path,
+        );
+
+        model.profileFormsFilterPickerVisible = true;
+        const open_path = try std.fmt.bufPrint(
+            &path_buffer,
+            "/tmp/ebirforms-filter-menu-shots/{s}-open.png",
+            .{shot.name},
+        );
+        try writeReferenceProofShot(
+            &model,
+            shot.width,
+            shot.height,
+            open_path,
+        );
+    }
+}
+
+test "render opened form workspace proof shots when requested" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    if (std.c.getenv("FORM_WORKSPACE_SHOTS") == null) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+
+    const effective = try profile_model.EffectivePeriod.init(
+        try profile_model.Date.parseIso("2026-01-01"),
+        null,
+    );
+    const activities = [_]profile_model.BusinessActivity{.{
+        .id = try profile_model.BusinessActivityId.parse("activity-retail"),
+        .line_of_business = try profile_fields.LineOfBusiness.parse("Retail"),
+        .atc = try profile_fields.Atc.parse("PT010"),
+        .effective = effective,
+    }};
+    try persistTestSoleProprietorRevision(
+        &store,
+        "44444444444444444444444444444444",
+        "open-form-filer-r1",
+        1,
+        "2026-01-01",
+        "Open Form Fixture",
+        "444-444-444-000",
+        &activities,
+    );
+
+    var model = Model{
+        .page = .taxpayer_dashboard,
+        .dashboardSection = .forms,
+    };
+    try model.taxProfiles.attach(allocator, &store, "2026-08-02", 2026);
+    model.formProfiles.attach(allocator, &store);
+    defer model.formProfiles.deinit();
+
+    const profile_id = model.taxProfiles.selectedProfileId().?;
+    try store.replaceFormSet(profile_id, 2026, &.{
+        .{ .form_code = "2551Q", .form_revision = "2018-01-ENCS" },
+    });
+    try std.testing.expect(model.taxProfiles.loadFormsForYear(2026));
+    refreshSelectedProfileFormSet(&model);
+
+    const form_index = formCatalogIndex("2551Q").?;
+    try std.testing.expectEqual(
+        form_ui.LaunchStatus.ready_new,
+        model.profileFormLaunchAssessments[form_index].status,
+    );
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var library_ui = canvas.Ui(Msg).init(arena);
+    const library_tree = try library_ui.finalize(
+        try view.build(&library_ui, &model),
+    );
+    const open_button = findWidgetByText(
+        library_tree.root,
+        .button,
+        "Open Form",
+    ).?;
+    update(&model, library_tree.msgForPointer(open_button.id, .up).?);
+    try std.testing.expectEqual(Page.form_2551q, model.page);
+    model.taxProfiles.dismissNotice();
+
+    const shots = [_]struct {
+        name: []const u8,
+        width: usize,
+        height: usize,
+    }{
+        .{ .name = "desktop", .width = 1176, .height = 768 },
+        .{ .name = "phone", .width = 408, .height = 800 },
+    };
+    for (shots) |shot| {
+        update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+        var path_buffer: [160]u8 = undefined;
+        const path = try std.fmt.bufPrint(
+            &path_buffer,
+            "/tmp/ebirforms-open-form-shots/2551q-{s}.png",
+            .{shot.name},
+        );
+        try writeReferenceProofShot(&model, shot.width, shot.height, path);
+    }
+}
+
+test "render form activation flow proof shots when requested" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    if (std.c.getenv("FORM_ACTIVATION_SHOTS") == null) {
+        return error.SkipZigTest;
+    }
+
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addThreeTestProfiles(&store);
+
+    // Start from an explicitly empty Forms Set so the screenshots show the
+    // real distinction between inactive, staged, and saved active forms.
+    for ([_][]const u8{
+        "11111111111111111111111111111111",
+        "22222222222222222222222222222222",
+        "33333333333333333333333333333333",
+    }) |profile_id| {
+        try store.replaceFormSet(profile_id, 2026, &.{});
+    }
+
+    var model = Model{
+        .page = .taxpayer_dashboard,
+        .dashboardSection = .forms,
+    };
+    try model.taxProfiles.attach(allocator, &store, "2026-08-02", 2026);
+    model.formProfiles.attach(allocator, &store);
+    defer model.formProfiles.deinit();
+    update(&model, .{ .select_taxpayer = 0 });
+    model.dashboardSection = .forms;
+    model.taxProfiles.dismissNotice();
+    canvas.icons.registerAppIcons(&app_icons);
+
+    try writeFormActivationProofShots(&model, "01-before");
+    // On a phone, Manage Forms is intentionally in the compact profile
+    // actions menu rather than consuming header width.
+    update(&model, .{ .viewport_width_changed = 408 });
+    {
+        var arena_state = std.heap.ArenaAllocator.init(allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+        var ui = canvas.Ui(Msg).init(arena);
+        const closed_tree = try ui.finalize(try view.build(&ui, &model));
+        const trigger = findWidgetBySemanticsLabel(
+            closed_tree.root,
+            "Profile actions",
+        ).?;
+        update(&model, closed_tree.msgForPointer(trigger.id, .up).?);
+    }
+    try writeReferenceProofShot(
+        &model,
+        408,
+        800,
+        "/tmp/ebirforms-form-activation-shots/01b-actions-phone.png",
+    );
+    model.profileActionsOpen = false;
+    update(&model, .{ .viewport_width_changed = 1176 });
+
+    // Enter the real Manage Forms interaction from the compiled markup.
+    {
+        var arena_state = std.heap.ArenaAllocator.init(allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+        var ui = canvas.Ui(Msg).init(arena);
+        const tree = try ui.finalize(try view.build(&ui, &model));
+        const manage = findWidgetByText(tree.root, .button, "Manage Forms").?;
+        update(&model, tree.msgForPointer(manage.id, .up).?);
+    }
+    model.taxProfiles.applyFormsQuery(.{ .insert_text = "2551Q" });
+    try writeFormActivationProofShots(&model, "02-manage");
+    update(&model, .{ .viewport_width_changed = 1176 });
+
+    // Select 2551Q, but do not save it yet. The staged state is intentionally
+    // visible before the authoritative Forms Set changes.
+    {
+        var arena_state = std.heap.ArenaAllocator.init(allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+        var ui = canvas.Ui(Msg).init(arena);
+        const tree = try ui.finalize(try view.build(&ui, &model));
+        const form_checkbox = findWidgetBySemanticsLabel(
+            tree.root,
+            "Select BIR Form 2551Q",
+        ).?;
+        update(&model, tree.msgFor(form_checkbox.id, .change).?);
+    }
+    try writeFormActivationProofShots(&model, "03-activate-staged");
+    update(&model, .{ .viewport_width_changed = 1176 });
+
+    // Save commits the staged selection and makes 2551Q active for 2026.
+    {
+        var arena_state = std.heap.ArenaAllocator.init(allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+        var ui = canvas.Ui(Msg).init(arena);
+        const tree = try ui.finalize(try view.build(&ui, &model));
+        const save = findWidgetByText(tree.root, .button, "Save").?;
+        update(&model, tree.msgForPointer(save.id, .up).?);
+    }
+    model.taxProfiles.dismissNotice();
+    try writeFormActivationProofShots(&model, "04-active-saved");
+    update(&model, .{ .viewport_width_changed = 1176 });
+
+    // Stage the reverse operation from the active library.
+    {
+        var arena_state = std.heap.ArenaAllocator.init(allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+        var ui = canvas.Ui(Msg).init(arena);
+        const tree = try ui.finalize(try view.build(&ui, &model));
+        const manage = findWidgetByText(tree.root, .button, "Manage Forms").?;
+        update(&model, tree.msgForPointer(manage.id, .up).?);
+    }
+    model.taxProfiles.applyFormsQuery(.{ .insert_text = "2551Q" });
+    update(&model, .{ .viewport_width_changed = 1176 });
+    {
+        var arena_state = std.heap.ArenaAllocator.init(allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+        var ui = canvas.Ui(Msg).init(arena);
+        const tree = try ui.finalize(try view.build(&ui, &model));
+        const form_checkbox = findWidgetBySemanticsLabel(
+            tree.root,
+            "Deselect BIR Form 2551Q",
+        ).?;
+        update(&model, tree.msgFor(form_checkbox.id, .change).?);
+    }
+    try writeFormActivationProofShots(&model, "05-inactivate-staged");
+    update(&model, .{ .viewport_width_changed = 1176 });
+
+    {
+        var arena_state = std.heap.ArenaAllocator.init(allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+        var ui = canvas.Ui(Msg).init(arena);
+        const tree = try ui.finalize(try view.build(&ui, &model));
+        const save = findWidgetByText(tree.root, .button, "Save").?;
+        update(&model, tree.msgForPointer(save.id, .up).?);
+    }
+    model.taxProfiles.dismissNotice();
+    try writeFormActivationProofShots(&model, "06-inactive-saved");
+}
+
+test "tax form library filter dispatches through compiled markup" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addThreeTestProfiles(&store);
+
+    var model = Model{
+        .page = .taxpayer_dashboard,
+        .dashboardSection = .forms,
+        .viewportClass = .phone,
+        .viewportWidth = 408,
+    };
+    try model.taxProfiles.attach(allocator, &store, "2026-08-02", 2026);
+    update(&model, .{ .select_taxpayer = 0 });
+    model.dashboardSection = .forms;
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+
+    var closed_ui = canvas.Ui(Msg).init(arena);
+    const closed_tree = try closed_ui.finalize(try view.build(&closed_ui, &model));
+    const closed_trigger = findWidgetBySemanticsLabel(
+        closed_tree.root,
+        "Filter forms: active, any form type",
+    ).?;
+    try std.testing.expectEqual(canvas.WidgetKind.select, closed_trigger.kind);
+    try std.testing.expectEqualStrings("Active · Any type", closed_trigger.text);
+
+    update(&model, closed_tree.msgForPointer(closed_trigger.id, .up).?);
+    try std.testing.expect(model.profileFormsFilterPickerOpen());
+
+    var open_ui = canvas.Ui(Msg).init(arena);
+    const open_tree = try open_ui.finalize(try view.build(&open_ui, &model));
+    const active = findWidgetByText(open_tree.root, .checkbox, "Active").?;
+    const inactive = findWidgetByText(open_tree.root, .checkbox, "Inactive").?;
+    try std.testing.expect(
+        findWidgetByText(open_tree.root, .button, "Reset filters") != null,
+    );
+    try std.testing.expect(
+        findWidgetByText(open_tree.root, .button, "Done") == null,
+    );
+    try std.testing.expect(active.state.selected);
+    try std.testing.expect(active.state.disabled);
+    try std.testing.expect(!inactive.state.selected);
+
+    update(&model, open_tree.msgForPointer(inactive.id, .up).?);
+    try std.testing.expect(model.profileFormsFilterPickerOpen());
+
+    var toggled_ui = canvas.Ui(Msg).init(arena);
+    const toggled_tree = try toggled_ui.finalize(try view.build(&toggled_ui, &model));
+    const toggled_trigger = findWidgetBySemanticsLabel(
+        toggled_tree.root,
+        "Filter forms: all forms",
+    ).?;
+    try std.testing.expectEqualStrings("All forms", toggled_trigger.text);
+    try std.testing.expect(
+        findWidgetByText(toggled_tree.root, .checkbox, "Active").?.state.selected,
+    );
+    try std.testing.expect(
+        findWidgetByText(toggled_tree.root, .checkbox, "Inactive").?.state.selected,
+    );
+
+    const menu = findWidgetByKind(toggled_tree.root, .dropdown_menu).?;
+    update(&model, toggled_tree.msgForDismiss(menu.id).?);
+    try std.testing.expect(!model.profileFormsFilterPickerOpen());
 }
 
 test "global calendar picker dispatches open search toggle and dismiss interactions" {
