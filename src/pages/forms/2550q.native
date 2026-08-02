@@ -6,15 +6,15 @@
     </column>
     <column gap="4">
       <text foreground="text_muted">Taxable year (raw)</text>
-      <input placeholder="YYYY" />
+      <input text="{formFilingYear}" placeholder="YYYY" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Return Period From</text>
-      <input placeholder="MM / DD / YYYY" />
+      <input text="{formFilingPeriodStart}" placeholder="MM / DD / YYYY" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Return Period To</text>
-      <input placeholder="MM / DD / YYYY" />
+      <input text="{formFilingPeriodEnd}" placeholder="MM / DD / YYYY" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">Amended Return?</text>

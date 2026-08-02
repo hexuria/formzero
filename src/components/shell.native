@@ -518,6 +518,7 @@
       <column gap="2">
         <text><span weight="bold">{formProfileContextTitle}</span></text>
         <text wrap="true" foreground="text_muted">{formProfileStatus}</text>
+        <text wrap="true" foreground="text_muted">Filing period: {formFilingPeriodLabel}</text>
       </column>
 
       <if test="{formProfileNotice}">

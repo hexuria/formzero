@@ -18,7 +18,11 @@ const canvas = native_sdk.canvas;
 
 pub const max_profiles: usize = 64;
 pub const max_registered_forms: usize = catalog.registry_count;
-pub const max_draft_summaries: usize = 64;
+/// Covers every recurring catalog slot (51 forms × 12 periods) plus a
+/// bounded on-demand history window. If that window is exceeded the library
+/// reports status as unavailable instead of falsely labelling omitted work
+/// as New.
+pub const max_draft_summaries: usize = catalog.registry_count * 12 + 64;
 const FormSelectionState = multi_select.State(catalog.registry_count, 96);
 
 pub const Error = error{
@@ -59,6 +63,32 @@ pub const GovernmentWithholdingChoice = enum {
 
 pub const FormActivityFilter = enum { active, inactive, all };
 pub const FormCapabilityFilter = enum { all, editor, calendar_only };
+
+/// Presentation status for one catalog form while the Forms Set editor is
+/// open. Persisted membership and staged membership stay separate so Manage
+/// mode can describe the pending effect without changing Browse mode.
+pub const ManagedFormStatus = enum {
+    inactive,
+    active,
+    will_activate,
+    will_deactivate,
+
+    pub fn label(self: ManagedFormStatus) []const u8 {
+        return switch (self) {
+            .inactive => "Inactive",
+            .active => "Active",
+            .will_activate => "Will activate",
+            .will_deactivate => "Will deactivate",
+        };
+    }
+
+    pub fn changed(self: ManagedFormStatus) bool {
+        return switch (self) {
+            .will_activate, .will_deactivate => true,
+            .inactive, .active => false,
+        };
+    }
+};
 
 fn FixedText(comptime capacity: usize) type {
     return struct {
@@ -331,6 +361,10 @@ pub const State = struct {
         self.notice_epoch +%= 1;
     }
 
+    pub fn reportFormLaunchFailure(self: *State, message: []const u8) void {
+        self.setNotice(.failure, message);
+    }
+
     pub fn saveDisabled(self: *const State) bool {
         return self.store == null or !self.loaded_shape_supported;
     }
@@ -397,6 +431,10 @@ pub const State = struct {
 
     pub fn draftSummaries(self: *const State) []const DraftSummaryRow {
         return self.draft_summaries[0..self.draft_summary_count];
+    }
+
+    pub fn draftSummariesTruncated(self: *const State) bool {
+        return self.draft_summaries_truncated;
     }
 
     pub fn selectSlot(self: *State, slot: usize) !void {
@@ -865,8 +903,60 @@ pub const State = struct {
             self.saved_forms.isSelected(index);
     }
 
+    /// Authoritative membership used by Browse mode. This never reflects an
+    /// unsaved Manage-mode toggle.
+    pub fn persistedFormSelected(self: *const State, index: usize) bool {
+        return self.saved_forms.isSelected(index);
+    }
+
+    /// Candidate membership used only by Manage mode until Save succeeds.
+    pub fn stagedFormSelected(self: *const State, index: usize) bool {
+        return self.staged_forms.isSelected(index);
+    }
+
     pub fn activeFormCount(self: *const State) usize {
         return self.saved_forms.selectedCount();
+    }
+
+    pub fn stagedFormCount(self: *const State) usize {
+        return self.staged_forms.selectedCount();
+    }
+
+    pub fn changedFormCount(self: *const State) usize {
+        var count: usize = 0;
+        for (0..catalog.registry_count) |index| {
+            if (self.saved_forms.isSelected(index) !=
+                self.staged_forms.isSelected(index))
+            {
+                count += 1;
+            }
+        }
+        return count;
+    }
+
+    pub fn managedFormStatus(
+        self: *const State,
+        index: usize,
+    ) ?ManagedFormStatus {
+        if (index >= catalog.registry_count) return null;
+        const persisted = self.saved_forms.isSelected(index);
+        const staged = self.staged_forms.isSelected(index);
+        return switch (@as(u2, @intFromBool(persisted)) << 1 |
+            @as(u2, @intFromBool(staged))) {
+            0b00 => .inactive,
+            0b01 => .will_activate,
+            0b10 => .will_deactivate,
+            0b11 => .active,
+        };
+    }
+
+    pub fn managedFormStatusLabel(
+        self: *const State,
+        index: usize,
+    ) []const u8 {
+        const status = self.managedFormStatus(index) orelse
+            return "Unavailable";
+        return status.label();
     }
 
     pub fn saveManagedForms(self: *State) bool {
@@ -1861,6 +1951,60 @@ test "form filter checkbox groups stay nonempty and reset by context" {
     try std.testing.expectEqual(FormCapabilityFilter.all, state.form_capability_filter);
 }
 
+test "managed Forms Set status compares persisted and staged membership" {
+    var state = State{};
+
+    // 0: inactive, 1: active, 2: pending activation, 3: pending
+    // deactivation. These are the four states rendered by Manage cards.
+    _ = state.saved_forms.set(1, true);
+    _ = state.staged_forms.set(1, true);
+    _ = state.staged_forms.set(2, true);
+    _ = state.saved_forms.set(3, true);
+
+    try std.testing.expectEqual(@as(usize, 2), state.activeFormCount());
+    try std.testing.expectEqual(@as(usize, 2), state.stagedFormCount());
+    try std.testing.expectEqual(@as(usize, 2), state.changedFormCount());
+
+    try std.testing.expectEqual(
+        ManagedFormStatus.inactive,
+        state.managedFormStatus(0).?,
+    );
+    try std.testing.expectEqualStrings("Inactive", state.managedFormStatusLabel(0));
+    try std.testing.expectEqual(
+        ManagedFormStatus.active,
+        state.managedFormStatus(1).?,
+    );
+    try std.testing.expectEqualStrings("Active", state.managedFormStatusLabel(1));
+    try std.testing.expectEqual(
+        ManagedFormStatus.will_activate,
+        state.managedFormStatus(2).?,
+    );
+    try std.testing.expectEqualStrings(
+        "Will activate",
+        state.managedFormStatusLabel(2),
+    );
+    try std.testing.expectEqual(
+        ManagedFormStatus.will_deactivate,
+        state.managedFormStatus(3).?,
+    );
+    try std.testing.expectEqualStrings(
+        "Will deactivate",
+        state.managedFormStatusLabel(3),
+    );
+
+    try std.testing.expect(!state.managedFormStatus(0).?.changed());
+    try std.testing.expect(state.managedFormStatus(2).?.changed());
+    try std.testing.expect(state.persistedFormSelected(3));
+    try std.testing.expect(!state.stagedFormSelected(3));
+    try std.testing.expect(
+        state.managedFormStatus(catalog.registry_count) == null,
+    );
+    try std.testing.expectEqualStrings(
+        "Unavailable",
+        state.managedFormStatusLabel(catalog.registry_count),
+    );
+}
+
 test "forms set parsing canonicalizes codes and preserves explicit revisions" {
     var output: [max_registered_forms]persistence.FormRegistrationWrite =
         undefined;
@@ -2085,11 +2229,19 @@ test "staged Forms Set is isolated until save and blocks context switches" {
     try std.testing.expectEqual(FormCapabilityFilter.all, state.form_capability_filter);
     state.toggleStagedForm(index);
     try std.testing.expect(state.formsDirty());
+    try std.testing.expectEqual(@as(usize, 1), state.stagedFormCount());
+    try std.testing.expectEqual(@as(usize, 1), state.changedFormCount());
+    try std.testing.expectEqual(
+        ManagedFormStatus.will_activate,
+        state.managedFormStatus(index).?,
+    );
     try std.testing.expect(!state.formAvailable(2026, "2551Q"));
     try std.testing.expectError(error.UnsavedFormSetChanges, state.selectSlot(0));
 
     state.cancelManageForms();
     try std.testing.expect(!state.formsDirty());
+    try std.testing.expectEqual(@as(usize, 0), state.stagedFormCount());
+    try std.testing.expectEqual(@as(usize, 0), state.changedFormCount());
     try std.testing.expect(!state.displayedFormSelected(index));
     try std.testing.expectEqual(FormActivityFilter.active, state.form_activity_filter);
     try std.testing.expectEqual(FormCapabilityFilter.all, state.form_capability_filter);
@@ -2100,6 +2252,12 @@ test "staged Forms Set is isolated until save and blocks context switches" {
     try std.testing.expect(state.formAvailable(2026, "2551Q"));
     try std.testing.expect(!state.formAvailable(2026, "1701Q"));
     try std.testing.expectEqual(@as(usize, 1), state.activeFormCount());
+    try std.testing.expectEqual(@as(usize, 1), state.stagedFormCount());
+    try std.testing.expectEqual(@as(usize, 0), state.changedFormCount());
+    try std.testing.expectEqual(
+        ManagedFormStatus.active,
+        state.managedFormStatus(index).?,
+    );
     try std.testing.expectEqual(FormActivityFilter.active, state.form_activity_filter);
     try std.testing.expectEqual(FormCapabilityFilter.all, state.form_capability_filter);
 }

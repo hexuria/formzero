@@ -2,7 +2,7 @@
   <grid columns="{columns}" gap="12">
     <column gap="4">
       <text foreground="text_muted">1 For the Month of (MM/YYYY)</text>
-      <input placeholder="MM / YYYY" />
+      <input text="{formFilingMonthYear}" placeholder="MM / YYYY" disabled="true" />
     </column>
     <column gap="4">
       <text foreground="text_muted">3 Amended Form?</text>

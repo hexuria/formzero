@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 
 import {
   editorForms,
+  filingCadenceValues,
+  filingPeriodPolicy,
+  formDisplayMetadata,
+  formDisplayMetadataByCode,
   inferProfileField,
   inferProvenance,
   inferRole,
@@ -18,15 +22,18 @@ import {
   profileSubjectKindValues,
   registryCodes,
   roleValues,
+  taxCategoryValues,
   valueTypeValues,
   type EditorFormSpec,
   type FieldStatus,
+  type FilingCadence,
   type FormStatus,
   type ProfileFieldKey,
   type ProfilePresence,
   type ProfileRoleSpec,
   type Provenance,
   type Role,
+  type TaxCategory,
   type ValueType,
 } from "./catalog.ts";
 
@@ -46,8 +53,13 @@ interface FieldDefinition {
 
 interface FormDefinition {
   readonly code: string;
+  readonly displayTitle: string;
+  readonly taxCategory: TaxCategory;
   readonly revision: string | null;
   readonly status: FormStatus;
+  readonly cadence: FilingCadence;
+  readonly minPeriod: number | null;
+  readonly maxPeriod: number | null;
   readonly sourcePath: string | null;
   readonly roles: readonly Role[];
   readonly profileRoles: readonly ProfileRoleSpec[];
@@ -230,8 +242,10 @@ async function loadEditorForm(spec: EditorFormSpec): Promise<FormDefinition> {
 
   return {
     code: spec.code,
+    ...formDisplayMetadata(spec.code),
     revision: spec.revision,
     status: "static_layout",
+    ...filingPeriodPolicy(spec.code),
     sourcePath: spec.sourcePath,
     roles: spec.roles,
     profileRoles: spec.profileRoles,
@@ -351,10 +365,48 @@ function validateCatalog(forms: readonly FormDefinition[]): void {
   validateUnique(editorForms.map((form) => form.code), "editor form codes");
   validateUnique(editorForms.map((form) => form.sourcePath), "editor source paths");
 
+  const displayMetadataCodes = Object.keys(formDisplayMetadataByCode).toSorted();
+  const expectedDisplayMetadataCodes = [...registryCodes].toSorted();
+  if (
+    JSON.stringify(displayMetadataCodes) !==
+    JSON.stringify(expectedDisplayMetadataCodes)
+  ) {
+    fail(
+      "Display metadata differs from the 51-code registry.\n" +
+        `metadata: ${displayMetadataCodes.join(", ")}\n` +
+        `registry: ${expectedDisplayMetadataCodes.join(", ")}`,
+    );
+  }
+
   const editorCodes = new Set(editorForms.map((form) => form.code));
   for (const code of editorCodes) {
     if (!registryCodes.includes(code as (typeof registryCodes)[number])) {
       fail(`Editor code ${code} is absent from the 51-code registry`);
+    }
+  }
+
+  for (const code of registryCodes) {
+    const metadata = formDisplayMetadata(code);
+    if (!metadata.displayTitle.trim()) {
+      fail(`${code} has an empty display title`);
+    }
+    if (metadata.displayTitle !== metadata.displayTitle.trim()) {
+      fail(`${code} display title has leading or trailing whitespace`);
+    }
+    if (!taxCategoryValues.includes(metadata.taxCategory)) {
+      fail(`${code} has an unknown tax category ${metadata.taxCategory}`);
+    }
+
+    const policy = filingPeriodPolicy(code);
+    if (!filingCadenceValues.includes(policy.cadence)) {
+      fail(`${code} has an unknown filing cadence ${policy.cadence}`);
+    }
+    if (
+      (policy.minPeriod === null) !== (policy.maxPeriod === null) ||
+      (policy.minPeriod !== null &&
+        (policy.minPeriod < 1 || policy.maxPeriod! < policy.minPeriod))
+    ) {
+      fail(`${code} has invalid filing period bounds`);
     }
   }
 
@@ -566,8 +618,10 @@ async function buildCatalog(): Promise<FormDefinition[]> {
     (code) =>
       editorByCode.get(code) ?? {
         code,
+        ...formDisplayMetadata(code),
         revision: null,
         status: "calendar_only",
+        ...filingPeriodPolicy(code),
         sourcePath: null,
         roles: [],
         profileRoles: [],
@@ -613,6 +667,8 @@ function generateZig(forms: readonly FormDefinition[]): string {
     `pub const ValueType = enum { ${valueTypeValues.join(", ")} };`,
     "pub const FieldStatus = enum { unbound_input, static_table, derived_display };",
     "pub const FormStatus = enum { calendar_only, static_layout };",
+    "pub const FilingCadence = enum { monthly, quarterly, annual, on_demand };",
+    `pub const TaxCategory = enum { ${taxCategoryValues.join(", ")} };`,
     "",
     "pub const FieldDefinition = struct {",
     "    id: []const u8,",
@@ -637,8 +693,13 @@ function generateZig(forms: readonly FormDefinition[]): string {
     "",
     "pub const FormDefinition = struct {",
     "    code: []const u8,",
+    "    display_title: []const u8,",
+    "    tax_category: TaxCategory,",
     "    revision: ?[]const u8,",
     "    status: FormStatus,",
+    "    cadence: FilingCadence,",
+    "    min_period: ?u8,",
+    "    max_period: ?u8,",
     "    source_path: ?[]const u8,",
     "    roles: []const Role,",
     "    profile_roles: []const ProfileRoleDefinition,",
@@ -700,8 +761,13 @@ function generateZig(forms: readonly FormDefinition[]): string {
       sections.push(
         "    .{",
         `        .code = ${zigString(form.code)},`,
+        `        .display_title = ${zigString(form.displayTitle)},`,
+        `        .tax_category = .${form.taxCategory},`,
         "        .revision = null,",
         "        .status = .calendar_only,",
+        `        .cadence = .${form.cadence},`,
+        `        .min_period = ${form.minPeriod === null ? "null" : String(form.minPeriod)},`,
+        `        .max_period = ${form.maxPeriod === null ? "null" : String(form.maxPeriod)},`,
         "        .source_path = null,",
         "        .roles = &.{},",
         "        .profile_roles = &.{},",
@@ -715,8 +781,13 @@ function generateZig(forms: readonly FormDefinition[]): string {
     sections.push(
       "    .{",
       `        .code = ${zigString(form.code)},`,
+      `        .display_title = ${zigString(form.displayTitle)},`,
+      `        .tax_category = .${form.taxCategory},`,
       `        .revision = ${zigString(form.revision ?? "")},`,
       "        .status = .static_layout,",
+      `        .cadence = .${form.cadence},`,
+      `        .min_period = ${form.minPeriod === null ? "null" : String(form.minPeriod)},`,
+      `        .max_period = ${form.maxPeriod === null ? "null" : String(form.maxPeriod)},`,
       `        .source_path = ${zigString(form.sourcePath ?? "")},`,
       `        .roles = &roles_${name},`,
       `        .profile_roles = &profile_roles_${name},`,
@@ -782,15 +853,18 @@ function generateMarkdown(forms: readonly FormDefinition[]): string {
     `- Direct profile projection targets: ${profileTargets.length}`,
     `- Optional profile projection targets: ${profileTargets.filter(({ field }) => field.profilePresence === "optional").length}`,
     "",
-    "| Code | Revision | Status | Inputs | Table fields | Source |",
-    "|---|---|---|---:|---:|---|",
+    "| Code | Title | Tax category | Revision | Status | Cadence | Periods | Inputs | Table fields | Source |",
+    "|---|---|---|---|---|---|---|---:|---:|---|",
   ];
 
   for (const form of forms) {
     const inputs = form.fields.filter((field) => field.control === "input").length;
     const tables = form.fields.filter((field) => field.control === "table").length;
+    const periods = form.minPeriod === null
+      ? "—"
+      : `${form.minPeriod}-${form.maxPeriod}`;
     lines.push(
-      `| ${form.code} | ${form.revision ?? "—"} | ${form.status} | ${inputs} | ${tables} | ${form.sourcePath ?? "—"} |`,
+      `| ${form.code} | ${markdownCell(form.displayTitle)} | ${form.taxCategory} | ${form.revision ?? "—"} | ${form.status} | ${form.cadence} | ${periods} | ${inputs} | ${tables} | ${form.sourcePath ?? "—"} |`,
     );
   }
 

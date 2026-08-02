@@ -9,7 +9,8 @@
 //! corrections append-only. Schema v4 adds a separate exact-draft repository:
 //! random workspaces can share a canonical filing business key, while every
 //! schema-bound revision, named profile binding, and ordered value occurrence
-//! remains an immutable historical snapshot.
+//! remains an immutable historical snapshot. Schema v7 adds owner-scoped,
+//! transactional counters for unique on-demand filing occurrences.
 
 const std = @import("std");
 const profile_field = @import("field.zig");
@@ -35,7 +36,7 @@ const sqlite = @cImport({
     @cInclude("sqlite3.h");
 });
 
-pub const latest_schema_version: u32 = 6;
+pub const latest_schema_version: u32 = 7;
 const migration_component = "tax_profile";
 pub const storage_classification =
     repository_opening.legacy_plaintext_repository_classification;
@@ -47,6 +48,7 @@ pub const production_repository_scope =
 const max_exact_provenance_bytes: usize = 4096;
 const max_exact_role_bindings: usize = 2;
 const max_exact_period_key_bytes: usize = 64;
+pub const max_on_demand_occurrence: u32 = 999;
 pub const max_exact_workspaces_per_filing_business_key: usize = 32;
 pub const max_returned_exact_draft_alternates: usize = 32;
 
@@ -86,6 +88,7 @@ pub const Error = error{
     MissingIdentityAnchor,
     NoIdentityCorrection,
     NotFound,
+    OnDemandOccurrenceLimitExceeded,
     RevisionConflict,
     SchemaTooNew,
     SqliteBusy,
@@ -342,6 +345,18 @@ pub const DraftWrite = struct {
     intent: []const u8 = "original",
     mapping_revision: []const u8,
     amendment_of: ?[]const u8 = null,
+};
+
+/// Owner- and profile-scoped identity used to reserve a unique on-demand
+/// filing occurrence. The returned occurrence is durably reserved even when
+/// draft composition later fails, so retries can never overwrite an earlier
+/// on-demand workspace.
+pub const OnDemandOccurrenceScope = struct {
+    owner_id: []const u8,
+    profile_id: []const u8,
+    form_code: []const u8,
+    form_revision: []const u8,
+    tax_year: i32,
 };
 
 pub const RoleBindingWrite = struct {
@@ -1282,6 +1297,17 @@ pub const Store = struct {
             var version = try self.prepare(
                 \\UPDATE app_component_migrations
                 \\SET version = 6, updated_at = unixepoch()
+                \\WHERE component = ?;
+            );
+            defer version.deinit();
+            try version.bindText(1, migration_component);
+            try version.expectDone();
+        }
+        if (current < 7) {
+            try self.exec(schema_v7);
+            var version = try self.prepare(
+                \\UPDATE app_component_migrations
+                \\SET version = 7, updated_at = unixepoch()
                 \\WHERE component = ?;
             );
             defer version.deinit();
@@ -2508,6 +2534,133 @@ pub const Store = struct {
         try statement.bindText(1, profile_id);
         try statement.expectDone();
         return sqlite.sqlite3_changes(try self.handle()) != 0;
+    }
+
+    /// Atomically reserves the next canonical `YYYY-O###` occurrence for one
+    /// on-demand form. `BEGIN IMMEDIATE` serializes allocators across SQLite
+    /// connections; the persisted counter makes the reservation durable even
+    /// before a draft is composed. On first use, canonical legacy draft keys
+    /// are reconciled so an existing occurrence is never reused.
+    pub fn allocateOnDemandOccurrence(
+        self: *Store,
+        scope: OnDemandOccurrenceScope,
+    ) !u32 {
+        try validateLocalOwnerId(scope.owner_id);
+        try validateOpaqueText(scope.profile_id);
+        try requireExactText(scope.form_code);
+        try requireExactText(scope.form_revision);
+        try validateTaxYear(scope.tax_year);
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        var owned_profile = try self.prepare(
+            \\SELECT 1
+            \\FROM tax_profiles
+            \\WHERE id = ? AND owner_id = ?;
+        );
+        defer owned_profile.deinit();
+        try owned_profile.bindText(1, scope.profile_id);
+        try owned_profile.bindText(2, scope.owner_id);
+        if (try owned_profile.step() != .row) return Error.NotFound;
+        if (try owned_profile.step() != .done) return Error.SqliteFailure;
+
+        var counter_read = try self.prepare(
+            \\SELECT last_occurrence
+            \\FROM tax_form_on_demand_occurrence_counters
+            \\WHERE owner_id = ? AND profile_id = ?
+            \\  AND form_code = ? AND form_revision = ?
+            \\  AND tax_year = ?;
+        );
+        defer counter_read.deinit();
+        try counter_read.bindText(1, scope.owner_id);
+        try counter_read.bindText(2, scope.profile_id);
+        try counter_read.bindText(3, scope.form_code);
+        try counter_read.bindText(4, scope.form_revision);
+        try counter_read.bindInt64(5, scope.tax_year);
+        const counter_value: u32 = switch (try counter_read.step()) {
+            .done => 0,
+            .row => blk: {
+                const raw = sqlite.sqlite3_column_int64(counter_read.raw, 0);
+                if (raw < 1 or raw > max_on_demand_occurrence) {
+                    return Error.SqliteFailure;
+                }
+                if (try counter_read.step() != .done) {
+                    return Error.SqliteFailure;
+                }
+                break :blk @intCast(raw);
+            },
+        };
+
+        // Drafts created before this allocator remain authoritative. Only the
+        // canonical fixed-width on-demand key is considered; recurring and
+        // malformed legacy keys cannot influence this sequence.
+        var draft_max_read = try self.prepare(
+            \\SELECT COALESCE(MAX(CAST(substr(draft.period_key, 7, 3)
+            \\                            AS INTEGER)), 0)
+            \\FROM tax_form_drafts AS draft
+            \\JOIN tax_form_draft_role_bindings AS binding
+            \\  ON binding.draft_id = draft.id
+            \\JOIN tax_profiles AS profile
+            \\  ON profile.id = binding.profile_id
+            \\WHERE binding.role = 'filer'
+            \\  AND binding.profile_id = ? AND profile.owner_id = ?
+            \\  AND draft.form_code = ? AND draft.form_revision = ?
+            \\  AND length(draft.period_key) = 9
+            \\  AND draft.period_key GLOB
+            \\      printf('%04d-O[0-9][0-9][0-9]', ?);
+        );
+        defer draft_max_read.deinit();
+        try draft_max_read.bindText(1, scope.profile_id);
+        try draft_max_read.bindText(2, scope.owner_id);
+        try draft_max_read.bindText(3, scope.form_code);
+        try draft_max_read.bindText(4, scope.form_revision);
+        try draft_max_read.bindInt64(5, scope.tax_year);
+        if (try draft_max_read.step() != .row) return Error.SqliteFailure;
+        const draft_max_raw = sqlite.sqlite3_column_int64(
+            draft_max_read.raw,
+            0,
+        );
+        if (draft_max_raw < 0 or
+            draft_max_raw > max_on_demand_occurrence)
+        {
+            return Error.SqliteFailure;
+        }
+        if (try draft_max_read.step() != .done) return Error.SqliteFailure;
+        const draft_max: u32 = @intCast(draft_max_raw);
+        const prior = @max(counter_value, draft_max);
+        if (prior == max_on_demand_occurrence) {
+            return Error.OnDemandOccurrenceLimitExceeded;
+        }
+        const occurrence = prior + 1;
+
+        var reserve = try self.prepare(
+            \\INSERT INTO tax_form_on_demand_occurrence_counters (
+            \\    owner_id, profile_id, form_code, form_revision,
+            \\    tax_year, last_occurrence
+            \\) VALUES (?, ?, ?, ?, ?, ?)
+            \\ON CONFLICT(
+            \\    owner_id, profile_id, form_code, form_revision, tax_year
+            \\) DO UPDATE SET
+            \\    last_occurrence = excluded.last_occurrence,
+            \\    updated_at = unixepoch();
+        );
+        defer reserve.deinit();
+        try reserve.bindText(1, scope.owner_id);
+        try reserve.bindText(2, scope.profile_id);
+        try reserve.bindText(3, scope.form_code);
+        try reserve.bindText(4, scope.form_revision);
+        try reserve.bindInt64(5, scope.tax_year);
+        try reserve.bindInt64(6, occurrence);
+        try reserve.expectDone();
+        if (sqlite.sqlite3_changes(try self.handle()) != 1) {
+            return Error.SqliteFailure;
+        }
+
+        try self.commit();
+        committed = true;
+        return occurrence;
     }
 
     /// Creates a draft, its named role bindings, immutable profile snapshot,
@@ -6951,6 +7104,15 @@ fn validateOpaqueText(value: []const u8) Error!void {
     try validateIdText(value);
 }
 
+fn validateLocalOwnerId(value: []const u8) Error!void {
+    if (value.len != 32) return Error.InvalidValue;
+    for (value) |byte| {
+        if (!std.ascii.isDigit(byte) and (byte < 'a' or byte > 'f')) {
+            return Error.InvalidValue;
+        }
+    }
+}
+
 fn validateTaxYear(value: i32) Error!void {
     if (value < 1 or value > 9999) return Error.InvalidValue;
 }
@@ -8285,6 +8447,58 @@ const schema_v6 =
     \\) THEN 'active_nonempty' ELSE 'active_empty' END;
 ;
 
+/// A durable reservation is required because calculating `MAX(period_key)`
+/// and returning it without a write allows two processes to claim the same
+/// occurrence. The profile FK owns deletion, while triggers enforce the
+/// owner/profile scope and monotonic counter invariant.
+const schema_v7 =
+    \\CREATE TABLE tax_form_on_demand_occurrence_counters (
+    \\    owner_id TEXT NOT NULL
+    \\        REFERENCES tax_profile_local_owner(id) ON DELETE RESTRICT,
+    \\    profile_id TEXT NOT NULL
+    \\        REFERENCES tax_profiles(id) ON DELETE CASCADE,
+    \\    form_code TEXT NOT NULL CHECK (length(trim(form_code)) > 0),
+    \\    form_revision TEXT NOT NULL CHECK (
+    \\        length(trim(form_revision)) > 0
+    \\    ),
+    \\    tax_year INTEGER NOT NULL CHECK (tax_year BETWEEN 1 AND 9999),
+    \\    last_occurrence INTEGER NOT NULL CHECK (
+    \\        last_occurrence BETWEEN 1 AND 999
+    \\    ),
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    PRIMARY KEY (
+    \\        owner_id, profile_id, form_code, form_revision, tax_year
+    \\    )
+    \\);
+    \\CREATE TRIGGER tax_form_on_demand_counter_owner_insert_guard
+    \\BEFORE INSERT ON tax_form_on_demand_occurrence_counters
+    \\WHEN NOT EXISTS (
+    \\    SELECT 1 FROM tax_profiles AS profile
+    \\    WHERE profile.id = NEW.profile_id
+    \\      AND profile.owner_id = NEW.owner_id
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'on-demand counter owner mismatch');
+    \\END;
+    \\CREATE TRIGGER tax_form_on_demand_counter_update_guard
+    \\BEFORE UPDATE ON tax_form_on_demand_occurrence_counters
+    \\WHEN NEW.owner_id <> OLD.owner_id
+    \\  OR NEW.profile_id <> OLD.profile_id
+    \\  OR NEW.form_code <> OLD.form_code
+    \\  OR NEW.form_revision <> OLD.form_revision
+    \\  OR NEW.tax_year <> OLD.tax_year
+    \\  OR NEW.last_occurrence <= OLD.last_occurrence
+    \\  OR NOT EXISTS (
+    \\      SELECT 1 FROM tax_profiles AS profile
+    \\      WHERE profile.id = NEW.profile_id
+    \\        AND profile.owner_id = NEW.owner_id
+    \\  )
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid on-demand counter update');
+    \\END;
+;
+
 test "tax profile migration is namespaced idempotent and preserves user_version" {
     var store = try Store.openMemory(std.testing.allocator);
     defer store.close();
@@ -8336,6 +8550,178 @@ test "local owner is opaque stable and attached to new profiles" {
             \\        'ffffffffffffffffffffffffffffffff');
         ),
     );
+}
+
+test "on-demand occurrence allocation is scoped monotonic and legacy aware" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+    const owner = try store.localOwnerId();
+    const profile_id = "tax-profile-on-demand-counter";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "On-demand Counter", "2026-01-01"),
+        .{},
+    );
+
+    const base_scope: OnDemandOccurrenceScope = .{
+        .owner_id = &owner,
+        .profile_id = profile_id,
+        .form_code = "0605",
+        .form_revision = "2002-01",
+        .tax_year = 2026,
+    };
+    try std.testing.expectEqual(
+        @as(u32, 1),
+        try store.allocateOnDemandOccurrence(base_scope),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 2),
+        try store.allocateOnDemandOccurrence(base_scope),
+    );
+
+    var independent = base_scope;
+    independent.tax_year = 2027;
+    try std.testing.expectEqual(
+        @as(u32, 1),
+        try store.allocateOnDemandOccurrence(independent),
+    );
+    independent = base_scope;
+    independent.form_revision = "2026-01";
+    try std.testing.expectEqual(
+        @as(u32, 1),
+        try store.allocateOnDemandOccurrence(independent),
+    );
+    independent = base_scope;
+    independent.form_code = "1905";
+    try std.testing.expectEqual(
+        @as(u32, 1),
+        try store.allocateOnDemandOccurrence(independent),
+    );
+
+    // A canonical draft created before the counter existed remains reserved.
+    try store.createDraft(
+        .{
+            .id = "legacy-on-demand-seven",
+            .form_code = "legacy-on-demand",
+            .form_revision = "2018-01",
+            .period_key = "2026-O007",
+            .profile_as_of = testDate("2026-12-31"),
+            .mapping_revision = "mapping-v1",
+        },
+        &.{.{
+            .role = "filer",
+            .profile_id = profile_id,
+            .profile_revision_id = "revision-1",
+            .profile_revision_sequence = 1,
+        }},
+        &.{},
+        &.{},
+    );
+    try std.testing.expectEqual(
+        @as(u32, 8),
+        try store.allocateOnDemandOccurrence(.{
+            .owner_id = &owner,
+            .profile_id = profile_id,
+            .form_code = "legacy-on-demand",
+            .form_revision = "2018-01",
+            .tax_year = 2026,
+        }),
+    );
+
+    // A failed reservation rolls back instead of consuming a number.
+    try store.exec(
+        \\CREATE TRIGGER synthetic_on_demand_reservation_failure
+        \\BEFORE INSERT ON tax_form_on_demand_occurrence_counters
+        \\WHEN NEW.form_code = 'FAIL'
+        \\BEGIN
+        \\    SELECT RAISE(ABORT, 'synthetic reservation failure');
+        \\END;
+    );
+    const failing_scope: OnDemandOccurrenceScope = .{
+        .owner_id = &owner,
+        .profile_id = profile_id,
+        .form_code = "FAIL",
+        .form_revision = "2018-01",
+        .tax_year = 2026,
+    };
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.allocateOnDemandOccurrence(failing_scope),
+    );
+    try store.exec("DROP TRIGGER synthetic_on_demand_reservation_failure;");
+    try std.testing.expectEqual(
+        @as(u32, 1),
+        try store.allocateOnDemandOccurrence(failing_scope),
+    );
+
+    try store.createDraft(
+        .{
+            .id = "legacy-on-demand-limit",
+            .form_code = "MAX",
+            .form_revision = "2018-01",
+            .period_key = "2026-O999",
+            .profile_as_of = testDate("2026-12-31"),
+            .mapping_revision = "mapping-v1",
+        },
+        &.{.{
+            .role = "filer",
+            .profile_id = profile_id,
+            .profile_revision_id = "revision-1",
+            .profile_revision_sequence = 1,
+        }},
+        &.{},
+        &.{},
+    );
+    try std.testing.expectError(
+        Error.OnDemandOccurrenceLimitExceeded,
+        store.allocateOnDemandOccurrence(.{
+            .owner_id = &owner,
+            .profile_id = profile_id,
+            .form_code = "MAX",
+            .form_revision = "2018-01",
+            .tax_year = 2026,
+        }),
+    );
+
+    try std.testing.expectError(
+        Error.NotFound,
+        store.allocateOnDemandOccurrence(.{
+            .owner_id = "ffffffffffffffffffffffffffffffff",
+            .profile_id = profile_id,
+            .form_code = "0605",
+            .form_revision = "2002-01",
+            .tax_year = 2026,
+        }),
+    );
+    try std.testing.expectError(
+        Error.InvalidValue,
+        store.allocateOnDemandOccurrence(.{
+            .owner_id = "INVALID-OWNER",
+            .profile_id = profile_id,
+            .form_code = "0605",
+            .form_revision = "2002-01",
+            .tax_year = 2026,
+        }),
+    );
+}
+
+test "schema v6 upgrades to durable on-demand occurrence counters" {
+    var store = try openLegacyStoreForTest(6);
+    defer store.close();
+    try std.testing.expectEqual(@as(u32, 6), try store.schemaVersion());
+    try std.testing.expect(!(try tableExistsForTest(
+        &store,
+        "tax_form_on_demand_occurrence_counters",
+    )));
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+    try std.testing.expect(try tableExistsForTest(
+        &store,
+        "tax_form_on_demand_occurrence_counters",
+    ));
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
 }
 
 test "schema version one upgrades append-only delete guards atomically" {
@@ -9927,7 +10313,7 @@ test "file store reopens with revisions Forms Set and drafts intact" {
 }
 
 test "latest schema migrates every prior version idempotently and keeps legacy drafts" {
-    for ([_]u32{ 1, 2, 3, 4 }) |legacy_version| {
+    for ([_]u32{ 1, 2, 3, 4, 5, 6 }) |legacy_version| {
         var store = try openLegacyStoreForTest(legacy_version);
         defer store.close();
         try std.testing.expectEqual(
@@ -9958,6 +10344,10 @@ test "latest schema migrates every prior version idempotently and keeps legacy d
         try std.testing.expect(try tableExistsForTest(
             &store,
             "tax_profile_calendar_form_selections",
+        ));
+        try std.testing.expect(try tableExistsForTest(
+            &store,
+            "tax_form_on_demand_occurrence_counters",
         ));
         try store.migrate();
         try std.testing.expectEqual(
@@ -12223,7 +12613,7 @@ fn expectAllZero(bytes: []const u8) !void {
 }
 
 fn openLegacyStoreForTest(version: u32) !Store {
-    std.debug.assert(version >= 1 and version <= 5);
+    std.debug.assert(version >= 1 and version <= 6);
     var raw: ?*sqlite.sqlite3 = null;
     const flags = sqlite.SQLITE_OPEN_READWRITE |
         sqlite.SQLITE_OPEN_CREATE |
@@ -12253,6 +12643,7 @@ fn openLegacyStoreForTest(version: u32) !Store {
     }
     if (version >= 4) try store.exec(schema_v4);
     if (version >= 5) try store.exec(schema_v5);
+    if (version >= 6) try store.exec(schema_v6);
     var set_version = try store.prepare(
         \\INSERT INTO app_component_migrations(component, version)
         \\VALUES ('tax_profile', ?);

@@ -26,6 +26,7 @@ const form_ui = @import("forms/ui_state.zig");
 const form_ids = @import("forms/id.zig");
 const form_persistence = @import("forms/persistence_adapter.zig");
 const form_runtime = @import("forms/runtime.zig");
+const form_period = @import("forms/filing_period.zig");
 const form_catalog = @import("forms/generated/catalog.zig");
 const income_tax_ui = @import("forms/income_tax_ui_state.zig");
 const key_custody = @import("security/key_custody.zig");
@@ -430,6 +431,169 @@ pub const FormProfileChoiceRow = struct {
     }
 };
 
+/// The Tax Form Library's period picker is a display/opening context. It
+/// never changes the authoritative Forms Set; it only narrows the cadence
+/// cards shown for the selected taxpayer and tax year.
+pub const LibraryPeriodFilter = union(enum) {
+    all,
+    monthly: u8,
+    quarterly: u8,
+    annual,
+    on_demand,
+
+    pub fn label(self: LibraryPeriodFilter) []const u8 {
+        return switch (self) {
+            .all => "All filing periods",
+            .monthly => |month| form_period.monthName(month),
+            .quarterly => |quarter| switch (quarter) {
+                1 => "Quarter 1",
+                2 => "Quarter 2",
+                3 => "Quarter 3",
+                4 => "Quarter 4",
+                else => "Quarter",
+            },
+            .annual => "Annual",
+            .on_demand => "On-demand",
+        };
+    }
+
+    pub fn summary(self: LibraryPeriodFilter) []const u8 {
+        return switch (self) {
+            .all => "All periods",
+            .monthly => |month| form_period.monthName(month),
+            .quarterly => |quarter| switch (quarter) {
+                1 => "Q1",
+                2 => "Q2",
+                3 => "Q3",
+                4 => "Q4",
+                else => "Quarter",
+            },
+            .annual => "Annual",
+            .on_demand => "On-demand",
+        };
+    }
+
+    pub fn matches(self: LibraryPeriodFilter, cadence: form_catalog.FilingCadence) bool {
+        return switch (self) {
+            .all => true,
+            .monthly => cadence == .monthly,
+            .quarterly => cadence == .quarterly,
+            .annual => cadence == .annual,
+            .on_demand => cadence == .on_demand,
+        };
+    }
+};
+
+fn taxCategoryLabel(category: form_catalog.TaxCategory) []const u8 {
+    return switch (category) {
+        .payment => "Payment",
+        .registration => "Registration",
+        .withholding_tax => "Withholding tax",
+        .income_tax => "Income tax",
+        .value_added_tax => "Value-added tax",
+        .percentage_tax => "Percentage tax",
+        .documentary_stamp_tax => "Documentary stamp tax",
+        .excise_tax => "Excise tax",
+        .capital_gains_tax => "Capital gains tax",
+        .estate_and_donors_tax => "Estate and donor's tax",
+    };
+}
+
+pub const TaxFormLibraryPeriodCell = struct {
+    id: usize = 0,
+    action_id: usize = 0,
+    label: []const u8 = "",
+    status: []const u8 = "",
+    visual_status: []const u8 = "",
+    status_color: []const u8 = "muted",
+    tile_width: u16 = 64,
+    tone: []const u8 = "outline",
+    selected: bool = false,
+    available: bool = false,
+    visible: bool = false,
+    filtered_out: bool = false,
+    actionable: bool = false,
+    calendar_only: bool = false,
+    accessible_label: []const u8 = "Filing period",
+
+    pub fn key(self: *const TaxFormLibraryPeriodCell) canvas.UiKey {
+        return canvas.uiKey(self.id);
+    }
+
+    pub fn actionId(self: *const TaxFormLibraryPeriodCell) usize {
+        return self.action_id;
+    }
+
+    pub fn filteredOut(self: *const TaxFormLibraryPeriodCell) bool {
+        return self.filtered_out;
+    }
+
+    pub fn launchDisabled(self: *const TaxFormLibraryPeriodCell) bool {
+        return !self.actionable or self.filtered_out;
+    }
+
+    pub fn disabled(self: *const TaxFormLibraryPeriodCell) bool {
+        return self.launchDisabled();
+    }
+
+    pub fn editorAction(self: *const TaxFormLibraryPeriodCell) bool {
+        return !self.calendar_only;
+    }
+
+    pub fn calendarOnly(self: *const TaxFormLibraryPeriodCell) bool {
+        return self.calendar_only;
+    }
+
+    pub fn accessibleLabel(self: *const TaxFormLibraryPeriodCell) []const u8 {
+        return self.accessible_label;
+    }
+
+    pub fn actionLabel(self: *const TaxFormLibraryPeriodCell) []const u8 {
+        return self.accessible_label;
+    }
+
+    pub fn visualStatus(self: *const TaxFormLibraryPeriodCell) []const u8 {
+        return if (self.visual_status.len == 0) self.status else self.visual_status;
+    }
+
+    pub fn statusColor(self: *const TaxFormLibraryPeriodCell) []const u8 {
+        return self.status_color;
+    }
+
+    pub fn tileWidth(self: *const TaxFormLibraryPeriodCell) u16 {
+        return self.tile_width;
+    }
+
+    pub fn statusWarning(self: *const TaxFormLibraryPeriodCell) bool {
+        const status = self.visualStatus();
+        return std.mem.eql(u8, status, "Draft") or
+            std.mem.eql(u8, status, "Queued") or
+            std.mem.eql(u8, status, "Due") or
+            std.mem.eql(u8, status, "Unknown");
+    }
+
+    pub fn statusInfo(self: *const TaxFormLibraryPeriodCell) bool {
+        return std.mem.eql(u8, self.visualStatus(), "Sent");
+    }
+
+    pub fn statusSuccess(self: *const TaxFormLibraryPeriodCell) bool {
+        const status = self.visualStatus();
+        return std.mem.eql(u8, status, "Confirmed") or
+            std.mem.eql(u8, status, "Paid");
+    }
+
+    pub fn statusDestructive(self: *const TaxFormLibraryPeriodCell) bool {
+        return std.mem.eql(u8, self.visualStatus(), "Cancelled");
+    }
+
+    pub fn statusNeutral(self: *const TaxFormLibraryPeriodCell) bool {
+        return !self.statusWarning() and
+            !self.statusInfo() and
+            !self.statusSuccess() and
+            !self.statusDestructive();
+    }
+};
+
 pub const TaxFormLibraryRow = struct {
     id: usize,
     definition: *const form_catalog.FormDefinition,
@@ -437,6 +601,23 @@ pub const TaxFormLibraryRow = struct {
     selected: bool,
     launch_disabled: bool,
     launch_assessment: form_ui.LaunchAssessment = .{},
+    period_cells: [12]TaxFormLibraryPeriodCell = undefined,
+    period_cell_count: u8 = 0,
+    period1: TaxFormLibraryPeriodCell = .{},
+    period2: TaxFormLibraryPeriodCell = .{},
+    period3: TaxFormLibraryPeriodCell = .{},
+    period4: TaxFormLibraryPeriodCell = .{},
+    period5: TaxFormLibraryPeriodCell = .{},
+    period6: TaxFormLibraryPeriodCell = .{},
+    period7: TaxFormLibraryPeriodCell = .{},
+    period8: TaxFormLibraryPeriodCell = .{},
+    period9: TaxFormLibraryPeriodCell = .{},
+    period10: TaxFormLibraryPeriodCell = .{},
+    period11: TaxFormLibraryPeriodCell = .{},
+    period12: TaxFormLibraryPeriodCell = .{},
+    period_summary: []const u8 = "",
+    period_grid_columns: u8 = 4,
+    manage_status: profile_ui.ManagedFormStatus = .inactive,
 
     pub fn key(self: *const TaxFormLibraryRow) canvas.UiKey {
         return canvas.uiKey(self.id);
@@ -448,13 +629,16 @@ pub const TaxFormLibraryRow = struct {
 
     pub fn title(
         self: *const TaxFormLibraryRow,
-        arena: std.mem.Allocator,
     ) []const u8 {
-        return std.fmt.allocPrint(
-            arena,
-            "BIR Form {s}",
-            .{self.definition.code},
-        ) catch self.definition.code;
+        return self.definition.display_title;
+    }
+
+    pub fn taxCategory(self: *const TaxFormLibraryRow) []const u8 {
+        return taxCategoryLabel(self.definition.tax_category);
+    }
+
+    pub fn categoryLabel(self: *const TaxFormLibraryRow) []const u8 {
+        return self.taxCategory();
     }
 
     pub fn capability(self: *const TaxFormLibraryRow) []const u8 {
@@ -464,12 +648,96 @@ pub const TaxFormLibraryRow = struct {
             "Calendar only";
     }
 
+    pub fn cadenceLabel(self: *const TaxFormLibraryRow) []const u8 {
+        return switch (self.definition.cadence) {
+            .monthly => "Monthly",
+            .quarterly => "Quarterly",
+            .annual => "Annual",
+            .on_demand => "On-demand",
+        };
+    }
+
+    pub fn periodCells(self: *const TaxFormLibraryRow) []const TaxFormLibraryPeriodCell {
+        return self.period_cells[0..self.period_cell_count];
+    }
+
+    pub fn setPeriodCell(
+        self: *TaxFormLibraryRow,
+        slot: usize,
+        cell: TaxFormLibraryPeriodCell,
+    ) void {
+        if (slot >= self.period_cells.len) return;
+        self.period_cells[slot] = cell;
+        switch (slot) {
+            0 => self.period1 = cell,
+            1 => self.period2 = cell,
+            2 => self.period3 = cell,
+            3 => self.period4 = cell,
+            4 => self.period5 = cell,
+            5 => self.period6 = cell,
+            6 => self.period7 = cell,
+            7 => self.period8 = cell,
+            8 => self.period9 = cell,
+            9 => self.period10 = cell,
+            10 => self.period11 = cell,
+            11 => self.period12 = cell,
+            else => unreachable,
+        }
+    }
+
+    pub fn hasPeriodCells(self: *const TaxFormLibraryRow) bool {
+        return self.period_cell_count != 0;
+    }
+
+    pub fn periodSummary(self: *const TaxFormLibraryRow) []const u8 {
+        return self.period_summary;
+    }
+
+    pub fn periodGridColumns(self: *const TaxFormLibraryRow) u8 {
+        return self.period_grid_columns;
+    }
+
+    pub fn filingProgress(
+        self: *const TaxFormLibraryRow,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        var filed: usize = 0;
+        for (self.periodCells()) |cell| {
+            if (std.mem.eql(u8, cell.status, "Sent") or
+                std.mem.eql(u8, cell.status, "Confirmed") or
+                std.mem.eql(u8, cell.status, "Paid"))
+            {
+                filed += 1;
+            }
+        }
+        return std.fmt.allocPrint(
+            arena,
+            "{d}/{d} filed",
+            .{ filed, self.period_cell_count },
+        ) catch "Filing progress";
+    }
+
+    pub fn infoLabel(
+        self: *const TaxFormLibraryRow,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "About BIR Form {s}",
+            .{self.definition.code},
+        ) catch "About this form";
+    }
+
     pub fn activeLabel(self: *const TaxFormLibraryRow) []const u8 {
         return if (self.active) "Active" else "Inactive";
     }
 
     pub fn editorAvailable(self: *const TaxFormLibraryRow) bool {
         return self.definition.status == .static_layout;
+    }
+
+    pub fn calendarOnly(self: *const TaxFormLibraryRow) bool {
+        return self.definition.status == .calendar_only;
     }
 
     pub fn selectionLabel(
@@ -484,6 +752,23 @@ pub const TaxFormLibraryRow = struct {
                 self.definition.code,
             },
         ) catch "Toggle form selection";
+    }
+
+    pub fn manageStatusLabel(self: *const TaxFormLibraryRow) []const u8 {
+        return self.manage_status.label();
+    }
+
+    pub fn manageStatusTone(self: *const TaxFormLibraryRow) []const u8 {
+        return switch (self.manage_status) {
+            .active => "secondary",
+            .inactive => "outline",
+            .will_activate => "secondary",
+            .will_deactivate => "destructive",
+        };
+    }
+
+    pub fn selectedCard(self: *const TaxFormLibraryRow) bool {
+        return self.selected;
     }
 
     pub fn launchLabel(self: *const TaxFormLibraryRow) []const u8 {
@@ -518,6 +803,46 @@ pub const TaxFormLibraryRow = struct {
 
     pub fn launchDisabled(self: *const TaxFormLibraryRow) bool {
         return self.launch_disabled;
+    }
+};
+
+pub const LibraryOnDemandFilterRow = struct {
+    id: usize,
+    definition: *const form_catalog.FormDefinition,
+    selected: bool,
+
+    pub fn key(self: *const LibraryOnDemandFilterRow) canvas.UiKey {
+        return canvas.uiKey(self.id);
+    }
+
+    pub fn code(self: *const LibraryOnDemandFilterRow) []const u8 {
+        return self.definition.code;
+    }
+
+    pub fn title(self: *const LibraryOnDemandFilterRow) []const u8 {
+        return self.definition.display_title;
+    }
+
+    pub fn label(
+        self: *const LibraryOnDemandFilterRow,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "{s} - {s}",
+            .{ self.definition.code, self.definition.display_title },
+        ) catch self.definition.code;
+    }
+
+    pub fn selectionLabel(
+        self: *const LibraryOnDemandFilterRow,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "Filter on-demand filings by BIR Form {s}, {s}",
+            .{ self.definition.code, self.definition.display_title },
+        ) catch "Filter on-demand form";
     }
 };
 
@@ -564,7 +889,21 @@ pub const Model = struct {
     profileCompletionFormIndex: ?usize = null,
     profileFormLaunchAssessments: [form_catalog.registry_count]form_ui.LaunchAssessment = undefined,
     profileFormLaunchAssessmentsReady: bool = false,
+    profilePeriodLaunchAssessments: [form_catalog.registry_count][12]form_ui.LaunchAssessment = undefined,
+    profilePeriodLaunchAssessmentsReady: [form_catalog.registry_count][12]bool =
+        [_][12]bool{[_]bool{false} ** 12} ** form_catalog.registry_count,
     profileFormsFilterPickerVisible: bool = false,
+    profileFormsBrowseCadenceMask: u8 = 0b1111,
+    profileFormsManageCadenceMask: u8 = 0b1111,
+    profileFormsMonthMask: u16 = 0,
+    profileFormsQuarterMask: u8 = 0,
+    profileFormsOnDemandMask: u64 = 0,
+    profileFormsCategoryMask: u16 = 0,
+    profileFormsVisibleLimit: usize = 12,
+    profileFormsPageOffset: usize = 0,
+    profileFormsInfoIndex: ?usize = null,
+    profileFormsPeriodFilter: LibraryPeriodFilter = .all,
+    profileFormsPeriodPickerVisible: bool = false,
     profileCalendarSelectedDate: ?calendar_domain.Date = null,
     profileNoticeTimerKey: u64 = 0,
     calendarToday: calendar_domain.Date = .{
@@ -602,7 +941,73 @@ pub const Model = struct {
         "profileCompletionFormIndex",
         "profileFormLaunchAssessments",
         "profileFormLaunchAssessmentsReady",
+        "profilePeriodLaunchAssessments",
+        "profilePeriodLaunchAssessmentsReady",
         "profileFormsFilterPickerVisible",
+        "profileFormsBrowseCadenceMask",
+        "profileFormsManageCadenceMask",
+        "profileFormsMonthMask",
+        "profileFormsQuarterMask",
+        "profileFormsOnDemandMask",
+        "profileFormsCategoryMask",
+        "profileFormsVisibleLimit",
+        "profileFormsPageOffset",
+        "profileFormsInfoIndex",
+        "profileFormPeriodCellTypeRows",
+        "profileFormsPeriodFilter",
+        "profileFormsPeriodPickerVisible",
+        // Compatibility/test-only helpers retained while older callers move
+        // to the grouped Browse filters and exact period-tile action.
+        "profileFormsHeading",
+        "profileFormsModeDescription",
+        "profileFormsIconAction",
+        "profileFormsPeriodFilterPickerOpen",
+        "profileFormsPeriodFilterLabel",
+        "profileFormsPeriodFilterAccessibleLabel",
+        "profileFormsFilterSummaryLabel",
+        "profileFormsJanuarySelected",
+        "profileFormsFebruarySelected",
+        "profileFormsMarchSelected",
+        "profileFormsAprilSelected",
+        "profileFormsMaySelected",
+        "profileFormsJuneSelected",
+        "profileFormsJulySelected",
+        "profileFormsAugustSelected",
+        "profileFormsSeptemberSelected",
+        "profileFormsOctoberSelected",
+        "profileFormsNovemberSelected",
+        "profileFormsDecemberSelected",
+        "profileFormsQuarterOneSelected",
+        "profileFormsQuarterTwoSelected",
+        "profileFormsQuarterThreeSelected",
+        "profileFormsQuarterFourSelected",
+        "profileFormsShowMoreVisible",
+        "profileFormsHasMoreRows",
+        "profileFormsHasPreviousRows",
+        "profileBrowseFormRows",
+        "profileManageFormRows",
+        "profile_forms_toggle_period_picker",
+        "profile_forms_close_period_picker",
+        "profile_forms_period_all",
+        "profile_forms_period_january",
+        "profile_forms_period_february",
+        "profile_forms_period_march",
+        "profile_forms_period_april",
+        "profile_forms_period_may",
+        "profile_forms_period_june",
+        "profile_forms_period_july",
+        "profile_forms_period_august",
+        "profile_forms_period_september",
+        "profile_forms_period_october",
+        "profile_forms_period_november",
+        "profile_forms_period_december",
+        "profile_forms_period_quarter_one",
+        "profile_forms_period_quarter_two",
+        "profile_forms_period_quarter_three",
+        "profile_forms_period_quarter_four",
+        "profile_forms_period_annual",
+        "profile_forms_period_on_demand",
+        "open_library_form",
         "profileCalendarDeadlines",
         "profileCalendarHasDeadlines",
         "profileCalendarDeadlineCount",
@@ -1141,6 +1546,79 @@ pub const Model = struct {
         arena: std.mem.Allocator,
     ) []const u8 {
         return self.renderedFormTin(.filer, arena);
+    }
+
+    pub fn formFilingPeriodLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const period = self.formProfiles.filingPeriod() orelse
+            form_period.FilingPeriod{ .quarterly = .{
+                .tax_year = self.formProfiles.taxYear(),
+                .quarter = self.formProfiles.quarter(),
+            } };
+        var buffer: [48]u8 = undefined;
+        const label = period.label(&buffer) catch return "Filing period unavailable";
+        return arena.dupe(u8, label) catch label;
+    }
+
+    pub fn formFilingYear(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const period = self.formProfiles.filingPeriod() orelse return "";
+        return std.fmt.allocPrint(arena, "{d}", .{period.taxYear()}) catch "";
+    }
+
+    pub fn formFilingMonthYear(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const period = self.formProfiles.filingPeriod() orelse return "";
+        return switch (period) {
+            .monthly => |value| std.fmt.allocPrint(
+                arena,
+                "{d:0>2} / {d:0>4}",
+                .{ value.month, value.tax_year },
+            ) catch "",
+            else => "",
+        };
+    }
+
+    pub fn formFilingPeriodStart(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const period = self.formProfiles.filingPeriod() orelse return "";
+        const date = switch (period) {
+            .monthly => |value| profile_model.Date.init(
+                value.tax_year,
+                value.month,
+                1,
+            ) catch return "",
+            .quarterly => |value| profile_model.Date.init(
+                value.tax_year,
+                (value.quarter - 1) * 3 + 1,
+                1,
+            ) catch return "",
+            .annual => |value| profile_model.Date.init(value.tax_year, 1, 1) catch return "",
+            .on_demand => return "",
+        };
+        return formatFilingDate(arena, date);
+    }
+
+    pub fn formFilingPeriodEnd(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const period = self.formProfiles.filingPeriod() orelse return "";
+        const date = switch (period) {
+            .monthly => |value| monthEndDate(value.tax_year, value.month),
+            .quarterly => |value| monthEndDate(value.tax_year, value.quarter * 3),
+            .annual => |value| profile_model.Date.init(value.tax_year, 12, 31) catch return "",
+            .on_demand => return "",
+        };
+        return formatFilingDate(arena, date);
     }
 
     pub fn formFilerRdo(self: *const Model) []const u8 {
@@ -2199,6 +2677,10 @@ pub const Model = struct {
         return self.taxProfiles.managing_forms;
     }
 
+    pub fn browsingProfileForms(self: *const Model) bool {
+        return !self.taxProfiles.managing_forms;
+    }
+
     pub fn profileFormsSaveDisabled(self: *const Model) bool {
         return !self.taxProfiles.formsDirty();
     }
@@ -2211,11 +2693,59 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
+        if (self.taxProfiles.managing_forms) {
+            return std.fmt.allocPrint(
+                arena,
+                "{d} selected · {d} unsaved changes",
+                .{
+                    self.taxProfiles.stagedFormCount(),
+                    self.taxProfiles.changedFormCount(),
+                },
+            ) catch "Manage Forms";
+        }
         return std.fmt.allocPrint(
             arena,
             "{d} of {d} active",
             .{ self.taxProfiles.activeFormCount(), form_catalog.registry_count },
         ) catch "Forms Set unavailable";
+    }
+
+    pub fn profileFormsStagedCountLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "{d} selected for tax year {d}",
+            .{ self.taxProfiles.stagedFormCount(), self.calendar.selected_year },
+        ) catch "Selected forms";
+    }
+
+    pub fn profileFormsChangedCountLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const changed = self.taxProfiles.changedFormCount();
+        if (changed == 1) return "1 unsaved change";
+        return std.fmt.allocPrint(
+            arena,
+            "{d} unsaved changes",
+            .{changed},
+        ) catch "Unsaved changes";
+    }
+
+    pub fn profileFormsHeading(self: *const Model) []const u8 {
+        return if (self.taxProfiles.managing_forms)
+            "Manage active forms"
+        else
+            "Tax Form Library";
+    }
+
+    pub fn profileFormsModeDescription(self: *const Model) []const u8 {
+        return if (self.taxProfiles.managing_forms)
+            "Choose which forms apply to this taxpayer. Changes stay staged until Save."
+        else
+            "Choose a month, quarter, annual return, or on-demand filing to open that exact workspace.";
     }
 
     pub fn profileCompletionVisible(self: *const Model) bool {
@@ -2311,46 +2841,588 @@ pub const Model = struct {
             self.viewportClass == .rail_narrow;
     }
 
+    pub fn profileFormCardColumns(self: *const Model) u8 {
+        // Match the original eBIRForms library proportions: desktop 3 cards,
+        // tablet 2, and phone 1. The Native grid stretches each row
+        // to its tallest card, so different title or capability text cannot
+        // make neighboring cards jump in height.
+        if (self.viewportWidth >= 1100) return 3;
+        if (self.viewportWidth >= 600) return 2;
+        return 1;
+    }
+
+    fn profileFormInfoDefinition(
+        self: *const Model,
+    ) ?*const form_catalog.FormDefinition {
+        const index = self.profileFormsInfoIndex orelse return null;
+        if (index >= form_catalog.forms.len) return null;
+        return &form_catalog.forms[index];
+    }
+
+    pub fn profileFormInfoDialogOpen(self: *const Model) bool {
+        return !self.taxProfiles.managing_forms and
+            self.profileFormInfoDefinition() != null;
+    }
+
+    pub fn profileFormInfoDialogWidth(self: *const Model) f32 {
+        return @min(
+            @as(f32, 520),
+            @max(@as(f32, 320), self.viewportWidth - 32),
+        );
+    }
+
+    pub fn profileFormInfoCode(self: *const Model) []const u8 {
+        const definition = self.profileFormInfoDefinition() orelse return "";
+        return definition.code;
+    }
+
+    pub fn profileFormInfoTitle(self: *const Model) []const u8 {
+        const definition = self.profileFormInfoDefinition() orelse return "";
+        return definition.display_title;
+    }
+
+    pub fn profileFormInfoCategory(self: *const Model) []const u8 {
+        const definition = self.profileFormInfoDefinition() orelse return "";
+        return taxCategoryLabel(definition.tax_category);
+    }
+
+    pub fn profileFormInfoCadence(self: *const Model) []const u8 {
+        const definition = self.profileFormInfoDefinition() orelse return "";
+        return switch (definition.cadence) {
+            .monthly => "Monthly",
+            .quarterly => "Quarterly",
+            .annual => "Annual",
+            .on_demand => "On-demand",
+        };
+    }
+
+    pub fn profileFormInfoCapability(self: *const Model) []const u8 {
+        const definition = self.profileFormInfoDefinition() orelse return "";
+        return if (definition.status == .static_layout)
+            "An in-app editor is available. Select a filing period to open or resume the form."
+        else
+            "Calendar only. This form can appear in deadlines and exports, but an in-app editor is not available.";
+    }
+
+    pub fn profileFormInfoRevision(self: *const Model) []const u8 {
+        const definition = self.profileFormInfoDefinition() orelse return "";
+        return definition.revision orelse "Not specified";
+    }
+
+    /// Makes the nested period-cell row type discoverable to the runtime
+    /// markup interpreter. The actual rows are supplied by each form card's
+    /// `periodCells` projection.
+    pub fn profileFormPeriodCellTypeRows(
+        self: *const Model,
+    ) []const TaxFormLibraryPeriodCell {
+        _ = self;
+        return &.{};
+    }
+
     pub fn profileFormsFilterPickerOpen(self: *const Model) bool {
         return self.profileFormsFilterPickerVisible;
     }
 
+    pub fn profileFormsPeriodFilterPickerOpen(self: *const Model) bool {
+        return self.profileFormsPeriodPickerVisible;
+    }
+
+    pub fn profileFormsPeriodFilterLabel(self: *const Model) []const u8 {
+        return self.profileFormsPeriodFilter.label();
+    }
+
+    pub fn profileFormsPeriodFilterAccessibleLabel(self: *const Model) []const u8 {
+        _ = self;
+        return "Filter filing periods";
+    }
+
+    fn currentProfileFormsCadenceMask(self: *const Model) u8 {
+        return if (self.taxProfiles.managing_forms)
+            self.profileFormsManageCadenceMask
+        else
+            self.profileFormsBrowseCadenceMask;
+    }
+
+    pub fn profileFormsCadenceMonthlySelected(self: *const Model) bool {
+        return self.currentProfileFormsCadenceMask() & 0b0001 != 0;
+    }
+
+    pub fn profileFormsCadenceQuarterlySelected(self: *const Model) bool {
+        return self.currentProfileFormsCadenceMask() & 0b0010 != 0;
+    }
+
+    pub fn profileFormsCadenceAnnualSelected(self: *const Model) bool {
+        return self.currentProfileFormsCadenceMask() & 0b0100 != 0;
+    }
+
+    pub fn profileFormsCadenceOnDemandSelected(self: *const Model) bool {
+        return self.currentProfileFormsCadenceMask() & 0b1000 != 0;
+    }
+
+    fn profileFormsCadenceLocked(self: *const Model, bit: u8) bool {
+        return self.currentProfileFormsCadenceMask() == bit;
+    }
+
+    pub fn profileFormsCadenceMonthlyLocked(self: *const Model) bool {
+        return self.profileFormsCadenceLocked(0b0001);
+    }
+
+    pub fn profileFormsCadenceQuarterlyLocked(self: *const Model) bool {
+        return self.profileFormsCadenceLocked(0b0010);
+    }
+
+    pub fn profileFormsCadenceAnnualLocked(self: *const Model) bool {
+        return self.profileFormsCadenceLocked(0b0100);
+    }
+
+    pub fn profileFormsCadenceOnDemandLocked(self: *const Model) bool {
+        return self.profileFormsCadenceLocked(0b1000);
+    }
+
+    fn profileFormsAllMonthsSelected(self: *const Model) bool {
+        return !self.taxProfiles.managing_forms and
+            self.profileFormsCadenceMonthlySelected() and
+            self.profileFormsMonthMask == 0;
+    }
+
+    fn profileFormsAllQuartersSelected(self: *const Model) bool {
+        return !self.taxProfiles.managing_forms and
+            self.profileFormsCadenceQuarterlySelected() and
+            self.profileFormsQuarterMask == 0;
+    }
+
+    fn profileFormsMonthSelected(self: *const Model, month: u8) bool {
+        if (month < 1 or month > 12) return false;
+        return self.profileFormsMonthMask &
+            (@as(u16, 1) << @intCast(month - 1)) != 0;
+    }
+
+    pub fn profileFormsJanuarySelected(self: *const Model) bool {
+        return self.profileFormsMonthSelected(1);
+    }
+
+    pub fn profileFormsFebruarySelected(self: *const Model) bool {
+        return self.profileFormsMonthSelected(2);
+    }
+
+    pub fn profileFormsMarchSelected(self: *const Model) bool {
+        return self.profileFormsMonthSelected(3);
+    }
+
+    pub fn profileFormsAprilSelected(self: *const Model) bool {
+        return self.profileFormsMonthSelected(4);
+    }
+
+    pub fn profileFormsMaySelected(self: *const Model) bool {
+        return self.profileFormsMonthSelected(5);
+    }
+
+    pub fn profileFormsJuneSelected(self: *const Model) bool {
+        return self.profileFormsMonthSelected(6);
+    }
+
+    pub fn profileFormsJulySelected(self: *const Model) bool {
+        return self.profileFormsMonthSelected(7);
+    }
+
+    pub fn profileFormsAugustSelected(self: *const Model) bool {
+        return self.profileFormsMonthSelected(8);
+    }
+
+    pub fn profileFormsSeptemberSelected(self: *const Model) bool {
+        return self.profileFormsMonthSelected(9);
+    }
+
+    pub fn profileFormsOctoberSelected(self: *const Model) bool {
+        return self.profileFormsMonthSelected(10);
+    }
+
+    pub fn profileFormsNovemberSelected(self: *const Model) bool {
+        return self.profileFormsMonthSelected(11);
+    }
+
+    pub fn profileFormsDecemberSelected(self: *const Model) bool {
+        return self.profileFormsMonthSelected(12);
+    }
+
+    pub fn profileFormsMonth1Selected(self: *const Model) bool {
+        return self.profileFormsJanuarySelected();
+    }
+
+    pub fn profileFormsMonth2Selected(self: *const Model) bool {
+        return self.profileFormsFebruarySelected();
+    }
+
+    pub fn profileFormsMonth3Selected(self: *const Model) bool {
+        return self.profileFormsMarchSelected();
+    }
+
+    pub fn profileFormsMonth4Selected(self: *const Model) bool {
+        return self.profileFormsAprilSelected();
+    }
+
+    pub fn profileFormsMonth5Selected(self: *const Model) bool {
+        return self.profileFormsMaySelected();
+    }
+
+    pub fn profileFormsMonth6Selected(self: *const Model) bool {
+        return self.profileFormsJuneSelected();
+    }
+
+    pub fn profileFormsMonth7Selected(self: *const Model) bool {
+        return self.profileFormsJulySelected();
+    }
+
+    pub fn profileFormsMonth8Selected(self: *const Model) bool {
+        return self.profileFormsAugustSelected();
+    }
+
+    pub fn profileFormsMonth9Selected(self: *const Model) bool {
+        return self.profileFormsSeptemberSelected();
+    }
+
+    pub fn profileFormsMonth10Selected(self: *const Model) bool {
+        return self.profileFormsOctoberSelected();
+    }
+
+    pub fn profileFormsMonth11Selected(self: *const Model) bool {
+        return self.profileFormsNovemberSelected();
+    }
+
+    pub fn profileFormsMonth12Selected(self: *const Model) bool {
+        return self.profileFormsDecemberSelected();
+    }
+
+    fn profileFormsPeriodButtonVariant(selected: bool) []const u8 {
+        return if (selected) "primary" else "outline";
+    }
+
+    pub fn profileFormsMonth1Variant(self: *const Model) []const u8 {
+        return profileFormsPeriodButtonVariant(self.profileFormsMonth1Selected());
+    }
+
+    pub fn profileFormsMonth2Variant(self: *const Model) []const u8 {
+        return profileFormsPeriodButtonVariant(self.profileFormsMonth2Selected());
+    }
+
+    pub fn profileFormsMonth3Variant(self: *const Model) []const u8 {
+        return profileFormsPeriodButtonVariant(self.profileFormsMonth3Selected());
+    }
+
+    pub fn profileFormsMonth4Variant(self: *const Model) []const u8 {
+        return profileFormsPeriodButtonVariant(self.profileFormsMonth4Selected());
+    }
+
+    pub fn profileFormsMonth5Variant(self: *const Model) []const u8 {
+        return profileFormsPeriodButtonVariant(self.profileFormsMonth5Selected());
+    }
+
+    pub fn profileFormsMonth6Variant(self: *const Model) []const u8 {
+        return profileFormsPeriodButtonVariant(self.profileFormsMonth6Selected());
+    }
+
+    pub fn profileFormsMonth7Variant(self: *const Model) []const u8 {
+        return profileFormsPeriodButtonVariant(self.profileFormsMonth7Selected());
+    }
+
+    pub fn profileFormsMonth8Variant(self: *const Model) []const u8 {
+        return profileFormsPeriodButtonVariant(self.profileFormsMonth8Selected());
+    }
+
+    pub fn profileFormsMonth9Variant(self: *const Model) []const u8 {
+        return profileFormsPeriodButtonVariant(self.profileFormsMonth9Selected());
+    }
+
+    pub fn profileFormsMonth10Variant(self: *const Model) []const u8 {
+        return profileFormsPeriodButtonVariant(self.profileFormsMonth10Selected());
+    }
+
+    pub fn profileFormsMonth11Variant(self: *const Model) []const u8 {
+        return profileFormsPeriodButtonVariant(self.profileFormsMonth11Selected());
+    }
+
+    pub fn profileFormsMonth12Variant(self: *const Model) []const u8 {
+        return profileFormsPeriodButtonVariant(self.profileFormsMonth12Selected());
+    }
+
+    fn profileFormsQuarterSelected(self: *const Model, quarter: u8) bool {
+        if (quarter < 1 or quarter > 4) return false;
+        return self.profileFormsQuarterMask &
+            (@as(u8, 1) << @intCast(quarter - 1)) != 0;
+    }
+
+    pub fn profileFormsQuarterOneSelected(self: *const Model) bool {
+        return self.profileFormsQuarterSelected(1);
+    }
+
+    pub fn profileFormsQuarterTwoSelected(self: *const Model) bool {
+        return self.profileFormsQuarterSelected(2);
+    }
+
+    pub fn profileFormsQuarterThreeSelected(self: *const Model) bool {
+        return self.profileFormsQuarterSelected(3);
+    }
+
+    pub fn profileFormsQuarterFourSelected(self: *const Model) bool {
+        return self.profileFormsQuarterSelected(4);
+    }
+
+    pub fn profileFormsQuarter1Selected(self: *const Model) bool {
+        return self.profileFormsQuarterOneSelected();
+    }
+
+    pub fn profileFormsQuarter2Selected(self: *const Model) bool {
+        return self.profileFormsQuarterTwoSelected();
+    }
+
+    pub fn profileFormsQuarter3Selected(self: *const Model) bool {
+        return self.profileFormsQuarterThreeSelected();
+    }
+
+    pub fn profileFormsQuarter4Selected(self: *const Model) bool {
+        return self.profileFormsQuarterFourSelected();
+    }
+
+    pub fn profileFormsQuarter1Variant(self: *const Model) []const u8 {
+        return profileFormsPeriodButtonVariant(self.profileFormsQuarter1Selected());
+    }
+
+    pub fn profileFormsQuarter2Variant(self: *const Model) []const u8 {
+        return profileFormsPeriodButtonVariant(self.profileFormsQuarter2Selected());
+    }
+
+    pub fn profileFormsQuarter3Variant(self: *const Model) []const u8 {
+        return profileFormsPeriodButtonVariant(self.profileFormsQuarter3Selected());
+    }
+
+    pub fn profileFormsQuarter4Variant(self: *const Model) []const u8 {
+        return profileFormsPeriodButtonVariant(self.profileFormsQuarter4Selected());
+    }
+
+    fn profileFormsCategorySelected(
+        self: *const Model,
+        category: form_catalog.TaxCategory,
+    ) bool {
+        return self.profileFormsCategoryMask &
+            (@as(u16, 1) << @intCast(@intFromEnum(category))) != 0;
+    }
+
+    pub fn profileFormsCategoryPaymentSelected(self: *const Model) bool {
+        return self.profileFormsCategorySelected(.payment);
+    }
+
+    pub fn profileFormsCategoryRegistrationSelected(self: *const Model) bool {
+        return self.profileFormsCategorySelected(.registration);
+    }
+
+    pub fn profileFormsCategoryWithholdingSelected(self: *const Model) bool {
+        return self.profileFormsCategorySelected(.withholding_tax);
+    }
+
+    pub fn profileFormsCategoryIncomeSelected(self: *const Model) bool {
+        return self.profileFormsCategorySelected(.income_tax);
+    }
+
+    pub fn profileFormsCategoryVatSelected(self: *const Model) bool {
+        return self.profileFormsCategorySelected(.value_added_tax);
+    }
+
+    pub fn profileFormsCategoryPercentageSelected(self: *const Model) bool {
+        return self.profileFormsCategorySelected(.percentage_tax);
+    }
+
+    pub fn profileFormsCategoryDstSelected(self: *const Model) bool {
+        return self.profileFormsCategorySelected(.documentary_stamp_tax);
+    }
+
+    pub fn profileFormsCategoryExciseSelected(self: *const Model) bool {
+        return self.profileFormsCategorySelected(.excise_tax);
+    }
+
+    pub fn profileFormsCategoryCapitalGainsSelected(self: *const Model) bool {
+        return self.profileFormsCategorySelected(.capital_gains_tax);
+    }
+
+    pub fn profileFormsCategoryEstateDonorsSelected(self: *const Model) bool {
+        return self.profileFormsCategorySelected(.estate_and_donors_tax);
+    }
+
+    pub fn profileOnDemandFilterRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const LibraryOnDemandFilterRow {
+        const rows = arena.alloc(
+            LibraryOnDemandFilterRow,
+            form_catalog.registry_count,
+        ) catch return &.{};
+        var count: usize = 0;
+        for (&form_catalog.forms, 0..) |*definition, index| {
+            if (definition.cadence != .on_demand) continue;
+            if (!self.taxProfiles.formAvailable(
+                self.calendar.selected_year,
+                definition.code,
+            )) continue;
+            rows[count] = .{
+                .id = index,
+                .definition = definition,
+                .selected = self.profileFormsOnDemandMask &
+                    (@as(u64, 1) << @intCast(index)) != 0,
+            };
+            count += 1;
+        }
+        return rows[0..count];
+    }
+
+    pub fn profileFormsHasOnDemandFilters(self: *const Model) bool {
+        for (&form_catalog.forms) |*definition| {
+            if (definition.cadence == .on_demand and
+                self.taxProfiles.formAvailable(
+                    self.calendar.selected_year,
+                    definition.code,
+                )) return true;
+        }
+        return false;
+    }
+
     pub fn profileFormsFilterSummaryLabel(self: *const Model) []const u8 {
+        if (!self.taxProfiles.managing_forms) {
+            if (self.profileFormsBrowseCadenceMask == 0b1111 and
+                self.profileFormsMonthMask == 0 and
+                self.profileFormsQuarterMask == 0 and
+                self.profileFormsOnDemandMask == 0)
+            {
+                return "All active filings";
+            }
+            return "Browse filters applied";
+        }
         return switch (self.taxProfiles.form_activity_filter) {
             .active => switch (self.taxProfiles.form_capability_filter) {
-                .all => "Active · Any type",
-                .editor => "Active · Editor",
-                .calendar_only => "Active · Calendar only",
+                .all => "Selected · Any capability",
+                .editor => "Selected · Editor",
+                .calendar_only => "Selected · Calendar only",
             },
             .inactive => switch (self.taxProfiles.form_capability_filter) {
-                .all => "Inactive · Any type",
-                .editor => "Inactive · Editor",
-                .calendar_only => "Inactive · Calendar only",
+                .all => "Not selected · Any capability",
+                .editor => "Not selected · Editor",
+                .calendar_only => "Not selected · Calendar only",
             },
             .all => switch (self.taxProfiles.form_capability_filter) {
                 .all => "All forms",
-                .editor => "All statuses · Editor",
-                .calendar_only => "All statuses · Calendar only",
+                .editor => "All selections · Editor",
+                .calendar_only => "All selections · Calendar only",
             },
         };
     }
 
-    pub fn profileFormsFilterAccessibleLabel(self: *const Model) []const u8 {
+    pub fn profileFormsFilterDisplayLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (self.taxProfiles.managing_forms) {
+            return self.profileFormsFilterSummaryLabel();
+        }
+        if (self.profileFormsBrowseCadenceMask == 0b1111 and
+            self.profileFormsMonthMask == 0 and
+            self.profileFormsQuarterMask == 0 and
+            self.profileFormsOnDemandMask == 0)
+        {
+            return "All active filings";
+        }
+
+        var label: std.ArrayList(u8) = .empty;
+        if (self.profileFormsCadenceMonthlySelected()) {
+            const month_count: u8 = @intCast(@popCount(
+                self.profileFormsMonthMask,
+            ));
+            const part = if (month_count == 0)
+                "All months"
+            else if (month_count == 1)
+                shortMonthName(firstSelectedMonth(self.profileFormsMonthMask))
+            else
+                std.fmt.allocPrint(
+                    arena,
+                    "{d} months",
+                    .{month_count},
+                ) catch "Months";
+            appendLibraryFilterLabelPart(&label, arena, part) catch
+                return "Filing periods selected";
+        }
+        if (self.profileFormsCadenceQuarterlySelected()) {
+            const quarter_count: u8 = @intCast(@popCount(
+                self.profileFormsQuarterMask,
+            ));
+            const part = if (quarter_count == 0)
+                "All quarters"
+            else if (quarter_count == 1)
+                shortQuarterName(firstSelectedQuarter(
+                    self.profileFormsQuarterMask,
+                ))
+            else
+                std.fmt.allocPrint(
+                    arena,
+                    "{d} quarters",
+                    .{quarter_count},
+                ) catch "Quarters";
+            appendLibraryFilterLabelPart(&label, arena, part) catch
+                return "Filing periods selected";
+        }
+        if (self.profileFormsCadenceAnnualSelected()) {
+            appendLibraryFilterLabelPart(&label, arena, "Annual") catch
+                return "Filing periods selected";
+        }
+        if (self.profileFormsCadenceOnDemandSelected()) {
+            const selected_count: u8 = @intCast(@popCount(
+                self.profileFormsOnDemandMask,
+            ));
+            const part = if (selected_count == 0)
+                "On-demand"
+            else if (selected_count == 1)
+                "1 on-demand form"
+            else
+                std.fmt.allocPrint(
+                    arena,
+                    "{d} on-demand forms",
+                    .{selected_count},
+                ) catch "On-demand forms";
+            appendLibraryFilterLabelPart(&label, arena, part) catch
+                return "Filing periods selected";
+        }
+        return if (label.items.len == 0) "All active filings" else label.items;
+    }
+
+    pub fn profileFormsFilterAccessibleLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (!self.taxProfiles.managing_forms) {
+            if (self.profileFormsBrowseCadenceMask == 0b1111 and
+                self.profileFormsMonthMask == 0 and
+                self.profileFormsQuarterMask == 0 and
+                self.profileFormsOnDemandMask == 0)
+            {
+                return "Filter active forms by cadence, month, or quarter";
+            }
+            return std.fmt.allocPrint(
+                arena,
+                "Filter active forms: {s}. Change cadence, month, or quarter",
+                .{self.profileFormsFilterDisplayLabel(arena)},
+            ) catch "Change active form filters";
+        }
         return switch (self.taxProfiles.form_activity_filter) {
             .active => switch (self.taxProfiles.form_capability_filter) {
-                .all => "Filter forms: active, any form type",
-                .editor => "Filter forms: active, editor available",
-                .calendar_only => "Filter forms: active, calendar only",
+                .all => "Filter forms: selected, any capability",
+                .editor => "Filter forms: selected, editor available",
+                .calendar_only => "Filter forms: selected, calendar only",
             },
             .inactive => switch (self.taxProfiles.form_capability_filter) {
-                .all => "Filter forms: inactive, any form type",
-                .editor => "Filter forms: inactive, editor available",
-                .calendar_only => "Filter forms: inactive, calendar only",
+                .all => "Filter forms: not selected, any capability",
+                .editor => "Filter forms: not selected, editor available",
+                .calendar_only => "Filter forms: not selected, calendar only",
             },
             .all => switch (self.taxProfiles.form_capability_filter) {
                 .all => "Filter forms: all forms",
-                .editor => "Filter forms: all statuses, editor available",
-                .calendar_only => "Filter forms: all statuses, calendar only",
+                .editor => "Filter forms: all selections, editor available",
+                .calendar_only => "Filter forms: all selections, calendar only",
             },
         };
     }
@@ -2387,7 +3459,164 @@ pub const Model = struct {
         return self.taxProfiles.formFilterCalendarOnlyLocked();
     }
 
-    pub fn profileFormRows(
+    fn libraryCadenceSelected(self: *const Model, cadence: form_catalog.FilingCadence) bool {
+        const bit: u8 = switch (cadence) {
+            .monthly => 0b0001,
+            .quarterly => 0b0010,
+            .annual => 0b0100,
+            .on_demand => 0b1000,
+        };
+        return self.currentProfileFormsCadenceMask() & bit != 0;
+    }
+
+    fn libraryValidPeriodMask(
+        definition: *const form_catalog.FormDefinition,
+    ) u16 {
+        const maximum: u8 = switch (definition.cadence) {
+            .monthly => 12,
+            .quarterly => 4,
+            .annual, .on_demand => return 0,
+        };
+        const first = @min(definition.min_period orelse 1, maximum);
+        const last = @min(definition.max_period orelse maximum, maximum);
+        var mask: u16 = 0;
+        var value = first;
+        while (value <= last) : (value += 1) {
+            mask |= @as(u16, 1) << @intCast(value - 1);
+        }
+        return mask;
+    }
+
+    fn libraryPeriodGridColumns(
+        self: *const Model,
+        definition: *const form_catalog.FormDefinition,
+    ) u8 {
+        _ = self;
+        // Period tiles keep their cadence footprint regardless of the active
+        // period filter. Monthly cards are always 4 columns x 3 rows and
+        // quarterly cards are always 4 columns x 1 row; filtered-out slots
+        // render as invisible placeholders instead of widening the survivors.
+        return switch (definition.cadence) {
+            .monthly, .quarterly => 4,
+            .annual, .on_demand => 1,
+        };
+    }
+
+    fn libraryFormMatchesSearch(
+        self: *const Model,
+        definition: *const form_catalog.FormDefinition,
+    ) bool {
+        const query = self.taxProfiles.formsQuery();
+        if (query.len == 0) return true;
+        return multi_select.containsAsciiInsensitive(definition.code, query) or
+            multi_select.containsAsciiInsensitive(definition.display_title, query) or
+            multi_select.containsAsciiInsensitive(
+                taxCategoryLabel(definition.tax_category),
+                query,
+            );
+    }
+
+    fn browseFormMatches(
+        self: *const Model,
+        definition: *const form_catalog.FormDefinition,
+        index: usize,
+    ) bool {
+        if (!self.taxProfiles.formAvailable(
+            self.calendar.selected_year,
+            definition.code,
+        )) return false;
+        if (!self.libraryCadenceSelected(definition.cadence)) return false;
+        switch (definition.cadence) {
+            .monthly => if (self.profileFormsMonthMask != 0 and
+                self.profileFormsMonthMask & libraryValidPeriodMask(definition) == 0)
+                return false,
+            .quarterly => if (self.profileFormsQuarterMask != 0 and
+                @as(u16, self.profileFormsQuarterMask) &
+                    libraryValidPeriodMask(definition) == 0)
+                return false,
+            .annual, .on_demand => {},
+        }
+        if (definition.cadence == .on_demand and
+            self.profileFormsOnDemandMask != 0 and
+            self.profileFormsOnDemandMask &
+                (@as(u64, 1) << @intCast(index)) == 0) return false;
+        return self.libraryFormMatchesSearch(definition);
+    }
+
+    fn manageFormMatches(
+        self: *const Model,
+        definition: *const form_catalog.FormDefinition,
+        index: usize,
+    ) bool {
+        const selected = self.taxProfiles.stagedFormSelected(index);
+        switch (self.taxProfiles.form_activity_filter) {
+            .active => if (!selected) return false,
+            .inactive => if (selected) return false,
+            .all => {},
+        }
+        switch (self.taxProfiles.form_capability_filter) {
+            .editor => if (definition.status != .static_layout) return false,
+            .calendar_only => if (definition.status != .calendar_only) return false,
+            .all => {},
+        }
+        if (!self.libraryCadenceSelected(definition.cadence)) return false;
+        if (self.profileFormsCategoryMask != 0 and
+            !self.profileFormsCategorySelected(definition.tax_category)) return false;
+        return self.libraryFormMatchesSearch(definition);
+    }
+
+    pub fn profileBrowseFormRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const TaxFormLibraryRow {
+        const rows = arena.alloc(
+            TaxFormLibraryRow,
+            form_catalog.registry_count,
+        ) catch return &.{};
+        var count: usize = 0;
+        var matched: usize = 0;
+        for (&form_catalog.forms, 0..) |*definition, index| {
+            if (!self.browseFormMatches(definition, index)) continue;
+            if (matched < self.profileFormsPageOffset) {
+                matched += 1;
+                continue;
+            }
+            if (count >= self.profileFormsVisibleLimit) break;
+            const launch_assessment = if (self.profileFormLaunchAssessmentsReady)
+                self.profileFormLaunchAssessments[index]
+            else
+                form_ui.LaunchAssessment{};
+            rows[count] = .{
+                .id = index,
+                .definition = definition,
+                .active = true,
+                .selected = true,
+                .launch_assessment = launch_assessment,
+                .launch_disabled = definition.status != .static_layout or
+                    !launchActionEnabled(
+                        launch_assessment.status,
+                    ),
+                .period_grid_columns = self.libraryPeriodGridColumns(definition),
+            };
+            populateLibraryPeriodCells(
+                &rows[count],
+                self.taxProfiles.draftSummaries(),
+                self.taxProfiles.draftSummariesTruncated(),
+                definition.code,
+                self.calendar.selected_year,
+                arena,
+                self.profileFormsMonthMask,
+                self.profileFormsQuarterMask,
+                self.profilePeriodLaunchAssessments[index],
+                self.profilePeriodLaunchAssessmentsReady[index],
+            );
+            count += 1;
+            matched += 1;
+        }
+        return rows[0..count];
+    }
+
+    pub fn profileManageFormRows(
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const TaxFormLibraryRow {
@@ -2397,48 +3626,83 @@ pub const Model = struct {
         ) catch return &.{};
         var count: usize = 0;
         for (&form_catalog.forms, 0..) |*definition, index| {
-            const active = self.taxProfiles.formAvailable(
-                self.calendar.selected_year,
-                definition.code,
-            );
-            const selected = self.taxProfiles.displayedFormSelected(index);
-            const filter_selected = if (self.taxProfiles.managing_forms)
-                selected
-            else
-                active;
-            switch (self.taxProfiles.form_activity_filter) {
-                .active => if (!filter_selected) continue,
-                .inactive => if (filter_selected) continue,
-                .all => {},
-            }
-            switch (self.taxProfiles.form_capability_filter) {
-                .editor => if (definition.status != .static_layout) continue,
-                .calendar_only => if (definition.status != .calendar_only) continue,
-                .all => {},
-            }
-            if (!multi_select.containsAsciiInsensitive(
-                definition.code,
-                self.taxProfiles.formsQuery(),
-            )) continue;
-            const launch_assessment = if (self.profileFormLaunchAssessmentsReady)
-                self.profileFormLaunchAssessments[index]
-            else
-                form_ui.LaunchAssessment{};
+            if (!self.manageFormMatches(definition, index)) continue;
+            const active = self.taxProfiles.persistedFormSelected(index);
+            const selected = self.taxProfiles.stagedFormSelected(index);
             rows[count] = .{
                 .id = index,
                 .definition = definition,
                 .active = active,
                 .selected = selected,
-                .launch_assessment = launch_assessment,
-                .launch_disabled = definition.status != .static_layout or
-                    !active or
-                    !launchActionEnabled(
-                        launch_assessment.status,
-                    ),
+                .launch_disabled = true,
+                .manage_status = self.taxProfiles.managedFormStatus(index) orelse
+                    .inactive,
             };
             count += 1;
         }
         return rows[0..count];
+    }
+
+    pub fn profileFormRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const TaxFormLibraryRow {
+        return if (self.taxProfiles.managing_forms)
+            self.profileManageFormRows(arena)
+        else
+            self.profileBrowseFormRows(arena);
+    }
+
+    pub fn profileFormsShowMoreVisible(self: *const Model) bool {
+        if (self.taxProfiles.managing_forms) return false;
+        var count: usize = 0;
+        for (&form_catalog.forms, 0..) |*definition, index| {
+            if (self.browseFormMatches(definition, index)) count += 1;
+        }
+        return count > self.profileFormsPageOffset + self.profileFormsVisibleLimit;
+    }
+
+    pub fn profileFormsHasMoreRows(self: *const Model) bool {
+        return self.profileFormsShowMoreVisible();
+    }
+
+    pub fn profileFormsHasPreviousRows(self: *const Model) bool {
+        return !self.taxProfiles.managing_forms and
+            self.profileFormsPageOffset != 0;
+    }
+
+    pub fn profileFormsPreviousDisabled(self: *const Model) bool {
+        return !self.profileFormsHasPreviousRows();
+    }
+
+    pub fn profileFormsNextDisabled(self: *const Model) bool {
+        return !self.profileFormsHasMoreRows();
+    }
+
+    pub fn profileFormsPaginationVisible(self: *const Model) bool {
+        return self.profileFormsHasPreviousRows() or
+            self.profileFormsHasMoreRows();
+    }
+
+    pub fn profileFormsPageLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        var total: usize = 0;
+        for (&form_catalog.forms, 0..) |*definition, index| {
+            if (self.browseFormMatches(definition, index)) total += 1;
+        }
+        if (total == 0) return "No forms";
+        const first = @min(self.profileFormsPageOffset + 1, total);
+        const last = @min(
+            self.profileFormsPageOffset + self.profileFormsVisibleLimit,
+            total,
+        );
+        return std.fmt.allocPrint(
+            arena,
+            "Forms {d}-{d} of {d}",
+            .{ first, last, total },
+        ) catch "Forms page";
     }
 
     pub fn profileFormRowsEmpty(
@@ -2446,6 +3710,17 @@ pub const Model = struct {
         arena: std.mem.Allocator,
     ) bool {
         return self.profileFormRows(arena).len == 0;
+    }
+
+    pub fn profileBrowseActiveEmpty(self: *const Model) bool {
+        if (self.taxProfiles.managing_forms) return false;
+        for (&form_catalog.forms) |*definition| {
+            if (self.taxProfiles.formAvailable(
+                self.calendar.selected_year,
+                definition.code,
+            )) return false;
+        }
+        return true;
     }
 
     pub fn dashboardCalendarActive(self: *const Model) bool {
@@ -3593,6 +4868,541 @@ pub const Model = struct {
     }
 };
 
+const LibraryDraftStatus = struct {
+    label: []const u8,
+    tone: []const u8,
+};
+
+fn onDemandDraftPeriodForSlot(
+    drafts: []const profile_ui.DraftSummaryRow,
+    form_code: []const u8,
+    tax_year: u16,
+    slot: usize,
+) ?form_period.FilingPeriod {
+    if (slot == 0) return null;
+    var matched: usize = 0;
+    for (drafts) |*draft| {
+        if (!formCodesEquivalent(draft.formCode(), form_code)) continue;
+        const period = form_period.FilingPeriod.parseKey(
+            .on_demand,
+            draft.periodKey(),
+        ) catch continue;
+        if (period.taxYear() != tax_year) continue;
+        matched += 1;
+        if (matched == slot) return period;
+    }
+    return null;
+}
+
+fn newOnDemandAssessmentPeriod(
+    drafts: []const profile_ui.DraftSummaryRow,
+    form_code: []const u8,
+    tax_year: u16,
+) ?form_period.FilingPeriod {
+    var maximum: u32 = 0;
+    for (drafts) |*draft| {
+        if (!formCodesEquivalent(draft.formCode(), form_code)) continue;
+        const period = form_period.FilingPeriod.parseKey(
+            .on_demand,
+            draft.periodKey(),
+        ) catch continue;
+        switch (period) {
+            .on_demand => |value| {
+                if (value.tax_year == tax_year) maximum = @max(
+                    maximum,
+                    value.occurrence,
+                );
+            },
+            else => unreachable,
+        }
+    }
+    if (maximum >= 999) return null;
+    return .{ .on_demand = .{
+        .tax_year = tax_year,
+        .occurrence = maximum + 1,
+    } };
+}
+
+fn libraryDraftStatus(
+    drafts: []const profile_ui.DraftSummaryRow,
+    drafts_truncated: bool,
+    form_code: []const u8,
+    period: form_period.FilingPeriod,
+    arena: std.mem.Allocator,
+) LibraryDraftStatus {
+    var key_buffer: [32]u8 = undefined;
+    const period_key = period.key(&key_buffer) catch "";
+    for (drafts) |*draft| {
+        if (!formCodesEquivalent(draft.formCode(), form_code)) continue;
+        if (!std.mem.eql(u8, draft.periodKey(), period_key)) continue;
+        return .{
+            .label = filingLifecycleLabel(draft.lifecycleText()),
+            .tone = filingLifecycleTone(draft.lifecycleText()),
+        };
+    }
+    _ = arena;
+    if (drafts_truncated) return .{
+        .label = "Status unavailable",
+        .tone = "secondary",
+    };
+    return .{ .label = "New", .tone = "outline" };
+}
+
+fn filingLifecycleLabel(lifecycle: []const u8) []const u8 {
+    if (std.mem.eql(u8, lifecycle, "editing") or
+        std.mem.eql(u8, lifecycle, "prepared")) return "Draft";
+    if (std.mem.eql(u8, lifecycle, "queued")) return "Queued";
+    if (std.mem.eql(u8, lifecycle, "submitted")) return "Sent";
+    if (std.mem.eql(u8, lifecycle, "confirmed")) return "Confirmed";
+    if (std.mem.eql(u8, lifecycle, "paid")) return "Paid";
+    if (std.mem.eql(u8, lifecycle, "cancelled")) return "Cancelled";
+    return "New";
+}
+
+fn filingLifecycleTone(lifecycle: []const u8) []const u8 {
+    if (std.mem.eql(u8, lifecycle, "submitted")) return "secondary";
+    if (std.mem.eql(u8, lifecycle, "confirmed") or
+        std.mem.eql(u8, lifecycle, "paid")) return "primary";
+    if (std.mem.eql(u8, lifecycle, "cancelled")) return "destructive";
+    if (std.mem.eql(u8, lifecycle, "editing") or
+        std.mem.eql(u8, lifecycle, "prepared") or
+        std.mem.eql(u8, lifecycle, "queued")) return "secondary";
+    return "outline";
+}
+
+fn resetProfileFormsPage(model: *Model) void {
+    model.profileFormsVisibleLimit = 12;
+    model.profileFormsPageOffset = 0;
+}
+
+fn toggleLibraryCadence(model: *Model, bit: u8) void {
+    const mask = if (model.taxProfiles.managing_forms)
+        &model.profileFormsManageCadenceMask
+    else
+        &model.profileFormsBrowseCadenceMask;
+    if (mask.* & bit != 0) {
+        if (mask.* == bit) return;
+        mask.* &= ~bit;
+        if (!model.taxProfiles.managing_forms) {
+            switch (bit) {
+                0b0001 => model.profileFormsMonthMask = 0,
+                0b0010 => model.profileFormsQuarterMask = 0,
+                0b1000 => model.profileFormsOnDemandMask = 0,
+                else => {},
+            }
+        }
+    } else {
+        mask.* |= bit;
+    }
+    resetProfileFormsPage(model);
+}
+
+fn toggleLibraryMonth(model: *Model, month: u8) void {
+    if (model.taxProfiles.managing_forms or month < 1 or month > 12) return;
+    const bit = @as(u16, 1) << @intCast(month - 1);
+    if (model.profileFormsMonthMask & bit != 0) {
+        const remaining = model.profileFormsMonthMask & ~bit;
+        model.profileFormsMonthMask = remaining;
+        if (remaining == 0 and
+            model.profileFormsBrowseCadenceMask != 0b0001)
+        {
+            model.profileFormsBrowseCadenceMask &= ~@as(u8, 0b0001);
+        }
+    } else {
+        model.profileFormsMonthMask |= bit;
+        if (model.profileFormsBrowseCadenceMask == 0b1111) {
+            model.profileFormsBrowseCadenceMask = 0b0001;
+        } else {
+            model.profileFormsBrowseCadenceMask |= 0b0001;
+        }
+    }
+    resetProfileFormsPage(model);
+}
+
+fn toggleLibraryQuarter(model: *Model, quarter: u8) void {
+    if (model.taxProfiles.managing_forms or quarter < 1 or quarter > 4) return;
+    const bit = @as(u8, 1) << @intCast(quarter - 1);
+    if (model.profileFormsQuarterMask & bit != 0) {
+        const remaining = model.profileFormsQuarterMask & ~bit;
+        model.profileFormsQuarterMask = remaining;
+        if (remaining == 0 and
+            model.profileFormsBrowseCadenceMask != 0b0010)
+        {
+            model.profileFormsBrowseCadenceMask &= ~@as(u8, 0b0010);
+        }
+    } else {
+        model.profileFormsQuarterMask |= bit;
+        if (model.profileFormsBrowseCadenceMask == 0b1111) {
+            model.profileFormsBrowseCadenceMask = 0b0010;
+        } else {
+            model.profileFormsBrowseCadenceMask |= 0b0010;
+        }
+    }
+    resetProfileFormsPage(model);
+}
+
+fn toggleLibraryCategory(
+    model: *Model,
+    category: form_catalog.TaxCategory,
+) void {
+    if (!model.taxProfiles.managing_forms) return;
+    const bit = @as(u16, 1) << @intCast(@intFromEnum(category));
+    model.profileFormsCategoryMask ^= bit;
+}
+
+fn toggleLibraryOnDemandForm(model: *Model, index: usize) void {
+    if (model.taxProfiles.managing_forms or
+        index >= form_catalog.registry_count) return;
+    const definition = &form_catalog.forms[index];
+    if (definition.cadence != .on_demand or
+        !model.taxProfiles.formAvailable(
+            model.calendar.selected_year,
+            definition.code,
+        )) return;
+    model.profileFormsOnDemandMask ^=
+        @as(u64, 1) << @intCast(index);
+    if (model.profileFormsOnDemandMask != 0) {
+        if (model.profileFormsBrowseCadenceMask == 0b1111) {
+            model.profileFormsBrowseCadenceMask = 0b1000;
+        } else {
+            model.profileFormsBrowseCadenceMask |= 0b1000;
+        }
+    }
+    resetProfileFormsPage(model);
+}
+
+fn resetProfileFormsBrowseFilters(model: *Model) void {
+    model.profileFormsBrowseCadenceMask = 0b1111;
+    model.profileFormsMonthMask = 0;
+    model.profileFormsQuarterMask = 0;
+    model.profileFormsOnDemandMask = 0;
+    resetProfileFormsPage(model);
+}
+
+fn setLibraryPeriodFilter(model: *Model, filter: LibraryPeriodFilter) void {
+    model.profileFormsPeriodFilter = filter;
+    model.profileFormsPeriodPickerVisible = false;
+    switch (filter) {
+        .all => resetProfileFormsBrowseFilters(model),
+        .monthly => |month| {
+            model.profileFormsMonthMask =
+                @as(u16, 1) << @intCast(month - 1);
+            model.profileFormsQuarterMask = 0;
+            model.profileFormsOnDemandMask = 0;
+            model.profileFormsBrowseCadenceMask = 0b0001;
+        },
+        .quarterly => |quarter| {
+            model.profileFormsMonthMask = 0;
+            model.profileFormsQuarterMask =
+                @as(u8, 1) << @intCast(quarter - 1);
+            model.profileFormsBrowseCadenceMask = 0b0010;
+            model.profileFormsOnDemandMask = 0;
+        },
+        .annual => {
+            model.profileFormsMonthMask = 0;
+            model.profileFormsQuarterMask = 0;
+            model.profileFormsOnDemandMask = 0;
+            model.profileFormsBrowseCadenceMask = 0b0100;
+        },
+        .on_demand => {
+            model.profileFormsMonthMask = 0;
+            model.profileFormsQuarterMask = 0;
+            model.profileFormsOnDemandMask = 0;
+            model.profileFormsBrowseCadenceMask = 0b1000;
+        },
+    }
+    refreshProfileFormLaunchAssessments(model);
+}
+
+fn libraryPeriodFilterAllowed(
+    definition: *const form_catalog.FormDefinition,
+    filter: LibraryPeriodFilter,
+) bool {
+    const slot: ?u8 = switch (filter) {
+        .monthly => |month| month,
+        .quarterly => |quarter| quarter,
+        else => null,
+    };
+    if (slot) |value| {
+        if (definition.min_period) |minimum| if (value < minimum) return false;
+        if (definition.max_period) |maximum| if (value > maximum) return false;
+    }
+    return filter.matches(definition.cadence);
+}
+
+fn libraryPeriodForSlot(
+    definition: *const form_catalog.FormDefinition,
+    year: u16,
+    slot: usize,
+) ?form_period.FilingPeriod {
+    return switch (definition.cadence) {
+        .monthly => blk: {
+            const minimum = definition.min_period orelse 1;
+            const maximum = definition.max_period orelse 12;
+            const value: usize = @as(usize, minimum) + slot;
+            if (value > maximum or value > 12) break :blk null;
+            break :blk .{ .monthly = .{
+                .tax_year = year,
+                .month = @intCast(value),
+            } };
+        },
+        .quarterly => blk: {
+            const minimum = definition.min_period orelse 1;
+            const maximum = definition.max_period orelse 4;
+            const value: usize = @as(usize, minimum) + slot;
+            if (value > maximum or value > 4) break :blk null;
+            break :blk .{ .quarterly = .{
+                .tax_year = year,
+                .quarter = @intCast(value),
+            } };
+        },
+        .annual => if (slot == 0)
+            .{ .annual = .{ .tax_year = year } }
+        else
+            null,
+        .on_demand => if (slot == 0)
+            .{ .on_demand = .{ .tax_year = year, .occurrence = 1 } }
+        else
+            null,
+    };
+}
+
+fn compactPeriodStatus(label: []const u8) []const u8 {
+    // Period tiles are intentionally compact (four columns even on a phone),
+    // so keep their visual status to a short token while the full status
+    // remains in the accessible action label and the card capability copy.
+    if (std.mem.eql(u8, label, "Deadline only")) return "Due";
+    if (std.mem.eql(u8, label, "Status unavailable")) return "Unknown";
+    return label;
+}
+
+fn periodStatusColor(label: []const u8) []const u8 {
+    if (std.mem.eql(u8, label, "Sent")) return "info";
+    if (std.mem.eql(u8, label, "Confirmed") or std.mem.eql(u8, label, "Paid")) {
+        return "success";
+    }
+    if (std.mem.eql(u8, label, "Cancelled")) return "destructive";
+    if (std.mem.eql(u8, label, "Draft") or
+        std.mem.eql(u8, label, "Queued") or
+        std.mem.eql(u8, label, "Due") or
+        std.mem.eql(u8, label, "Unknown"))
+    {
+        return "warning";
+    }
+    return "muted";
+}
+
+fn periodLaunchNote(
+    assessment: form_ui.LaunchAssessment,
+    assessment_ready: bool,
+) []const u8 {
+    if (!assessment_ready) return "";
+    return switch (assessment.status) {
+        .ready_new, .ready_resume => "",
+        .needs_profile => ", complete profile before opening",
+        .needs_activity_selection => ", choose an activity before opening",
+        .profile_not_eligible => ", profile is not eligible",
+        .unavailable => ", unavailable",
+    };
+}
+
+fn appendLibraryPeriodCell(
+    row: *TaxFormLibraryRow,
+    drafts: []const profile_ui.DraftSummaryRow,
+    drafts_truncated: bool,
+    form_code: []const u8,
+    period: form_period.FilingPeriod,
+    month_mask: u16,
+    quarter_mask: u8,
+    assessment: form_ui.LaunchAssessment,
+    assessment_ready: bool,
+    label_override: ?[]const u8,
+    force_new_status: bool,
+    arena: std.mem.Allocator,
+) void {
+    if (row.period_cell_count >= row.period_cells.len) return;
+    const label = label_override orelse switch (period) {
+        .monthly => |value| shortMonthName(value.month),
+        .quarterly => |value| std.fmt.allocPrint(
+            arena,
+            "Q{d}",
+            .{value.quarter},
+        ) catch "Quarter",
+        .annual => "File annual return",
+        .on_demand => "Start new return",
+    };
+    const persisted_status = if (row.definition.status == .calendar_only)
+        LibraryDraftStatus{ .label = "Deadline only", .tone = "outline" }
+    else if (force_new_status)
+        LibraryDraftStatus{ .label = "New", .tone = "outline" }
+    else
+        libraryDraftStatus(
+            drafts,
+            drafts_truncated,
+            form_code,
+            period,
+            arena,
+        );
+    // Launch readiness is a separate concern from filing lifecycle. A form
+    // can be New while profile data is incomplete; that must not leak as a
+    // fake filing status such as "Profile" into the period tile.
+    const status = persisted_status;
+    const filtered_out = switch (period) {
+        .monthly => |value| month_mask != 0 and
+            month_mask & (@as(u16, 1) << @intCast(value.month - 1)) == 0,
+        .quarterly => |value| quarter_mask != 0 and
+            quarter_mask & (@as(u8, 1) << @intCast(value.quarter - 1)) == 0,
+        .annual, .on_demand => false,
+    };
+    const selected = !filtered_out and switch (period) {
+        .monthly => month_mask != 0,
+        .quarterly => quarter_mask != 0,
+        .annual, .on_demand => false,
+    };
+    const action_id = row.id * 16 + row.period_cell_count;
+    const action_label = std.fmt.allocPrint(
+        arena,
+        "BIR Form {s}, {s}, tax year {d}, {s}{s}{s}",
+        .{
+            form_code,
+            label,
+            period.taxYear(),
+            status.label,
+            periodLaunchNote(assessment, assessment_ready),
+            if (row.definition.status == .calendar_only)
+                ", calendar only"
+            else
+                ", open exact filing period",
+        },
+    ) catch "Open filing period";
+    const cell: TaxFormLibraryPeriodCell = .{
+        .id = action_id,
+        .action_id = action_id,
+        .label = label,
+        .status = status.label,
+        .visual_status = compactPeriodStatus(status.label),
+        .status_color = periodStatusColor(compactPeriodStatus(status.label)),
+        .tile_width = switch (period) {
+            .annual, .on_demand => 280,
+            .monthly, .quarterly => 64,
+        },
+        .tone = status.tone,
+        .selected = selected,
+        .available = true,
+        .visible = !filtered_out,
+        .filtered_out = filtered_out,
+        .actionable = row.definition.status == .static_layout and
+            assessment_ready and
+            launchActionEnabled(assessment.status),
+        .calendar_only = row.definition.status == .calendar_only,
+        .accessible_label = action_label,
+    };
+    row.setPeriodCell(row.period_cell_count, cell);
+    row.period_cell_count += 1;
+}
+
+fn populateLibraryPeriodCells(
+    row: *TaxFormLibraryRow,
+    drafts: []const profile_ui.DraftSummaryRow,
+    drafts_truncated: bool,
+    form_code: []const u8,
+    tax_year: i32,
+    arena: std.mem.Allocator,
+    month_mask: u16,
+    quarter_mask: u8,
+    assessments: [12]form_ui.LaunchAssessment,
+    assessments_ready: [12]bool,
+) void {
+    if (tax_year < 1 or tax_year > 9999) return;
+    const year: u16 = @intCast(tax_year);
+    if (row.definition.cadence == .on_demand) {
+        const new_period = newOnDemandAssessmentPeriod(
+            drafts,
+            form_code,
+            year,
+        ) orelse form_period.FilingPeriod{ .on_demand = .{
+            .tax_year = year,
+            .occurrence = 999,
+        } };
+        appendLibraryPeriodCell(
+            row,
+            drafts,
+            drafts_truncated,
+            form_code,
+            new_period,
+            month_mask,
+            quarter_mask,
+            assessments[0],
+            assessments_ready[0],
+            "Start new return",
+            true,
+            arena,
+        );
+        for (1..row.period_cells.len) |slot| {
+            const period = onDemandDraftPeriodForSlot(
+                drafts,
+                form_code,
+                year,
+                slot,
+            ) orelse break;
+            const occurrence = switch (period) {
+                .on_demand => |value| value.occurrence,
+                else => unreachable,
+            };
+            const label = std.fmt.allocPrint(
+                arena,
+                "Saved return O{d:0>3}",
+                .{occurrence},
+            ) catch "Saved return";
+            appendLibraryPeriodCell(
+                row,
+                drafts,
+                drafts_truncated,
+                form_code,
+                period,
+                month_mask,
+                quarter_mask,
+                assessments[slot],
+                assessments_ready[slot],
+                label,
+                false,
+                arena,
+            );
+        }
+    } else {
+        for (0..row.period_cells.len) |slot| {
+            const period = libraryPeriodForSlot(row.definition, year, slot) orelse
+                break;
+            appendLibraryPeriodCell(
+                row,
+                drafts,
+                drafts_truncated,
+                form_code,
+                period,
+                month_mask,
+                quarter_mask,
+                assessments[slot],
+                assessments_ready[slot],
+                null,
+                false,
+                arena,
+            );
+        }
+    }
+    const summary_buffer = arena.alloc(u8, 768) catch return;
+    var summary_len: usize = 0;
+    for (row.periodCells(), 0..) |*cell, index| {
+        const separator = if (index == 0) "" else "  ·  ";
+        const written = std.fmt.bufPrint(
+            summary_buffer[summary_len..],
+            "{s}{s} {s}",
+            .{ separator, cell.label, cell.status },
+        ) catch break;
+        summary_len += written.len;
+    }
+    row.period_summary = summary_buffer[0..summary_len];
+}
+
 fn deadlineMarker(count: usize) []const u8 {
     return switch (count) {
         0 => "",
@@ -3666,6 +5476,43 @@ fn shortMonthName(month: u8) []const u8 {
         12 => "Dec",
         else => "",
     };
+}
+
+fn shortQuarterName(quarter: u8) []const u8 {
+    return switch (quarter) {
+        1 => "Q1",
+        2 => "Q2",
+        3 => "Q3",
+        4 => "Q4",
+        else => "",
+    };
+}
+
+fn firstSelectedMonth(mask: u16) u8 {
+    for (1..13) |month| {
+        if (mask & (@as(u16, 1) << @intCast(month - 1)) != 0) {
+            return @intCast(month);
+        }
+    }
+    return 0;
+}
+
+fn firstSelectedQuarter(mask: u8) u8 {
+    for (1..5) |quarter| {
+        if (mask & (@as(u8, 1) << @intCast(quarter - 1)) != 0) {
+            return @intCast(quarter);
+        }
+    }
+    return 0;
+}
+
+fn appendLibraryFilterLabelPart(
+    label: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    part: []const u8,
+) !void {
+    if (label.items.len != 0) try label.appendSlice(allocator, " · ");
+    try label.appendSlice(allocator, part);
 }
 
 fn formatNewsTimestamp(
@@ -3886,7 +5733,64 @@ pub const Msg = union(enum) {
     profile_forms_reset_filters,
     profile_forms_toggle_filter_picker,
     profile_forms_close_filter_picker,
+    profile_forms_show_info: usize,
+    profile_forms_close_info,
+    profile_forms_toggle_cadence_monthly,
+    profile_forms_toggle_cadence_quarterly,
+    profile_forms_toggle_cadence_annual,
+    profile_forms_toggle_cadence_on_demand,
+    profile_forms_toggle_month_1,
+    profile_forms_toggle_month_2,
+    profile_forms_toggle_month_3,
+    profile_forms_toggle_month_4,
+    profile_forms_toggle_month_5,
+    profile_forms_toggle_month_6,
+    profile_forms_toggle_month_7,
+    profile_forms_toggle_month_8,
+    profile_forms_toggle_month_9,
+    profile_forms_toggle_month_10,
+    profile_forms_toggle_month_11,
+    profile_forms_toggle_month_12,
+    profile_forms_toggle_quarter_1,
+    profile_forms_toggle_quarter_2,
+    profile_forms_toggle_quarter_3,
+    profile_forms_toggle_quarter_4,
+    profile_forms_toggle_category_payment,
+    profile_forms_toggle_category_registration,
+    profile_forms_toggle_category_withholding,
+    profile_forms_toggle_category_income,
+    profile_forms_toggle_category_vat,
+    profile_forms_toggle_category_percentage,
+    profile_forms_toggle_category_dst,
+    profile_forms_toggle_category_excise,
+    profile_forms_toggle_category_capital_gains,
+    profile_forms_toggle_category_estate_donors,
+    profile_forms_toggle_on_demand_form: usize,
+    profile_forms_show_previous,
+    profile_forms_show_more,
+    profile_forms_toggle_period_picker,
+    profile_forms_close_period_picker,
+    profile_forms_period_all,
+    profile_forms_period_january,
+    profile_forms_period_february,
+    profile_forms_period_march,
+    profile_forms_period_april,
+    profile_forms_period_may,
+    profile_forms_period_june,
+    profile_forms_period_july,
+    profile_forms_period_august,
+    profile_forms_period_september,
+    profile_forms_period_october,
+    profile_forms_period_november,
+    profile_forms_period_december,
+    profile_forms_period_quarter_one,
+    profile_forms_period_quarter_two,
+    profile_forms_period_quarter_three,
+    profile_forms_period_quarter_four,
+    profile_forms_period_annual,
+    profile_forms_period_on_demand,
     open_library_form: usize,
+    open_library_period: usize,
     save_profile,
     cancel_profile_edit,
     dismiss_profile_notice,
@@ -3978,6 +5882,32 @@ pub const Msg = union(enum) {
         "calendar_today_refresh",
         "important_news_response",
 
+        // Legacy single-period/card-level library actions remain available
+        // to focused compatibility tests, but the Native UI dispatches only
+        // grouped filter toggles and exact `open_library_period` tile IDs.
+        "profile_forms_toggle_period_picker",
+        "profile_forms_close_period_picker",
+        "profile_forms_period_all",
+        "profile_forms_period_january",
+        "profile_forms_period_february",
+        "profile_forms_period_march",
+        "profile_forms_period_april",
+        "profile_forms_period_may",
+        "profile_forms_period_june",
+        "profile_forms_period_july",
+        "profile_forms_period_august",
+        "profile_forms_period_september",
+        "profile_forms_period_october",
+        "profile_forms_period_november",
+        "profile_forms_period_december",
+        "profile_forms_period_quarter_one",
+        "profile_forms_period_quarter_two",
+        "profile_forms_period_quarter_three",
+        "profile_forms_period_quarter_four",
+        "profile_forms_period_annual",
+        "profile_forms_period_on_demand",
+        "open_library_form",
+
         // The coarse 1701Q editor remains compiled only for compatibility
         // and focused Zig tests. The Native 1701Q page is exclusively bound
         // to the exact adapter and must not dispatch these legacy actions.
@@ -4054,6 +5984,10 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.profileCompletionTarget = null;
             model.profileCompletionFormIndex = null;
             model.profileFormsFilterPickerVisible = false;
+            model.profileFormsPeriodPickerVisible = false;
+            model.profileFormsInfoIndex = null;
+            model.profileFormsPeriodFilter = .all;
+            resetProfileFormsBrowseFilters(model);
             model.taxProfiles.startNew();
             openProfileEditor(model);
         },
@@ -4381,6 +6315,9 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.taxProfiles.select(slot);
             model.profileCalendarSelectedDate = null;
             model.profileFormsFilterPickerVisible = false;
+            model.profileFormsPeriodPickerVisible = false;
+            model.profileFormsPeriodFilter = .all;
+            resetProfileFormsBrowseFilters(model);
             model.profileCompletionTarget = null;
             model.profileCompletionFormIndex = null;
             refreshSelectedProfileFormSet(model);
@@ -4390,6 +6327,8 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .show_dashboard_calendar => {
             model.profileFormsFilterPickerVisible = false;
+            model.profileFormsPeriodPickerVisible = false;
+            model.profileFormsInfoIndex = null;
             model.dashboardSection = .calendar;
         },
         .show_dashboard_forms => model.dashboardSection = .forms,
@@ -4452,12 +6391,19 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .manage_profile_forms => {
             if (!model.taxProfiles.beginManageForms()) return;
             model.profileFormsFilterPickerVisible = false;
+            model.profileFormsPeriodPickerVisible = false;
+            model.profileFormsInfoIndex = null;
+            model.profileFormsManageCadenceMask = 0b1111;
+            model.profileFormsCategoryMask = 0;
+            resetProfileFormsPage(model);
             model.dashboardSection = .forms;
             model.profileActionsOpen = false;
             navigate(model, .taxpayer_dashboard);
         },
         .profile_forms_search_input => |edit| {
             model.taxProfiles.applyFormsQuery(edit);
+            model.profileFormsInfoIndex = null;
+            resetProfileFormsPage(model);
         },
         .toggle_profile_form => |index| {
             model.taxProfiles.toggleStagedForm(index);
@@ -4467,6 +6413,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .profile_forms_save => {
             if (model.taxProfiles.saveManagedForms()) {
                 model.profileFormsFilterPickerVisible = false;
+                resetProfileFormsPage(model);
                 refreshSelectedProfileFormSet(model);
                 refreshSelectedProfileCalendar(model);
             }
@@ -4474,6 +6421,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .profile_forms_cancel => {
             model.taxProfiles.cancelManageForms();
             model.profileFormsFilterPickerVisible = false;
+            resetProfileFormsPage(model);
         },
         .profile_forms_reset_legacy => {
             if (model.taxProfiles.resetManagedFormsToLegacyDefault()) {
@@ -4495,16 +6443,120 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.taxProfiles.toggleFormFilterCalendarOnly();
         },
         .profile_forms_reset_filters => {
+            model.profileFormsInfoIndex = null;
+            model.taxProfiles.applyFormsQuery(.clear);
             model.taxProfiles.resetFormFilters();
+            if (model.taxProfiles.managing_forms) {
+                model.profileFormsManageCadenceMask = 0b1111;
+                model.profileFormsCategoryMask = 0;
+            } else {
+                model.profileFormsBrowseCadenceMask = 0b1111;
+                model.profileFormsMonthMask = 0;
+                model.profileFormsQuarterMask = 0;
+                model.profileFormsOnDemandMask = 0;
+            }
+            resetProfileFormsPage(model);
+            model.profileFormsPeriodFilter = .all;
+            model.profileFormsPeriodPickerVisible = false;
         },
         .profile_forms_toggle_filter_picker => {
+            model.profileFormsPeriodPickerVisible = false;
+            model.profileFormsInfoIndex = null;
             model.profileFormsFilterPickerVisible =
                 !model.profileFormsFilterPickerVisible;
         },
         .profile_forms_close_filter_picker => {
             model.profileFormsFilterPickerVisible = false;
         },
+        .profile_forms_show_info => |index| {
+            if (index >= form_catalog.forms.len or
+                model.taxProfiles.managing_forms)
+            {
+                model.profileFormsInfoIndex = null;
+            } else if (model.profileFormsInfoIndex == index) {
+                model.profileFormsInfoIndex = null;
+            } else {
+                model.profileFormsFilterPickerVisible = false;
+                model.profileFormsInfoIndex = index;
+            }
+        },
+        .profile_forms_close_info => {
+            model.profileFormsInfoIndex = null;
+        },
+        .profile_forms_toggle_cadence_monthly => toggleLibraryCadence(model, 0b0001),
+        .profile_forms_toggle_cadence_quarterly => toggleLibraryCadence(model, 0b0010),
+        .profile_forms_toggle_cadence_annual => toggleLibraryCadence(model, 0b0100),
+        .profile_forms_toggle_cadence_on_demand => toggleLibraryCadence(model, 0b1000),
+        .profile_forms_toggle_month_1 => toggleLibraryMonth(model, 1),
+        .profile_forms_toggle_month_2 => toggleLibraryMonth(model, 2),
+        .profile_forms_toggle_month_3 => toggleLibraryMonth(model, 3),
+        .profile_forms_toggle_month_4 => toggleLibraryMonth(model, 4),
+        .profile_forms_toggle_month_5 => toggleLibraryMonth(model, 5),
+        .profile_forms_toggle_month_6 => toggleLibraryMonth(model, 6),
+        .profile_forms_toggle_month_7 => toggleLibraryMonth(model, 7),
+        .profile_forms_toggle_month_8 => toggleLibraryMonth(model, 8),
+        .profile_forms_toggle_month_9 => toggleLibraryMonth(model, 9),
+        .profile_forms_toggle_month_10 => toggleLibraryMonth(model, 10),
+        .profile_forms_toggle_month_11 => toggleLibraryMonth(model, 11),
+        .profile_forms_toggle_month_12 => toggleLibraryMonth(model, 12),
+        .profile_forms_toggle_quarter_1 => toggleLibraryQuarter(model, 1),
+        .profile_forms_toggle_quarter_2 => toggleLibraryQuarter(model, 2),
+        .profile_forms_toggle_quarter_3 => toggleLibraryQuarter(model, 3),
+        .profile_forms_toggle_quarter_4 => toggleLibraryQuarter(model, 4),
+        .profile_forms_toggle_category_payment => toggleLibraryCategory(model, .payment),
+        .profile_forms_toggle_category_registration => toggleLibraryCategory(model, .registration),
+        .profile_forms_toggle_category_withholding => toggleLibraryCategory(model, .withholding_tax),
+        .profile_forms_toggle_category_income => toggleLibraryCategory(model, .income_tax),
+        .profile_forms_toggle_category_vat => toggleLibraryCategory(model, .value_added_tax),
+        .profile_forms_toggle_category_percentage => toggleLibraryCategory(model, .percentage_tax),
+        .profile_forms_toggle_category_dst => toggleLibraryCategory(model, .documentary_stamp_tax),
+        .profile_forms_toggle_category_excise => toggleLibraryCategory(model, .excise_tax),
+        .profile_forms_toggle_category_capital_gains => toggleLibraryCategory(model, .capital_gains_tax),
+        .profile_forms_toggle_category_estate_donors => toggleLibraryCategory(model, .estate_and_donors_tax),
+        .profile_forms_toggle_on_demand_form => |index| toggleLibraryOnDemandForm(model, index),
+        .profile_forms_show_previous => {
+            model.profileFormsPageOffset -|= model.profileFormsVisibleLimit;
+        },
+        .profile_forms_show_more => {
+            if (model.profileFormsHasMoreRows()) {
+                model.profileFormsPageOffset += model.profileFormsVisibleLimit;
+            }
+        },
+        .profile_forms_toggle_period_picker => {
+            model.profileFormsFilterPickerVisible = false;
+            model.profileFormsPeriodPickerVisible =
+                !model.profileFormsPeriodPickerVisible;
+        },
+        .profile_forms_close_period_picker => {
+            model.profileFormsPeriodPickerVisible = false;
+        },
+        .profile_forms_period_all => {
+            setLibraryPeriodFilter(model, .all);
+        },
+        .profile_forms_period_january => setLibraryPeriodFilter(model, .{ .monthly = 1 }),
+        .profile_forms_period_february => setLibraryPeriodFilter(model, .{ .monthly = 2 }),
+        .profile_forms_period_march => setLibraryPeriodFilter(model, .{ .monthly = 3 }),
+        .profile_forms_period_april => setLibraryPeriodFilter(model, .{ .monthly = 4 }),
+        .profile_forms_period_may => setLibraryPeriodFilter(model, .{ .monthly = 5 }),
+        .profile_forms_period_june => setLibraryPeriodFilter(model, .{ .monthly = 6 }),
+        .profile_forms_period_july => setLibraryPeriodFilter(model, .{ .monthly = 7 }),
+        .profile_forms_period_august => setLibraryPeriodFilter(model, .{ .monthly = 8 }),
+        .profile_forms_period_september => setLibraryPeriodFilter(model, .{ .monthly = 9 }),
+        .profile_forms_period_october => setLibraryPeriodFilter(model, .{ .monthly = 10 }),
+        .profile_forms_period_november => setLibraryPeriodFilter(model, .{ .monthly = 11 }),
+        .profile_forms_period_december => setLibraryPeriodFilter(model, .{ .monthly = 12 }),
+        .profile_forms_period_quarter_one => setLibraryPeriodFilter(model, .{ .quarterly = 1 }),
+        .profile_forms_period_quarter_two => setLibraryPeriodFilter(model, .{ .quarterly = 2 }),
+        .profile_forms_period_quarter_three => setLibraryPeriodFilter(model, .{ .quarterly = 3 }),
+        .profile_forms_period_quarter_four => setLibraryPeriodFilter(model, .{ .quarterly = 4 }),
+        .profile_forms_period_annual => {
+            setLibraryPeriodFilter(model, .annual);
+        },
+        .profile_forms_period_on_demand => {
+            setLibraryPeriodFilter(model, .on_demand);
+        },
         .open_library_form => |index| openLibraryForm(model, index),
+        .open_library_period => |action_id| openLibraryPeriod(model, action_id),
         .profile_tin_input => |edit| {
             model.taxProfiles.tin.apply(edit);
             model.taxProfiles.captureInputTruncation();
@@ -4629,6 +6681,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             if (model.taxProfiles.rejectIfFormsDirty()) return;
             model.profileFormsFilterPickerVisible = false;
             model.profileCalendarSelectedDate = null;
+            resetProfileFormsBrowseFilters(model);
             model.calendar.previousYear();
             _ = model.taxProfiles.loadFormsForYear(model.calendar.selected_year);
             refreshSelectedProfileFormSet(model);
@@ -4637,6 +6690,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             if (model.taxProfiles.rejectIfFormsDirty()) return;
             model.profileFormsFilterPickerVisible = false;
             model.profileCalendarSelectedDate = null;
+            resetProfileFormsBrowseFilters(model);
             model.calendar.nextYear();
             _ = model.taxProfiles.loadFormsForYear(model.calendar.selected_year);
             refreshSelectedProfileFormSet(model);
@@ -4648,6 +6702,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.calendar.previousMonth();
             if (model.calendar.selected_year != previous_year) {
                 model.profileFormsFilterPickerVisible = false;
+                resetProfileFormsBrowseFilters(model);
                 _ = model.taxProfiles.loadFormsForYear(model.calendar.selected_year);
                 refreshSelectedProfileFormSet(model);
             } else {
@@ -4662,6 +6717,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.calendar.nextMonth();
             if (model.calendar.selected_year != previous_year) {
                 model.profileFormsFilterPickerVisible = false;
+                resetProfileFormsBrowseFilters(model);
                 _ = model.taxProfiles.loadFormsForYear(model.calendar.selected_year);
                 refreshSelectedProfileFormSet(model);
             } else {
@@ -4900,9 +6956,12 @@ fn refreshSelectedProfileFormSet(model: *Model) void {
 
 fn refreshProfileFormLaunchAssessments(model: *Model) void {
     model.profileFormLaunchAssessmentsReady = false;
+    for (&model.profilePeriodLaunchAssessmentsReady) |*row| {
+        row.* = [_]bool{false} ** 12;
+    }
     if (model.formProfiles.allocator == null or
         model.formProfiles.store == null) return;
-    const profile_id = model.taxProfiles.selectedProfileDomainId() orelse return;
+    _ = model.taxProfiles.selectedProfileDomainId() orelse return;
     const year_value = model.calendar.selected_year;
     if (year_value < 1 or year_value > 9999) return;
     const year: u16 = @intCast(year_value);
@@ -4912,25 +6971,69 @@ fn refreshProfileFormLaunchAssessments(model: *Model) void {
         if (!model.taxProfiles.formAvailable(year_value, definition.code)) {
             continue;
         }
-        const revision = editorRevision(definition.code) orelse continue;
-        const quarter = selectedFormQuarter(model, definition.code);
-        const request: form_ui.OpenRequest = .{
-            .form = revision,
-            .filer_profile_id = profile_id,
-            .tax_year = year,
-            .quarter = quarter,
-            .profile_as_of = profileAsOfForForm(
+        for (0..12) |slot| {
+            const filing = if (definition.cadence == .on_demand)
+                (if (slot == 0)
+                    newOnDemandAssessmentPeriod(
+                        model.taxProfiles.draftSummaries(),
+                        definition.code,
+                        year,
+                    )
+                else
+                    onDemandDraftPeriodForSlot(
+                        model.taxProfiles.draftSummaries(),
+                        definition.code,
+                        year,
+                        slot,
+                    )) orelse break
+            else
+                libraryPeriodForSlot(definition, year, slot) orelse break;
+            const quarter = filing.quarter() orelse switch (filing) {
+                .annual => 4,
+                .on_demand => selectedFormQuarter(model, definition.code),
+                else => selectedFormQuarter(model, definition.code),
+            };
+            const assessment = assessProfileFormLaunch(
                 model,
                 definition.code,
-                year,
+                year_value,
                 quarter,
-                null,
-            ),
-        };
-        model.profileFormLaunchAssessments[index] =
-            model.formProfiles.assessLaunch(request);
+                filing.month(),
+                filing,
+            );
+            model.profilePeriodLaunchAssessments[index][slot] = assessment;
+            model.profilePeriodLaunchAssessmentsReady[index][slot] = true;
+            if (slot == 0) {
+                model.profileFormLaunchAssessments[index] = assessment;
+            }
+        }
     }
     model.profileFormLaunchAssessmentsReady = true;
+}
+
+fn libraryFilingPeriod(
+    model: *const Model,
+    definition: *const form_catalog.FormDefinition,
+    year: u16,
+) form_period.FilingPeriod {
+    return switch (definition.cadence) {
+        .monthly => .{ .monthly = .{
+            .tax_year = year,
+            .month = switch (model.profileFormsPeriodFilter) {
+                .monthly => |month| month,
+                else => @intCast(std.math.clamp(model.calendar.selected_month, 1, 12)),
+            },
+        } },
+        .quarterly => .{ .quarterly = .{
+            .tax_year = year,
+            .quarter = switch (model.profileFormsPeriodFilter) {
+                .quarterly => |quarter| quarter,
+                else => selectedFormQuarter(model, definition.code),
+            },
+        } },
+        .annual => .{ .annual = .{ .tax_year = year } },
+        .on_demand => .{ .on_demand = .{ .tax_year = year, .occurrence = 1 } },
+    };
 }
 
 fn selectedTaxpayerCalendarContext(
@@ -5176,6 +7279,17 @@ fn monthEndDate(year: u16, month: u8) profile_model.Date {
     return profile_model.Date.init(year, month, day) catch unreachable;
 }
 
+fn formatFilingDate(
+    arena: std.mem.Allocator,
+    date: profile_model.Date,
+) []const u8 {
+    return std.fmt.allocPrint(
+        arena,
+        "{d:0>2} / {d:0>2} / {d:0>4}",
+        .{ date.month, date.day, date.year },
+    ) catch "";
+}
+
 fn profileAsOfForForm(
     model: *const Model,
     form_code: []const u8,
@@ -5232,6 +7346,7 @@ fn openProfileBoundForm(
         selectedCalendarQuarter(model),
         null,
         null,
+        null,
     );
 }
 
@@ -5274,12 +7389,20 @@ fn openLibraryForm(model: *Model, index: usize) void {
         model.calendar.selected_year,
         definition.code,
     )) return;
+    const year: u16 = @intCast(model.calendar.selected_year);
+    const filing = libraryFilingPeriod(model, definition, year);
+    const quarter = filing.quarter() orelse switch (filing) {
+        .annual => 4,
+        .on_demand => selectedFormQuarter(model, definition.code),
+        else => selectedFormQuarter(model, definition.code),
+    };
     const launch = assessProfileFormLaunch(
         model,
         definition.code,
         model.calendar.selected_year,
-        selectedFormQuarter(model, definition.code),
-        null,
+        quarter,
+        filing.month(),
+        filing,
     );
     switch (launch.status) {
         .needs_profile => {
@@ -5290,7 +7413,158 @@ fn openLibraryForm(model: *Model, index: usize) void {
         .ready_new, .ready_resume, .needs_activity_selection => {},
     }
     const route = profileFormRoute(definition.code) orelse return;
-    openProfileBoundForm(model, route.page, route.form_code);
+    _ = openProfileBoundFormForQuarter(
+        model,
+        route.page,
+        route.form_code,
+        model.calendar.selected_year,
+        quarter,
+        filing.month(),
+        null,
+        filing,
+    );
+}
+
+fn libraryPeriodMatchesBrowseFilters(
+    model: *const Model,
+    filing: form_period.FilingPeriod,
+) bool {
+    return switch (filing) {
+        .monthly => |period| model.profileFormsMonthMask == 0 or
+            model.profileFormsMonthMask &
+                (@as(u16, 1) << @intCast(period.month - 1)) != 0,
+        .quarterly => |period| model.profileFormsQuarterMask == 0 or
+            model.profileFormsQuarterMask &
+                (@as(u8, 1) << @intCast(period.quarter - 1)) != 0,
+        .annual, .on_demand => true,
+    };
+}
+
+/// Opens the exact period represented by one library tile. The primitive
+/// action ID is decoded against generated catalog metadata and every
+/// profile/year/capability guard is rechecked at dispatch time.
+fn openLibraryPeriod(model: *Model, action_id: usize) void {
+    if (model.taxProfiles.managing_forms) return;
+    const index = action_id / 16;
+    const slot = action_id % 16;
+    if (index >= form_catalog.forms.len or slot >= 12) return;
+    const definition = &form_catalog.forms[index];
+    if (definition.status != .static_layout) return;
+    if (!model.taxProfiles.formAvailable(
+        model.calendar.selected_year,
+        definition.code,
+    )) return;
+    if (!model.libraryCadenceSelected(definition.cadence)) return;
+    if (model.calendar.selected_year < 1 or
+        model.calendar.selected_year > 9999) return;
+    const year: u16 = @intCast(model.calendar.selected_year);
+    var filing = if (definition.cadence == .on_demand)
+        (if (slot == 0)
+            newOnDemandAssessmentPeriod(
+                model.taxProfiles.draftSummaries(),
+                definition.code,
+                year,
+            )
+        else
+            onDemandDraftPeriodForSlot(
+                model.taxProfiles.draftSummaries(),
+                definition.code,
+                year,
+                slot,
+            )) orelse return
+    else
+        libraryPeriodForSlot(definition, year, slot) orelse return;
+    if (!libraryPeriodMatchesBrowseFilters(model, filing)) return;
+
+    var quarter = filing.quarter() orelse switch (filing) {
+        .annual => 4,
+        .on_demand => selectedFormQuarter(model, definition.code),
+        else => selectedFormQuarter(model, definition.code),
+    };
+    var launch = assessProfileFormLaunch(
+        model,
+        definition.code,
+        model.calendar.selected_year,
+        quarter,
+        filing.month(),
+        filing,
+    );
+    switch (launch.status) {
+        .needs_profile => {
+            openProfileCompletion(model, index, launch);
+            return;
+        },
+        .profile_not_eligible, .unavailable => return,
+        .ready_new, .ready_resume, .needs_activity_selection => {},
+    }
+
+    if (definition.cadence == .on_demand and slot == 0) {
+        const store = model.formProfiles.store orelse {
+            model.taxProfiles.reportFormLaunchFailure(
+                "On-demand filing storage is unavailable.",
+            );
+            return;
+        };
+        const profile_id = model.taxProfiles.selectedProfileDomainId() orelse
+            return;
+        const revision = definition.revision orelse return;
+        const owner_id = store.localOwnerId() catch {
+            model.taxProfiles.reportFormLaunchFailure(
+                "Could not verify the filing owner. Try again.",
+            );
+            return;
+        };
+        const occurrence = store.allocateOnDemandOccurrence(.{
+            .owner_id = owner_id[0..],
+            .profile_id = profile_id.asSlice(),
+            .form_code = definition.code,
+            .form_revision = revision,
+            .tax_year = model.calendar.selected_year,
+        }) catch {
+            model.taxProfiles.reportFormLaunchFailure(
+                "Could not reserve a new on-demand filing. Try again.",
+            );
+            return;
+        };
+        filing = .{ .on_demand = .{
+            .tax_year = year,
+            .occurrence = occurrence,
+        } };
+        quarter = selectedFormQuarter(model, definition.code);
+        launch = assessProfileFormLaunch(
+            model,
+            definition.code,
+            model.calendar.selected_year,
+            quarter,
+            null,
+            filing,
+        );
+        switch (launch.status) {
+            .profile_not_eligible, .unavailable => {
+                model.taxProfiles.reportFormLaunchFailure(
+                    "The new on-demand filing could not be opened.",
+                );
+                return;
+            },
+            .needs_profile => {
+                openProfileCompletion(model, index, launch);
+                return;
+            },
+            .ready_new, .ready_resume, .needs_activity_selection => {},
+        }
+    }
+
+    const route = profileFormRoute(definition.code) orelse return;
+    _ = openProfileBoundFormForQuarter(
+        model,
+        route.page,
+        route.form_code,
+        model.calendar.selected_year,
+        quarter,
+        filing.month(),
+        null,
+        filing,
+    );
 }
 
 fn assessProfileFormLaunch(
@@ -5299,6 +7573,7 @@ fn assessProfileFormLaunch(
     tax_year: i32,
     quarter: u8,
     period_month: ?u8,
+    filing: ?form_period.FilingPeriod,
 ) form_ui.LaunchAssessment {
     const profile_id = model.taxProfiles.selectedProfileDomainId() orelse
         return .{};
@@ -5310,6 +7585,7 @@ fn assessProfileFormLaunch(
         .filer_profile_id = profile_id,
         .tax_year = year,
         .quarter = quarter,
+        .filing_period = filing,
         .profile_as_of = profileAsOfForForm(
             model,
             form_code,
@@ -5361,6 +7637,23 @@ fn openProfileDeadline(
         deadline.final_deadline.year;
     const quarter = deadline.period.quarter() orelse
         @as(u8, 1);
+    const filing = switch (deadline.period) {
+        .monthly => |period| form_period.FilingPeriod{ .monthly = .{
+            .tax_year = @intCast(tax_year),
+            .month = period.month,
+        } },
+        .quarterly => |period| form_period.FilingPeriod{ .quarterly = .{
+            .tax_year = @intCast(tax_year),
+            .quarter = period.quarter,
+        } },
+        .annual => form_period.FilingPeriod{ .annual = .{
+            .tax_year = @intCast(tax_year),
+        } },
+        .event_based => form_period.FilingPeriod{ .on_demand = .{
+            .tax_year = @intCast(tax_year),
+            .occurrence = 1,
+        } },
+    };
     _ = openProfileBoundFormForQuarter(
         model,
         route.page,
@@ -5369,6 +7662,7 @@ fn openProfileDeadline(
         quarter,
         deadline.period.month(),
         null,
+        filing,
     );
 }
 
@@ -5380,6 +7674,7 @@ fn openProfileBoundFormForQuarter(
     quarter: u8,
     period_month: ?u8,
     spouse_profile_id: ?profile_model.ProfileId,
+    filing: ?form_period.FilingPeriod,
 ) bool {
     if (std.mem.eql(u8, form_code, "1701Q") and
         rejectExact1701QContextChange(model))
@@ -5399,6 +7694,7 @@ fn openProfileBoundFormForQuarter(
         tax_year,
         quarter,
         period_month,
+        filing,
     );
     switch (launch.status) {
         .needs_profile => {
@@ -5422,6 +7718,7 @@ fn openProfileBoundFormForQuarter(
         .spouse_profile_id = spouse_profile_id,
         .tax_year = year,
         .quarter = quarter,
+        .filing_period = filing,
         .profile_as_of = profile_as_of,
     };
     const open_result = if (std.mem.eql(u8, form_code, "1701Q"))
@@ -5580,6 +7877,7 @@ fn reopenIncomeTaxQuarter(model: *Model, quarter: u8) void {
         quarter,
         null,
         spouse_profile_id,
+        null,
     )) {
         model.calendar.selected_month = quarter * 3;
         model.profileCalendarSelectedDate = null;
@@ -5596,6 +7894,12 @@ fn navigate(model: *Model, page: Page) void {
     model.profileActionsOpen = false;
     model.profileSubjectPickerVisible = false;
     model.profileFormsFilterPickerVisible = false;
+    model.profileFormsPeriodPickerVisible = false;
+    model.profileFormsInfoIndex = null;
+    if (page != .taxpayer_dashboard) {
+        model.profileFormsPeriodFilter = .all;
+        resetProfileFormsBrowseFilters(model);
+    }
 }
 
 fn bumpSidebarActionEpoch(model: *Model) void {
@@ -6627,49 +8931,206 @@ test "tax form library uses icon actions through narrow tablet widths" {
 }
 
 test "tax form library grouped filters summarize and stay open while toggling" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
     var model = Model{};
 
     try std.testing.expectEqualStrings(
-        "Active · Any type",
+        "All active filings",
         model.profileFormsFilterSummaryLabel(),
     );
     try std.testing.expectEqualStrings(
-        "Filter forms: active, any form type",
-        model.profileFormsFilterAccessibleLabel(),
+        "All active filings",
+        model.profileFormsFilterDisplayLabel(arena),
     );
-    try std.testing.expect(model.profileFormsFilterActiveSelected());
-    try std.testing.expect(!model.profileFormsFilterInactiveSelected());
-    try std.testing.expect(model.profileFormsFilterEditorSelected());
-    try std.testing.expect(model.profileFormsFilterCalendarOnlySelected());
+    try std.testing.expectEqualStrings(
+        "Filter active forms by cadence, month, or quarter",
+        model.profileFormsFilterAccessibleLabel(arena),
+    );
+    try std.testing.expect(model.profileFormsAllMonthsSelected());
+    try std.testing.expect(model.profileFormsAllQuartersSelected());
 
     update(&model, .profile_forms_toggle_filter_picker);
     try std.testing.expect(model.profileFormsFilterPickerOpen());
 
-    update(&model, .profile_forms_toggle_filter_inactive);
+    update(&model, .profile_forms_toggle_month_1);
     try std.testing.expect(model.profileFormsFilterPickerOpen());
+    try std.testing.expect(model.profileFormsMonth1Selected());
+    try std.testing.expect(model.profileFormsCadenceMonthlySelected());
+    try std.testing.expect(!model.profileFormsCadenceQuarterlySelected());
+    try std.testing.expect(!model.profileFormsAllMonthsSelected());
     try std.testing.expectEqualStrings(
-        "All forms",
+        "Browse filters applied",
         model.profileFormsFilterSummaryLabel(),
+    );
+    try std.testing.expectEqualStrings(
+        "Jan",
+        model.profileFormsFilterDisplayLabel(arena),
     );
 
-    update(&model, .profile_forms_toggle_filter_calendar_only);
+    update(&model, .profile_forms_toggle_quarter_2);
+    try std.testing.expect(model.profileFormsMonth1Selected());
+    try std.testing.expect(model.profileFormsQuarter2Selected());
+    try std.testing.expect(model.profileFormsCadenceMonthlySelected());
+    try std.testing.expect(model.profileFormsCadenceQuarterlySelected());
     try std.testing.expectEqualStrings(
-        "All statuses · Editor",
-        model.profileFormsFilterSummaryLabel(),
+        "Jan · Q2",
+        model.profileFormsFilterDisplayLabel(arena),
     );
-    try std.testing.expectEqualStrings(
-        "Filter forms: all statuses, editor available",
-        model.profileFormsFilterAccessibleLabel(),
-    );
+
+    update(&model, .profile_forms_toggle_cadence_monthly);
+    try std.testing.expect(!model.profileFormsCadenceMonthlySelected());
+    try std.testing.expect(!model.profileFormsMonth1Selected());
 
     update(&model, .profile_forms_close_filter_picker);
     try std.testing.expect(!model.profileFormsFilterPickerOpen());
 
+    model.profileFormsOnDemandMask = 1;
+    model.taxProfiles.applyFormsQuery(.{ .insert_text = "2551Q" });
+    try std.testing.expectEqualStrings("2551Q", model.taxProfiles.formsQuery());
     update(&model, .profile_forms_reset_filters);
     try std.testing.expectEqualStrings(
-        "Active · Any type",
+        "All active filings",
         model.profileFormsFilterSummaryLabel(),
     );
+    try std.testing.expect(!model.profileFormsMonth1Selected());
+    try std.testing.expect(!model.profileFormsQuarter2Selected());
+    try std.testing.expectEqual(@as(u64, 0), model.profileFormsOnDemandMask);
+    try std.testing.expectEqualStrings("", model.taxProfiles.formsQuery());
+}
+
+test "tax form library last period selection never widens another cadence" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var model = Model{};
+
+    update(&model, .profile_forms_toggle_month_1);
+    try std.testing.expect(model.profileFormsCadenceMonthlyLocked());
+    update(&model, .profile_forms_toggle_month_1);
+    try std.testing.expect(model.profileFormsAllMonthsSelected());
+    try std.testing.expectEqualStrings(
+        "All months",
+        model.profileFormsFilterDisplayLabel(arena),
+    );
+
+    update(&model, .profile_forms_toggle_month_1);
+    update(&model, .profile_forms_toggle_quarter_2);
+    try std.testing.expect(!model.profileFormsCadenceMonthlyLocked());
+    try std.testing.expect(!model.profileFormsCadenceQuarterlyLocked());
+    update(&model, .profile_forms_toggle_month_1);
+    try std.testing.expect(!model.profileFormsCadenceMonthlySelected());
+    try std.testing.expect(model.profileFormsCadenceQuarterlySelected());
+    try std.testing.expect(model.profileFormsQuarter2Selected());
+    try std.testing.expectEqualStrings(
+        "Q2",
+        model.profileFormsFilterDisplayLabel(arena),
+    );
+
+    update(&model, .profile_forms_toggle_quarter_2);
+    try std.testing.expect(model.profileFormsAllQuartersSelected());
+    try std.testing.expectEqualStrings(
+        "All quarters",
+        model.profileFormsFilterDisplayLabel(arena),
+    );
+}
+
+test "tax form library period tiles keep a fixed cadence grid" {
+    const quarterly = &form_catalog.forms[formCatalogIndex("2551Q").?];
+    var model = Model{
+        .viewportClass = .phone,
+        .viewportWidth = 408,
+    };
+    try std.testing.expectEqual(
+        @as(u8, 4),
+        model.libraryPeriodGridColumns(quarterly),
+    );
+    model.profileFormsQuarterMask = 0b0011;
+    try std.testing.expectEqual(
+        @as(u8, 4),
+        model.libraryPeriodGridColumns(quarterly),
+    );
+    model.profileFormsQuarterMask = 0;
+
+    model.viewportClass = .desktop;
+    model.viewportWidth = 1_320;
+    try std.testing.expectEqual(
+        @as(u8, 4),
+        model.libraryPeriodGridColumns(quarterly),
+    );
+
+    model.viewportWidth = 1_800;
+    try std.testing.expectEqual(
+        @as(u8, 4),
+        model.libraryPeriodGridColumns(quarterly),
+    );
+
+    model.viewportWidth = 2_400;
+    try std.testing.expectEqual(
+        @as(u8, 4),
+        model.libraryPeriodGridColumns(quarterly),
+    );
+
+    model.profileFormsQuarterMask = 0b0001;
+    try std.testing.expectEqual(
+        @as(u8, 4),
+        model.libraryPeriodGridColumns(quarterly),
+    );
+
+    const monthly = &form_catalog.forms[formCatalogIndex("1601C").?];
+    model.viewportClass = .phone;
+    model.profileFormsMonthMask = 0b0000_0000_0000_0011;
+    try std.testing.expectEqual(
+        @as(u8, 4),
+        model.libraryPeriodGridColumns(monthly),
+    );
+}
+
+test "tax form library card columns follow desktop tablet phone density" {
+    var model = Model{};
+    model.viewportWidth = 1_440;
+    try std.testing.expectEqual(@as(u8, 3), model.profileFormCardColumns());
+    model.viewportWidth = 768;
+    try std.testing.expectEqual(@as(u8, 2), model.profileFormCardColumns());
+    model.viewportWidth = 408;
+    try std.testing.expectEqual(@as(u8, 1), model.profileFormCardColumns());
+}
+
+test "tax form library progress counts filed lifecycle states only" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var row = TaxFormLibraryRow{
+        .id = 0,
+        .definition = &form_catalog.forms[formCatalogIndex("2551Q").?],
+        .active = true,
+        .selected = true,
+        .launch_disabled = false,
+    };
+    row.setPeriodCell(0, .{ .status = "Draft" });
+    row.setPeriodCell(1, .{ .status = "Sent" });
+    row.setPeriodCell(2, .{ .status = "Confirmed" });
+    row.setPeriodCell(3, .{ .status = "New" });
+    row.period_cell_count = 4;
+    try std.testing.expectEqualStrings(
+        "2/4 filed",
+        row.filingProgress(arena_state.allocator()),
+    );
+}
+
+test "tax form library information uses a dismissible dialog at every width" {
+    var model = Model{ .viewportWidth = 768 };
+    const index = formCatalogIndex("2551Q").?;
+    update(&model, .{ .profile_forms_show_info = index });
+    try std.testing.expect(model.profileFormInfoDialogOpen());
+    try std.testing.expectEqualStrings("2551Q", model.profileFormInfoCode());
+    model.viewportWidth = 1_440;
+    try std.testing.expect(model.profileFormInfoDialogOpen());
+    try std.testing.expect(model.profileFormInfoDialogWidth() >= 480);
+    model.viewportWidth = 408;
+    try std.testing.expect(model.profileFormInfoDialogWidth() <= 408);
+    update(&model, .profile_forms_close_info);
+    try std.testing.expect(model.profileFormsInfoIndex == null);
 }
 
 test "tax form library capability checkboxes partition the catalog" {
@@ -6677,20 +9138,202 @@ test "tax form library capability checkboxes partition the catalog" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     var model = Model{};
+    model.taxProfiles.managing_forms = true;
     model.taxProfiles.form_activity_filter = .all;
 
     update(&model, .profile_forms_toggle_filter_calendar_only);
-    const editor_rows = model.profileFormRows(arena);
+    const editor_rows = model.profileManageFormRows(arena);
     try std.testing.expectEqual(form_catalog.editor_count, editor_rows.len);
 
     update(&model, .profile_forms_reset_filters);
     model.taxProfiles.form_activity_filter = .all;
     update(&model, .profile_forms_toggle_filter_editor);
-    const calendar_rows = model.profileFormRows(arena);
+    const calendar_rows = model.profileManageFormRows(arena);
     try std.testing.expectEqual(
         form_catalog.calendar_only_count,
         calendar_rows.len,
     );
+
+    update(&model, .profile_forms_reset_filters);
+    update(&model, .profile_forms_toggle_category_income);
+    const income_rows = model.profileManageFormRows(arena);
+    try std.testing.expect(income_rows.len > 0);
+    for (income_rows) |*row| {
+        try std.testing.expectEqual(
+            form_catalog.TaxCategory.income_tax,
+            row.definition.tax_category,
+        );
+    }
+}
+
+test "tax form library cadence and period filters are immediate and bounded" {
+    var model = Model{};
+    try std.testing.expect(model.profileFormsCadenceMonthlySelected());
+    try std.testing.expect(model.profileFormsCadenceQuarterlySelected());
+    try std.testing.expectEqualStrings(
+        "All filing periods",
+        model.profileFormsPeriodFilterLabel(),
+    );
+
+    update(&model, .profile_forms_toggle_cadence_monthly);
+    try std.testing.expect(!model.profileFormsCadenceMonthlySelected());
+    try std.testing.expect(model.profileFormsCadenceQuarterlySelected());
+
+    update(&model, .profile_forms_period_march);
+    switch (model.profileFormsPeriodFilter) {
+        .monthly => |month| try std.testing.expectEqual(@as(u8, 3), month),
+        else => try std.testing.expect(false),
+    }
+    try std.testing.expectEqualStrings(
+        "March",
+        model.profileFormsPeriodFilterLabel(),
+    );
+
+    update(&model, .profile_forms_reset_filters);
+    try std.testing.expectEqualStrings(
+        "All filing periods",
+        model.profileFormsPeriodFilterLabel(),
+    );
+}
+
+test "catalog cadence projects canonical monthly quarterly annual and on-demand slots" {
+    const year: u16 = 2026;
+    const monthly = &form_catalog.forms[formCatalogIndex("1601C").?];
+    try std.testing.expectEqual(@as(?u8, 1), libraryPeriodForSlot(monthly, year, 0).?.month());
+    try std.testing.expectEqual(@as(?u8, 12), libraryPeriodForSlot(monthly, year, 11).?.month());
+    try std.testing.expect(libraryPeriodForSlot(monthly, year, 12) == null);
+
+    const quarterly = &form_catalog.forms[formCatalogIndex("1701Q").?];
+    try std.testing.expectEqual(@as(?u8, 3), libraryPeriodForSlot(quarterly, year, 2).?.quarter());
+    try std.testing.expect(libraryPeriodForSlot(quarterly, year, 3) == null);
+
+    const annual = &form_catalog.forms[formCatalogIndex("1701").?];
+    try std.testing.expectEqual(
+        form_catalog.FilingCadence.annual,
+        libraryPeriodForSlot(annual, year, 0).?.cadence(),
+    );
+    try std.testing.expect(libraryPeriodForSlot(annual, year, 1) == null);
+
+    const on_demand = &form_catalog.forms[formCatalogIndex("0605").?];
+    try std.testing.expectEqual(
+        form_catalog.FilingCadence.on_demand,
+        libraryPeriodForSlot(on_demand, year, 0).?.cadence(),
+    );
+}
+
+test "month and quarter filters project only selected filing buttons" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const assessments = [_]form_ui.LaunchAssessment{
+        .{ .status = .ready_new },
+    } ** 12;
+    const assessments_ready = [_]bool{true} ** 12;
+
+    var monthly = TaxFormLibraryRow{
+        .id = formCatalogIndex("1601C").?,
+        .definition = &form_catalog.forms[formCatalogIndex("1601C").?],
+        .active = true,
+        .selected = true,
+        .launch_disabled = false,
+    };
+    populateLibraryPeriodCells(
+        &monthly,
+        &.{},
+        false,
+        "1601C",
+        2026,
+        arena,
+        0b0000_0000_0000_0101,
+        0,
+        assessments,
+        assessments_ready,
+    );
+    var visible_months: usize = 0;
+    for (monthly.periodCells()) |cell| {
+        if (cell.visible) visible_months += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), visible_months);
+    try std.testing.expect(monthly.period1.visible);
+    try std.testing.expect(!monthly.period2.visible);
+    try std.testing.expect(monthly.period3.visible);
+
+    var quarterly = TaxFormLibraryRow{
+        .id = formCatalogIndex("2551Q").?,
+        .definition = &form_catalog.forms[formCatalogIndex("2551Q").?],
+        .active = true,
+        .selected = true,
+        .launch_disabled = false,
+    };
+    populateLibraryPeriodCells(
+        &quarterly,
+        &.{},
+        false,
+        "2551Q",
+        2026,
+        arena,
+        0,
+        0b0011,
+        assessments,
+        assessments_ready,
+    );
+    var visible_quarters: usize = 0;
+    for (quarterly.periodCells()) |cell| {
+        if (cell.visible) visible_quarters += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), visible_quarters);
+    try std.testing.expect(quarterly.period1.visible);
+    try std.testing.expect(quarterly.period2.visible);
+    try std.testing.expect(!quarterly.period3.visible);
+}
+
+test "on-demand cards expose start-new and saved occurrence actions" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var drafts = [_]profile_ui.DraftSummaryRow{
+        .{ .slot = 0 },
+        .{ .slot = 1 },
+    };
+    try drafts[0].form_code.set("0605");
+    try drafts[0].period_key.set("2026-O001");
+    try drafts[0].lifecycle.set("editing");
+    try drafts[1].form_code.set("0605");
+    try drafts[1].period_key.set("2026-O002");
+    try drafts[1].lifecycle.set("submitted");
+
+    var assessments = [_]form_ui.LaunchAssessment{
+        .{ .status = .ready_resume },
+    } ** 12;
+    assessments[0].status = .ready_new;
+    const assessments_ready = [_]bool{true} ** 12;
+    var row = TaxFormLibraryRow{
+        .id = formCatalogIndex("0605").?,
+        .definition = &form_catalog.forms[formCatalogIndex("0605").?],
+        .active = true,
+        .selected = true,
+        .launch_disabled = false,
+        .period_grid_columns = 1,
+    };
+    populateLibraryPeriodCells(
+        &row,
+        &drafts,
+        false,
+        "0605",
+        2026,
+        arena,
+        0,
+        0,
+        assessments,
+        assessments_ready,
+    );
+    try std.testing.expectEqual(@as(usize, 3), row.periodCells().len);
+    try std.testing.expectEqualStrings("Start new return", row.period1.label);
+    try std.testing.expectEqualStrings("New", row.period1.status);
+    try std.testing.expectEqualStrings("Saved return O001", row.period2.label);
+    try std.testing.expectEqualStrings("Draft", row.period2.status);
+    try std.testing.expectEqualStrings("Saved return O002", row.period3.label);
+    try std.testing.expectEqualStrings("Sent", row.period3.status);
 }
 
 test "tax form library composes status type and search over staged forms" {
@@ -6721,11 +9364,19 @@ test "tax form library composes status type and search over staged forms" {
     const arena = arena_state.allocator();
 
     try std.testing.expectEqual(@as(usize, 2), model.profileFormRows(arena).len);
+    const initial_rows = model.profileFormRows(arena);
+    var initial_quarterly: ?*const TaxFormLibraryRow = null;
+    for (initial_rows) |*row| {
+        if (std.mem.eql(u8, row.code(), "2551Q")) initial_quarterly = row;
+    }
+    try std.testing.expect(initial_quarterly != null);
+    try std.testing.expectEqual(@as(usize, 4), initial_quarterly.?.periodCells().len);
+    try std.testing.expectEqualStrings("Q1 New", initial_quarterly.?.periodSummary()[0..6]);
 
+    // Capability filters belong to Manage mode and cannot hide active filing
+    // cards while the user is browsing exact periods.
     update(&model, .profile_forms_toggle_filter_calendar_only);
-    const editor_rows = model.profileFormRows(arena);
-    try std.testing.expectEqual(@as(usize, 1), editor_rows.len);
-    try std.testing.expectEqualStrings("2551Q", editor_rows[0].code());
+    try std.testing.expectEqual(@as(usize, 2), model.profileFormRows(arena).len);
 
     update(&model, .profile_forms_reset_filters);
     update(&model, .{
@@ -6735,6 +9386,33 @@ test "tax form library composes status type and search over staged forms" {
     try std.testing.expectEqual(@as(usize, 1), search_rows.len);
     try std.testing.expectEqualStrings("2551Q", search_rows[0].code());
 
+    update(&model, .{ .profile_forms_search_input = .clear });
+    update(&model, .{
+        .profile_forms_search_input = .{
+            .insert_text = "Quarterly Percentage Tax Return",
+        },
+    });
+    const title_rows = model.profileFormRows(arena);
+    try std.testing.expectEqual(@as(usize, 1), title_rows.len);
+    try std.testing.expectEqualStrings("2551Q", title_rows[0].code());
+
+    update(&model, .{ .profile_forms_search_input = .clear });
+    update(&model, .{
+        .profile_forms_search_input = .{ .insert_text = "Percentage tax" },
+    });
+    const category_rows = model.profileFormRows(arena);
+    try std.testing.expectEqual(@as(usize, 1), category_rows.len);
+    try std.testing.expectEqualStrings("2551Q", category_rows[0].code());
+
+    update(&model, .profile_forms_reset_filters);
+    update(&model, .{ .profile_forms_search_input = .clear });
+    update(&model, .profile_forms_period_quarter_two);
+    const quarter_rows = model.profileFormRows(arena);
+    try std.testing.expectEqual(@as(usize, 1), quarter_rows.len);
+    try std.testing.expectEqualStrings("2551Q", quarter_rows[0].code());
+    try std.testing.expectEqualStrings("Quarter 2", model.profileFormsPeriodFilterLabel());
+
+    update(&model, .profile_forms_period_all);
     update(&model, .manage_profile_forms);
     try std.testing.expect(model.taxProfiles.managing_forms);
     try std.testing.expectEqual(
@@ -6776,16 +9454,16 @@ test "tax form filter picker closes when its dashboard context changes" {
     update(&model, .show_dashboard_forms);
     update(&model, .profile_forms_toggle_filter_picker);
     try std.testing.expect(model.profileFormsFilterPickerOpen());
-    update(&model, .profile_forms_toggle_filter_inactive);
+    update(&model, .profile_forms_toggle_month_1);
     try std.testing.expectEqualStrings(
-        "All forms",
+        "Browse filters applied",
         model.profileFormsFilterSummaryLabel(),
     );
 
     navigate(&model, .settings);
     try std.testing.expect(!model.profileFormsFilterPickerOpen());
     try std.testing.expectEqualStrings(
-        "Active · Any type",
+        "All active filings",
         model.profileFormsFilterSummaryLabel(),
     );
 
@@ -6819,6 +9497,8 @@ test "taxpayer selection and local page tabs are model owned" {
     const allocator = std.testing.allocator;
     var store = try profile_store.Store.openMemory(allocator);
     defer store.close();
+    var calendar_store = try calendar_ui.persistence.Store.openMemory(allocator);
+    defer calendar_store.close();
     try addThreeTestProfiles(&store);
 
     var model = Model{};
@@ -7112,6 +9792,7 @@ test "Forms Set explicit empty disables editors while fallback enables them" {
 
     try store.replaceFormSet(profile_id, 2026, &.{});
     refreshSelectedProfileFormSet(&model);
+    try std.testing.expect(model.profileBrowseActiveEmpty());
     try std.testing.expect(model.taxpayerForm0605Disabled());
     try std.testing.expect(model.taxpayerForm1701QDisabled());
     try std.testing.expect(model.taxpayerForm2551QDisabled());
@@ -7121,6 +9802,7 @@ test "Forms Set explicit empty disables editors while fallback enables them" {
 
     model.calendar.selected_year = 2027;
     refreshSelectedProfileFormSet(&model);
+    try std.testing.expect(!model.profileBrowseActiveEmpty());
     try std.testing.expect(!model.taxpayerForm0605Disabled());
     try std.testing.expect(!model.taxpayerForm1701QDisabled());
     try std.testing.expect(!model.taxpayerForm2551QDisabled());
@@ -7171,6 +9853,7 @@ test "library launch assessment routes incomplete profile to completion" {
     defer arena.deinit();
     const rows = model.profileFormRows(arena.allocator());
     var found = false;
+    var action_id: ?usize = null;
     for (rows) |*row| {
         if (!std.mem.eql(u8, row.code(), "2551Q")) continue;
         found = true;
@@ -7180,15 +9863,67 @@ test "library launch assessment routes incomplete profile to completion" {
         );
         try std.testing.expectEqualStrings("Complete profile", row.launchLabel());
         try std.testing.expect(!row.launchDisabled());
+        try std.testing.expectEqualStrings("New", row.period1.status);
+        try std.testing.expectEqualStrings("outline", row.period1.tone);
+        try std.testing.expect(
+            std.mem.indexOf(u8, row.period1.accessibleLabel(), "complete profile") != null,
+        );
+        action_id = row.period1.actionId();
     }
     try std.testing.expect(found);
 
-    update(&model, .show_form_2551q);
+    update(&model, .{ .open_library_period = action_id.? });
     try std.testing.expectEqual(Page.profile_setup, model.page);
     try std.testing.expectEqual(
         profile_fields.ReusableField.contact_number,
         model.profileCompletionTarget.?,
     );
+}
+
+test "library period tile opens the exact quarterly filing identity" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addTestProfile(
+        &store,
+        "11111111111111111111111111111111",
+        "Juan Dela Cruz",
+        "123-456-789-000",
+        .individual,
+    );
+
+    var model = Model{
+        .page = .taxpayer_dashboard,
+        .dashboardSection = .forms,
+    };
+    model.calendar.selected_year = 2026;
+    try model.taxProfiles.attach(allocator, &store, "2026-07-29", 2026);
+    model.formProfiles.attach(allocator, &store);
+    defer model.formProfiles.deinit();
+    const profile_id = model.taxProfiles.selectedProfileDomainId().?;
+    try store.replaceFormSet(profile_id.asSlice(), 2026, &.{.{
+        .form_code = "2551Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+    refreshSelectedProfileFormSet(&model);
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const rows = model.profileFormRows(arena_state.allocator());
+    try std.testing.expectEqual(@as(usize, 1), rows.len);
+    try std.testing.expectEqualStrings("2551Q", rows[0].code());
+    try std.testing.expectEqual(@as(usize, 4), rows[0].periodCells().len);
+    try std.testing.expectEqualStrings("Q2", rows[0].period2.label);
+
+    // A global month/filter context cannot rewrite this tile's exact Q2
+    // identity: the action payload is derived from the tile itself.
+    model.calendar.selected_month = 1;
+    update(&model, .{ .open_library_period = rows[0].period2.actionId() });
+    try std.testing.expectEqual(Page.form_2551q, model.page);
+    const filing = model.formProfiles.filingPeriod().?;
+    try std.testing.expectEqual(form_catalog.FilingCadence.quarterly, filing.cadence());
+    try std.testing.expectEqual(@as(?u8, 2), filing.quarter());
+    try std.testing.expectEqual(@as(u16, 2026), filing.taxYear());
 }
 
 test "month navigation refreshes the Forms Set across a year boundary" {
@@ -7232,11 +9967,18 @@ test "month navigation refreshes the Forms Set across a year boundary" {
     refreshSelectedProfileFormSet(&model);
     try std.testing.expect(!model.taxpayerForm0605Disabled());
 
+    model.profileFormsPageOffset = 12;
+    model.profileFormsMonthMask = 1;
+    model.profileFormsOnDemandMask = 1;
+
     update(&model, .calendar_next_month);
     try std.testing.expectEqual(@as(i32, 2027), model.calendar.selected_year);
     try std.testing.expectEqual(@as(u8, 1), model.calendar.selected_month);
     try std.testing.expect(model.taxpayerForm0605Disabled());
     try std.testing.expect(!model.taxpayerForm2551QDisabled());
+    try std.testing.expectEqual(@as(usize, 0), model.profileFormsPageOffset);
+    try std.testing.expectEqual(@as(u16, 0), model.profileFormsMonthMask);
+    try std.testing.expectEqual(@as(u64, 0), model.profileFormsOnDemandMask);
 
     update(&model, .calendar_previous_month);
     try std.testing.expectEqual(@as(i32, 2026), model.calendar.selected_year);
@@ -7272,6 +10014,22 @@ test "2551Q app wiring saves and resumes exact profile and transaction data" {
     );
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
+    try std.testing.expectEqualStrings(
+        "2026 Q1",
+        model.formFilingPeriodLabel(arena_state.allocator()),
+    );
+    try std.testing.expectEqualStrings(
+        "2026",
+        model.formFilingYear(arena_state.allocator()),
+    );
+    try std.testing.expectEqualStrings(
+        "01 / 01 / 2026",
+        model.formFilingPeriodStart(arena_state.allocator()),
+    );
+    try std.testing.expectEqualStrings(
+        "03 / 31 / 2026",
+        model.formFilingPeriodEnd(arena_state.allocator()),
+    );
     try std.testing.expectEqualStrings(
         "123-456-789-000",
         model.formFilerTin(arena_state.allocator()),
@@ -9179,6 +11937,23 @@ fn findWidgetBySemanticsLabel(
     return null;
 }
 
+fn findWidgetBySemanticsPrefix(
+    widget: canvas.Widget,
+    prefix: []const u8,
+) ?canvas.Widget {
+    if (std.mem.startsWith(u8, widget.semantics.label, prefix)) return widget;
+    for (widget.children) |child| {
+        if (findWidgetBySemanticsPrefix(child, prefix)) |found| return found;
+    }
+    return null;
+}
+
+fn countWidgetTree(widget: canvas.Widget) usize {
+    var count: usize = 1;
+    for (widget.children) |child| count += countWidgetTree(child);
+    return count;
+}
+
 fn writeReferenceProofShot(
     model: *const Model,
     width: usize,
@@ -9256,6 +12031,7 @@ fn writeFormActivationProofShots(
         height: usize,
     }{
         .{ .name = "desktop", .width = 1176, .height = 768 },
+        .{ .name = "tablet", .width = 768, .height = 768 },
         .{ .name = "phone", .width = 408, .height = 800 },
     };
     for (shots) |shot| {
@@ -9330,6 +12106,258 @@ test "render tax form filter menu proof shots when requested" {
             open_path,
         );
     }
+
+    // Capture a single-month selection first, then a multi-month selection.
+    // The period tiles are the interaction itself, so these renders make the
+    // selected-state and the compact closed summary auditable at each step.
+    update(&model, .profile_forms_toggle_month_1);
+    model.profileFormsFilterPickerVisible = true;
+    for (shots[0..3]) |shot| {
+        update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+        model.profileFormsFilterPickerVisible = true;
+        var path_buffer: [160]u8 = undefined;
+        const selected_path = try std.fmt.bufPrint(
+            &path_buffer,
+            "/tmp/ebirforms-filter-menu-shots/{s}-jan-open.png",
+            .{shot.name},
+        );
+        try writeReferenceProofShot(
+            &model,
+            shot.width,
+            shot.height,
+            selected_path,
+        );
+    }
+    update(&model, .profile_forms_toggle_month_2);
+    update(&model, .profile_forms_toggle_month_3);
+    model.profileFormsFilterPickerVisible = true;
+    for (shots[0..3]) |shot| {
+        update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+        model.profileFormsFilterPickerVisible = true;
+        var path_buffer: [160]u8 = undefined;
+        const selected_path = try std.fmt.bufPrint(
+            &path_buffer,
+            "/tmp/ebirforms-filter-menu-shots/{s}-jan-feb-mar-open.png",
+            .{shot.name},
+        );
+        try writeReferenceProofShot(
+            &model,
+            shot.width,
+            shot.height,
+            selected_path,
+        );
+    }
+
+    update(&model, .profile_forms_reset_filters);
+    update(&model, .profile_forms_toggle_month_1);
+    update(&model, .profile_forms_toggle_quarter_2);
+    model.profileFormsFilterPickerVisible = true;
+    for (shots[0..3]) |shot| {
+        update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+        model.profileFormsFilterPickerVisible = true;
+        var path_buffer: [160]u8 = undefined;
+        const selected_open_path = try std.fmt.bufPrint(
+            &path_buffer,
+            "/tmp/ebirforms-filter-menu-shots/{s}-selected-open.png",
+            .{shot.name},
+        );
+        try writeReferenceProofShot(
+            &model,
+            shot.width,
+            shot.height,
+            selected_open_path,
+        );
+    }
+    model.profileFormsFilterPickerVisible = false;
+    for (shots[0..3]) |shot| {
+        update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+        var path_buffer: [160]u8 = undefined;
+        const filtered_path = try std.fmt.bufPrint(
+            &path_buffer,
+            "/tmp/ebirforms-filter-menu-shots/{s}-jan-q2.png",
+            .{shot.name},
+        );
+        try writeReferenceProofShot(
+            &model,
+            shot.width,
+            shot.height,
+            filtered_path,
+        );
+    }
+
+    update(&model, .profile_forms_reset_filters);
+    update(&model, .profile_forms_toggle_quarter_1);
+    update(&model, .profile_forms_toggle_quarter_2);
+    update(&model, .{
+        .profile_forms_search_input = .{ .insert_text = "2551Q" },
+    });
+    for (shots[0..3]) |shot| {
+        update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+        var path_buffer: [160]u8 = undefined;
+        const filtered_path = try std.fmt.bufPrint(
+            &path_buffer,
+            "/tmp/ebirforms-filter-menu-shots/{s}-q1-q2.png",
+            .{shot.name},
+        );
+        try writeReferenceProofShot(
+            &model,
+            shot.width,
+            shot.height,
+            filtered_path,
+        );
+    }
+
+    update(&model, .{ .profile_forms_search_input = .clear });
+    update(&model, .{
+        .profile_forms_search_input = .{ .insert_text = "no-such-form" },
+    });
+    for (shots[0..3]) |shot| {
+        update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+        var path_buffer: [160]u8 = undefined;
+        const empty_path = try std.fmt.bufPrint(
+            &path_buffer,
+            "/tmp/ebirforms-filter-menu-shots/{s}-empty.png",
+            .{shot.name},
+        );
+        try writeReferenceProofShot(
+            &model,
+            shot.width,
+            shot.height,
+            empty_path,
+        );
+    }
+
+    // Period-card geometry proof set. These captures deliberately focus on
+    // one monthly form and one quarterly form so every filtered cardinality
+    // can be inspected without other cards masking the grid footprint.
+    const period_shots = [_]struct {
+        name: []const u8,
+        width: usize,
+        height: usize,
+    }{
+        // Keep the requested desktop/tablet/phone widths, with a taller
+        // canvas so all twelve monthly slots remain visible in one proof.
+        .{ .name = "desktop-full", .width = 1176, .height = 1120 },
+        .{ .name = "tablet-full", .width = 768, .height = 1120 },
+        .{ .name = "phone-full", .width = 408, .height = 1120 },
+    };
+    update(&model, .profile_forms_reset_filters);
+    update(&model, .{
+        .profile_forms_search_input = .{ .insert_text = "1601C" },
+    });
+    model.profileFormsFilterPickerVisible = false;
+    for (period_shots) |shot| {
+        update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+        model.profileFormsFilterPickerVisible = false;
+        var path_buffer: [192]u8 = undefined;
+        const all_path = try std.fmt.bufPrint(
+            &path_buffer,
+            "/tmp/ebirforms-period-card-shots/monthly-all-{s}.png",
+            .{shot.name},
+        );
+        try writeReferenceProofShot(&model, shot.width, shot.height, all_path);
+    }
+
+    var month_index: u8 = 1;
+    while (month_index <= 12) : (month_index += 1) {
+        const toggle: Msg = switch (month_index) {
+            1 => .profile_forms_toggle_month_1,
+            2 => .profile_forms_toggle_month_2,
+            3 => .profile_forms_toggle_month_3,
+            4 => .profile_forms_toggle_month_4,
+            5 => .profile_forms_toggle_month_5,
+            6 => .profile_forms_toggle_month_6,
+            7 => .profile_forms_toggle_month_7,
+            8 => .profile_forms_toggle_month_8,
+            9 => .profile_forms_toggle_month_9,
+            10 => .profile_forms_toggle_month_10,
+            11 => .profile_forms_toggle_month_11,
+            12 => .profile_forms_toggle_month_12,
+            else => unreachable,
+        };
+        update(&model, toggle);
+        for (period_shots) |shot| {
+            update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+            model.profileFormsFilterPickerVisible = false;
+            var path_buffer: [192]u8 = undefined;
+            const filtered_path = try std.fmt.bufPrint(
+                &path_buffer,
+                "/tmp/ebirforms-period-card-shots/monthly-{d:0>2}-{s}.png",
+                .{ month_index, shot.name },
+            );
+            try writeReferenceProofShot(
+                &model,
+                shot.width,
+                shot.height,
+                filtered_path,
+            );
+        }
+    }
+
+    update(&model, .profile_forms_reset_filters);
+    update(&model, .{ .profile_forms_search_input = .clear });
+    update(&model, .{
+        .profile_forms_search_input = .{ .insert_text = "2551Q" },
+    });
+    for (period_shots) |shot| {
+        update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+        model.profileFormsFilterPickerVisible = false;
+        var path_buffer: [192]u8 = undefined;
+        const all_path = try std.fmt.bufPrint(
+            &path_buffer,
+            "/tmp/ebirforms-period-card-shots/quarterly-all-{s}.png",
+            .{shot.name},
+        );
+        try writeReferenceProofShot(&model, shot.width, shot.height, all_path);
+    }
+
+    var quarter_index: u8 = 1;
+    while (quarter_index <= 4) : (quarter_index += 1) {
+        const toggle: Msg = switch (quarter_index) {
+            1 => .profile_forms_toggle_quarter_1,
+            2 => .profile_forms_toggle_quarter_2,
+            3 => .profile_forms_toggle_quarter_3,
+            4 => .profile_forms_toggle_quarter_4,
+            else => unreachable,
+        };
+        update(&model, toggle);
+        for (period_shots) |shot| {
+            update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+            model.profileFormsFilterPickerVisible = false;
+            var path_buffer: [192]u8 = undefined;
+            const filtered_path = try std.fmt.bufPrint(
+                &path_buffer,
+                "/tmp/ebirforms-period-card-shots/quarterly-{d:0>2}-{s}.png",
+                .{ quarter_index, shot.name },
+            );
+            try writeReferenceProofShot(
+                &model,
+                shot.width,
+                shot.height,
+                filtered_path,
+            );
+        }
+    }
+
+    // Annual cards have one full-width filing action rather than a period
+    // matrix. Keep a dedicated visual proof beside the monthly/quarterly
+    // fixtures so the card contract is reviewable at every breakpoint.
+    update(&model, .profile_forms_reset_filters);
+    update(&model, .{ .profile_forms_search_input = .clear });
+    update(&model, .{
+        .profile_forms_search_input = .{ .insert_text = "1702RT" },
+    });
+    for (period_shots) |shot| {
+        update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+        model.profileFormsFilterPickerVisible = false;
+        var path_buffer: [192]u8 = undefined;
+        const annual_path = try std.fmt.bufPrint(
+            &path_buffer,
+            "/tmp/ebirforms-period-card-shots/annual-all-{s}.png",
+            .{shot.name},
+        );
+        try writeReferenceProofShot(&model, shot.width, shot.height, annual_path);
+    }
 }
 
 test "render opened form workspace proof shots when requested" {
@@ -9372,6 +12400,7 @@ test "render opened form workspace proof shots when requested" {
     const profile_id = model.taxProfiles.selectedProfileId().?;
     try store.replaceFormSet(profile_id, 2026, &.{
         .{ .form_code = "2551Q", .form_revision = "2018-01-ENCS" },
+        .{ .form_code = "1601C", .form_revision = "2018-01-ENCS" },
     });
     try std.testing.expect(model.taxProfiles.loadFormsForYear(2026));
     refreshSelectedProfileFormSet(&model);
@@ -9390,12 +12419,11 @@ test "render opened form workspace proof shots when requested" {
     const library_tree = try library_ui.finalize(
         try view.build(&library_ui, &model),
     );
-    const open_button = findWidgetByText(
+    const quarter_one = findWidgetBySemanticsPrefix(
         library_tree.root,
-        .button,
-        "Open Form",
+        "BIR Form 2551Q, Q1, tax year 2026",
     ).?;
-    update(&model, library_tree.msgForPointer(open_button.id, .up).?);
+    update(&model, library_tree.msgForPointer(quarter_one.id, .up).?);
     try std.testing.expectEqual(Page.form_2551q, model.page);
     model.taxProfiles.dismissNotice();
 
@@ -9413,6 +12441,41 @@ test "render opened form workspace proof shots when requested" {
         const path = try std.fmt.bufPrint(
             &path_buffer,
             "/tmp/ebirforms-open-form-shots/2551q-{s}.png",
+            .{shot.name},
+        );
+        try writeReferenceProofShot(&model, shot.width, shot.height, path);
+    }
+
+    // Re-enter the library and open a monthly tile. This is the companion
+    // proof that the selected month is passed into the editor as its filing
+    // period, rather than being inferred from the global calendar context.
+    navigate(&model, .taxpayer_dashboard);
+    model.dashboardSection = .forms;
+    model.taxProfiles.dismissNotice();
+    var monthly_arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer monthly_arena_state.deinit();
+    const monthly_arena = monthly_arena_state.allocator();
+    var monthly_view = try canvas.MarkupView(Model, Msg).init(
+        monthly_arena,
+        app_markup,
+    );
+    var monthly_ui = canvas.Ui(Msg).init(monthly_arena);
+    const monthly_tree = try monthly_ui.finalize(
+        try monthly_view.build(&monthly_ui, &model),
+    );
+    const january = findWidgetBySemanticsPrefix(
+        monthly_tree.root,
+        "BIR Form 1601C, Jan, tax year 2026",
+    ).?;
+    update(&model, monthly_tree.msgForPointer(january.id, .up).?);
+    try std.testing.expectEqual(Page.form_1601_c, model.page);
+    model.taxProfiles.dismissNotice();
+    for (shots) |shot| {
+        update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+        var path_buffer: [160]u8 = undefined;
+        const path = try std.fmt.bufPrint(
+            &path_buffer,
+            "/tmp/ebirforms-open-form-shots/1601c-jan-{s}.png",
             .{shot.name},
         );
         try writeReferenceProofShot(&model, shot.width, shot.height, path);
@@ -9591,51 +12654,168 @@ test "tax form library filter dispatches through compiled markup" {
     var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
 
     var closed_ui = canvas.Ui(Msg).init(arena);
-    const closed_tree = try closed_ui.finalize(try view.build(&closed_ui, &model));
+    const closed_root = view.build(&closed_ui, &model) catch |err| {
+        std.debug.print(
+            "library markup build failed at {s}:{d}:{d}: {s}\n",
+            .{
+                view.diagnostic.path,
+                view.diagnostic.line,
+                view.diagnostic.column,
+                view.diagnostic.message,
+            },
+        );
+        return err;
+    };
+    const closed_tree = try closed_ui.finalize(closed_root);
     const closed_trigger = findWidgetBySemanticsLabel(
         closed_tree.root,
-        "Filter forms: active, any form type",
+        "Filter active forms by cadence, month, or quarter",
     ).?;
     try std.testing.expectEqual(canvas.WidgetKind.select, closed_trigger.kind);
-    try std.testing.expectEqualStrings("Active · Any type", closed_trigger.text);
+    try std.testing.expectEqualStrings("All active filings", closed_trigger.text);
 
     update(&model, closed_tree.msgForPointer(closed_trigger.id, .up).?);
     try std.testing.expect(model.profileFormsFilterPickerOpen());
 
     var open_ui = canvas.Ui(Msg).init(arena);
     const open_tree = try open_ui.finalize(try view.build(&open_ui, &model));
-    const active = findWidgetByText(open_tree.root, .checkbox, "Active").?;
-    const inactive = findWidgetByText(open_tree.root, .checkbox, "Inactive").?;
+    const january = findWidgetBySemanticsLabel(open_tree.root, "January").?;
+    const quarter_two = findWidgetBySemanticsLabel(open_tree.root, "Quarter 2").?;
+    try std.testing.expectEqual(canvas.WidgetKind.button, january.kind);
+    try std.testing.expectEqual(canvas.WidgetKind.button, quarter_two.kind);
+    try std.testing.expect(
+        findWidgetBySemanticsLabel(open_tree.root, "All months") == null,
+    );
     try std.testing.expect(
         findWidgetByText(open_tree.root, .button, "Reset filters") != null,
     );
     try std.testing.expect(
         findWidgetByText(open_tree.root, .button, "Done") == null,
     );
-    try std.testing.expect(active.state.selected);
-    try std.testing.expect(active.state.disabled);
-    try std.testing.expect(!inactive.state.selected);
+    try std.testing.expect(
+        findWidgetByText(open_tree.root, .checkbox, "Selected") == null,
+    );
+    try std.testing.expect(!january.state.selected);
+    try std.testing.expect(!quarter_two.state.selected);
 
-    update(&model, open_tree.msgForPointer(inactive.id, .up).?);
+    update(&model, open_tree.msgForPointer(january.id, .up).?);
     try std.testing.expect(model.profileFormsFilterPickerOpen());
 
     var toggled_ui = canvas.Ui(Msg).init(arena);
     const toggled_tree = try toggled_ui.finalize(try view.build(&toggled_ui, &model));
     const toggled_trigger = findWidgetBySemanticsLabel(
         toggled_tree.root,
-        "Filter forms: all forms",
+        "Filter active forms: Jan. Change cadence, month, or quarter",
     ).?;
-    try std.testing.expectEqualStrings("All forms", toggled_trigger.text);
+    try std.testing.expectEqualStrings("Jan", toggled_trigger.text);
     try std.testing.expect(
-        findWidgetByText(toggled_tree.root, .checkbox, "Active").?.state.selected,
+        findWidgetBySemanticsLabel(toggled_tree.root, "January").?.state.selected,
+    );
+    try std.testing.expect(model.profileFormsCadenceMonthlySelected());
+
+    const toggled_quarter_two = findWidgetBySemanticsLabel(
+        toggled_tree.root,
+        "Quarter 2",
+    ).?;
+    update(
+        &model,
+        toggled_tree.msgForPointer(toggled_quarter_two.id, .up).?,
+    );
+    var combined_ui = canvas.Ui(Msg).init(arena);
+    const combined_tree = try combined_ui.finalize(
+        try view.build(&combined_ui, &model),
     );
     try std.testing.expect(
-        findWidgetByText(toggled_tree.root, .checkbox, "Inactive").?.state.selected,
+        findWidgetBySemanticsLabel(combined_tree.root, "January").?.state.selected,
+    );
+    try std.testing.expect(
+        findWidgetBySemanticsLabel(combined_tree.root, "Quarter 2").?.state.selected,
+    );
+    try std.testing.expect(model.profileFormsCadenceMonthlySelected());
+    try std.testing.expect(model.profileFormsCadenceQuarterlySelected());
+    const combined_trigger = findWidgetBySemanticsLabel(
+        combined_tree.root,
+        "Filter active forms: Jan · Q2. Change cadence, month, or quarter",
+    ).?;
+    try std.testing.expectEqualStrings("Jan · Q2", combined_trigger.text);
+
+    const menu = findWidgetByKind(combined_tree.root, .dropdown_menu).?;
+    update(&model, combined_tree.msgForDismiss(menu.id).?);
+    try std.testing.expect(!model.profileFormsFilterPickerOpen());
+
+    update(&model, .{
+        .profile_forms_search_input = .{ .insert_text = "no-such-form" },
+    });
+    var empty_ui = canvas.Ui(Msg).init(arena);
+    const empty_tree = try empty_ui.finalize(try view.build(&empty_ui, &model));
+    try std.testing.expect(
+        findWidgetByText(
+            empty_tree.root,
+            .text,
+            "No forms match these filters",
+        ) != null,
+    );
+    const reset = findWidgetByText(empty_tree.root, .button, "Reset filters").?;
+    update(&model, empty_tree.msgForPointer(reset.id, .up).?);
+    try std.testing.expectEqualStrings("", model.taxProfiles.formsQuery());
+    try std.testing.expect(!model.profileFormRowsEmpty(arena));
+}
+
+test "tax form library keeps browse and manage trees within widget budget" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addThreeTestProfiles(&store);
+
+    var model = Model{
+        .page = .taxpayer_dashboard,
+        .dashboardSection = .forms,
+        .viewportWidth = 1176,
+    };
+    try model.taxProfiles.attach(allocator, &store, "2026-08-02", 2026);
+    update(&model, .{ .select_taxpayer = 0 });
+    model.dashboardSection = .forms;
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+
+    var browse_ui = canvas.Ui(Msg).init(arena);
+    const browse_tree = try browse_ui.finalize(try view.build(&browse_ui, &model));
+    try std.testing.expect(countWidgetTree(browse_tree.root) < 1024);
+    try std.testing.expect(
+        findWidgetByText(browse_tree.root, .button, "Open Form") == null,
+    );
+    const next = findWidgetBySemanticsLabel(browse_tree.root, "Next forms").?;
+    update(&model, browse_tree.msgForPointer(next.id, .up).?);
+    try std.testing.expectEqual(@as(usize, 12), model.profileFormsPageOffset);
+
+    var second_page_ui = canvas.Ui(Msg).init(arena);
+    const second_page_tree = try second_page_ui.finalize(
+        try view.build(&second_page_ui, &model),
+    );
+    try std.testing.expect(countWidgetTree(second_page_tree.root) < 1024);
+    try std.testing.expect(
+        !findWidgetBySemanticsLabel(
+            second_page_tree.root,
+            "Previous forms",
+        ).?.state.disabled,
     );
 
-    const menu = findWidgetByKind(toggled_tree.root, .dropdown_menu).?;
-    update(&model, toggled_tree.msgForDismiss(menu.id).?);
-    try std.testing.expect(!model.profileFormsFilterPickerOpen());
+    update(&model, .manage_profile_forms);
+    var manage_ui = canvas.Ui(Msg).init(arena);
+    const manage_tree = try manage_ui.finalize(try view.build(&manage_ui, &model));
+    try std.testing.expect(countWidgetTree(manage_tree.root) < 1024);
+    try std.testing.expect(
+        findWidgetByText(manage_tree.root, .button, "Open Form") == null,
+    );
+    try std.testing.expect(
+        findWidgetBySemanticsPrefix(
+            manage_tree.root,
+            "BIR Form 0605,",
+        ) == null,
+    );
 }
 
 test "global calendar picker dispatches open search toggle and dismiss interactions" {
