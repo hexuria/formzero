@@ -72,16 +72,18 @@
 
   <if test="{contentPage == 'taxpayer_dashboard'}">
     <if test="{profileFormInfoDialogOpen}">
-      <dialog width="{profileFormInfoDialogWidth}" on-dismiss="profile_forms_close_info">
-        <use
-          template="taxpayer-form-info-content"
-          code="{profileFormInfoCode}"
-          title="{profileFormInfoTitle}"
-          category="{profileFormInfoCategory}"
-          cadence="{profileFormInfoCadence}"
-          capability="{profileFormInfoCapability}"
-          revision="{profileFormInfoRevision}"/>
-      </dialog>
+      <column grow="1" padding="16" main="center" cross="center">
+        <dialog width="{profileFormInfoDialogWidth}" on-dismiss="profile_forms_close_info">
+          <use
+            template="taxpayer-form-info-content"
+            code="{profileFormInfoCode}"
+            title="{profileFormInfoTitle}"
+            category="{profileFormInfoCategory}"
+            cadence="{profileFormInfoCadence}"
+            capability="{profileFormInfoCapability}"
+            revision="{profileFormInfoRevision}"/>
+        </dialog>
+      </column>
     </if>
   </if>
 

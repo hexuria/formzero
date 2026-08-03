@@ -100,3 +100,87 @@
     </if>
   </stack>
 </template>
+
+<template name="profile-calendar-multi-select-combobox" args="placeholder label">
+  <stack width="{profileCalendarFormPickerWidth}">
+    <select
+      height="44"
+      placeholder="Select forms..."
+      label="{label}"
+      disabled="{profileCalendarFormPickerDisabled}"
+      on-press="profile_calendar_forms_open">{profileCalendarFormSelectionText}</select>
+
+    <if test="{profileCalendarFormPickerOpen}">
+      <dropdown-menu
+        anchor="below"
+        anchor-alignment="stretch"
+        anchor-offset="4"
+        height="{profileCalendarFormMenuHeight}"
+        on-dismiss="profile_calendar_forms_close">
+        <search-field
+          height="44"
+          text="{profileCalendarFormQuery}"
+          placeholder="{placeholder}"
+          autofocus="true"
+          on-input="profile_calendar_forms_query_changed"/>
+
+        <separator/>
+
+        <row height="44" gap="4" cross="center">
+          <if test="{profileCalendarAllFilteredSelected}">
+            <button
+              height="44"
+              size="sm"
+              variant="ghost"
+              icon="x"
+              on-press="profile_calendar_forms_clear_all">Deselect All</button>
+          </if>
+          <else>
+            <button
+              height="44"
+              size="sm"
+              variant="ghost"
+              icon="check"
+              on-press="profile_calendar_forms_select_all_filtered">Select All</button>
+            <if test="{profileCalendarAnyFormsSelected}">
+              <button
+                height="44"
+                size="sm"
+                variant="ghost"
+                icon="x-circle"
+                on-press="profile_calendar_forms_clear_all">Clear All</button>
+            </if>
+          </else>
+        </row>
+
+        <separator/>
+
+        <scroll
+          height="{profileCalendarFormOptionsHeight}"
+          overscroll="none"
+          label="{label}">
+          <column>
+            <for each="visibleProfileCalendarFormOptions" key="id" as="option">
+              <if test="{option.selected}">
+                <menu-item
+                  height="44"
+                  icon="check"
+                  selected="true"
+                  on-press="profile_calendar_forms_toggle_option:{option.id}">{option.label}</menu-item>
+              </if>
+              <else>
+                <menu-item
+                  height="44"
+                  selected="false"
+                  on-press="profile_calendar_forms_toggle_option:{option.id}">{option.label}</menu-item>
+              </else>
+            </for>
+            <else>
+              <menu-item height="44" disabled="true">No matching options</menu-item>
+            </else>
+          </column>
+        </scroll>
+      </dropdown-menu>
+    </if>
+  </stack>
+</template>
