@@ -226,34 +226,18 @@
                 <column gap="4" role="group" label="Tax category">
                   <text><span weight="bold">Tax category</span></text>
                   <text wrap="true" foreground="text_muted">Leave all unchecked to show every category.</text>
-                  <checkbox height="44" checked="{profileFormsCategoryPaymentSelected}" text="Payment" on-toggle="profile_forms_toggle_category_payment"/>
-                  <checkbox height="44" checked="{profileFormsCategoryRegistrationSelected}" text="Registration" on-toggle="profile_forms_toggle_category_registration"/>
-                  <checkbox height="44" checked="{profileFormsCategoryWithholdingSelected}" text="Withholding tax" on-toggle="profile_forms_toggle_category_withholding"/>
-                  <checkbox height="44" checked="{profileFormsCategoryIncomeSelected}" text="Income tax" on-toggle="profile_forms_toggle_category_income"/>
-                  <checkbox height="44" checked="{profileFormsCategoryVatSelected}" text="Value-added tax" on-toggle="profile_forms_toggle_category_vat"/>
-                  <checkbox height="44" checked="{profileFormsCategoryPercentageSelected}" text="Percentage tax" on-toggle="profile_forms_toggle_category_percentage"/>
-                  <checkbox height="44" checked="{profileFormsCategoryDstSelected}" text="Documentary stamp tax" on-toggle="profile_forms_toggle_category_dst"/>
-                  <checkbox height="44" checked="{profileFormsCategoryExciseSelected}" text="Excise tax" on-toggle="profile_forms_toggle_category_excise"/>
-                  <checkbox height="44" checked="{profileFormsCategoryCapitalGainsSelected}" text="Capital gains tax" on-toggle="profile_forms_toggle_category_capital_gains"/>
-                  <checkbox height="44" checked="{profileFormsCategoryEstateDonorsSelected}" text="Estate and donor's tax" on-toggle="profile_forms_toggle_category_estate_donors"/>
+                  <for each="profileFormsCategoryOptions" key="id" as="category">
+                    <checkbox height="44" checked="{category.selected}" text="{category.text}" on-toggle="profile_forms_toggle_category:{category.id}"/>
+                  </for>
                 </column>
               </if>
               <if test="{browsingProfileForms}">
                 <column gap="6" role="group" label="Monthly filing periods">
                   <text><span weight="bold">Monthly filings</span></text>
                   <grid columns="4" gap="4">
-                    <button height="44" variant="{profileFormsMonth1Variant}" selected="{profileFormsMonth1Selected}" label="January" on-press="profile_forms_toggle_month_1">Jan</button>
-                    <button height="44" variant="{profileFormsMonth2Variant}" selected="{profileFormsMonth2Selected}" label="February" on-press="profile_forms_toggle_month_2">Feb</button>
-                    <button height="44" variant="{profileFormsMonth3Variant}" selected="{profileFormsMonth3Selected}" label="March" on-press="profile_forms_toggle_month_3">Mar</button>
-                    <button height="44" variant="{profileFormsMonth4Variant}" selected="{profileFormsMonth4Selected}" label="April" on-press="profile_forms_toggle_month_4">Apr</button>
-                    <button height="44" variant="{profileFormsMonth5Variant}" selected="{profileFormsMonth5Selected}" on-press="profile_forms_toggle_month_5">May</button>
-                    <button height="44" variant="{profileFormsMonth6Variant}" selected="{profileFormsMonth6Selected}" label="June" on-press="profile_forms_toggle_month_6">Jun</button>
-                    <button height="44" variant="{profileFormsMonth7Variant}" selected="{profileFormsMonth7Selected}" label="July" on-press="profile_forms_toggle_month_7">Jul</button>
-                    <button height="44" variant="{profileFormsMonth8Variant}" selected="{profileFormsMonth8Selected}" label="August" on-press="profile_forms_toggle_month_8">Aug</button>
-                    <button height="44" variant="{profileFormsMonth9Variant}" selected="{profileFormsMonth9Selected}" label="September" on-press="profile_forms_toggle_month_9">Sep</button>
-                    <button height="44" variant="{profileFormsMonth10Variant}" selected="{profileFormsMonth10Selected}" label="October" on-press="profile_forms_toggle_month_10">Oct</button>
-                    <button height="44" variant="{profileFormsMonth11Variant}" selected="{profileFormsMonth11Selected}" label="November" on-press="profile_forms_toggle_month_11">Nov</button>
-                    <button height="44" variant="{profileFormsMonth12Variant}" selected="{profileFormsMonth12Selected}" label="December" on-press="profile_forms_toggle_month_12">Dec</button>
+                    <for each="profileFormsMonthOptions" key="id" as="month">
+                      <button height="44" variant="{month.variant}" selected="{month.selected}" label="{month.label}" on-press="profile_forms_toggle_month:{month.month}">{month.text}</button>
+                    </for>
                   </grid>
                 </column>
                 <separator/>

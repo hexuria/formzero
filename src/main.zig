@@ -58,6 +58,8 @@ pub const LibraryPeriodFilter = library_view.LibraryPeriodFilter;
 pub const TaxFormLibraryPeriodCell = library_view.TaxFormLibraryPeriodCell;
 pub const TaxFormLibraryRow = library_view.TaxFormLibraryRow;
 pub const LibraryOnDemandFilterRow = library_view.LibraryOnDemandFilterRow;
+pub const LibraryCategoryFilterRow = library_view.LibraryCategoryFilterRow;
+pub const LibraryMonthFilterRow = library_view.LibraryMonthFilterRow;
 
 const taxCategoryLabel = library_view.taxCategoryLabel;
 const filingLifecycleLabel = library_view.filingLifecycleLabel;
@@ -3549,110 +3551,33 @@ pub const Model = struct {
         return self.profileFormsMonthSelected(12);
     }
 
-    pub fn profileFormsMonth1Selected(self: *const Model) bool {
-        return self.profileFormsJanuarySelected();
-    }
-
-    pub fn profileFormsMonth2Selected(self: *const Model) bool {
-        return self.profileFormsFebruarySelected();
-    }
-
-    pub fn profileFormsMonth3Selected(self: *const Model) bool {
-        return self.profileFormsMarchSelected();
-    }
-
-    pub fn profileFormsMonth4Selected(self: *const Model) bool {
-        return self.profileFormsAprilSelected();
-    }
-
-    pub fn profileFormsMonth5Selected(self: *const Model) bool {
-        return self.profileFormsMaySelected();
-    }
-
-    pub fn profileFormsMonth6Selected(self: *const Model) bool {
-        return self.profileFormsJuneSelected();
-    }
-
-    pub fn profileFormsMonth7Selected(self: *const Model) bool {
-        return self.profileFormsJulySelected();
-    }
-
-    pub fn profileFormsMonth8Selected(self: *const Model) bool {
-        return self.profileFormsAugustSelected();
-    }
-
-    pub fn profileFormsMonth9Selected(self: *const Model) bool {
-        return self.profileFormsSeptemberSelected();
-    }
-
-    pub fn profileFormsMonth10Selected(self: *const Model) bool {
-        return self.profileFormsOctoberSelected();
-    }
-
-    pub fn profileFormsMonth11Selected(self: *const Model) bool {
-        return self.profileFormsNovemberSelected();
-    }
-
-    pub fn profileFormsMonth12Selected(self: *const Model) bool {
-        return self.profileFormsDecemberSelected();
-    }
-
+    /// One row per month, carrying its own label, accessible name, and
+    /// selected state. Twelve near-identical markup blocks and twenty-four
+    /// accessors collapse into this.
     fn profileFormsPeriodButtonVariant(selected: bool) []const u8 {
         return if (selected) "primary" else "outline";
-    }
-
-    pub fn profileFormsMonth1Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth1Selected());
-    }
-
-    pub fn profileFormsMonth2Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth2Selected());
-    }
-
-    pub fn profileFormsMonth3Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth3Selected());
-    }
-
-    pub fn profileFormsMonth4Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth4Selected());
-    }
-
-    pub fn profileFormsMonth5Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth5Selected());
-    }
-
-    pub fn profileFormsMonth6Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth6Selected());
-    }
-
-    pub fn profileFormsMonth7Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth7Selected());
-    }
-
-    pub fn profileFormsMonth8Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth8Selected());
-    }
-
-    pub fn profileFormsMonth9Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth9Selected());
-    }
-
-    pub fn profileFormsMonth10Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth10Selected());
-    }
-
-    pub fn profileFormsMonth11Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth11Selected());
-    }
-
-    pub fn profileFormsMonth12Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth12Selected());
     }
 
     fn profileFormsQuarterSelected(self: *const Model, quarter: u8) bool {
         if (quarter < 1 or quarter > 4) return false;
         return self.libraryFilter.quarter_mask &
             (@as(u8, 1) << @intCast(quarter - 1)) != 0;
+    }
+
+    pub fn profileFormsMonthOptions(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const LibraryMonthFilterRow {
+        const rows = arena.alloc(LibraryMonthFilterRow, 12) catch return &.{};
+        for (0..12) |index| {
+            const month: u8 = @intCast(index + 1);
+            rows[index] = .{
+                .id = index,
+                .month = month,
+                .selected = self.profileFormsMonthSelected(month),
+            };
+        }
+        return rows;
     }
 
     pub fn profileFormsQuarterOneSelected(self: *const Model) bool {
@@ -3711,44 +3636,24 @@ pub const Model = struct {
             (@as(u16, 1) << @intCast(@intFromEnum(category))) != 0;
     }
 
-    pub fn profileFormsCategoryPaymentSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.payment);
-    }
-
-    pub fn profileFormsCategoryRegistrationSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.registration);
-    }
-
-    pub fn profileFormsCategoryWithholdingSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.withholding_tax);
-    }
-
-    pub fn profileFormsCategoryIncomeSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.income_tax);
-    }
-
-    pub fn profileFormsCategoryVatSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.value_added_tax);
-    }
-
-    pub fn profileFormsCategoryPercentageSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.percentage_tax);
-    }
-
-    pub fn profileFormsCategoryDstSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.documentary_stamp_tax);
-    }
-
-    pub fn profileFormsCategoryExciseSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.excise_tax);
-    }
-
-    pub fn profileFormsCategoryCapitalGainsSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.capital_gains_tax);
-    }
-
-    pub fn profileFormsCategoryEstateDonorsSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.estate_and_donors_tax);
+    /// One row per tax category, driven by the catalog enum rather than ten
+    /// hand-written accessors and ten messages that had to stay in step with
+    /// it. Adding a category to the catalog now adds its filter for free.
+    pub fn profileFormsCategoryOptions(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const LibraryCategoryFilterRow {
+        const categories = std.meta.tags(form_catalog.TaxCategory);
+        const rows = arena.alloc(LibraryCategoryFilterRow, categories.len) catch
+            return &.{};
+        for (categories, 0..) |category, index| {
+            rows[index] = .{
+                .id = index,
+                .label = taxCategoryLabel(category),
+                .selected = self.profileFormsCategorySelected(category),
+            };
+        }
+        return rows;
     }
 
     pub fn profileOnDemandFilterRows(
@@ -5506,6 +5411,14 @@ fn toggleLibraryQuarter(model: *Model, quarter: u8) void {
     resetProfileFormsPage(model);
 }
 
+/// Toggles the category at a row index. The index comes from the rendered
+/// row list, so it is validated against the enum rather than cast blindly.
+fn toggleLibraryCategoryAt(model: *Model, index: usize) void {
+    const categories = std.meta.tags(form_catalog.TaxCategory);
+    if (index >= categories.len) return;
+    toggleLibraryCategory(model, categories[index]);
+}
+
 fn toggleLibraryCategory(
     model: *Model,
     category: form_catalog.TaxCategory,
@@ -6081,32 +5994,12 @@ pub const Msg = union(enum) {
     profile_forms_toggle_cadence_quarterly,
     profile_forms_toggle_cadence_annual,
     profile_forms_toggle_cadence_on_demand,
-    profile_forms_toggle_month_1,
-    profile_forms_toggle_month_2,
-    profile_forms_toggle_month_3,
-    profile_forms_toggle_month_4,
-    profile_forms_toggle_month_5,
-    profile_forms_toggle_month_6,
-    profile_forms_toggle_month_7,
-    profile_forms_toggle_month_8,
-    profile_forms_toggle_month_9,
-    profile_forms_toggle_month_10,
-    profile_forms_toggle_month_11,
-    profile_forms_toggle_month_12,
+    profile_forms_toggle_month: u8,
     profile_forms_toggle_quarter_1,
     profile_forms_toggle_quarter_2,
     profile_forms_toggle_quarter_3,
     profile_forms_toggle_quarter_4,
-    profile_forms_toggle_category_payment,
-    profile_forms_toggle_category_registration,
-    profile_forms_toggle_category_withholding,
-    profile_forms_toggle_category_income,
-    profile_forms_toggle_category_vat,
-    profile_forms_toggle_category_percentage,
-    profile_forms_toggle_category_dst,
-    profile_forms_toggle_category_excise,
-    profile_forms_toggle_category_capital_gains,
-    profile_forms_toggle_category_estate_donors,
+    profile_forms_toggle_category: usize,
     profile_forms_toggle_on_demand_form: usize,
     profile_forms_show_previous,
     profile_forms_show_more,
@@ -6908,32 +6801,12 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .profile_forms_toggle_cadence_quarterly => toggleLibraryCadence(model, 0b0010),
         .profile_forms_toggle_cadence_annual => toggleLibraryCadence(model, 0b0100),
         .profile_forms_toggle_cadence_on_demand => toggleLibraryCadence(model, 0b1000),
-        .profile_forms_toggle_month_1 => toggleLibraryMonth(model, 1),
-        .profile_forms_toggle_month_2 => toggleLibraryMonth(model, 2),
-        .profile_forms_toggle_month_3 => toggleLibraryMonth(model, 3),
-        .profile_forms_toggle_month_4 => toggleLibraryMonth(model, 4),
-        .profile_forms_toggle_month_5 => toggleLibraryMonth(model, 5),
-        .profile_forms_toggle_month_6 => toggleLibraryMonth(model, 6),
-        .profile_forms_toggle_month_7 => toggleLibraryMonth(model, 7),
-        .profile_forms_toggle_month_8 => toggleLibraryMonth(model, 8),
-        .profile_forms_toggle_month_9 => toggleLibraryMonth(model, 9),
-        .profile_forms_toggle_month_10 => toggleLibraryMonth(model, 10),
-        .profile_forms_toggle_month_11 => toggleLibraryMonth(model, 11),
-        .profile_forms_toggle_month_12 => toggleLibraryMonth(model, 12),
+        .profile_forms_toggle_month => |month| toggleLibraryMonth(model, month),
         .profile_forms_toggle_quarter_1 => toggleLibraryQuarter(model, 1),
         .profile_forms_toggle_quarter_2 => toggleLibraryQuarter(model, 2),
         .profile_forms_toggle_quarter_3 => toggleLibraryQuarter(model, 3),
         .profile_forms_toggle_quarter_4 => toggleLibraryQuarter(model, 4),
-        .profile_forms_toggle_category_payment => toggleLibraryCategory(model, .payment),
-        .profile_forms_toggle_category_registration => toggleLibraryCategory(model, .registration),
-        .profile_forms_toggle_category_withholding => toggleLibraryCategory(model, .withholding_tax),
-        .profile_forms_toggle_category_income => toggleLibraryCategory(model, .income_tax),
-        .profile_forms_toggle_category_vat => toggleLibraryCategory(model, .value_added_tax),
-        .profile_forms_toggle_category_percentage => toggleLibraryCategory(model, .percentage_tax),
-        .profile_forms_toggle_category_dst => toggleLibraryCategory(model, .documentary_stamp_tax),
-        .profile_forms_toggle_category_excise => toggleLibraryCategory(model, .excise_tax),
-        .profile_forms_toggle_category_capital_gains => toggleLibraryCategory(model, .capital_gains_tax),
-        .profile_forms_toggle_category_estate_donors => toggleLibraryCategory(model, .estate_and_donors_tax),
+        .profile_forms_toggle_category => |index| toggleLibraryCategoryAt(model, index),
         .profile_forms_toggle_on_demand_form => |index| toggleLibraryOnDemandForm(model, index),
         .profile_forms_show_previous => {
             model.libraryFilter.page_offset -|= model.libraryFilter.visible_limit;
@@ -9414,9 +9287,9 @@ test "tax form library grouped filters summarize and stay open while toggling" {
     update(&model, .profile_forms_toggle_filter_picker);
     try std.testing.expect(model.profileFormsFilterPickerOpen());
 
-    update(&model, .profile_forms_toggle_month_1);
+    update(&model, .{ .profile_forms_toggle_month = 1 });
     try std.testing.expect(model.profileFormsFilterPickerOpen());
-    try std.testing.expect(model.profileFormsMonth1Selected());
+    try std.testing.expect(model.profileFormsJanuarySelected());
     try std.testing.expect(model.profileFormsCadenceMonthlySelected());
     try std.testing.expect(!model.profileFormsCadenceQuarterlySelected());
     try std.testing.expect(!model.profileFormsAllMonthsSelected());
@@ -9430,7 +9303,7 @@ test "tax form library grouped filters summarize and stay open while toggling" {
     );
 
     update(&model, .profile_forms_toggle_quarter_2);
-    try std.testing.expect(model.profileFormsMonth1Selected());
+    try std.testing.expect(model.profileFormsJanuarySelected());
     try std.testing.expect(model.profileFormsQuarter2Selected());
     try std.testing.expect(model.profileFormsCadenceMonthlySelected());
     try std.testing.expect(model.profileFormsCadenceQuarterlySelected());
@@ -9441,7 +9314,7 @@ test "tax form library grouped filters summarize and stay open while toggling" {
 
     update(&model, .profile_forms_toggle_cadence_monthly);
     try std.testing.expect(!model.profileFormsCadenceMonthlySelected());
-    try std.testing.expect(!model.profileFormsMonth1Selected());
+    try std.testing.expect(!model.profileFormsJanuarySelected());
 
     update(&model, .profile_forms_close_filter_picker);
     try std.testing.expect(!model.profileFormsFilterPickerOpen());
@@ -9454,7 +9327,7 @@ test "tax form library grouped filters summarize and stay open while toggling" {
         "All active filings",
         model.profileFormsFilterSummaryLabel(),
     );
-    try std.testing.expect(!model.profileFormsMonth1Selected());
+    try std.testing.expect(!model.profileFormsJanuarySelected());
     try std.testing.expect(!model.profileFormsQuarter2Selected());
     try std.testing.expectEqual(@as(u64, 0), model.libraryFilter.on_demand_mask);
     try std.testing.expectEqualStrings("", model.taxProfiles.formsQuery());
@@ -9466,20 +9339,20 @@ test "tax form library last period selection never widens another cadence" {
     const arena = arena_state.allocator();
     var model = Model{};
 
-    update(&model, .profile_forms_toggle_month_1);
+    update(&model, .{ .profile_forms_toggle_month = 1 });
     try std.testing.expect(model.profileFormsCadenceMonthlyLocked());
-    update(&model, .profile_forms_toggle_month_1);
+    update(&model, .{ .profile_forms_toggle_month = 1 });
     try std.testing.expect(model.profileFormsAllMonthsSelected());
     try std.testing.expectEqualStrings(
         "All months",
         model.profileFormsFilterDisplayLabel(arena),
     );
 
-    update(&model, .profile_forms_toggle_month_1);
+    update(&model, .{ .profile_forms_toggle_month = 1 });
     update(&model, .profile_forms_toggle_quarter_2);
     try std.testing.expect(!model.profileFormsCadenceMonthlyLocked());
     try std.testing.expect(!model.profileFormsCadenceQuarterlyLocked());
-    update(&model, .profile_forms_toggle_month_1);
+    update(&model, .{ .profile_forms_toggle_month = 1 });
     try std.testing.expect(!model.profileFormsCadenceMonthlySelected());
     try std.testing.expect(model.profileFormsCadenceQuarterlySelected());
     try std.testing.expect(model.profileFormsQuarter2Selected());
@@ -9615,7 +9488,13 @@ test "tax form library capability checkboxes partition the catalog" {
     );
 
     update(&model, .profile_forms_reset_filters);
-    update(&model, .profile_forms_toggle_category_income);
+    // Rows are ordered by the catalog enum, so income tax is at its index.
+    const income_index = std.mem.indexOfScalar(
+        form_catalog.TaxCategory,
+        std.meta.tags(form_catalog.TaxCategory),
+        .income_tax,
+    ).?;
+    update(&model, .{ .profile_forms_toggle_category = income_index });
     const income_rows = model.profileManageFormRows(arena);
     try std.testing.expect(income_rows.len > 0);
     for (income_rows) |*row| {
@@ -9926,7 +9805,7 @@ test "tax form filter picker closes when its dashboard context changes" {
     update(&model, .show_dashboard_forms);
     update(&model, .profile_forms_toggle_filter_picker);
     try std.testing.expect(model.profileFormsFilterPickerOpen());
-    update(&model, .profile_forms_toggle_month_1);
+    update(&model, .{ .profile_forms_toggle_month = 1 });
     try std.testing.expectEqualStrings(
         "Browse filters applied",
         model.profileFormsFilterSummaryLabel(),
@@ -13007,7 +12886,7 @@ test "render tax form filter menu proof shots when requested" {
     // Capture a single-month selection first, then a multi-month selection.
     // The period tiles are the interaction itself, so these renders make the
     // selected-state and the compact closed summary auditable at each step.
-    update(&model, .profile_forms_toggle_month_1);
+    update(&model, .{ .profile_forms_toggle_month = 1 });
     model.libraryFilter.filter_picker_visible = true;
     for (shots[0..3]) |shot| {
         update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
@@ -13025,8 +12904,8 @@ test "render tax form filter menu proof shots when requested" {
             selected_path,
         );
     }
-    update(&model, .profile_forms_toggle_month_2);
-    update(&model, .profile_forms_toggle_month_3);
+    update(&model, .{ .profile_forms_toggle_month = 2 });
+    update(&model, .{ .profile_forms_toggle_month = 3 });
     model.libraryFilter.filter_picker_visible = true;
     for (shots[0..3]) |shot| {
         update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
@@ -13046,7 +12925,7 @@ test "render tax form filter menu proof shots when requested" {
     }
 
     update(&model, .profile_forms_reset_filters);
-    update(&model, .profile_forms_toggle_month_1);
+    update(&model, .{ .profile_forms_toggle_month = 1 });
     update(&model, .profile_forms_toggle_quarter_2);
     model.libraryFilter.filter_picker_visible = true;
     for (shots[0..3]) |shot| {
@@ -13157,22 +13036,8 @@ test "render tax form filter menu proof shots when requested" {
 
     var month_index: u8 = 1;
     while (month_index <= 12) : (month_index += 1) {
-        const toggle: Msg = switch (month_index) {
-            1 => .profile_forms_toggle_month_1,
-            2 => .profile_forms_toggle_month_2,
-            3 => .profile_forms_toggle_month_3,
-            4 => .profile_forms_toggle_month_4,
-            5 => .profile_forms_toggle_month_5,
-            6 => .profile_forms_toggle_month_6,
-            7 => .profile_forms_toggle_month_7,
-            8 => .profile_forms_toggle_month_8,
-            9 => .profile_forms_toggle_month_9,
-            10 => .profile_forms_toggle_month_10,
-            11 => .profile_forms_toggle_month_11,
-            12 => .profile_forms_toggle_month_12,
-            else => unreachable,
-        };
-        update(&model, toggle);
+        // The message carries the month, so no tag-per-month mapping is needed.
+        update(&model, .{ .profile_forms_toggle_month = month_index });
         for (period_shots) |shot| {
             update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
             model.libraryFilter.filter_picker_visible = false;
