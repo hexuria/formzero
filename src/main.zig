@@ -1508,19 +1508,56 @@ pub const Model = struct {
     }
 
     pub fn formFilerRegisteredAddress(self: *const Model) []const u8 {
-        return self.formProfiles.filerText(.registered_address);
+        return self.filerContactText(.registered_address);
     }
 
     pub fn formFilerZipCode(self: *const Model) []const u8 {
-        return self.formProfiles.filerText(.zip_code);
+        return self.filerContactText(.zip_code);
+    }
+
+    /// A filing shows the contact detail it was given, falling back to the one
+    /// the taxpayer's profile supplied when the draft was composed.
+    fn filerContactText(
+        self: *const Model,
+        contact_field: percentage_tax_ui.FilingContactField,
+    ) []const u8 {
+        if (self.percentageTax.contactOverridden(contact_field)) {
+            return self.percentageTax.contactOverrideText(contact_field);
+        }
+        return self.formProfiles.filerText(contact_field.reusable());
     }
 
     pub fn formFilerContactNumber(self: *const Model) []const u8 {
-        return self.formProfiles.filerText(.contact_number);
+        return self.filerContactText(.contact_number);
+    }
+
+    pub fn formFilingContactEditable(self: *const Model) bool {
+        return self.percentageTax.editable;
+    }
+
+    /// Says where the contact details on this filing came from. Provenance is
+    /// text, not a colour, because it is the fact that matters.
+    pub fn formFilingContactProvenance(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const changed = self.percentageTax.overriddenContactCount();
+        if (changed == 0) return "From profile";
+        if (changed == 1) return "1 contact detail changed for this filing";
+        return std.fmt.allocPrint(
+            arena,
+            "{d} contact details changed for this filing",
+            .{changed},
+        ) catch "Changed for this filing";
+    }
+
+    pub fn formFilingContactResetDisabled(self: *const Model) bool {
+        return self.percentageTax.overriddenContactCount() == 0 or
+            !self.percentageTax.editable;
     }
 
     pub fn formFilerEmailAddress(self: *const Model) []const u8 {
-        return self.formProfiles.filerText(.email_address);
+        return self.filerContactText(.email_address);
     }
 
     pub fn formFilerDateOfBirth(
@@ -6235,6 +6272,11 @@ pub const Msg = union(enum) {
     profile_cor_toggle_tax_type,
     profile_cor_toggle_apply_forms,
     profile_cor_apply,
+    form_filing_address_input: canvas.TextInputEvent,
+    form_filing_zip_input: canvas.TextInputEvent,
+    form_filing_contact_input: canvas.TextInputEvent,
+    form_filing_email_input: canvas.TextInputEvent,
+    form_filing_use_profile_contacts,
     show_profile_email,
     profile_subject_individual,
     profile_subject_sole_proprietor,
@@ -6906,6 +6948,21 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .profile_cor_toggle_tax_type => toggleCorAccepted(model, .tax_type),
         .profile_cor_toggle_apply_forms => {
             model.taxProfiles.toggleCorReviewApplyForms();
+        },
+        .form_filing_address_input => |edit| {
+            model.percentageTax.setContactOverride(.registered_address, edit);
+        },
+        .form_filing_zip_input => |edit| {
+            model.percentageTax.setContactOverride(.zip_code, edit);
+        },
+        .form_filing_contact_input => |edit| {
+            model.percentageTax.setContactOverride(.contact_number, edit);
+        },
+        .form_filing_email_input => |edit| {
+            model.percentageTax.setContactOverride(.email_address, edit);
+        },
+        .form_filing_use_profile_contacts => {
+            model.percentageTax.useProfileContactValues();
         },
         .profile_cor_apply => {
             if (model.taxProfiles.applyCorReview()) {
@@ -11000,8 +11057,10 @@ test "2551Q app wiring saves and resumes exact profile and transaction data" {
         saved_id.asSlice(),
     )).?;
     defer draft.deinit(allocator);
+    // Transaction fields only: this filing states no contact detail of its own.
     try std.testing.expectEqual(
-        @as(usize, percentage_tax_ui.max_draft_values),
+        @as(usize, percentage_tax_ui.max_draft_values -
+            percentage_tax_ui.filing_contact_field_count),
         draft.values.len,
     );
     var found_external_rate = false;

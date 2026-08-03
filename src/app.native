@@ -7637,21 +7637,28 @@ on-press="percentage_tax_election_eight_percent">
 </column>
 <column gap="4">
 <text foreground="text_muted">Registered Address</text>
-<input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="true" />
+<input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="{not formFilingContactEditable}" on-input="form_filing_address_input"/>
 </column>
 <column gap="4">
 <text foreground="text_muted">ZIP Code</text>
-<input text="{formFilerZipCode}" placeholder="ZIP code" disabled="true" />
+<input text="{formFilerZipCode}" placeholder="ZIP code" disabled="{not formFilingContactEditable}" on-input="form_filing_zip_input"/>
 </column>
 <column gap="4">
 <text foreground="text_muted">Contact Number</text>
-<input text="{formFilerContactNumber}" placeholder="Contact number" disabled="true" />
+<input text="{formFilerContactNumber}" placeholder="Contact number" disabled="{not formFilingContactEditable}" on-input="form_filing_contact_input"/>
 </column>
 <column gap="4">
 <text foreground="text_muted">Email Address</text>
-<input text="{formFilerEmailAddress}" placeholder="name@example.com" disabled="true" />
+<input text="{formFilerEmailAddress}" placeholder="name@example.com" disabled="{not formFilingContactEditable}" on-input="form_filing_email_input"/>
 </column>
 </grid>
+</template>
+<template name="form-2551q-contact-provenance">
+<row gap="8" cross="center">
+<badge variant="outline">{formFilingContactProvenance}</badge>
+<text grow="1" wrap="true" foreground="text_muted">Changes here apply to this filing only.</text>
+<button height="44" variant="outline" disabled="{formFilingContactResetDisabled}" on-press="form_filing_use_profile_contacts">Use profile values</button>
+</row>
 </template>
 <template name="form-2551q-schedule-editor" args="columns">
 <column gap="16">
@@ -7999,6 +8006,7 @@ Save
 <if test="{desktopLayout}">
 <use template="form-2551q-grid-2" columns="3"/>
 </if>
+<use template="form-2551q-contact-provenance"/>
 </column>
 </card>
 <card>
