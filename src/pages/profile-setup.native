@@ -5,17 +5,23 @@
   </column>
 </template>
 
-<template name="profile-setup-year-combobox">
-  <stack width="176">
+<template name="profile-setup-year-combobox-body">
+  <column>
     <select
       height="44"
       label="Tax year for forms setup"
       on-press="profile_setup_toggle_year_picker">{profileSetupYearLabel}</select>
     <if test="{profileSetupYearPickerOpen}">
+      <!--
+        Wider than the compact trigger: a row states the year and what that
+        year's setup is, and a truncated status would leave the user guessing
+        which years still need setting up.
+      -->
       <dropdown-menu
         anchor="below"
-        anchor-alignment="stretch"
+        anchor-alignment="end"
         anchor-offset="4"
+        width="300"
         height="300"
         on-dismiss="profile_setup_close_year_picker">
         <column padding="8" gap="8">
@@ -42,7 +48,27 @@
         </column>
       </dropdown-menu>
     </if>
-  </stack>
+  </column>
+</template>
+
+<template name="profile-setup-year-combobox">
+  <!--
+    A four-digit year needs little room, so the control stays compact where
+    there is space and fills the width only when the header has stacked and a
+    narrow control would sit oddly alone on its own row.
+  -->
+  <column>
+    <if test="{profileFormsHeaderStacked}">
+      <stack>
+        <use template="profile-setup-year-combobox-body"/>
+      </stack>
+    </if>
+    <else>
+      <stack width="176">
+        <use template="profile-setup-year-combobox-body"/>
+      </stack>
+    </else>
+  </column>
 </template>
 
 <template name="profile-setup-source-picker">
@@ -127,7 +153,7 @@
         height="44"
         selected="{profileTaxFormsActive}"
         on-press="show_profile_tax_forms">
-        Registration &amp; Forms
+        Registration & Forms
       </button>
       <button
         height="44"
@@ -253,19 +279,20 @@
                   <select
                     height="44"
                     label="Taxpayer subject kind"
+                    disabled="{profileBranchMode}"
                     on-press="toggle_profile_subject_picker">{profileSubjectKindLabel}</select>
                   <if test="{profileSubjectPickerOpen}">
                     <dropdown-menu
                       anchor="below"
                       anchor-alignment="stretch"
                       on-dismiss="close_profile_subject_picker">
-                      <menu-item height="44" selected="{profileIndividualSelected}" on-press="profile_subject_individual">Individual</menu-item>
-                      <menu-item height="44" selected="{profileSoleProprietorSelected}" on-press="profile_subject_sole_proprietor">Sole proprietor</menu-item>
-                      <menu-item height="44" selected="{profileCorporationSelected}" on-press="profile_subject_corporation">Corporation</menu-item>
-                      <menu-item height="44" selected="{profilePartnershipSelected}" on-press="profile_subject_partnership">Partnership</menu-item>
-                      <menu-item height="44" selected="{profileEstateSelected}" on-press="profile_subject_estate">Estate</menu-item>
-                      <menu-item height="44" selected="{profileTrustSelected}" on-press="profile_subject_trust">Trust</menu-item>
-                      <menu-item height="44" selected="{profileOtherLegalSelected}" on-press="profile_subject_other_legal">Other legal entity</menu-item>
+                      <menu-item height="44" disabled="{profileBranchMode}" selected="{profileIndividualSelected}" on-press="profile_subject_individual">Individual</menu-item>
+                      <menu-item height="44" disabled="{profileBranchMode}" selected="{profileSoleProprietorSelected}" on-press="profile_subject_sole_proprietor">Sole proprietor</menu-item>
+                      <menu-item height="44" disabled="{profileBranchMode}" selected="{profileCorporationSelected}" on-press="profile_subject_corporation">Corporation</menu-item>
+                      <menu-item height="44" disabled="{profileBranchMode}" selected="{profilePartnershipSelected}" on-press="profile_subject_partnership">Partnership</menu-item>
+                      <menu-item height="44" disabled="{profileBranchMode}" selected="{profileEstateSelected}" on-press="profile_subject_estate">Estate</menu-item>
+                      <menu-item height="44" disabled="{profileBranchMode}" selected="{profileTrustSelected}" on-press="profile_subject_trust">Trust</menu-item>
+                      <menu-item height="44" disabled="{profileBranchMode}" selected="{profileOtherLegalSelected}" on-press="profile_subject_other_legal">Other legal entity</menu-item>
                     </dropdown-menu>
                   </if>
                 </stack>
@@ -273,15 +300,15 @@
               <else>
                 <column gap="8">
                   <row gap="8">
-                    <button height="44" variant="outline" selected="{profileIndividualSelected}" on-press="profile_subject_individual">Individual</button>
-                    <button height="44" variant="outline" selected="{profileSoleProprietorSelected}" on-press="profile_subject_sole_proprietor">Sole proprietor</button>
-                    <button height="44" variant="outline" selected="{profileCorporationSelected}" on-press="profile_subject_corporation">Corporation</button>
-                    <button height="44" variant="outline" selected="{profilePartnershipSelected}" on-press="profile_subject_partnership">Partnership</button>
+                    <button height="44" variant="outline" selected="{profileIndividualSelected}" disabled="{profileBranchMode}" on-press="profile_subject_individual">Individual</button>
+                    <button height="44" variant="outline" selected="{profileSoleProprietorSelected}" disabled="{profileBranchMode}" on-press="profile_subject_sole_proprietor">Sole proprietor</button>
+                    <button height="44" variant="outline" selected="{profileCorporationSelected}" disabled="{profileBranchMode}" on-press="profile_subject_corporation">Corporation</button>
+                    <button height="44" variant="outline" selected="{profilePartnershipSelected}" disabled="{profileBranchMode}" on-press="profile_subject_partnership">Partnership</button>
                   </row>
                   <row gap="8">
-                    <button height="44" variant="outline" selected="{profileEstateSelected}" on-press="profile_subject_estate">Estate</button>
-                    <button height="44" variant="outline" selected="{profileTrustSelected}" on-press="profile_subject_trust">Trust</button>
-                    <button height="44" variant="outline" selected="{profileOtherLegalSelected}" on-press="profile_subject_other_legal">Other legal entity</button>
+                    <button height="44" variant="outline" selected="{profileEstateSelected}" disabled="{profileBranchMode}" on-press="profile_subject_estate">Estate</button>
+                    <button height="44" variant="outline" selected="{profileTrustSelected}" disabled="{profileBranchMode}" on-press="profile_subject_trust">Trust</button>
+                    <button height="44" variant="outline" selected="{profileOtherLegalSelected}" disabled="{profileBranchMode}" on-press="profile_subject_other_legal">Other legal entity</button>
                   </row>
                 </column>
               </else>
@@ -522,7 +549,7 @@
         <if test="{profileFormsHeaderStacked}">
           <column gap="10">
             <column gap="4">
-              <text><span weight="bold">Registration &amp; Forms</span></text>
+              <text><span weight="bold">Registration & Forms</span></text>
               <text wrap="true" foreground="text_muted">
                 Choose which BIR forms apply to this taxpayer in each tax year.
               </text>
@@ -533,7 +560,7 @@
         <else>
           <row gap="12" cross="center">
             <column grow="1" gap="4">
-              <text><span weight="bold">Registration &amp; Forms</span></text>
+              <text><span weight="bold">Registration & Forms</span></text>
               <text wrap="true" foreground="text_muted">
                 Choose which BIR forms apply to this taxpayer in each tax year.
               </text>
@@ -671,8 +698,12 @@
             </card>
           </if>
 
+          <!--
+            The actions sit above the catalog, not after it. Fifty-one form
+            cards do not paginate while managing, so a footer button would be
+            a long scroll away from the choices it commits.
+          -->
           <if test="{profileSetupManagerVisible}">
-            <!-- @include-template taxpayer-form-library-section -->
             <if test="{profileSetupZeroFormsHelperVisible}">
               <text wrap="true" foreground="text_muted">{profileSetupZeroFormsHelperText}</text>
             </if>
@@ -680,14 +711,14 @@
               <column gap="10">
                 <button
                   height="44"
-                  variant="outline"
-                  on-press="profile_forms_cancel">Cancel</button>
-                <button
-                  height="44"
                   variant="primary"
                   icon="save"
                   disabled="{profileSetupPrimaryDisabled}"
                   on-press="profile_setup_save">{profileSetupPrimaryLabel}</button>
+                <button
+                  height="44"
+                  variant="outline"
+                  on-press="profile_forms_cancel">Cancel</button>
               </column>
             </if>
             <else>
@@ -704,6 +735,7 @@
                   on-press="profile_setup_save">{profileSetupPrimaryLabel}</button>
               </row>
             </else>
+            <!-- @include-template taxpayer-form-library-section -->
           </if>
 
           <if test="{profileSetupYearsDisclosureVisible}">

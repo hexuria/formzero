@@ -3186,10 +3186,6 @@ pub const Model = struct {
         return !self.formsManageMode();
     }
 
-    pub fn profileFormsSaveDisabled(self: *const Model) bool {
-        return !self.taxProfiles.formsDirty();
-    }
-
     pub fn profileFormsSearchValue(self: *const Model) []const u8 {
         return self.taxProfiles.formsQuery();
     }
@@ -3213,17 +3209,6 @@ pub const Model = struct {
             "{d} of {d} active",
             .{ self.taxProfiles.activeFormCount(), form_catalog.registry_count },
         ) catch "Forms Set unavailable";
-    }
-
-    pub fn profileFormsStagedCountLabel(
-        self: *const Model,
-        arena: std.mem.Allocator,
-    ) []const u8 {
-        return std.fmt.allocPrint(
-            arena,
-            "{d} selected for tax year {d}",
-            .{ self.taxProfiles.stagedFormCount(), self.calendar.selected_year },
-        ) catch "Selected forms";
     }
 
     pub fn profileFormsYearLabel(
@@ -6081,7 +6066,6 @@ pub const Msg = union(enum) {
     toggle_profile_form: usize,
     profile_forms_select_all,
     profile_forms_clear_all,
-    profile_forms_save,
     profile_forms_cancel,
     profile_forms_reset_legacy,
     profile_forms_toggle_filter_active,
@@ -6855,14 +6839,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .profile_forms_select_all => model.taxProfiles.selectAllStagedForms(),
         .profile_forms_clear_all => model.taxProfiles.clearAllStagedForms(),
-        .profile_forms_save => {
-            if (model.taxProfiles.saveManagedForms()) {
-                model.libraryFilter.filter_picker_visible = false;
-                resetProfileFormsPage(model);
-                refreshSelectedProfileFormSet(model);
-                refreshSelectedProfileCalendar(model);
-            }
-        },
         .profile_forms_cancel => {
             model.taxProfiles.cancelYearWorkspaceEdits();
             model.libraryFilter.filter_picker_visible = false;
@@ -12736,6 +12712,108 @@ fn writeFormActivationProofShots(
             .{ stage, shot.name },
         );
         try writeReferenceProofShot(model, shot.width, shot.height, path);
+    }
+}
+
+test "render taxpayer setup workspace proof shots when requested" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    if (std.c.getenv("SETUP_WORKSPACE_SHOTS") == null) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addTestProfile(
+        &store,
+        "77777777777777777777777777777777",
+        "Maria Santos",
+        "123-456-789-000",
+        .sole_proprietor,
+    );
+    // The fixture seeds 2025-2027; leave 2025 unset so both a configured year
+    // and a year that still needs setup are reachable.
+    _ = try store.clearFormSet("77777777777777777777777777777777", 2025);
+    _ = try store.clearFormSet("77777777777777777777777777777777", 2027);
+    try store.replaceFormSet("77777777777777777777777777777777", 2026, &.{
+        .{ .form_code = "2551Q", .form_revision = "2018-01-ENCS" },
+        .{ .form_code = "1701Q", .form_revision = "2018-01-ENCS" },
+    });
+
+    var model = Model{ .page = .profile_setup };
+    model.calendarToday = try calendar_domain.Date.init(2026, 8, 4);
+    model.calendar.selected_year = 2026;
+    try model.taxProfiles.attach(allocator, &store, "2026-08-04", 2026);
+    model.formProfiles.attach(allocator, &store);
+    defer model.formProfiles.deinit();
+    canvas.icons.registerAppIcons(&app_icons);
+    update(&model, .{ .select_taxpayer = 0 });
+    model.page = .profile_setup;
+    model.taxProfiles.dismissNotice();
+
+    const widths = [_]struct {
+        name: []const u8,
+        width: usize,
+        height: usize,
+    }{
+        .{ .name = "desktop", .width = 1400, .height = 900 },
+        .{ .name = "tablet", .width = 768, .height = 900 },
+        .{ .name = "phone", .width = 408, .height = 900 },
+    };
+
+    const Stage = enum {
+        profile,
+        forms_configured,
+        forms_year_open,
+        forms_draft_choice,
+        forms_draft_seeded,
+        branch,
+    };
+
+    for (widths) |shot| {
+        for (std.meta.tags(Stage)) |stage| {
+            update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+            switch (stage) {
+                .profile => {
+                    update(&model, .show_profile_tax);
+                },
+                .forms_configured => {
+                    update(&model, .show_profile_tax_forms);
+                    update(&model, .{ .profile_setup_select_year = 2026 });
+                },
+                .forms_year_open => {
+                    update(&model, .show_profile_tax_forms);
+                    update(&model, .profile_setup_toggle_year_picker);
+                },
+                .forms_draft_choice => {
+                    update(&model, .profile_setup_close_year_picker);
+                    update(&model, .{ .profile_setup_select_year = 2025 });
+                },
+                .forms_draft_seeded => {
+                    update(&model, .{ .profile_setup_draft_seed = 2026 });
+                },
+                .branch => {
+                    // Leave the seeded draft behind first: an unsaved year
+                    // legitimately blocks leaving, which the previous stage
+                    // already demonstrates.
+                    update(&model, .profile_setup_cancel_year_switch);
+                    update(&model, .profile_forms_cancel);
+                    update(&model, .{ .profile_setup_select_year = 2026 });
+                    update(&model, .add_branch_profile);
+                },
+            }
+            update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+            model.taxProfiles.dismissNotice();
+            var path_buffer: [192]u8 = undefined;
+            const path = try std.fmt.bufPrint(
+                &path_buffer,
+                "/tmp/ebirforms-setup-shots/{s}-{s}.png",
+                .{ @tagName(stage), shot.name },
+            );
+            try writeReferenceProofShot(&model, shot.width, shot.height, path);
+        }
+        // Return to a saved taxpayer before the next width sweep.
+        model.taxProfiles.cancelAddBranch();
+        update(&model, .{ .select_taxpayer = 0 });
+        model.page = .profile_setup;
     }
 }
 

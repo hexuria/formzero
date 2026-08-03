@@ -47,6 +47,7 @@ pub const Error = error{
     DuplicateTaxpayerIdentifier,
     BranchTinRootChanged,
     BranchCodeRequired,
+    BranchLegalPersonChanged,
 } || persistence.Error;
 
 pub const NoticeKind = enum {
@@ -391,6 +392,7 @@ pub const State = struct {
     branch_mode: bool = false,
     branch_source_root: FixedText(9) = .{},
     branch_source_name: NameText = .{},
+    branch_source_kind: model.SubjectKind = .individual,
     /// The effective date as loaded, so switching to a correction can restore
     /// the period being restated without guessing.
     loaded_effective_from: FixedText(10) = .{},
@@ -888,6 +890,7 @@ pub const State = struct {
         self.branch_mode = true;
         self.branch_source_root.set(source_root) catch {};
         self.branch_source_name.set(source_name) catch {};
+        self.branch_source_kind = source_kind;
 
         // The branch belongs to the same legal person, so its kind is fixed.
         self.subject_kind = source_kind;
@@ -1067,6 +1070,12 @@ pub const State = struct {
                     return error.BranchTinRootChanged;
                 }
                 if (tin.branch() == null) return error.BranchCodeRequired;
+                // A branch is another registration of the same legal person.
+                // Changing the kind would make it a different taxpayer, which
+                // needs its own profile rather than a branch of this one.
+                if (self.subject_kind != self.branch_source_kind) {
+                    return error.BranchLegalPersonChanged;
+                }
             }
         }
         var generated_profile_id: persistence.OpaqueId = undefined;
@@ -2568,6 +2577,7 @@ pub const State = struct {
             error.DuplicateTaxpayerIdentifier => "That TIN already belongs to a taxpayer you have. Open it instead of adding it again.",
             error.BranchTinRootChanged => "A branch keeps the same nine-digit TIN as its head office. Change only the branch code.",
             error.BranchCodeRequired => "Add the branch code after the nine-digit TIN, for example 123-456-789-002.",
+            error.BranchLegalPersonChanged => "A branch is the same taxpayer. A different kind of taxpayer needs its own profile.",
             error.NoFactsEffectiveForYear => "No taxpayer details exist for that year yet. Record what was true then before setting up its forms.",
             error.FormsRequireSavedProfile => "Save this taxpayer profile before choosing its forms.",
             persistence.Error.FormSetAlreadyExists => "That year is already set up. Choose it from the year list to edit its forms.",
@@ -3699,6 +3709,28 @@ test "a branch reuses safe details and requires its own registration facts" {
     try std.testing.expect(
         (try store.getFormSet(allocator, branch_id, 2026)) == null,
     );
+}
+
+test "a branch cannot become a different kind of taxpayer" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    try std.testing.expect(state.beginAddBranch());
+    try std.testing.expectEqual(state.subject_kind, state.branch_source_kind);
+
+    state.rdo.set("043");
+    state.registered_address.set("Makati City");
+    state.tin.set("123-456-789-002");
+    state.setSubjectKind(.corporation);
+    try std.testing.expect(!state.save());
+    try std.testing.expectEqualStrings(
+        "A branch is the same taxpayer. A different kind of taxpayer needs its own profile.",
+        state.noticeText(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), state.rows().len);
 }
 
 test "a branch cannot change the taxpayer it belongs to" {
