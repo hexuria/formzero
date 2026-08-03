@@ -14,22 +14,22 @@ global form/deadline dashboard, and a functional tax-calendar engine.
 | Global Dashboard calendar | Functional; complete resolved schedule, never profile-filtered |
 | Tax deadline calculation | Functional; 20 compiled rule groups |
 | Calendar policy | Persisted in SQLite with sourced holidays and overrides |
-| Calendar export | Functional profile-selected `.ics` handoff to the default calendar app |
-| Tax profiles and Forms Set | Persisted, revisioned, effective-dated, and used by form availability; calendar choices persist separately per profile |
+| Calendar export | Functional `.ics` handoff to the default calendar app, scoped to the profile's Forms Set |
+| Tax profiles and Forms Set | Persisted, revisioned, effective-dated, and the sole source of form availability for the taxpayer calendar and its export |
 | Recurring form drafts | Existing 2551Q/1701Q save/resume plus a grounded, ordered 1701Q exact-core integration in progress |
 | Grounded 1701Q core | Exact 173-control contract, calculations, ordered validation, immutable profile mapping, candidate plaintext codecs, decrypt-only Artifact Lab, and schema-v4 draft streams under test |
 | Other form editors and print previews | UI/projection coverage only; not filing-ready |
 | Import, authentication, filing payment, and submission | UI only |
 | Distribution | macOS development build and Windows ARM64 development executable; neither is signed or production-ready |
 
-**Do not use this app as an authoritative filing plan yet.** The profile
-calendar currently starts with all 51 catalog forms and persists an independent
-per-profile selection. It does not yet intersect that selection with the
-profile's tax-year Forms Set. Once tax-profile form entitlement is complete,
-the picker and export must be limited to that intersection. The app also does
-not yet fully model fiscal periods, eFPS groups, every scoped policy, filing
-submission, or official print/file parity. Always confirm deadlines and filing
-requirements with official BIR guidance.
+**Do not use this app as an authoritative filing plan yet.** The taxpayer
+calendar and its `.ics` export are both limited to the profile's Forms Set,
+resolved against each deadline's own taxable year. A profile with no configured
+Forms Set therefore shows no deadlines; only a profile migrated from an older
+store falls back to the full catalog, and only until its Forms Set is saved.
+The app does not yet fully model fiscal periods, eFPS groups, every scoped
+policy, filing submission, or official print/file parity. Always confirm
+deadlines and filing requirements with official BIR guidance.
 
 All bundled taxpayer data is synthetic. `reference/` is intentionally ignored
 because source-app captures may contain private taxpayer data.
