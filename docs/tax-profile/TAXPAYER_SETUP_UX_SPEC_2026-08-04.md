@@ -1,8 +1,8 @@
 # Taxpayer Setup UX Specification
 
 Date: 2026-08-04
-Status: **implemented except COR ingestion and filing-level exceptions** — see
-§21 for exactly what landed and what did not
+Status: **implemented**, including COR evidence and review and filing-level
+exceptions — see §21 for what landed and the few gaps that remain
 Prompt: `docs/tax-profile/CLAUDE_FABLE_5_TAXPAYER_SETUP_UX_PROMPT_2026-08-04.md`
 Repository baseline: branch `gol/taxpayer-setup-ux-153451` at `2ff21cb`
 
@@ -1337,3 +1337,56 @@ A1 minimum year 2000, A2 recent window 5, A3 no second confirm on discard,
 A4 no cloud provider, A6 presentation grouping, A7 correction exposed beside
 the change action rather than only under history. A5 (COR retention) is moot
 until Phase E.
+
+---
+
+## 22. Follow-up tracks (2026-08-04, later the same day)
+
+Five further tracks hardened the above and closed the deferred work. Suite:
+1006 passing / 4 skipped, strict markup and model contract clean, catalog
+drift clean, ReleaseFast builds, `src/app.native` at 261,525 bytes against
+its 262,144 ceiling.
+
+| Track | Commit | What changed |
+|---|---|---|
+| TIN uniqueness | `c9d312a` | One canonical TIN, one taxpayer, enforced inside the create and correction transactions and covering archived profiles. Pre-existing duplicates surfaced on load with a masked TIN. |
+| Layout + entity checks | `1f3f511` | The SDK layout audit runs over six workspace states × three widths on every test run; found a wrapped paragraph overrunning its box on phone. Generation now refuses XML entities, which found two 1601-C buttons rendering `&amp;` literally. |
+| Exact no-op detection | `9278230` | `ProfileRevision.contentEquals` compares parsed values, so re-punctuating a phone number no longer records a change. `EffectivePeriod.eql` moved to the type. Header states multiple registered tax types rather than none. |
+| Markup budget | `be422fd` | Month and category filters generated from data, reclaiming 2.6 KB and deleting 22 message tags. |
+| COR evidence | `ad2e75e` | Attach a COR through the platform file chooser, stored as a checked reference (path, SHA-256, size) rather than a copy, with moved/changed detection. |
+| COR review and apply | `63715c0` | Transcribe and review candidates against current values; apply only accepted rows. Scenarios 8 and 9 automated. |
+| Filing contact exceptions | `cac7fd7` | 2551Q can state its own contact details, persisted with the draft under `filing_override` provenance; reset restores from the draft's own snapshot. Scenario 12 automated. |
+
+### Scenario ledger
+
+All fourteen are now covered: 1–7, 10, 11, 13 from the first pass; 8, 9, 12
+added here; 14 by the always-on layout audit plus the opt-in proof shots.
+
+### Corrections to §18 and §21
+
+- **The file dialog was reachable all along.** §21 recorded COR ingestion as
+  blocked on storage and a key-custody gate. The storage question was real and
+  is answered by referencing rather than copying; the dialog was not — `Effects`
+  carries the platform services the runtime binds at startup, and
+  `PlatformServices.showOpenDialog` is the native chooser. The earlier reading
+  checked only what `update` receives.
+- **Gap G3 (durable branch grouping) is closed differently than proposed.** No
+  `branch_of` relationship kind was added: the relationships table's `kind`
+  CHECK is fixed and the rows are immutable, so a new kind means a table
+  rebuild — for data the immutable identity anchors already carry. Grouping
+  keys on the anchor TIN root, which only an audited correction can change.
+
+### Still open
+
+- **Machine extraction (E4/E5).** Local OCR to prefill the review remains
+  future work, per decision D4. Nothing waits on it: the review is complete
+  without it.
+- **Encrypted COR copies.** Deliberate, per decision D3. The card never claims
+  durable custody of the document; it reports whether the user's own file is
+  still the one attached.
+- **1701Q filing exceptions.** The contact-exception pattern is implemented for
+  2551Q. 1701Q renders its profile-derived values through a different
+  presenter (`ControlRow`) and its unbound header inputs would need binding
+  first.
+- **Mid-year Forms Set intervals (G5)** and **owner scoping (G4)** are
+  unchanged, and no copy promises either.
