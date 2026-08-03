@@ -4839,32 +4839,66 @@ pub const Model = struct {
         return false;
     }
 
-    fn selectedProfileCalendarFormCodes(
-        self: *const Model,
-        arena: std.mem.Allocator,
-    ) ![]const []const u8 {
-        if (!self.taxProfiles.calendarFormSetConfigured(
-            self.calendar.selected_year,
-        )) {
-            return calendar_form_codes[0..];
-        }
-        return self.taxProfiles.calendarFormCodes(
-            arena,
-            self.calendar.selected_year,
-        );
+    /// The taxable years one export can touch. A January obligation belongs to
+    /// the prior taxable year, so both years' Forms Sets participate. This
+    /// mirrors the pair `profileCalendarScopeAvailable` requires.
+    fn profileExportTaxYears(self: *const Model) [2]i32 {
+        const year = self.profileCalendar.selected_year;
+        return .{ year, if (year > 1) year - 1 else year };
     }
 
-    fn selectedProfileCalendarHasForms(self: *const Model) bool {
-        if (!self.taxProfiles.calendarFormSetConfigured(
-            self.calendar.selected_year,
-        )) return true;
-        for (calendar_form_codes) |form_code| {
-            if (self.taxProfiles.formAvailable(
-                self.calendar.selected_year,
-                form_code,
-            )) return true;
+    /// A value copy of the on-screen profile calendar keeping only deadlines
+    /// the selected taxpayer's Forms Set includes *for that deadline's own
+    /// taxable year*, without mutating the global or on-screen projections.
+    ///
+    /// This is the authoritative filter, because it resolves each deadline
+    /// against its own year. `profileExportFormScope` is a flat list and cannot
+    /// express that, so it can only ever be a redundant second pass.
+    fn profileCalendarForExport(self: *const Model) calendar_ui.State {
+        var filtered = self.profileCalendar;
+        filtered.deadline_count = 0;
+        for (
+            self.profileCalendar.deadlines[0..self.profileCalendar.deadline_count],
+        ) |deadline| {
+            if (!self.profileCalendarIncludesDeadline(&deadline)) continue;
+            filtered.deadlines[filtered.deadline_count] = deadline;
+            filtered.deadline_count += 1;
         }
-        return false;
+        return filtered;
+    }
+
+    /// The form scope handed to the ICS serializer.
+    ///
+    /// `.catalog_fallback` is not a placeholder here: it is the correct scope
+    /// whenever a participating year has no configured Forms Set, because no
+    /// profile-level restriction exists for that year's obligations. Narrowing
+    /// it would silently drop deadlines the taxpayer is still liable for.
+    ///
+    /// When every participating year is configured, the union of their codes is
+    /// authoritative, and passing it keeps the serializer's own filter active
+    /// instead of trusting callers to have pre-filtered.
+    fn profileExportFormScope(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) calendar_ui.ProfileFormScope {
+        var codes: [2 * profile_ui.max_registered_forms][]const u8 = undefined;
+        var count: usize = 0;
+        for (self.profileExportTaxYears()) |year| {
+            if (!self.taxProfiles.calendarFormSetConfigured(year)) {
+                return .catalog_fallback;
+            }
+            for (self.taxProfiles.calendarFormCodes(arena, year)) |code| {
+                if (count == codes.len) return .catalog_fallback;
+                codes[count] = code;
+                count += 1;
+            }
+        }
+        // The events were already filtered by the year-aware predicate above,
+        // so a widened scope cannot widen the exported set. Falling back here
+        // costs the redundancy layer, never correctness.
+        const owned = arena.alloc([]const u8, count) catch return .catalog_fallback;
+        @memcpy(owned, codes[0..count]);
+        return .{ .registered = owned };
     }
 };
 
@@ -8240,24 +8274,22 @@ fn exportProfileCalendar(model: *Model, maybe_fx: ?*Effects) void {
         }
         @memcpy(&export_stamp, fallback);
     }
-    // Form availability is year-specific. Compact a value copy of the
-    // already profile-context-resolved calendar before handing it to the ICS
-    // serializer, so January obligations use the prior taxable year's Forms
-    // Set without mutating either the global or on-screen projections.
-    var export_calendar = model.profileCalendar;
-    export_calendar.deadline_count = 0;
-    for (model.profileCalendar.deadlines[0..model.profileCalendar.deadline_count]) |deadline| {
-        if (!model.profileCalendarIncludesDeadline(&deadline)) continue;
-        export_calendar.deadlines[export_calendar.deadline_count] = deadline;
-        export_calendar.deadline_count += 1;
-    }
+    // Form availability is year-specific, so the calendar is filtered against
+    // each deadline's own taxable year before serialization.
+    const export_calendar = model.profileCalendarForExport();
+    // The serializer applies the profile's registered form scope as well. It
+    // is deliberately redundant with the filter above: a future caller that
+    // forgets to pre-filter still cannot export a form the taxpayer has not
+    // registered for.
+    var scope_arena = std.heap.ArenaAllocator.init(allocator);
+    defer scope_arena.deinit();
     const bytes = export_calendar.buildProfileIcs(
         allocator,
         &export_stamp,
         .{
             .key = model.selectedTaxpayerCalendarKey(),
             .name = model.selectedTaxpayerName(),
-            .form_scope = .catalog_fallback,
+            .form_scope = model.profileExportFormScope(scope_arena.allocator()),
         },
     ) catch |err| {
         if (err == error.NoCalendarEvents) {
@@ -9659,20 +9691,18 @@ test "profile ICS uses current and prior taxable-year Forms Sets" {
     );
     refreshSelectedProfileFormSet(&model);
 
-    var export_calendar = model.profileCalendar;
-    export_calendar.deadline_count = 0;
-    for (model.profileCalendar.deadlines[0..model.profileCalendar.deadline_count]) |deadline| {
-        if (!model.profileCalendarIncludesDeadline(&deadline)) continue;
-        export_calendar.deadlines[export_calendar.deadline_count] = deadline;
-        export_calendar.deadline_count += 1;
-    }
+    // Exercise the same filter and scope the export effect uses, so this test
+    // cannot pass against a path production does not take.
+    const export_calendar = model.profileCalendarForExport();
+    var scope_arena = std.heap.ArenaAllocator.init(allocator);
+    defer scope_arena.deinit();
     const bytes = try export_calendar.buildProfileIcs(
         allocator,
         "20260729T010203Z",
         .{
             .key = model.selectedTaxpayerCalendarKey(),
             .name = model.selectedTaxpayerName(),
-            .form_scope = .catalog_fallback,
+            .form_scope = model.profileExportFormScope(scope_arena.allocator()),
         },
     );
     defer allocator.free(bytes);
@@ -9692,6 +9722,235 @@ test "profile ICS uses current and prior taxable-year Forms Sets" {
         bytes,
         "X-EBIRFORMS-OBLIGATION-KEY:2026:2551Q:q1",
     ) == null);
+}
+
+test "profile ICS form scope alone excludes unregistered forms" {
+    // The export effect filters deadlines before serializing. This test skips
+    // that filter deliberately: the scope handed to the serializer must be an
+    // independent barrier, so a future caller that forgets to pre-filter still
+    // cannot leak a form the taxpayer never registered for.
+    const allocator = std.testing.allocator;
+    var calendar_store = try calendar_ui.persistence.Store.openMemory(
+        allocator,
+    );
+    defer calendar_store.close();
+    var profile_fixture = try profile_store.Store.openMemory(allocator);
+    defer profile_fixture.close();
+
+    const profile_id = "ics-scope-barrier-profile";
+    try addTestProfile(
+        &profile_fixture,
+        profile_id,
+        "Scope Barrier",
+        "321-654-987-000",
+        .individual,
+    );
+    try profile_fixture.replaceFormSet(profile_id, 2026, &.{.{
+        .form_code = "1701Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+    try profile_fixture.replaceFormSet(profile_id, 2025, &.{.{
+        .form_code = "1701Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+
+    var model = Model{};
+    try model.calendar.attach(
+        allocator,
+        &calendar_store,
+        "/tmp/ebirforms-scope-barrier-test.ics",
+        "20260729T010203Z",
+        2026,
+        1,
+    );
+    try model.profileCalendar.attach(
+        allocator,
+        &calendar_store,
+        "/tmp/ebirforms-scope-barrier-test.ics",
+        "20260729T010203Z",
+        2026,
+        1,
+    );
+    try model.taxProfiles.attach(
+        allocator,
+        &profile_fixture,
+        "2026-01-10",
+        2026,
+    );
+    refreshSelectedProfileFormSet(&model);
+
+    // Precondition: the unfiltered projection really does carry the
+    // unregistered form, so the assertion below cannot pass vacuously.
+    var unregistered_present = false;
+    for (
+        model.profileCalendar.deadlines[0..model.profileCalendar.deadline_count],
+    ) |*row| {
+        if (std.mem.eql(u8, row.form_code, "2550Q")) unregistered_present = true;
+    }
+    try std.testing.expect(unregistered_present);
+
+    var scope_arena = std.heap.ArenaAllocator.init(allocator);
+    defer scope_arena.deinit();
+    const bytes = try model.profileCalendar.buildProfileIcs(
+        allocator,
+        "20260729T010203Z",
+        .{
+            .key = model.selectedTaxpayerCalendarKey(),
+            .name = model.selectedTaxpayerName(),
+            .form_scope = model.profileExportFormScope(scope_arena.allocator()),
+        },
+    );
+    defer allocator.free(bytes);
+
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "1701Q") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "2550Q") == null);
+}
+
+test "profile export scope spans the current and prior taxable years" {
+    // A January obligation belongs to the prior taxable year, so a scope built
+    // from the selected year alone would silently drop it. This pins the union
+    // across the year pair that `profileExportTaxYears` reports.
+    const allocator = std.testing.allocator;
+    var calendar_store = try calendar_ui.persistence.Store.openMemory(
+        allocator,
+    );
+    defer calendar_store.close();
+    var profile_fixture = try profile_store.Store.openMemory(allocator);
+    defer profile_fixture.close();
+
+    const profile_id = "ics-partial-year-profile";
+    try addTestProfile(
+        &profile_fixture,
+        profile_id,
+        "Partial Year",
+        "321-654-987-000",
+        .individual,
+    );
+    // Disjoint sets, so each year's contribution is individually visible.
+    try profile_fixture.replaceFormSet(profile_id, 2026, &.{.{
+        .form_code = "1701Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+    try profile_fixture.replaceFormSet(profile_id, 2025, &.{.{
+        .form_code = "2551Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+
+    var model = Model{};
+    try model.calendar.attach(
+        allocator,
+        &calendar_store,
+        "/tmp/ebirforms-partial-year-test.ics",
+        "20260729T010203Z",
+        2026,
+        1,
+    );
+    try model.profileCalendar.attach(
+        allocator,
+        &calendar_store,
+        "/tmp/ebirforms-partial-year-test.ics",
+        "20260729T010203Z",
+        2026,
+        1,
+    );
+    try model.taxProfiles.attach(
+        allocator,
+        &profile_fixture,
+        "2026-01-10",
+        2026,
+    );
+    refreshSelectedProfileFormSet(&model);
+
+    var scope_arena = std.heap.ArenaAllocator.init(allocator);
+    defer scope_arena.deinit();
+    switch (model.profileExportFormScope(scope_arena.allocator())) {
+        // Degrading to the catalog fallback here would export every form in
+        // the catalog for a taxpayer who configured exactly one.
+        .catalog_fallback => return error.TestUnexpectedResult,
+        .registered => |codes| {
+            try std.testing.expectEqual(@as(usize, 2), codes.len);
+            var has_current = false;
+            var has_prior = false;
+            for (codes) |code| {
+                if (std.mem.eql(u8, code, "1701Q")) has_current = true;
+                if (std.mem.eql(u8, code, "2551Q")) has_prior = true;
+            }
+            try std.testing.expect(has_current);
+            try std.testing.expect(has_prior);
+        },
+    }
+}
+
+test "profile export scope is an authoritative empty set for an empty Forms Set" {
+    const allocator = std.testing.allocator;
+    var calendar_store = try calendar_ui.persistence.Store.openMemory(
+        allocator,
+    );
+    defer calendar_store.close();
+    var profile_fixture = try profile_store.Store.openMemory(allocator);
+    defer profile_fixture.close();
+
+    const profile_id = "ics-empty-set-profile";
+    try addTestProfile(
+        &profile_fixture,
+        profile_id,
+        "Empty Forms Set",
+        "321-654-987-000",
+        .individual,
+    );
+    try profile_fixture.replaceFormSet(profile_id, 2026, &.{});
+    try profile_fixture.replaceFormSet(profile_id, 2025, &.{});
+
+    var model = Model{};
+    try model.calendar.attach(
+        allocator,
+        &calendar_store,
+        "/tmp/ebirforms-empty-set-test.ics",
+        "20260729T010203Z",
+        2026,
+        1,
+    );
+    try model.profileCalendar.attach(
+        allocator,
+        &calendar_store,
+        "/tmp/ebirforms-empty-set-test.ics",
+        "20260729T010203Z",
+        2026,
+        1,
+    );
+    try model.taxProfiles.attach(
+        allocator,
+        &profile_fixture,
+        "2026-01-10",
+        2026,
+    );
+    refreshSelectedProfileFormSet(&model);
+
+    var scope_arena = std.heap.ArenaAllocator.init(allocator);
+    defer scope_arena.deinit();
+    const scope = model.profileExportFormScope(scope_arena.allocator());
+    // An explicitly empty selection exports nothing. It must not degrade into
+    // the catalog fallback, which would export everything.
+    switch (scope) {
+        .catalog_fallback => return error.TestUnexpectedResult,
+        .registered => |codes| try std.testing.expectEqual(
+            @as(usize, 0),
+            codes.len,
+        ),
+    }
+
+    try std.testing.expectError(
+        error.NoCalendarEvents,
+        model.profileCalendar.buildProfileIcs(
+            allocator,
+            "20260729T010203Z",
+            .{
+                .key = model.selectedTaxpayerCalendarKey(),
+                .name = model.selectedTaxpayerName(),
+                .form_scope = scope,
+            },
+        ),
+    );
 }
 
 test "profile calendar export remains correlated while preferences change" {
