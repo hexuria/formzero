@@ -4,6 +4,11 @@ Date: 2026-08-04
 Baseline: `main` at `e84e300` (`Consolidate yearly tax forms and profile calendar`)  
 Scope: implementation plan only; do not edit `src/app.native` directly
 
+> **Status: PAUSED on 2026-08-04.** Do not execute this plan until the
+> taxpayer-profile, yearly setup, branch, and COR information architecture has
+> been reviewed. The active design handoff is
+> `docs/tax-profile/CLAUDE_FABLE_5_TAXPAYER_SETUP_UX_PROMPT_2026-08-04.md`.
+
 ## 1. Required outcome
 
 Implement this exact profile-page contract:
