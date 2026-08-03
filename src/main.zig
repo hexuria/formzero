@@ -736,6 +736,7 @@ pub const Model = struct {
     profileSetupYearQuery: canvas.TextBuffer(4) = .{},
     profileSetupSourcePickerVisible: bool = false,
     profileSetupYearsExpanded: bool = false,
+    profileAdvancedExpanded: bool = false,
     profileNoticeTimerKey: u64 = 0,
     calendarToday: calendar_domain.Date = .{
         .year = 2026,
@@ -774,6 +775,11 @@ pub const Model = struct {
         "pendingProfileFormLaunch",
         "profileCalendarYearPickerVisible",
         "profileCalendarYearQuery",
+        "profileSetupYearPickerVisible",
+        "profileSetupYearQuery",
+        "profileSetupSourcePickerVisible",
+        "profileSetupYearsExpanded",
+        "profileAdvancedExpanded",
         "profileFormLaunchAssessments",
         "profileFormLaunchAssessmentsReady",
         "profilePeriodLaunchAssessments",
@@ -1296,6 +1302,26 @@ pub const Model = struct {
 
     pub fn selectedTaxpayerInitials(self: *const Model) []const u8 {
         return self.taxProfiles.selectedInitials();
+    }
+
+    pub fn selectedTaxpayerTaxType(self: *const Model) []const u8 {
+        return self.taxProfiles.selectedTaxTypeLabel();
+    }
+
+    pub fn selectedTaxpayerSummary(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "TIN: {s} - Type: {s} - Tax Year {d} - {s}",
+            .{
+                self.taxProfiles.selectedTin(),
+                self.taxProfiles.selectedKindLabel(),
+                self.calendar.selected_year,
+                self.taxProfiles.selectedTaxTypeLabel(),
+            },
+        ) catch "Taxpayer details unavailable";
     }
 
     pub fn selectedTaxpayerCalendarKey(self: *const Model) []const u8 {
@@ -2565,13 +2591,6 @@ pub const Model = struct {
         return rows[0..emitted];
     }
 
-    pub fn profileSetupYearOptionsEmpty(
-        self: *const Model,
-        arena: std.mem.Allocator,
-    ) bool {
-        return self.profileSetupYearOptions(arena).len == 0;
-    }
-
     pub fn profileSetupYearHelperVisible(self: *const Model) bool {
         const typed = self.profileSetupTypedYear() orelse return false;
         return typed > self.taxProfiles.maximumSetupYear() or
@@ -2596,11 +2615,6 @@ pub const Model = struct {
             "Years before {d} aren't supported.",
             .{profile_ui.minimum_setup_year},
         ) catch "That year is not supported.";
-    }
-
-    pub fn profileSetupWorkspaceVisible(self: *const Model) bool {
-        return !self.taxProfiles.editing_new and
-            self.taxProfiles.selectedProfileId() != null;
     }
 
     pub fn profileSetupDraftChoiceVisible(self: *const Model) bool {
@@ -2881,6 +2895,102 @@ pub const Model = struct {
         return self.taxProfiles.formSetSummaries().len != 0;
     }
 
+    pub fn profileFactsSummaryVisible(self: *const Model) bool {
+        return !self.taxProfiles.editing_new and
+            self.taxProfiles.factsSummaryAvailable();
+    }
+
+    /// States which taxpayer details a year uses, in plain language. Carry
+    /// forward is reported from the history itself, so an unchanged year never
+    /// needs a duplicate record to look complete.
+    pub fn profileFactsSummaryLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const year = self.taxProfiles.factsSummaryYear();
+        if (self.taxProfiles.factsMissingForYear()) {
+            return std.fmt.allocPrint(
+                arena,
+                "No taxpayer details exist for {d} yet.",
+                .{year},
+            ) catch "No taxpayer details exist for that year yet.";
+        }
+        if (self.taxProfiles.factsChangedDuringYear()) {
+            return std.fmt.allocPrint(
+                arena,
+                "Details changed during {d}. Earlier filings keep the details they were prepared with.",
+                .{year},
+            ) catch "Details changed during this year.";
+        }
+        const effective = friendlyDateLabel(
+            arena,
+            self.taxProfiles.factsEffectiveFrom(),
+        );
+        if (self.taxProfiles.factsSameAsPriorYear()) {
+            return std.fmt.allocPrint(
+                arena,
+                "Using details effective {s} · No changes from {d}",
+                .{ effective, year - 1 },
+            ) catch "No changes from the previous year.";
+        }
+        return std.fmt.allocPrint(
+            arena,
+            "Using details effective {s}",
+            .{effective},
+        ) catch "Using the details on file.";
+    }
+
+    pub fn profileFactsMissingVisible(self: *const Model) bool {
+        return self.taxProfiles.factsMissingForYear();
+    }
+
+    pub fn profileChangeControlsVisible(self: *const Model) bool {
+        return !self.taxProfiles.editing_new and
+            self.taxProfiles.selectedProfileId() != null;
+    }
+
+    pub fn profileRecordChangeSelected(self: *const Model) bool {
+        return self.taxProfiles.changeIntent() == .record_change;
+    }
+
+    pub fn profileFixMistakeSelected(self: *const Model) bool {
+        return self.taxProfiles.changeIntent() == .fix_mistake;
+    }
+
+    pub fn profileEffectiveDateLabel(self: *const Model) []const u8 {
+        return if (self.taxProfiles.changeIntent() == .fix_mistake)
+            "Which period was recorded wrong?"
+        else
+            "When did this take effect?";
+    }
+
+    pub fn profileEffectiveDateHelp(self: *const Model) []const u8 {
+        return if (self.taxProfiles.changeIntent() == .fix_mistake)
+            "This replaces what's shown for that period. Forms you already prepared keep the values they were prepared with."
+        else
+            "Earlier periods keep their old details.";
+    }
+
+    pub fn profileAdvancedExpandedVisible(self: *const Model) bool {
+        return self.profileAdvancedExpanded;
+    }
+
+    pub fn profileIdentityLockNote(self: *const Model) []const u8 {
+        _ = self;
+        return "Identity doesn't change with ordinary updates. A different kind of taxpayer needs its own profile.";
+    }
+
+    pub fn profileFactsMissingHelpText(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "Record what was true in {d} — today's details won't be copied backward.",
+            .{self.taxProfiles.factsSummaryYear()},
+        ) catch "Record what was true then; today's details are not copied backward.";
+    }
+
     pub fn profileFormSetRows(
         self: *const Model,
         arena: std.mem.Allocator,
@@ -2899,9 +3009,6 @@ pub const Model = struct {
         return rows;
     }
 
-    pub fn profileFormSetRowsEmpty(self: *const Model) bool {
-        return self.taxProfiles.formSetSummaries().len == 0;
-    }
 
     /// True only while the taxpayer's yearly setup workspace is the surface on
     /// screen. The Tax Form Library markup is shared with the taxpayer
@@ -5133,6 +5240,27 @@ fn resetProfileFormsPage(model: *Model) void {
     model.libraryFilter.resetPage();
 }
 
+const month_names = [_][]const u8{
+    "January",   "February", "March",    "April",
+    "May",       "June",     "July",     "August",
+    "September", "October",  "November", "December",
+};
+
+/// Renders an ISO date the way the interface speaks: "July 1, 2026". Falls
+/// back to the stored text rather than inventing a date it cannot parse.
+fn friendlyDateLabel(arena: std.mem.Allocator, iso: []const u8) []const u8 {
+    if (iso.len != 10) return iso;
+    const year = std.fmt.parseInt(u16, iso[0..4], 10) catch return iso;
+    const month = std.fmt.parseInt(u8, iso[5..7], 10) catch return iso;
+    const day = std.fmt.parseInt(u8, iso[8..10], 10) catch return iso;
+    if (month < 1 or month > 12) return iso;
+    return std.fmt.allocPrint(
+        arena,
+        "{s} {d}, {d}",
+        .{ month_names[month - 1], day, year },
+    ) catch iso;
+}
+
 /// Mirrors one text edit and then keeps only digits, so the year filter can
 /// never hold arbitrary text no matter how the bytes arrived (typing, paste,
 /// or an input method).
@@ -5773,6 +5901,9 @@ pub const Msg = union(enum) {
     profile_setup_confirm_year_switch,
     profile_setup_cancel_year_switch,
     profile_setup_toggle_years_disclosure,
+    profile_record_change,
+    profile_fix_mistake,
+    profile_toggle_advanced,
     profile_forms_search_input: canvas.TextInputEvent,
     toggle_profile_form: usize,
     profile_forms_select_all,
@@ -6519,6 +6650,11 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .profile_setup_toggle_years_disclosure => {
             model.profileSetupYearsExpanded = !model.profileSetupYearsExpanded;
+        },
+        .profile_record_change => model.taxProfiles.beginRecordChange(),
+        .profile_fix_mistake => model.taxProfiles.beginFixMistake(),
+        .profile_toggle_advanced => {
+            model.profileAdvancedExpanded = !model.profileAdvancedExpanded;
         },
         .profile_forms_search_input => |edit| {
             model.taxProfiles.applyFormsQuery(edit);
@@ -10952,6 +11088,9 @@ test "material exact 1701Q guards profile creation and retains its immutable rev
     try std.testing.expectEqual(Page.profile_setup, model.page);
     try std.testing.expect(!model.taxProfiles.editing_new);
     try expectAppMarkupBuilds(&model);
+    // Reopening the editor reloads the persisted values, so give the save an
+    // actual change to record: a revision logs a real event, not a visit.
+    model.taxProfiles.display_name.set("Exact Filer Renamed");
     update(&model, .save_profile);
 
     try std.testing.expectEqual(Page.form_1701q, model.page);

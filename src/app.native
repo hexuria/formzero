@@ -1730,7 +1730,7 @@ on-press="profile_forms_show_more"></button>
 <column grow="1" gap="5">
 <text size="heading" wrap="true">{selectedTaxpayerName}</text>
 <text wrap="true" foreground="text_muted">TIN: {selectedTaxpayerTin}</text>
-<text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear} - Non-VAT</text>
+<text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear} - {selectedTaxpayerTaxType}</text>
 </column>
 <button
 width="44"
@@ -1749,9 +1749,7 @@ on-press="show_profile_setup">
 <avatar label="{selectedTaxpayerName}">{selectedTaxpayerInitials}</avatar>
 <column grow="1" gap="6">
 <text size="heading">{selectedTaxpayerName}</text>
-<text wrap="true" foreground="text_muted">
-TIN: {selectedTaxpayerTin} - Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear} - Non-VAT
-</text>
+<text wrap="true" foreground="text_muted">{selectedTaxpayerSummary}</text>
 </column>
 <button variant="outline" icon="settings" on-press="show_profile_setup">Profile Settings</button>
 </row>
@@ -1952,6 +1950,16 @@ Email Settings
 </if>
 <if test="{profileTaxActive}">
 <column gap="24">
+<if test="{profileFactsSummaryVisible}">
+<card padding="0">
+<column padding="14" gap="6">
+<text wrap="true" foreground="text_muted">{profileFactsSummaryLabel}</text>
+<if test="{profileFactsMissingVisible}">
+<text wrap="true" foreground="text_muted">{profileFactsMissingHelpText}</text>
+</if>
+</column>
+</card>
+</if>
 <column gap="16">
 <column gap="4">
 <text><span weight="bold">Identity and registration</span></text>
@@ -2195,34 +2203,46 @@ registration facts. Transaction schedules remain on the form.
 </column>
 <column gap="16">
 <column gap="4">
-<text><span weight="bold">Revision and registration evidence</span></text>
-<text wrap="true" foreground="text_muted">
-Each saved revision records the effective period and source
-evidence for this taxpayer.
-</text>
+<text><span weight="bold">When this applies</span></text>
+<text wrap="true" foreground="text_muted">{profileEffectiveDateHelp}</text>
 </column>
+<if test="{profileChangeControlsVisible}">
 <if test="{constrainedLayout}">
-<column gap="12">
-<use template="profile-field" label="Revision effective from">
-<input height="44" text="{profileEffectiveFromValue}" placeholder="YYYY-MM-DD" label="Revision effective from" on-input="profile_effective_from_input"/>
-</use>
-<use template="profile-field" label="Revision effective until">
-<input height="44" text="{profileEffectiveUntilValue}" placeholder="YYYY-MM-DD or empty" label="Revision effective until" on-input="profile_effective_until_input"/>
-</use>
+<column gap="8">
+<button height="44" variant="outline" selected="{profileRecordChangeSelected}" on-press="profile_record_change">Record a change</button>
+<button height="44" variant="outline" selected="{profileFixMistakeSelected}" on-press="profile_fix_mistake">Fix a mistake</button>
 </column>
 </if>
 <else>
-<row gap="12">
-<use template="profile-field" label="Revision effective from" grow="1">
-<input height="44" text="{profileEffectiveFromValue}" placeholder="YYYY-MM-DD" label="Revision effective from" on-input="profile_effective_from_input"/>
-</use>
-<use template="profile-field" label="Revision effective until" grow="1">
-<input height="44" text="{profileEffectiveUntilValue}" placeholder="YYYY-MM-DD or empty" label="Revision effective until" on-input="profile_effective_until_input"/>
-</use>
+<row gap="8">
+<button height="44" variant="outline" selected="{profileRecordChangeSelected}" on-press="profile_record_change">Record a change</button>
+<button height="44" variant="outline" selected="{profileFixMistakeSelected}" on-press="profile_fix_mistake">Fix a mistake</button>
 </row>
 </else>
+</if>
+<use template="profile-field" label="{profileEffectiveDateLabel}">
+<input
+height="44"
+text="{profileEffectiveFromValue}"
+placeholder="YYYY-MM-DD"
+label="{profileEffectiveDateLabel}"
+on-input="profile_effective_from_input"/>
+</use>
+<text wrap="true" foreground="text_muted">{profileIdentityLockNote}</text>
+<row>
+<button
+height="44"
+variant="ghost"
+icon="chevron-right"
+on-press="profile_toggle_advanced">Advanced</button>
+</row>
+<if test="{profileAdvancedExpandedVisible}">
+<column gap="12">
+<use template="profile-field" label="Applies until">
+<input height="44" text="{profileEffectiveUntilValue}" placeholder="YYYY-MM-DD or empty" label="Applies until" on-input="profile_effective_until_input"/>
+</use>
 <column gap="8">
-<text foreground="text_muted">Revision source</text>
+<text foreground="text_muted">Where these details came from</text>
 <if test="{constrainedLayout}">
 <column gap="8">
 <button height="44" variant="outline" selected="{profileSourceManualSelected}" on-press="profile_source_manual">Manual entry</button>
@@ -2247,6 +2267,8 @@ label="Source reference"
 disabled="{profileSourceReferenceDisabled}"
 on-input="profile_source_reference_input"/>
 </use>
+</column>
+</if>
 </column>
 </column>
 </if>

@@ -613,7 +613,7 @@
         <column grow="1" gap="5">
           <text size="heading" wrap="true">{selectedTaxpayerName}</text>
           <text wrap="true" foreground="text_muted">TIN: {selectedTaxpayerTin}</text>
-          <text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear} - Non-VAT</text>
+          <text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear} - {selectedTaxpayerTaxType}</text>
         </column>
         <button
           width="44"
@@ -632,9 +632,7 @@
         <avatar label="{selectedTaxpayerName}">{selectedTaxpayerInitials}</avatar>
         <column grow="1" gap="6">
           <text size="heading">{selectedTaxpayerName}</text>
-          <text wrap="true" foreground="text_muted">
-            TIN: {selectedTaxpayerTin} - Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear} - Non-VAT
-          </text>
+          <text wrap="true" foreground="text_muted">{selectedTaxpayerSummary}</text>
         </column>
         <button variant="outline" icon="settings" on-press="show_profile_setup">Profile Settings</button>
       </row>

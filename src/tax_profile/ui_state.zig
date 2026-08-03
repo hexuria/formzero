@@ -42,6 +42,8 @@ pub const Error = error{
     NoSelectedProfile,
     FormsRequireSavedProfile,
     UnsavedFormSetChanges,
+    UnsavedProfileChanges,
+    NoFactsEffectiveForYear,
 } || persistence.Error;
 
 pub const NoticeKind = enum {
@@ -60,6 +62,16 @@ pub const GovernmentWithholdingChoice = enum {
     unset,
     no,
     yes,
+};
+
+/// Why the user is editing taxpayer details. Both append to the same
+/// append-only history; they differ in which period the new record claims and
+/// therefore in what the interface must tell the user about older filings.
+pub const ChangeIntent = enum {
+    /// Something changed in the real world on a date.
+    record_change,
+    /// Something was recorded wrongly and the same period must be restated.
+    fix_mistake,
 };
 
 pub const FormActivityFilter = enum { active, inactive, all };
@@ -318,6 +330,26 @@ pub const State = struct {
     default_effective_from: FixedText(10) = .{},
     default_tax_year: i32 = 2026,
 
+    /// Fingerprint of the editor values as they were loaded. Saving compares
+    /// against it so reopening a taxpayer and pressing save cannot append a
+    /// revision that records no actual change.
+    baseline_fingerprint: u64 = 0,
+    /// Which taxpayer facts apply to the workspace year, summarized without
+    /// revision vocabulary.
+    facts_summary_year: i32 = 0,
+    facts_summary_available: bool = false,
+    facts_effective_from: FixedText(10) = .{},
+    facts_missing_for_year: bool = false,
+    facts_changed_during_year: bool = false,
+    facts_same_as_prior_year: bool = false,
+    /// Persisted registered tax type for header display, kept separate from
+    /// the editable buffer so unsaved typing never reads as recorded fact.
+    selected_tax_type: FixedText(80) = .{},
+    change_intent: ChangeIntent = .record_change,
+    /// The effective date as loaded, so switching to a correction can restore
+    /// the period being restated without guessing.
+    loaded_effective_from: FixedText(10) = .{},
+
     /// The dashboard renders deadlines for the viewed year while some of
     /// those deadlines belong to the immediately preceding taxable year.
     /// Keep both authoritative Forms Sets in memory so view rendering never
@@ -416,6 +448,170 @@ pub const State = struct {
         return self.store == null or !self.loaded_shape_supported;
     }
 
+    /// Order-stable fingerprint of every value the editor can change. Used
+    /// only to detect "nothing actually changed"; the domain remains the
+    /// authority on what a revision contains.
+    fn editorFingerprint(self: *const State) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        const parts = [_][]const u8{
+            trimmed(self.tin.text()),
+            trimmed(self.rdo.text()),
+            trimmed(self.display_name.text()),
+            trimmed(self.trade_name.text()),
+            trimmed(self.registered_address.text()),
+            trimmed(self.zip_code.text()),
+            trimmed(self.phone.text()),
+            trimmed(self.email.text()),
+            trimmed(self.birth_date.text()),
+            trimmed(self.citizenship.text()),
+            trimmed(self.foreign_tax_number.text()),
+            trimmed(self.business_line.text()),
+            trimmed(self.atc.text()),
+            trimmed(self.tax_type.text()),
+            trimmed(self.special_rate_basis.text()),
+            trimmed(self.effective_from.text()),
+            trimmed(self.effective_until.text()),
+            trimmed(self.source_reference.text()),
+        };
+        for (parts) |part| {
+            hasher.update(part);
+            hasher.update("\x1e");
+        }
+        hasher.update(&[_]u8{
+            @intFromEnum(self.subject_kind),
+            @intFromEnum(self.source_kind),
+            @intFromEnum(self.government_withholding_agent),
+        });
+        return hasher.final();
+    }
+
+    fn captureBaseline(self: *State) void {
+        self.baseline_fingerprint = self.editorFingerprint();
+    }
+
+    /// True when the open taxpayer has editor changes that saving would
+    /// record. A brand-new taxpayer is never "dirty" in this sense: it has no
+    /// saved state to diverge from and is guarded by its own save path.
+    pub fn factsDirty(self: *const State) bool {
+        if (self.editing_new or !self.has_selection) return false;
+        return self.editorFingerprint() != self.baseline_fingerprint;
+    }
+
+    pub fn changeIntent(self: *const State) ChangeIntent {
+        return self.change_intent;
+    }
+
+    /// Records something that happened on a date. Earlier periods keep the
+    /// details they already had.
+    pub fn beginRecordChange(self: *State) void {
+        if (self.editing_new or !self.has_selection) return;
+        self.change_intent = .record_change;
+        setEditorBuffer(&self.effective_from, self.default_effective_from.text());
+    }
+
+    /// Restates the period that is already on screen, because what was
+    /// recorded for it was wrong. Filings already prepared keep their values.
+    pub fn beginFixMistake(self: *State) void {
+        if (self.editing_new or !self.has_selection) return;
+        self.change_intent = .fix_mistake;
+        setEditorBuffer(&self.effective_from, self.loaded_effective_from.text());
+    }
+
+    pub fn factsSummaryAvailable(self: *const State) bool {
+        return self.facts_summary_available;
+    }
+
+    pub fn factsSummaryYear(self: *const State) i32 {
+        return self.facts_summary_year;
+    }
+
+    pub fn factsMissingForYear(self: *const State) bool {
+        return self.facts_summary_available and self.facts_missing_for_year;
+    }
+
+    pub fn factsChangedDuringYear(self: *const State) bool {
+        return self.facts_summary_available and self.facts_changed_during_year;
+    }
+
+    pub fn factsSameAsPriorYear(self: *const State) bool {
+        return self.facts_summary_available and self.facts_same_as_prior_year;
+    }
+
+    pub fn factsEffectiveFrom(self: *const State) []const u8 {
+        return self.facts_effective_from.text();
+    }
+
+    /// Summarizes which taxpayer facts apply to one year by resolving the
+    /// effective history at its boundaries. Nothing is duplicated per year:
+    /// this only reports what the append-only history already says.
+    pub fn refreshFactsSummary(self: *State, year: i32) void {
+        self.facts_summary_year = year;
+        self.facts_summary_available = false;
+        self.facts_missing_for_year = false;
+        self.facts_changed_during_year = false;
+        self.facts_same_as_prior_year = false;
+        self.facts_effective_from.clear();
+        self.refreshFactsSummaryFallible(year) catch return;
+        self.facts_summary_available = true;
+    }
+
+    fn refreshFactsSummaryFallible(self: *State, year: i32) !void {
+        const allocator = self.allocator orelse return error.NotAttached;
+        const store = self.store orelse return error.NotAttached;
+        const profile_id = self.selectedProfileDomainId() orelse
+            return error.NoSelectedProfile;
+        if (year < 1 or year > 9999) return error.InvalidTaxYear;
+
+        var opening = try profile_persistence.loadEffectiveRevision(
+            store,
+            allocator,
+            profile_id,
+            try model.Date.init(@intCast(year), 1, 1),
+        );
+        defer if (opening) |*owned| owned.deinit(allocator);
+        var closing = try profile_persistence.loadEffectiveRevision(
+            store,
+            allocator,
+            profile_id,
+            try model.Date.init(@intCast(year), 12, 31),
+        );
+        defer if (closing) |*owned| owned.deinit(allocator);
+
+        // Only a year with no facts at any point needs a reviewed retroactive
+        // record. A taxpayer registered partway through a year legitimately
+        // has none on its first day, and that is not a gap to fix.
+        if (opening == null and closing == null) {
+            self.facts_missing_for_year = true;
+            return;
+        }
+        if (opening != null and closing != null and
+            !opening.?.revision.id.eql(&closing.?.revision.id))
+        {
+            self.facts_changed_during_year = true;
+        }
+
+        const anchor = opening orelse closing.?;
+        var buffer: [10]u8 = undefined;
+        try self.facts_effective_from.set(
+            anchor.revision.effective.from.writeIso(&buffer),
+        );
+
+        if (year > 1) {
+            var prior = try profile_persistence.loadEffectiveRevision(
+                store,
+                allocator,
+                profile_id,
+                try model.Date.init(@intCast(year - 1), 12, 31),
+            );
+            defer if (prior) |*owned| owned.deinit(allocator);
+            if (prior) |*owned| {
+                self.facts_same_as_prior_year =
+                    owned.revision.id.eql(&anchor.revision.id) and
+                    !self.facts_changed_during_year;
+            }
+        }
+    }
+
     pub fn selectedProfileId(self: *const State) ?[]const u8 {
         return if (self.has_selection) self.selected_id.text() else null;
     }
@@ -476,6 +672,15 @@ pub const State = struct {
         return subjectKindLabel(row.subject_kind);
     }
 
+    /// The registered tax type as persisted, never as currently typed. A
+    /// header states what is on file, so it must not echo an unsaved edit and
+    /// must not assert a classification that was never recorded.
+    pub fn selectedTaxTypeLabel(self: *const State) []const u8 {
+        if (!self.has_selection) return "Tax type not recorded";
+        const value = self.selected_tax_type.text();
+        return if (value.len == 0) "Tax type not recorded" else value;
+    }
+
     pub fn draftSummaries(self: *const State) []const DraftSummaryRow {
         return self.draft_summaries[0..self.draft_summary_count];
     }
@@ -487,6 +692,7 @@ pub const State = struct {
     pub fn selectSlot(self: *State, slot: usize) !void {
         if (slot >= self.profile_count) return persistence.Error.NotFound;
         if (self.formsDirty()) return error.UnsavedFormSetChanges;
+        if (self.factsDirty()) return error.UnsavedProfileChanges;
         // Invalidate before changing identity or performing any fallible load.
         // A failed profile switch must not expose the prior profile's forms.
         self.invalidateCalendarFormSetCache(self.default_tax_year);
@@ -513,6 +719,10 @@ pub const State = struct {
     pub fn startNew(self: *State) void {
         if (self.formsDirty()) {
             self.setError(error.UnsavedFormSetChanges);
+            return;
+        }
+        if (self.factsDirty()) {
+            self.setError(error.UnsavedProfileChanges);
             return;
         }
         self.editing_new = true;
@@ -588,6 +798,12 @@ pub const State = struct {
 
     pub fn save(self: *State) bool {
         const was_new = self.editing_new;
+        // Reopening a taxpayer and saving must not record a change that did
+        // not happen: history stays a log of real events, not of visits.
+        if (!was_new and !self.factsDirty()) {
+            self.setNotice(.neutral, "No changes to save.");
+            return true;
+        }
         self.saveFallible() catch |err| {
             self.setError(err);
             return false;
@@ -970,6 +1186,7 @@ pub const State = struct {
         self.draft_source_year = null;
         self.managing_forms = true;
         self.resetFormFilters();
+        self.refreshFactsSummary(year);
         if (self.form_set_state == .needs_configuration) {
             self.saved_forms = .{};
             self.staged_forms = .{};
@@ -1132,6 +1349,12 @@ pub const State = struct {
         }
         const creating = self.year_workspace.isDraft();
         const year = self.workspaceYear();
+        // Setting up a historical year must not invent facts for it. The user
+        // records what was true then, reviewed, before its forms can be saved.
+        if (creating and self.factsMissingForYear()) {
+            self.setError(error.NoFactsEffectiveForYear);
+            return false;
+        }
         self.saveManagedFormsFallible() catch |err| {
             if (creating and err == persistence.Error.FormSetAlreadyExists) {
                 self.year_workspace = .conflict;
@@ -1864,10 +2087,10 @@ pub const State = struct {
         );
 
         var date_buffer: [10]u8 = undefined;
-        setEditorBuffer(
-            &self.effective_from,
-            revision.effective.from.writeIso(&date_buffer),
-        );
+        const loaded_from = revision.effective.from.writeIso(&date_buffer);
+        setEditorBuffer(&self.effective_from, loaded_from);
+        try self.loaded_effective_from.set(loaded_from);
+        self.change_intent = .record_change;
         if (revision.effective.until) |until| {
             var until_buffer: [10]u8 = undefined;
             setEditorBuffer(
@@ -1911,12 +2134,14 @@ pub const State = struct {
 
         clearEditorBuffer(&self.tax_type);
         clearEditorBuffer(&self.special_rate_basis);
+        self.selected_tax_type.clear();
         self.government_withholding_agent = .unset;
         for (revision.registration_facts) |fact| {
             switch (fact.value) {
                 .tax_type => |value| {
                     if (registrationFactKindCount(revision, .tax_type) == 1) {
                         setEditorBuffer(&self.tax_type, value.asSlice());
+                        try self.selected_tax_type.set(value.asSlice());
                     }
                 },
                 .government_withholding_agent => |value| {
@@ -1947,6 +2172,8 @@ pub const State = struct {
         setTaxYearBuffer(&self.tax_year, self.default_tax_year);
         try self.loadEditorFormSet(self.default_tax_year);
         self.input_was_truncated = false;
+        self.captureBaseline();
+        self.refreshFactsSummary(self.default_tax_year);
         if (!self.loaded_shape_supported) {
             self.setNotice(
                 .failure,
@@ -2118,6 +2345,8 @@ pub const State = struct {
             error.ManualSourceHasReference => "Manual entry has no external source reference. Choose Imported or Migrated.",
             error.UnsupportedRepeatedComponents => "This repeated-component revision is preserved, but cannot be rewritten by the single-activity editor.",
             error.UnsavedFormSetChanges => "Save or cancel your unsaved form changes before switching taxpayers.",
+            error.UnsavedProfileChanges => "Save or cancel your unsaved taxpayer details before switching taxpayers.",
+            error.NoFactsEffectiveForYear => "No taxpayer details exist for that year yet. Record what was true then before setting up its forms.",
             error.FormsRequireSavedProfile => "Save this taxpayer profile before choosing its forms.",
             persistence.Error.FormSetAlreadyExists => "That year is already set up. Choose it from the year list to edit its forms.",
             error.FieldTooLong => "One or more profile fields exceed their supported length.",
@@ -2776,7 +3005,9 @@ fn workspaceFixture(
     state.rdo.set("040");
     state.display_name.set("Workspace Taxpayer");
     state.registered_address.set("Quezon City");
-    state.effective_from.set("2026-01-01");
+    // Registered well before the years these tests set up, so historical years
+    // resolve real facts instead of hitting the retroactive-record guard.
+    state.effective_from.set("2020-01-01");
     try std.testing.expect(state.save());
 }
 
@@ -3025,6 +3256,142 @@ test "an unreadable year fails closed instead of offering setup" {
     // No selection from the previous year survives an unreadable one.
     try std.testing.expectEqual(@as(usize, 0), state.stagedFormCount());
     try std.testing.expectEqual(@as(usize, 0), state.activeFormCount());
+}
+
+test "saving unchanged taxpayer details records no new revision" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    try std.testing.expectEqual(@as(u32, 1), state.selectedRevisionSequence().?);
+    try std.testing.expect(!state.factsDirty());
+
+    // Reopening and saving is a visit, not a change.
+    try std.testing.expect(state.save());
+    try std.testing.expectEqual(@as(u32, 1), state.selectedRevisionSequence().?);
+    try std.testing.expectEqualStrings("No changes to save.", state.noticeText());
+
+    // A real edit still appends exactly one revision.
+    state.registered_address.set("Makati City");
+    try std.testing.expect(state.factsDirty());
+    try std.testing.expect(state.save());
+    try std.testing.expectEqual(@as(u32, 2), state.selectedRevisionSequence().?);
+    try std.testing.expect(!state.factsDirty());
+}
+
+test "unsaved taxpayer details block a profile switch instead of vanishing" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    state.display_name.set("Edited But Unsaved");
+    try std.testing.expect(state.factsDirty());
+
+    try std.testing.expectError(
+        error.UnsavedProfileChanges,
+        state.selectSlot(0),
+    );
+    try std.testing.expectEqualStrings(
+        "Edited But Unsaved",
+        state.display_name.text(),
+    );
+
+    state.startNew();
+    try std.testing.expect(state.noticeFailure());
+    try std.testing.expect(!state.editing_new);
+}
+
+test "a year carries details forward without a duplicate record" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+
+    state.refreshFactsSummary(2026);
+    try std.testing.expect(state.factsSummaryAvailable());
+    try std.testing.expect(!state.factsMissingForYear());
+    try std.testing.expect(!state.factsChangedDuringYear());
+    // One record from 2020 still covers 2026, so 2025 and 2026 share it.
+    try std.testing.expect(state.factsSameAsPriorYear());
+    try std.testing.expectEqualStrings("2020-01-01", state.factsEffectiveFrom());
+
+    // A mid-year change is reported as such, and earlier years are untouched.
+    state.registered_address.set("Makati City");
+    state.effective_from.set("2026-07-01");
+    try std.testing.expect(state.save());
+
+    state.refreshFactsSummary(2026);
+    try std.testing.expect(state.factsChangedDuringYear());
+    try std.testing.expect(!state.factsSameAsPriorYear());
+
+    state.refreshFactsSummary(2025);
+    try std.testing.expect(!state.factsChangedDuringYear());
+    try std.testing.expect(state.factsSameAsPriorYear());
+    try std.testing.expectEqualStrings("2020-01-01", state.factsEffectiveFrom());
+}
+
+test "a historical year with no details asks for a record instead of inventing one" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try state.attach(allocator, &store, "2026-01-01", 2026);
+    state.tin.set("123-456-789-000");
+    state.rdo.set("040");
+    state.display_name.set("Recently Registered Taxpayer");
+    state.registered_address.set("Quezon City");
+    state.effective_from.set("2026-01-01");
+    try std.testing.expect(state.save());
+
+    try std.testing.expect(state.openYearWorkspace(2023));
+    try std.testing.expectEqual(YearWorkspaceMode.draft_choice, state.year_workspace);
+    try std.testing.expect(state.factsMissingForYear());
+
+    try std.testing.expect(state.chooseDraftEmpty());
+    // Today's details are never copied backward to make the save succeed.
+    try std.testing.expect(!state.saveYearWorkspace());
+    try std.testing.expect(state.noticeFailure());
+    try std.testing.expect(
+        (try store.getFormSet(allocator, state.selectedProfileId().?, 2023)) == null,
+    );
+
+    // Recording what was true then unblocks the year.
+    state.effective_from.set("2023-01-01");
+    state.registered_address.set("Cebu City");
+    try std.testing.expect(state.save());
+    try std.testing.expect(state.openYearWorkspace(2023));
+    try std.testing.expect(!state.factsMissingForYear());
+    try std.testing.expect(state.chooseDraftEmpty());
+    try std.testing.expect(state.saveYearWorkspace());
+}
+
+test "a taxpayer registered mid-year is not treated as missing details" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try state.attach(allocator, &store, "2026-08-04", 2026);
+    state.tin.set("123-456-789-000");
+    state.rdo.set("040");
+    state.display_name.set("Mid Year Registrant");
+    state.registered_address.set("Quezon City");
+    state.effective_from.set("2026-08-04");
+    try std.testing.expect(state.save());
+
+    // No details on 1 January is normal for a taxpayer registered in August.
+    state.refreshFactsSummary(2026);
+    try std.testing.expect(!state.factsMissingForYear());
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expect(state.chooseDraftEmpty());
+    try std.testing.expect(state.saveYearWorkspace());
 }
 
 test "calendar form selection refresh fails closed" {
