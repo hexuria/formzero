@@ -1390,3 +1390,80 @@ added here; 14 by the always-on layout audit plus the opt-in proof shots.
   first.
 - **Mid-year Forms Set intervals (G5)** and **owner scoping (G4)** are
   unchanged, and no copy promises either.
+
+
+---
+
+## 23. Closed doors (2026-08-04, hardening pass)
+
+Three loose ends from §22 were investigated. Two of the three answers changed
+under investigation, and one of the fixes was reverted after the premise proved
+false. Recorded here so nobody re-opens them from the earlier text.
+
+### Fixed
+
+- **A taxpayer's TIN is read from its identity anchor** (`43d2baa`). An audited
+  correction writes a new anchor and appends no revision, but `listProfiles`
+  selected the revision's TIN — so after a correction the sidebar kept showing
+  the identifier that had been corrected away, and branch grouping followed the
+  superseded value. The join is outer and coalesced so a profile with no anchor
+  row still lists. Sidebar order previously had no test coverage at all; it now
+  has three, one of which fails on the pre-fix code.
+- **Author comments no longer ship inside the runtime artifact** (`298dd13`).
+  4,380 bytes of XML comments were being written into `src/app.native`, which
+  the hot-reload watcher truncates silently past 256 KiB. Stripped per fragment
+  **after** include expansion — the include directives are themselves comments.
+  Headroom went from 619 bytes to 4,892, and `npm run generate` now prints the
+  remaining budget on every run.
+
+### Rejected on merit, not deferred
+
+- **A `branch_of` relationship kind.** The relationships table's `kind` CHECK is
+  fixed and its rows are immutable by trigger, so a new kind needs a table
+  rebuild — for data the immutable identity anchors already carry. Worse, it
+  would be a second source of truth: after a TIN correction a `branch_of` row
+  would keep asserting a grouping the recorded identities no longer support.
+  Grouping keys on the anchor root, which only an audited correction can change.
+
+### Proven impossible
+
+- **Generating the twelve period tiles with a `for` loop.** A dotted path off a
+  loop item (`{form.periodCells}`) can never produce a slice payload:
+  `ui_markup_view.zig:1516` requires a bare path *and* an existing `.slice`
+  payload, and its `else` at `:1520` denies an in-scope name any fallback.
+  Independently, `collectItemTypes` (`ui_markup_view.zig:2483-2510`) scans only
+  the Model's own fields, decls, and decl-fn returns, so a row method's element
+  type is never registered. The interpreter, the compiled mirror
+  (`ui_markup_compiled.zig:1531`), and the contract validator
+  (`ui_markup_contract.zig:1078`) all agree. The twelve-fold unroll at
+  `src/pages/taxpayer-dashboard.native:544-555` is the supported shape.
+  **If headroom is needed again**, the lever is slot-templating the
+  `<column><text>label</text><input/></column>` boilerplate across the ten form
+  pages, following the `profile-field` pattern
+  (`src/pages/profile-setup.native:1-6`) — an estimated 10-20 KB.
+
+### Premise was false
+
+- **1701Q does not show empty header boxes.** §22 recorded its header inputs as
+  unbound, and they are — but `form-1701q-tax-catalog-source-a` and `-b` are
+  **never `<use>`d**. They exist so the catalog generator can inventory the
+  field contract (`scripts/tax-catalog/generate.ts:118-150` reads the label and
+  placeholder of each `<input>` and records its source line). The page renders
+  the exact editor's control list (`src/pages/forms/1701q.native:602`), which
+  presents the filer values through its own presenter. Binding those templates
+  was implemented, found to change nothing a user sees, and reverted; the
+  strict model contract flagged it by reporting the two new accessors as never
+  bound in markup, which is exactly what dead markup should look like.
+  What survives is a test of the real behaviour: opening 1701Q in a December
+  context opens no projection (1701Q covers quarters one to three), and opening
+  it for Q2 makes the filer's details available.
+
+### Still open
+
+- **1701Q filing-specific contact exceptions** (scenario 12 parity). The exact
+  editor validates its stored value set against the canonical branch and rejects
+  unknown rows by design, so hosting `filing_override` rows means changing that
+  validation plus both adapters against the 242-test exact-persistence suite.
+  Scenario 12 is satisfied by 2551Q; this is parity work with its own track.
+- **Machine extraction (E4/E5)**, **encrypted COR copies**, **mid-year Forms Set
+  intervals (G5)**, and **owner scoping (G4)** are unchanged from §22.

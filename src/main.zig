@@ -11153,6 +11153,9 @@ test "1701Q opens exact state and coarse draft persistence stays disabled" {
     try std.testing.expectEqual(Page.form_1701q, model.page);
     try std.testing.expect(model.incomeTaxSaveDisabled());
     try std.testing.expect(model.formProfiles.formRevision() == null);
+    // 1701Q covers quarters one to three, so a December context opens no
+    // projection and the header has nothing truthful to show.
+    try std.testing.expectEqualStrings("", model.formFilerRdo());
 
     update(&model, .income_tax_quarter_q2);
     try std.testing.expectEqual(@as(u8, 6), model.calendar.selected_month);
@@ -11165,6 +11168,27 @@ test "1701Q opens exact state and coarse draft persistence stays disabled" {
         model.exact1701Q.rows().len,
     );
     try std.testing.expect(!model.formProfileCanSaveDraft());
+
+    // With a projection open the header shows the taxpayer's own details,
+    // which is what the bound inputs render.
+    {
+        var arena_state = std.heap.ArenaAllocator.init(allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        try std.testing.expectEqualStrings("040", model.formFilerRdo());
+        try std.testing.expectEqualStrings(
+            "Juan Dela Cruz",
+            model.formFilerTaxpayerName(),
+        );
+        try std.testing.expectEqualStrings(
+            "123-456-789-000",
+            model.formFilerTin(arena),
+        );
+        try std.testing.expectEqualStrings(
+            "Quezon City",
+            model.formFilerRegisteredAddress(),
+        );
+    }
 
     const filer_id = model.taxProfiles.selectedProfileDomainId().?;
     var spouse_slot: ?usize = null;
