@@ -148,6 +148,16 @@
 
     <if test="{profileTaxActive}">
       <column gap="24">
+        <if test="{profileBranchMode}">
+          <card padding="0">
+            <column padding="14" gap="6">
+              <text><span weight="bold">{profileBranchBannerTitle}</span></text>
+              <text wrap="true" foreground="text_muted">{profileBranchBannerBody}</text>
+              <text wrap="true" foreground="text_muted">{profileBranchCopyNote}</text>
+            </column>
+          </card>
+        </if>
+
         <if test="{profileFactsSummaryVisible}">
           <card padding="0">
             <column padding="14" gap="6">

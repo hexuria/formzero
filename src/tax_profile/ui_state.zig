@@ -44,6 +44,9 @@ pub const Error = error{
     UnsavedFormSetChanges,
     UnsavedProfileChanges,
     NoFactsEffectiveForYear,
+    DuplicateTaxpayerIdentifier,
+    BranchTinRootChanged,
+    BranchCodeRequired,
 } || persistence.Error;
 
 pub const NoticeKind = enum {
@@ -191,6 +194,42 @@ pub const ProfileRow = struct {
     initials: InitialsText = .{},
     subject_kind: model.SubjectKind,
     active: bool = false,
+    /// The nine-digit root shared by a head office and its branches, and the
+    /// branch segment that distinguishes them. Both are derived from the
+    /// canonical TIN; neither is a second source of truth.
+    tin_root: FixedText(9) = .{},
+    branch_code: FixedText(5) = .{},
+
+    pub fn tinRoot(self: *const ProfileRow) []const u8 {
+        return self.tin_root.text();
+    }
+
+    pub fn branchCode(self: *const ProfileRow) []const u8 {
+        return self.branch_code.text();
+    }
+
+    /// A registration with no branch segment, or segment zero, is the head
+    /// office. Anything else is a branch of the same taxpayer.
+    pub fn isBranch(self: *const ProfileRow) bool {
+        const code = self.branch_code.text();
+        if (code.len == 0) return false;
+        for (code) |digit| {
+            if (digit != '0') return true;
+        }
+        return false;
+    }
+
+    pub fn branchLabel(
+        self: *const ProfileRow,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (!self.isBranch()) return "Head office";
+        return std.fmt.allocPrint(
+            arena,
+            "Branch {s}",
+            .{self.branch_code.text()},
+        ) catch "Branch";
+    }
 
     pub fn nameLabel(self: *const ProfileRow) []const u8 {
         return self.name.text();
@@ -346,6 +385,12 @@ pub const State = struct {
     /// the editable buffer so unsaved typing never reads as recorded fact.
     selected_tax_type: FixedText(80) = .{},
     change_intent: ChangeIntent = .record_change,
+    /// Set while creating another registration of the taxpayer already
+    /// selected. The nine-digit root and the legal person are fixed by that
+    /// taxpayer; everything branch-specific must be reviewed, not inherited.
+    branch_mode: bool = false,
+    branch_source_root: FixedText(9) = .{},
+    branch_source_name: NameText = .{},
     /// The effective date as loaded, so switching to a correction can restore
     /// the period being restated without guessing.
     loaded_effective_from: FixedText(10) = .{},
@@ -746,6 +791,115 @@ pub const State = struct {
         );
     }
 
+    pub fn branchMode(self: *const State) bool {
+        return self.branch_mode;
+    }
+
+    pub fn branchSourceName(self: *const State) []const u8 {
+        return self.branch_source_name.text();
+    }
+
+    pub fn branchSourceRoot(self: *const State) []const u8 {
+        return self.branch_source_root.text();
+    }
+
+    pub fn canAddBranch(self: *const State) bool {
+        if (!self.has_selection or self.editing_new) return false;
+        const row = self.selectedRow() orelse return false;
+        return row.tin_root.len == 9;
+    }
+
+    /// Starts another registration of the selected taxpayer.
+    ///
+    /// Contact details and the registered name are reused because they
+    /// describe the same taxpayer. The branch segment, RDO, address, and every
+    /// registration fact are deliberately left blank: they are the facts most
+    /// likely to differ, and a silent copy would assert something unverified.
+    /// Nothing is copied that belongs to a filing, an evidence document, or a
+    /// secret.
+    pub fn beginAddBranch(self: *State) bool {
+        if (!self.canAddBranch()) {
+            self.setError(error.FormsRequireSavedProfile);
+            return false;
+        }
+        if (self.formsDirty()) {
+            self.setError(error.UnsavedFormSetChanges);
+            return false;
+        }
+        if (self.factsDirty()) {
+            self.setError(error.UnsavedProfileChanges);
+            return false;
+        }
+        const row = self.selectedRow() orelse return false;
+        const source_root = row.tin_root.text();
+        const source_name = row.name.text();
+        const source_kind = row.subject_kind;
+
+        const reused_name = self.display_name.text();
+        const reused_trade_name = self.trade_name.text();
+        const reused_phone = self.phone.text();
+        const reused_email = self.email.text();
+        var name_buffer: [160]u8 = undefined;
+        var trade_buffer: [160]u8 = undefined;
+        var phone_buffer: [32]u8 = undefined;
+        var email_buffer: [254]u8 = undefined;
+        const name = copyInto(&name_buffer, reused_name);
+        const trade_name = copyInto(&trade_buffer, reused_trade_name);
+        const phone = copyInto(&phone_buffer, reused_phone);
+        const email = copyInto(&email_buffer, reused_email);
+
+        self.editing_new = true;
+        self.loaded_shape_supported = true;
+        self.clearEditor();
+        self.branch_mode = true;
+        self.branch_source_root.set(source_root) catch {};
+        self.branch_source_name.set(source_name) catch {};
+
+        // The branch belongs to the same legal person, so its kind is fixed.
+        self.subject_kind = source_kind;
+        // Prefill the root the way a TIN is normally written, so the user
+        // appends a branch code to something they recognize.
+        var root_buffer: [11]u8 = undefined;
+        setEditorBuffer(&self.tin, std.fmt.bufPrint(
+            &root_buffer,
+            "{s}-{s}-{s}",
+            .{ source_root[0..3], source_root[3..6], source_root[6..9] },
+        ) catch source_root);
+        setEditorBuffer(&self.display_name, name);
+        if (source_kind == .sole_proprietor) {
+            setEditorBuffer(&self.trade_name, trade_name);
+        }
+        setEditorBuffer(&self.phone, phone);
+        setEditorBuffer(&self.email, email);
+        setEditorBuffer(&self.effective_from, self.default_effective_from.text());
+        setTaxYearBuffer(&self.tax_year, self.default_tax_year);
+        self.captureBaseline();
+        self.setNotice(
+            .neutral,
+            "Add the branch code, then review its RDO, address, and registration details.",
+        );
+        return true;
+    }
+
+    pub fn cancelAddBranch(self: *State) void {
+        self.branch_mode = false;
+        self.branch_source_root.clear();
+        self.branch_source_name.clear();
+    }
+
+    /// Reports the taxpayer already registered under a canonical TIN, so a
+    /// duplicate registration is refused with somewhere to go instead.
+    fn profileWithTin(
+        self: *const State,
+        tin: *const fields.Tin,
+    ) ?*const ProfileRow {
+        for (self.profiles[0..self.profile_count]) |*row| {
+            const existing = fields.Tin.parse(row.tin.text()) catch continue;
+            if (existing.eql(tin)) return row;
+        }
+        return null;
+    }
+
     pub fn editSelected(self: *State) void {
         if (!self.has_selection) {
             self.startNew();
@@ -808,12 +962,18 @@ pub const State = struct {
             self.setError(err);
             return false;
         };
+        const was_branch = self.branch_mode;
+        self.branch_mode = false;
+        self.branch_source_root.clear();
+        self.branch_source_name.clear();
         self.setNotice(
             .success,
-            if (was_new)
-                "Tax profile created."
+            if (was_branch)
+                "Branch created. Upload its COR and choose its forms when ready."
+            else if (was_new)
+                "Taxpayer created."
             else
-                "A new immutable profile revision was saved.",
+                "Your change was saved.",
         );
         return true;
     }
@@ -861,6 +1021,20 @@ pub const State = struct {
 
         const source = try self.buildSource();
         const creating = self.editing_new;
+        if (creating) {
+            // One registration per canonical TIN. Two profiles sharing a full
+            // TIN would make filings and evidence ambiguous with no way to
+            // tell them apart afterwards.
+            if (self.profileWithTin(&tin) != null) {
+                return error.DuplicateTaxpayerIdentifier;
+            }
+            if (self.branch_mode) {
+                if (!std.mem.eql(u8, tin.root(), self.branch_source_root.text())) {
+                    return error.BranchTinRootChanged;
+                }
+                if (tin.branch() == null) return error.BranchCodeRequired;
+            }
+        }
         var generated_profile_id: persistence.OpaqueId = undefined;
         const profile_id = if (creating) blk: {
             generated_profile_id = try store.generateOpaqueId();
@@ -1978,6 +2152,12 @@ pub const State = struct {
             try row.stable_id.set(item.id);
             try row.name.set(item.display_name);
             try row.tin.set(item.tin);
+            if (fields.Tin.parse(item.tin)) |parsed| {
+                try row.tin_root.set(parsed.root());
+                if (parsed.branch()) |segment| {
+                    try row.branch_code.set(segment);
+                }
+            } else |_| {}
             try setInitials(&row.initials, item.display_name);
             row.active = self.has_selection and
                 std.mem.eql(u8, self.selected_id.text(), item.id);
@@ -2288,6 +2468,11 @@ pub const State = struct {
         self.year_workspace = .viewing;
         self.draft_source_year = null;
         self.pending_year_switch = null;
+        self.branch_mode = false;
+        self.branch_source_root.clear();
+        self.branch_source_name.clear();
+        self.change_intent = .record_change;
+        self.selected_tax_type.clear();
         self.resetFormFilters();
         self.input_was_truncated = false;
     }
@@ -2346,6 +2531,9 @@ pub const State = struct {
             error.UnsupportedRepeatedComponents => "This repeated-component revision is preserved, but cannot be rewritten by the single-activity editor.",
             error.UnsavedFormSetChanges => "Save or cancel your unsaved form changes before switching taxpayers.",
             error.UnsavedProfileChanges => "Save or cancel your unsaved taxpayer details before switching taxpayers.",
+            error.DuplicateTaxpayerIdentifier => "That TIN already belongs to a taxpayer you have. Open it instead of adding it again.",
+            error.BranchTinRootChanged => "A branch keeps the same nine-digit TIN as its head office. Change only the branch code.",
+            error.BranchCodeRequired => "Add the branch code after the nine-digit TIN, for example 123-456-789-002.",
             error.NoFactsEffectiveForYear => "No taxpayer details exist for that year yet. Record what was true then before setting up its forms.",
             error.FormsRequireSavedProfile => "Save this taxpayer profile before choosing its forms.",
             persistence.Error.FormSetAlreadyExists => "That year is already set up. Choose it from the year list to edit its forms.",
@@ -2554,6 +2742,14 @@ fn optionalTrimmed(value: []const u8) ?[]const u8 {
 
 fn trimmed(value: []const u8) []const u8 {
     return std.mem.trim(u8, value, " \t\r\n");
+}
+
+/// Copies a slice into caller-owned scratch so it survives the editor being
+/// cleared. Reusing values across a reset would otherwise read freed bytes.
+fn copyInto(buffer: []u8, value: []const u8) []const u8 {
+    const length = @min(buffer.len, value.len);
+    @memcpy(buffer[0..length], value[0..length]);
+    return buffer[0..length];
 }
 
 test "form filter checkbox groups stay nonempty and reset by context" {
@@ -3392,6 +3588,132 @@ test "a taxpayer registered mid-year is not treated as missing details" {
     try std.testing.expect(state.openYearWorkspace(2026));
     try std.testing.expect(state.chooseDraftEmpty());
     try std.testing.expect(state.saveYearWorkspace());
+}
+
+test "a branch reuses safe details and requires its own registration facts" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    state.phone.set("+639171234567");
+    state.email.set("head@example.ph");
+    state.business_line.set("Retail");
+    try std.testing.expect(state.save());
+    // Copy: the selection buffer is reused when the branch becomes selected.
+    var head_office_storage: [64]u8 = undefined;
+    const selected_head_office = state.selectedProfileId().?;
+    @memcpy(
+        head_office_storage[0..selected_head_office.len],
+        selected_head_office,
+    );
+    const head_office_id = head_office_storage[0..selected_head_office.len];
+
+    try std.testing.expect(state.canAddBranch());
+    try std.testing.expect(state.beginAddBranch());
+    try std.testing.expect(state.branchMode());
+    try std.testing.expect(state.editing_new);
+
+    // The taxpayer's own details carry over.
+    try std.testing.expectEqualStrings("123-456-789", state.tin.text());
+    try std.testing.expectEqualStrings("Workspace Taxpayer", state.display_name.text());
+    try std.testing.expectEqualStrings("+639171234567", state.phone.text());
+    try std.testing.expectEqualStrings("head@example.ph", state.email.text());
+    // Everything branch-specific starts blank so it must be reviewed.
+    try std.testing.expectEqualStrings("", state.rdo.text());
+    try std.testing.expectEqualStrings("", state.registered_address.text());
+    try std.testing.expectEqualStrings("", state.business_line.text());
+    try std.testing.expectEqualStrings("", state.tax_type.text());
+
+    // Saving without a branch code would create a duplicate registration.
+    state.rdo.set("043");
+    state.registered_address.set("Makati City");
+    try std.testing.expect(!state.save());
+    try std.testing.expect(state.noticeFailure());
+
+    state.tin.set("123-456-789-002");
+    try std.testing.expect(state.save());
+    try std.testing.expect(!state.branchMode());
+
+    const branch_id = state.selectedProfileId().?;
+    try std.testing.expect(!std.mem.eql(u8, head_office_id, branch_id));
+    // The branch keeps its own forms: nothing was copied from the head office.
+    try std.testing.expect(
+        (try store.getFormSet(allocator, branch_id, 2026)) == null,
+    );
+}
+
+test "a branch cannot change the taxpayer it belongs to" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    try std.testing.expect(state.beginAddBranch());
+
+    state.rdo.set("043");
+    state.registered_address.set("Makati City");
+    state.tin.set("999-888-777-002");
+    try std.testing.expect(!state.save());
+    try std.testing.expectEqualStrings(
+        "A branch keeps the same nine-digit TIN as its head office. Change only the branch code.",
+        state.noticeText(),
+    );
+}
+
+test "one canonical TIN cannot be registered twice" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+
+    state.startNew();
+    state.tin.set("123-456-789-000");
+    state.rdo.set("040");
+    state.display_name.set("Same TIN Again");
+    state.registered_address.set("Quezon City");
+    state.effective_from.set("2026-01-01");
+    try std.testing.expect(!state.save());
+    try std.testing.expectEqualStrings(
+        "That TIN already belongs to a taxpayer you have. Open it instead of adding it again.",
+        state.noticeText(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), state.rows().len);
+}
+
+test "profile rows expose head office and branch identity" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    try std.testing.expect(state.beginAddBranch());
+    state.rdo.set("043");
+    state.registered_address.set("Makati City");
+    state.tin.set("123-456-789-002");
+    try std.testing.expect(state.save());
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var head_office: ?*const ProfileRow = null;
+    var branch: ?*const ProfileRow = null;
+    for (state.rows()) |*row| {
+        if (row.isBranch()) branch = row else head_office = row;
+    }
+    try std.testing.expect(head_office != null);
+    try std.testing.expect(branch != null);
+    try std.testing.expectEqualStrings("123456789", head_office.?.tinRoot());
+    try std.testing.expectEqualStrings("123456789", branch.?.tinRoot());
+    try std.testing.expectEqualStrings("002", branch.?.branchCode());
+    try std.testing.expectEqualStrings("Head office", head_office.?.branchLabel(arena));
+    try std.testing.expectEqualStrings("Branch 002", branch.?.branchLabel(arena));
 }
 
 test "calendar form selection refresh fails closed" {

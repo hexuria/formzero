@@ -1239,18 +1239,21 @@ pub const Model = struct {
         return self.taxProfiles.rows();
     }
 
+    /// Registrations of one taxpayer are listed together, head office first,
+    /// so a branch reads as part of that taxpayer rather than as an unrelated
+    /// entry that happens to share a name. Ordering is presentation only: each
+    /// row keeps its own slot, and selection is unaffected.
     pub fn visibleProfileRows(
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const profile_ui.ProfileRow {
         const all = self.taxProfiles.rows();
         const query = self.sidebarProfileSearchBuffer.text();
-        if (query.len == 0) return all;
-
         const rows = arena.alloc(profile_ui.ProfileRow, all.len) catch return &.{};
         var count: usize = 0;
         for (all) |row| {
-            if (!multi_select.containsAsciiInsensitive(row.nameLabel(), query) and
+            if (query.len != 0 and
+                !multi_select.containsAsciiInsensitive(row.nameLabel(), query) and
                 !multi_select.containsAsciiInsensitive(row.tinLabel(arena), query))
             {
                 continue;
@@ -1258,7 +1261,9 @@ pub const Model = struct {
             rows[count] = row;
             count += 1;
         }
-        return rows[0..count];
+        const visible = rows[0..count];
+        std.mem.sort(profile_ui.ProfileRow, visible, {}, profileRowPrecedes);
+        return visible;
     }
 
     pub fn visibleProfileRowsEmpty(
@@ -2978,6 +2983,53 @@ pub const Model = struct {
     pub fn profileIdentityLockNote(self: *const Model) []const u8 {
         _ = self;
         return "Identity doesn't change with ordinary updates. A different kind of taxpayer needs its own profile.";
+    }
+
+    pub fn profileBranchMode(self: *const Model) bool {
+        return self.taxProfiles.branchMode();
+    }
+
+    pub fn profileCanAddBranch(self: *const Model) bool {
+        return self.taxProfiles.canAddBranch();
+    }
+
+    pub fn profileAddBranchLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (!self.taxProfiles.canAddBranch()) return "Add branch";
+        return std.fmt.allocPrint(
+            arena,
+            "Add branch of {s}",
+            .{self.taxProfiles.selectedName()},
+        ) catch "Add branch";
+    }
+
+    pub fn profileBranchBannerTitle(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "New branch of {s}",
+            .{self.taxProfiles.branchSourceName()},
+        ) catch "New branch";
+    }
+
+    pub fn profileBranchBannerBody(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "Keep the nine-digit TIN {s} and add this branch's code. Its RDO, address, and registration details start blank because they often differ — review them before saving.",
+            .{self.taxProfiles.branchSourceRoot()},
+        ) catch "Keep the nine-digit TIN and add this branch's code.";
+    }
+
+    pub fn profileBranchCopyNote(self: *const Model) []const u8 {
+        _ = self;
+        return "Copied once: name, contact number, and email. Never copied: COR files, filings, drafts, payments, and email settings. Later head-office changes don't update this branch.";
     }
 
     pub fn profileFactsMissingHelpText(
@@ -5240,6 +5292,25 @@ fn resetProfileFormsPage(model: *Model) void {
     model.libraryFilter.resetPage();
 }
 
+/// Groups registrations by their shared nine-digit TIN, head office before its
+/// branches, then by branch code. Rows without a parsable TIN keep a stable
+/// position at the end rather than interleaving unpredictably.
+fn profileRowPrecedes(
+    _: void,
+    left: profile_ui.ProfileRow,
+    right: profile_ui.ProfileRow,
+) bool {
+    const left_root = left.tinRoot();
+    const right_root = right.tinRoot();
+    if (left_root.len != right_root.len) return left_root.len > right_root.len;
+    const root_order = std.mem.order(u8, left_root, right_root);
+    if (root_order != .eq) return root_order == .lt;
+    if (left.isBranch() != right.isBranch()) return !left.isBranch();
+    const branch_order = std.mem.order(u8, left.branchCode(), right.branchCode());
+    if (branch_order != .eq) return branch_order == .lt;
+    return left.slot < right.slot;
+}
+
 const month_names = [_][]const u8{
     "January",   "February", "March",    "April",
     "May",       "June",     "July",     "August",
@@ -5904,6 +5975,7 @@ pub const Msg = union(enum) {
     profile_record_change,
     profile_fix_mistake,
     profile_toggle_advanced,
+    add_branch_profile,
     profile_forms_search_input: canvas.TextInputEvent,
     toggle_profile_form: usize,
     profile_forms_select_all,
@@ -6650,6 +6722,22 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .profile_setup_toggle_years_disclosure => {
             model.profileSetupYearsExpanded = !model.profileSetupYearsExpanded;
+        },
+        .add_branch_profile => {
+            if (rejectExact1701QContextChange(model)) {
+                reconcileExact1701QTaxpayerSelection(model);
+                navigate(model, .form_1701q);
+                return;
+            }
+            if (!model.taxProfiles.beginAddBranch()) {
+                openProfileEditor(model);
+                return;
+            }
+            model.profileSetupSection = .tax_profile;
+            model.profileCompletionTarget = null;
+            model.profileCompletionFormIndex = null;
+            model.pendingProfileFormLaunch = null;
+            openProfileEditor(model);
         },
         .profile_record_change => model.taxProfiles.beginRecordChange(),
         .profile_fix_mistake => model.taxProfiles.beginFixMistake(),
