@@ -44,6 +44,10 @@ pub const Error = error{
     UnsavedFormSetChanges,
     UnsavedProfileChanges,
     NoFactsEffectiveForYear,
+    CorFileUnreadable,
+    CorFileEmpty,
+    CorFileTooLarge,
+    CorFileUnsupported,
     DuplicateTaxpayerIdentifier,
     NoProfileChanges,
     BranchTinRootChanged,
@@ -390,6 +394,9 @@ pub const State = struct {
     /// one is a real state the single-value editor cannot show, and reporting
     /// it as "not recorded" would deny a fact the taxpayer actually has.
     selected_tax_type_count: usize = 0,
+    cor_state: CorEvidenceState = .none,
+    cor_file_name: FixedText(160) = .{},
+    cor_attached_at: i64 = 0,
     change_intent: ChangeIntent = .record_change,
     /// Set while creating another registration of the taxpayer already
     /// selected. The nine-digit root and the legal person are fixed by that
@@ -760,6 +767,89 @@ pub const State = struct {
     pub fn selectedKindLabel(self: *const State) []const u8 {
         const row = self.selectedRow() orelse return "None";
         return subjectKindLabel(row.subject_kind);
+    }
+
+    /// Whether the file a COR reference points at is still the one attached.
+    pub const CorEvidenceState = enum {
+        /// No document has been attached to this taxpayer.
+        none,
+        /// The file is where it was, byte for byte.
+        on_file,
+        /// The file is no longer readable at the path it was attached from.
+        moved,
+        /// A file is there, but it is not the document that was attached.
+        changed,
+    };
+
+    pub fn corEvidenceState(self: *const State) CorEvidenceState {
+        return self.cor_state;
+    }
+
+    pub fn corFileName(self: *const State) []const u8 {
+        return self.cor_file_name.text();
+    }
+
+    pub fn corAttachedAt(self: *const State) i64 {
+        return self.cor_attached_at;
+    }
+
+    /// Reloads the COR reference for the selected taxpayer and re-checks the
+    /// file behind it, so the card reports what is true now rather than what
+    /// was true when it was attached.
+    pub fn refreshCorEvidence(self: *State) void {
+        self.cor_state = .none;
+        self.cor_file_name.clear();
+        self.cor_attached_at = 0;
+        self.refreshCorEvidenceFallible() catch return;
+    }
+
+    fn refreshCorEvidenceFallible(self: *State) !void {
+        const allocator = self.allocator orelse return error.NotAttached;
+        const store = self.store orelse return error.NotAttached;
+        const profile_id = self.selectedProfileId() orelse
+            return error.NoSelectedProfile;
+        var document = (try store.getLatestCorDocument(
+            allocator,
+            profile_id,
+        )) orelse return;
+        defer document.deinit(allocator);
+
+        try self.cor_file_name.set(document.file_name);
+        self.cor_attached_at = document.attached_at_unix_seconds;
+        self.cor_state = verifyCorFile(document.file_path, document.sha256);
+    }
+
+    /// Attaches the COR the user chose. The document is referenced, never
+    /// copied: the profile database already holds more sensitive facts than a
+    /// path and a digest, so a reference needs no key custody to be honest,
+    /// while a copy would.
+    pub fn attachCorDocument(self: *State, path: []const u8) bool {
+        self.attachCorDocumentFallible(path) catch |err| {
+            self.setError(err);
+            return false;
+        };
+        self.setNotice(.success, "COR attached.");
+        return true;
+    }
+
+    fn attachCorDocumentFallible(self: *State, path: []const u8) !void {
+        const store = self.store orelse return error.NotAttached;
+        if (self.editing_new) return error.FormsRequireSavedProfile;
+        const profile_id = self.selectedProfileId() orelse
+            return error.NoSelectedProfile;
+
+        var digest_text: [64]u8 = undefined;
+        const measured = try hashCorFile(path, &digest_text);
+        const generated = try store.generateOpaqueId();
+        try store.attachCorDocument(.{
+            .id = &generated,
+            .profile_id = profile_id,
+            .file_path = path,
+            .file_name = fileNameOf(path),
+            .sha256 = &digest_text,
+            .byte_size = measured,
+        });
+        self.refreshCorEvidence();
     }
 
     /// The registered tax type as persisted, never as currently typed. A
@@ -2511,6 +2601,7 @@ pub const State = struct {
         self.input_was_truncated = false;
         self.captureBaseline();
         self.refreshFactsSummary(self.default_tax_year);
+        self.refreshCorEvidence();
         if (!self.loaded_shape_supported) {
             self.setNotice(
                 .failure,
@@ -2713,6 +2804,10 @@ pub const State = struct {
             error.BranchCodeRequired => "Add the branch code after the nine-digit TIN, for example 123-456-789-002.",
             error.BranchLegalPersonChanged => "A branch is the same taxpayer. A different kind of taxpayer needs its own profile.",
             error.NoFactsEffectiveForYear => "No taxpayer details exist for that year yet. Record what was true then before setting up its forms.",
+            error.CorFileUnreadable => "That file could not be opened. Check it is still where you chose it from.",
+            error.CorFileEmpty => "That file is empty.",
+            error.CorFileTooLarge => "That file is larger than 16 MB, so it is not a Certificate of Registration.",
+            error.CorFileUnsupported => "A COR must be a PDF or an image.",
             error.FormsRequireSavedProfile => "Save this taxpayer profile before choosing its forms.",
             persistence.Error.FormSetAlreadyExists => "That year is already set up. Choose it from the year list to edit its forms.",
             error.FieldTooLong => "One or more profile fields exceed their supported length.",
@@ -2943,6 +3038,102 @@ fn optionalTrimmed(value: []const u8) ?[]const u8 {
 
 fn trimmed(value: []const u8) []const u8 {
     return std.mem.trim(u8, value, " \t\r\n");
+}
+
+/// A COR is a registration certificate, not an archive: anything past this is
+/// not the document it claims to be, and reading it would only stall the app.
+const max_cor_document_bytes: u64 = 16 * 1024 * 1024;
+
+/// The application's I/O handle, published once at boot.
+///
+/// Filesystem calls need one, and a message handler has no other way to reach
+/// it. Hashing a document is bounded and runs on the same loop thread as the
+/// file chooser that produced the path, so it costs no more than the modal the
+/// user just dismissed. Absent in tests, where no file is ever read.
+var app_io: ?std.Io = null;
+
+pub fn publishIo(io: std.Io) void {
+    app_io = io;
+}
+
+pub const CorFileError = error{
+    CorFileUnreadable,
+    CorFileEmpty,
+    CorFileTooLarge,
+    CorFileUnsupported,
+};
+
+/// Hashes the document at `path` and returns its size, refusing anything that
+/// is not a PDF or a common image. The signature check reads the real bytes
+/// rather than trusting the extension, which is what a file name can lie about.
+fn hashCorFile(path: []const u8, digest_text: *[64]u8) CorFileError!u64 {
+    const io = app_io orelse return error.CorFileUnreadable;
+    var file = std.Io.Dir.cwd().openFile(io, path, .{}) catch
+        return error.CorFileUnreadable;
+    defer file.close(io);
+
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    var buffer: [64 * 1024]u8 = undefined;
+    var total: u64 = 0;
+    var signature: [8]u8 = undefined;
+    var signature_len: usize = 0;
+    while (true) {
+        const read = file.readPositionalAll(io, &buffer, total) catch |err| {
+            // A short final chunk ends the file rather than failing it.
+            if (err != error.EndOfStream) return error.CorFileUnreadable;
+            break;
+        };
+        if (read == 0) break;
+        if (signature_len < signature.len) {
+            const take = @min(signature.len - signature_len, read);
+            @memcpy(signature[signature_len..][0..take], buffer[0..take]);
+            signature_len += take;
+        }
+        hasher.update(buffer[0..read]);
+        total += read;
+        if (total > max_cor_document_bytes) return error.CorFileTooLarge;
+        if (read < buffer.len) break;
+    }
+    if (total == 0) return error.CorFileEmpty;
+    if (!isSupportedCorSignature(signature[0..signature_len])) {
+        return error.CorFileUnsupported;
+    }
+
+    var digest: [32]u8 = undefined;
+    hasher.final(&digest);
+    _ = std.fmt.bufPrint(digest_text, "{x}", .{&digest}) catch unreachable;
+    return total;
+}
+
+fn isSupportedCorSignature(signature: []const u8) bool {
+    if (std.mem.startsWith(u8, signature, "%PDF-")) return true;
+    if (std.mem.startsWith(u8, signature, "\x89PNG\r\n\x1a\n")) return true;
+    // JPEG: start of image plus the first marker byte.
+    if (signature.len >= 3 and
+        std.mem.startsWith(u8, signature, "\xff\xd8\xff")) return true;
+    return false;
+}
+
+/// Re-checks a referenced document without loading it into the model.
+fn verifyCorFile(path: []const u8, expected_digest: []const u8) State.CorEvidenceState {
+    var digest_text: [64]u8 = undefined;
+    const size = hashCorFile(path, &digest_text) catch |err| return switch (err) {
+        // A file that is present but no longer the attached document is a
+        // different situation from one that is gone, and the user needs to
+        // be able to tell them apart.
+        error.CorFileUnsupported, error.CorFileEmpty, error.CorFileTooLarge => .changed,
+        error.CorFileUnreadable => .moved,
+    };
+    _ = size;
+    return if (std.mem.eql(u8, &digest_text, expected_digest))
+        .on_file
+    else
+        .changed;
+}
+
+fn fileNameOf(path: []const u8) []const u8 {
+    if (std.fs.path.basename(path).len != 0) return std.fs.path.basename(path);
+    return path;
 }
 
 /// Copies a slice into caller-owned scratch so it survives the editor being
@@ -3751,6 +3942,110 @@ test "the header states several registered tax types rather than none" {
     try std.testing.expectEqualStrings(
         "Multiple registered tax types",
         state.selectedTaxTypeLabel(),
+    );
+}
+
+test "an attached COR is a checked reference, not a copy" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    publishIo(std.testing.io);
+    defer app_io = null;
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+
+    // A real file on disk, because the point of a reference is that the
+    // document stays where the user keeps it.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var full_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const document = try std.fmt.bufPrint(
+        &full_buffer,
+        ".zig-cache/tmp/{s}/cor.pdf",
+        .{tmp.sub_path},
+    );
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "cor.pdf",
+        .data = "%PDF-1.4 registration",
+    });
+
+    try std.testing.expectEqual(State.CorEvidenceState.none, state.corEvidenceState());
+    try std.testing.expect(state.attachCorDocument(document));
+    try std.testing.expectEqual(State.CorEvidenceState.on_file, state.corEvidenceState());
+    try std.testing.expectEqualStrings("cor.pdf", state.corFileName());
+
+    // Nothing was copied: only a reference and a digest were recorded.
+    var stored = (try store.getLatestCorDocument(
+        allocator,
+        state.selectedProfileId().?,
+    )).?;
+    defer stored.deinit(allocator);
+    try std.testing.expectEqualStrings(document, stored.file_path);
+    try std.testing.expectEqual(@as(u64, 21), stored.byte_size);
+    try std.testing.expectEqual(@as(usize, 64), stored.sha256.len);
+
+    // Editing the document behind the reference is detectable, which is the
+    // whole reason the digest is stored.
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "cor.pdf",
+        .data = "%PDF-1.4 tampered!!!!",
+    });
+    state.refreshCorEvidence();
+    try std.testing.expectEqual(State.CorEvidenceState.changed, state.corEvidenceState());
+
+    // So is removing it.
+    try tmp.dir.deleteFile(std.testing.io, "cor.pdf");
+    state.refreshCorEvidence();
+    try std.testing.expectEqual(State.CorEvidenceState.moved, state.corEvidenceState());
+}
+
+test "a COR must be a document, not any file" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    publishIo(std.testing.io);
+    defer app_io = null;
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var full_buffer: [std.fs.max_path_bytes]u8 = undefined;
+
+    // The extension claims a PDF; the bytes do not. Signatures decide.
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "notes.pdf",
+        .data = "just some text",
+    });
+    const disguised = try std.fmt.bufPrint(
+        &full_buffer,
+        ".zig-cache/tmp/{s}/notes.pdf",
+        .{tmp.sub_path},
+    );
+    try std.testing.expect(!state.attachCorDocument(disguised));
+    try std.testing.expectEqualStrings(
+        "A COR must be a PDF or an image.",
+        state.noticeText(),
+    );
+    try std.testing.expectEqual(State.CorEvidenceState.none, state.corEvidenceState());
+
+    var missing_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const missing = try std.fmt.bufPrint(
+        &missing_buffer,
+        ".zig-cache/tmp/{s}/absent.pdf",
+        .{tmp.sub_path},
+    );
+    try std.testing.expect(!state.attachCorDocument(missing));
+    try std.testing.expect(state.noticeFailure());
+
+    try std.testing.expect(
+        (try store.getLatestCorDocument(allocator, state.selectedProfileId().?)) == null,
     );
 }
 

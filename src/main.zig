@@ -4148,24 +4148,53 @@ pub const Model = struct {
         return self.profileSetupSection == .tax_forms;
     }
 
-    /// COR evidence has no storage yet: the document tables, encryption, and
-    /// key custody are unbuilt. The card therefore states the real state and
-    /// keeps its action disabled rather than implying an upload would persist.
-    pub fn profileCorStatusLabel(self: *const Model) []const u8 {
+    /// What the COR card says about the referenced document.
+    ///
+    /// The reference is re-checked when the taxpayer loads, so the card can
+    /// report that the file moved or changed rather than showing a name that
+    /// no longer stands for anything.
+    pub fn profileCorStatusLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
         if (self.taxProfiles.editing_new) {
             return "Save this taxpayer first, then attach its COR.";
         }
-        return "No COR on file. Attaching evidence is not available yet.";
+        const name = self.taxProfiles.corFileName();
+        return switch (self.taxProfiles.corEvidenceState()) {
+            .none => "No COR on file. Attach it to check your details against it.",
+            .on_file => std.fmt.allocPrint(
+                arena,
+                "{s} · attached {s}",
+                .{ name, friendlyUnixDateLabel(
+                    arena,
+                    self.taxProfiles.corAttachedAt(),
+                ) },
+            ) catch name,
+            .moved => std.fmt.allocPrint(
+                arena,
+                "{s} was moved or deleted since you attached it.",
+                .{name},
+            ) catch "That document was moved or deleted.",
+            .changed => std.fmt.allocPrint(
+                arena,
+                "{s} changed since you attached it.",
+                .{name},
+            ) catch "That document changed since you attached it.",
+        };
     }
 
     pub fn profileCorActionLabel(self: *const Model) []const u8 {
-        _ = self;
-        return "Upload COR";
+        return if (self.taxProfiles.corEvidenceState() == .none)
+            "Attach COR"
+        else
+            "Attach updated COR";
     }
 
     pub fn profileCorUploadDisabled(self: *const Model) bool {
-        _ = self;
-        return true;
+        // A document belongs to a saved taxpayer.
+        return self.taxProfiles.editing_new or
+            self.taxProfiles.selectedProfileId() == null;
     }
 
     pub fn profileEmailActive(self: *const Model) bool {
@@ -5283,6 +5312,42 @@ fn resetProfileFormsPage(model: *Model) void {
     model.libraryFilter.resetPage();
 }
 
+/// Asks the platform for a document and attaches it as COR evidence.
+///
+/// The dialog is a synchronous platform service reached through the effects
+/// channel's bound services, which is how a modal file picker works natively:
+/// it blocks until the user chooses or cancels, and there is nothing to wait
+/// for afterwards. Effects are absent in tests, where this is a no-op.
+fn attachCorDocument(model: *Model, fx: ?*Effects) void {
+    const effects = fx orelse return;
+    const services = effects.services orelse {
+        model.taxProfiles.reportFormLaunchFailure(
+            "Choosing a file is not available on this system.",
+        );
+        return;
+    };
+    var paths: [native_sdk.platform.max_dialog_paths_bytes]u8 = undefined;
+    const result = services.showOpenDialog(.{
+        .title = "Choose your Certificate of Registration",
+        .filters = &.{.{
+            .name = "Certificate of Registration",
+            .extensions = &.{ "pdf", "png", "jpg", "jpeg" },
+        }},
+    }, &paths) catch {
+        model.taxProfiles.reportFormLaunchFailure(
+            "The file chooser could not be opened.",
+        );
+        return;
+    };
+    // Cancelling is an ordinary outcome, not a failure to report.
+    if (result.count == 0) return;
+    // Multiple selection is off, so the result is one path; a newline would
+    // only appear if that ever changed, and the first entry is still correct.
+    const chosen = std.mem.sliceTo(result.paths, '\n');
+    if (chosen.len == 0) return;
+    _ = model.taxProfiles.attachCorDocument(chosen);
+}
+
 /// Groups registrations by their shared nine-digit TIN, head office before its
 /// branches, then by branch code. Rows without a parsable TIN keep a stable
 /// position at the end rather than interleaving unpredictably.
@@ -5307,6 +5372,24 @@ const month_names = [_][]const u8{
     "May",       "June",     "July",     "August",
     "September", "October",  "November", "December",
 };
+
+/// Renders a Unix timestamp the way the interface speaks. Days are computed
+/// from the epoch directly: the value is a recorded instant, not a date the
+/// user typed, so there is nothing to parse.
+fn friendlyUnixDateLabel(arena: std.mem.Allocator, unix_seconds: i64) []const u8 {
+    if (unix_seconds <= 0) return "an unknown date";
+    const days: i64 = @divFloor(unix_seconds, std.time.s_per_day);
+    const epoch_day: std.time.epoch.EpochDay = .{ .day = @intCast(days) };
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const month_index = month_day.month.numeric() - 1;
+    if (month_index >= month_names.len) return "an unknown date";
+    return std.fmt.allocPrint(arena, "{s} {d}, {d}", .{
+        month_names[month_index],
+        month_day.day_index + 1,
+        year_day.year,
+    }) catch "an unknown date";
+}
 
 /// Renders an ISO date the way the interface speaks: "July 1, 2026". Falls
 /// back to the stored text rather than inventing a date it cannot parse.
@@ -6575,9 +6658,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.profileSetupYearQuery.clear();
             ensureYearWorkspaceOpen(model);
         },
-        // The control is disabled until COR evidence has real storage; the
-        // message exists so the card is wired rather than decorative.
-        .profile_cor_upload => {},
+        .profile_cor_upload => attachCorDocument(model, fx),
         .show_profile_email => model.profileSetupSection = .email,
         .toggle_profile_subject_picker => {
             model.profileSubjectPickerVisible =
@@ -8800,6 +8881,10 @@ pub fn main(init: std.process.Init) !void {
 
     canvas.icons.registerAppIcons(&app_icons);
     defer canvas.icons.registerAppIcons(&.{});
+
+    // Message handlers need an I/O handle to hash an attached COR; this is
+    // the only place one exists.
+    profile_ui.publishIo(init.io);
 
     const app_dirs = native_sdk.app_dirs;
     const platform = app_dirs.currentPlatform();

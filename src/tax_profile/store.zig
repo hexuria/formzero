@@ -33,7 +33,7 @@ const sqlite = @cImport({
     @cInclude("sqlite3.h");
 });
 
-pub const latest_schema_version: u32 = 7;
+pub const latest_schema_version: u32 = 8;
 const migration_component = "tax_profile";
 pub const storage_classification =
     repository_opening.legacy_plaintext_repository_classification;
@@ -725,6 +725,34 @@ pub const OwnedTaxpayerIdentityAnchor = struct {
     }
 };
 
+pub const CorDocumentWrite = struct {
+    id: []const u8,
+    profile_id: []const u8,
+    file_path: []const u8,
+    file_name: []const u8,
+    sha256: []const u8,
+    byte_size: u64,
+};
+
+pub const OwnedCorDocument = struct {
+    id: []u8,
+    profile_id: []u8,
+    file_path: []u8,
+    file_name: []u8,
+    sha256: []u8,
+    byte_size: u64,
+    attached_at_unix_seconds: i64,
+
+    pub fn deinit(self: *OwnedCorDocument, allocator: std.mem.Allocator) void {
+        allocator.free(self.id);
+        allocator.free(self.profile_id);
+        allocator.free(self.file_path);
+        allocator.free(self.file_name);
+        allocator.free(self.sha256);
+        self.* = undefined;
+    }
+};
+
 /// The taxpayer that already holds a canonical TIN, named well enough to send
 /// the user there instead of letting them register it twice. Archived owners
 /// are reported too: a TIN identifies one taxpayer for life and is never
@@ -1353,6 +1381,17 @@ pub const Store = struct {
             try version.bindText(1, migration_component);
             try version.expectDone();
         }
+        if (current < 8) {
+            try self.exec(schema_v8);
+            var version = try self.prepare(
+                \\UPDATE app_component_migrations
+                \\SET version = 8, updated_at = unixepoch()
+                \\WHERE component = ?;
+            );
+            defer version.deinit();
+            try version.bindText(1, migration_component);
+            try version.expectDone();
+        }
         try self.commit();
         committed = true;
     }
@@ -1728,6 +1767,83 @@ pub const Store = struct {
             .profile_id = profile_id,
             .status = status,
             .display_name = display_name,
+        };
+    }
+
+    /// Records a COR reference for a taxpayer. Attaching an updated document
+    /// keeps the earlier rows: evidence is a history, not a slot.
+    pub fn attachCorDocument(self: *Store, value: CorDocumentWrite) !void {
+        try validateIdText(value.id);
+        try validateOpaqueText(value.profile_id);
+        try requireValue(value.file_path);
+        try requireValue(value.file_name);
+        if (value.sha256.len != 64) return Error.InvalidValue;
+        for (value.sha256) |byte| {
+            if (!std.ascii.isHex(byte) or std.ascii.isUpper(byte)) {
+                return Error.InvalidValue;
+            }
+        }
+        if (value.byte_size == 0) return Error.InvalidValue;
+        if (value.byte_size > std.math.maxInt(i64)) return Error.InvalidValue;
+
+        var statement = try self.prepare(
+            \\INSERT INTO tax_profile_cor_documents (
+            \\    id, profile_id, file_path, file_name, sha256, byte_size
+            \\) VALUES (?, ?, ?, ?, ?, ?);
+        );
+        defer statement.deinit();
+        try statement.bindText(1, value.id);
+        try statement.bindText(2, value.profile_id);
+        try statement.bindText(3, value.file_path);
+        try statement.bindText(4, value.file_name);
+        try statement.bindText(5, value.sha256);
+        try statement.bindInt64(6, @intCast(value.byte_size));
+        try statement.expectDone();
+    }
+
+    /// The most recently attached COR for a taxpayer, or null when none is on
+    /// file.
+    pub fn getLatestCorDocument(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+    ) !?OwnedCorDocument {
+        try validateOpaqueText(profile_id);
+        var statement = try self.prepare(
+            \\SELECT id, profile_id, file_path, file_name, sha256,
+            \\       byte_size, attached_at
+            \\FROM tax_profile_cor_documents
+            \\WHERE profile_id = ?
+            \\ORDER BY attached_at DESC, rowid DESC
+            \\LIMIT 1;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        if (try statement.step() == .done) return null;
+
+        const id = try dupColumn(allocator, statement.raw, 0);
+        errdefer allocator.free(id);
+        const owner = try dupColumn(allocator, statement.raw, 1);
+        errdefer allocator.free(owner);
+        const file_path = try dupColumn(allocator, statement.raw, 2);
+        errdefer allocator.free(file_path);
+        const file_name = try dupColumn(allocator, statement.raw, 3);
+        errdefer allocator.free(file_name);
+        const digest = try dupColumn(allocator, statement.raw, 4);
+        errdefer allocator.free(digest);
+        const size = sqlite.sqlite3_column_int64(statement.raw, 5);
+        if (size <= 0) return Error.InvalidValue;
+        return .{
+            .id = id,
+            .profile_id = owner,
+            .file_path = file_path,
+            .file_name = file_name,
+            .sha256 = digest,
+            .byte_size = @intCast(size),
+            .attached_at_unix_seconds = sqlite.sqlite3_column_int64(
+                statement.raw,
+                6,
+            ),
         };
     }
 
@@ -8753,6 +8869,34 @@ const schema_v7 =
     \\BEGIN
     \\    SELECT RAISE(ABORT, 'invalid on-demand counter update');
     \\END;
+;
+
+/// Certificate of Registration evidence, stored as a reference to the user's
+/// own file rather than a copy of it.
+///
+/// A reference holds strictly less sensitive data than the profile tables
+/// already do, so it needs no key custody to be honest. The hash is what makes
+/// the reference trustworthy: the file lives in a directory the user controls,
+/// and comparing the digest is how the interface can say the document moved or
+/// changed instead of quietly showing a stale name. Taking an encrypted copy
+/// is a later migration, and it is the copy — not this — that the key-custody
+/// gate governs.
+const schema_v8 =
+    \\CREATE TABLE tax_profile_cor_documents (
+    \\    id TEXT PRIMARY KEY
+    \\        CHECK (length(id) BETWEEN 1 AND 64 AND id = trim(id)),
+    \\    profile_id TEXT NOT NULL
+    \\        REFERENCES tax_profiles(id) ON DELETE CASCADE,
+    \\    file_path TEXT NOT NULL CHECK (length(trim(file_path)) > 0),
+    \\    file_name TEXT NOT NULL CHECK (length(trim(file_name)) > 0),
+    \\    sha256 TEXT NOT NULL CHECK (
+    \\        length(sha256) = 64 AND sha256 NOT GLOB '*[^0-9a-f]*'
+    \\    ),
+    \\    byte_size INTEGER NOT NULL CHECK (byte_size > 0),
+    \\    attached_at INTEGER NOT NULL DEFAULT (unixepoch())
+    \\);
+    \\CREATE INDEX tax_profile_cor_documents_profile_idx
+    \\    ON tax_profile_cor_documents(profile_id, attached_at DESC);
 ;
 
 test "tax profile migration is namespaced idempotent and preserves user_version" {
