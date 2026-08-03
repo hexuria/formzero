@@ -1606,10 +1606,24 @@ on-input="profile_forms_search_input"/>
 </if>
 </row>
 </else>
+<!--
+Side by side the sentence wraps to two lines in a box sized for one
+once the badge has taken its width, so stack them where space is tight.
+-->
+<if test="{profileFormsHeaderStacked}">
+<column gap="6">
+<row>
+<badge variant="secondary">{profileFormsChangedCountLabel}</badge>
+</row>
+<text wrap="true" foreground="text_muted">Nothing is saved until you choose Save.</text>
+</column>
+</if>
+<else>
 <row gap="8" cross="center">
 <badge variant="secondary">{profileFormsChangedCountLabel}</badge>
 <text grow="1" wrap="true" foreground="text_muted">Nothing is saved until you choose Save.</text>
 </row>
+</else>
 </if>
 <if test="{profileFormRowsEmpty}">
 <if test="{browsingProfileForms}">
@@ -4881,7 +4895,7 @@ Reviewer-only index for every reconstructed eBIRForms surface. This page is not 
 <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
 <separator/>
 <button variant="secondary" disabled="true">Save Draft</button>
-<button variant="primary" disabled="true">Generate XML &amp; Submit</button>
+<button variant="primary" disabled="true">Generate XML & Submit</button>
 </column>
 </column>
 </if>
@@ -4900,7 +4914,7 @@ Reviewer-only index for every reconstructed eBIRForms surface. This page is not 
 <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
 <spacer/>
 <button variant="secondary" disabled="true">Save Draft</button>
-<button variant="primary" disabled="true">Generate XML &amp; Submit</button>
+<button variant="primary" disabled="true">Generate XML & Submit</button>
 </row>
 </column>
 </else>

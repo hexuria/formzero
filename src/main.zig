@@ -12715,6 +12715,201 @@ fn writeFormActivationProofShots(
     }
 }
 
+/// The states of the taxpayer setup workspace worth proving at every width.
+const SetupWorkspaceStage = enum {
+    profile,
+    forms_configured,
+    forms_year_open,
+    forms_draft_choice,
+    forms_draft_seeded,
+    branch,
+};
+
+const setup_workspace_widths = [_]struct {
+    name: []const u8,
+    width: usize,
+    height: usize,
+}{
+    .{ .name = "desktop", .width = 1400, .height = 900 },
+    .{ .name = "tablet", .width = 768, .height = 900 },
+    .{ .name = "phone", .width = 408, .height = 900 },
+};
+
+/// A taxpayer with one configured year and one that still needs setting up,
+/// so both halves of the year workspace are reachable.
+fn attachSetupWorkspaceFixture(
+    model: *Model,
+    allocator: std.mem.Allocator,
+    store: *profile_store.Store,
+) !void {
+    const profile_id = "77777777777777777777777777777777";
+    try addTestProfile(
+        store,
+        profile_id,
+        "Maria Santos",
+        "123-456-789-000",
+        .sole_proprietor,
+    );
+    // The fixture seeds 2025-2027; leave 2025 unset so both a configured year
+    // and a year that still needs setup are reachable.
+    _ = try store.clearFormSet(profile_id, 2025);
+    _ = try store.clearFormSet(profile_id, 2027);
+    try store.replaceFormSet(profile_id, 2026, &.{
+        .{ .form_code = "2551Q", .form_revision = "2018-01-ENCS" },
+        .{ .form_code = "1701Q", .form_revision = "2018-01-ENCS" },
+    });
+
+    model.calendarToday = try calendar_domain.Date.init(2026, 8, 4);
+    model.calendar.selected_year = 2026;
+    try model.taxProfiles.attach(allocator, store, "2026-08-04", 2026);
+    model.formProfiles.attach(allocator, store);
+    canvas.icons.registerAppIcons(&app_icons);
+    update(model, .{ .select_taxpayer = 0 });
+    model.page = .profile_setup;
+    model.taxProfiles.dismissNotice();
+}
+
+fn driveSetupWorkspaceStage(model: *Model, stage: SetupWorkspaceStage) void {
+    switch (stage) {
+        .profile => update(model, .show_profile_tax),
+        .forms_configured => {
+            update(model, .show_profile_tax_forms);
+            update(model, .{ .profile_setup_select_year = 2026 });
+        },
+        .forms_year_open => {
+            update(model, .show_profile_tax_forms);
+            update(model, .profile_setup_toggle_year_picker);
+        },
+        .forms_draft_choice => {
+            update(model, .profile_setup_close_year_picker);
+            update(model, .{ .profile_setup_select_year = 2025 });
+        },
+        .forms_draft_seeded => {
+            update(model, .{ .profile_setup_draft_seed = 2026 });
+        },
+        .branch => {
+            // Leave the seeded draft behind first: an unsaved year
+            // legitimately blocks leaving, which the previous stage
+            // already demonstrates.
+            update(model, .profile_setup_cancel_year_switch);
+            update(model, .profile_forms_cancel);
+            update(model, .{ .profile_setup_select_year = 2026 });
+            update(model, .add_branch_profile);
+        },
+    }
+}
+
+/// Lays the current model out at one size and runs the SDK's layout audit.
+///
+/// The audit reports text painted past its frame, widgets escaping their clip
+/// scope, overlapping siblings, and undersized hit targets — the defect
+/// classes that only rendering used to catch. It reads geometry, so layout
+/// must actually run: a finalized tree carries no frames.
+fn expectSetupWorkspaceLayoutClean(
+    model: *const Model,
+    width: usize,
+    height: usize,
+    label: []const u8,
+) !void {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var ui = canvas.Ui(Msg).init(arena);
+    const tree = try ui.finalize(try view.build(&ui, model));
+    const tokens = canvas.DesignTokens.theme(.{ .color_scheme = .light });
+    const nodes = try arena.alloc(
+        canvas.WidgetLayoutNode,
+        canvas.max_layout_audit_nodes,
+    );
+    const bounds = geometry.RectF.init(
+        0,
+        0,
+        @floatFromInt(width),
+        @floatFromInt(height),
+    );
+    const layout = canvas.layoutWidgetTreeWithTokens(
+        tree.root,
+        bounds,
+        tokens,
+        nodes,
+    ) catch |err| {
+        std.debug.print(
+            "layout audit: {s} failed to lay out at {d}x{d}: {s}\n",
+            .{ label, width, height, @errorName(err) },
+        );
+        return err;
+    };
+    // The audit only inspects the first `max_layout_audit_nodes`. A tree that
+    // outgrows the buffer would be audited in part while reporting clean, so
+    // fail loudly instead of quietly covering less.
+    if (layout.nodes.len >= canvas.max_layout_audit_nodes) {
+        std.debug.print(
+            "layout audit: {s} at {d}x{d} has {d} nodes, at or past the {d} the audit can inspect\n",
+            .{ label, width, height, layout.nodes.len, canvas.max_layout_audit_nodes },
+        );
+        return error.LayoutAuditTreeTooLarge;
+    }
+
+    var storage: [canvas.max_layout_audit_findings]canvas.LayoutAuditFinding =
+        undefined;
+    const issues = canvas.auditWidgetLayout(layout, bounds, tokens, &storage);
+    if (issues.total == 0) return;
+
+    std.debug.print(
+        "layout audit: {d} finding(s) for {s} at {d}x{d}\n",
+        .{ issues.total, label, width, height },
+    );
+    for (issues.findings) |finding| {
+        var buffer: [1024]u8 = undefined;
+        var writer = std.Io.Writer.fixed(&buffer);
+        canvas.formatLayoutAuditFinding(layout, finding, &writer) catch {};
+        std.debug.print("  - {s}\n", .{writer.buffered()});
+    }
+    return error.LayoutAuditFindings;
+}
+
+test "taxpayer setup workspace lays out cleanly at every width" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+
+    var model = Model{ .page = .profile_setup };
+    try attachSetupWorkspaceFixture(&model, allocator, &store);
+    defer model.formProfiles.deinit();
+
+    for (setup_workspace_widths) |viewport| {
+        for (std.meta.tags(SetupWorkspaceStage)) |stage| {
+            update(&model, .{
+                .viewport_width_changed = @floatFromInt(viewport.width),
+            });
+            driveSetupWorkspaceStage(&model, stage);
+            update(&model, .{
+                .viewport_width_changed = @floatFromInt(viewport.width),
+            });
+            model.taxProfiles.dismissNotice();
+
+            var label_buffer: [96]u8 = undefined;
+            const label = try std.fmt.bufPrint(
+                &label_buffer,
+                "{s}/{s}",
+                .{ @tagName(stage), viewport.name },
+            );
+            try expectSetupWorkspaceLayoutClean(
+                &model,
+                viewport.width,
+                viewport.height,
+                label,
+            );
+        }
+        // Return to a saved taxpayer before the next width sweep.
+        model.taxProfiles.cancelAddBranch();
+        update(&model, .{ .select_taxpayer = 0 });
+        model.page = .profile_setup;
+    }
+}
+
 test "render taxpayer setup workspace proof shots when requested" {
     if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
     if (std.c.getenv("SETUP_WORKSPACE_SHOTS") == null) return error.SkipZigTest;
@@ -12722,84 +12917,15 @@ test "render taxpayer setup workspace proof shots when requested" {
     const allocator = std.testing.allocator;
     var store = try profile_store.Store.openMemory(allocator);
     defer store.close();
-    try addTestProfile(
-        &store,
-        "77777777777777777777777777777777",
-        "Maria Santos",
-        "123-456-789-000",
-        .sole_proprietor,
-    );
-    // The fixture seeds 2025-2027; leave 2025 unset so both a configured year
-    // and a year that still needs setup are reachable.
-    _ = try store.clearFormSet("77777777777777777777777777777777", 2025);
-    _ = try store.clearFormSet("77777777777777777777777777777777", 2027);
-    try store.replaceFormSet("77777777777777777777777777777777", 2026, &.{
-        .{ .form_code = "2551Q", .form_revision = "2018-01-ENCS" },
-        .{ .form_code = "1701Q", .form_revision = "2018-01-ENCS" },
-    });
 
     var model = Model{ .page = .profile_setup };
-    model.calendarToday = try calendar_domain.Date.init(2026, 8, 4);
-    model.calendar.selected_year = 2026;
-    try model.taxProfiles.attach(allocator, &store, "2026-08-04", 2026);
-    model.formProfiles.attach(allocator, &store);
+    try attachSetupWorkspaceFixture(&model, allocator, &store);
     defer model.formProfiles.deinit();
-    canvas.icons.registerAppIcons(&app_icons);
-    update(&model, .{ .select_taxpayer = 0 });
-    model.page = .profile_setup;
-    model.taxProfiles.dismissNotice();
 
-    const widths = [_]struct {
-        name: []const u8,
-        width: usize,
-        height: usize,
-    }{
-        .{ .name = "desktop", .width = 1400, .height = 900 },
-        .{ .name = "tablet", .width = 768, .height = 900 },
-        .{ .name = "phone", .width = 408, .height = 900 },
-    };
-
-    const Stage = enum {
-        profile,
-        forms_configured,
-        forms_year_open,
-        forms_draft_choice,
-        forms_draft_seeded,
-        branch,
-    };
-
-    for (widths) |shot| {
-        for (std.meta.tags(Stage)) |stage| {
+    for (setup_workspace_widths) |shot| {
+        for (std.meta.tags(SetupWorkspaceStage)) |stage| {
             update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
-            switch (stage) {
-                .profile => {
-                    update(&model, .show_profile_tax);
-                },
-                .forms_configured => {
-                    update(&model, .show_profile_tax_forms);
-                    update(&model, .{ .profile_setup_select_year = 2026 });
-                },
-                .forms_year_open => {
-                    update(&model, .show_profile_tax_forms);
-                    update(&model, .profile_setup_toggle_year_picker);
-                },
-                .forms_draft_choice => {
-                    update(&model, .profile_setup_close_year_picker);
-                    update(&model, .{ .profile_setup_select_year = 2025 });
-                },
-                .forms_draft_seeded => {
-                    update(&model, .{ .profile_setup_draft_seed = 2026 });
-                },
-                .branch => {
-                    // Leave the seeded draft behind first: an unsaved year
-                    // legitimately blocks leaving, which the previous stage
-                    // already demonstrates.
-                    update(&model, .profile_setup_cancel_year_switch);
-                    update(&model, .profile_forms_cancel);
-                    update(&model, .{ .profile_setup_select_year = 2026 });
-                    update(&model, .add_branch_profile);
-                },
-            }
+            driveSetupWorkspaceStage(&model, stage);
             update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
             model.taxProfiles.dismissNotice();
             var path_buffer: [192]u8 = undefined;

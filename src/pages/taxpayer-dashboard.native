@@ -468,10 +468,24 @@
           </if>
         </row>
       </else>
-      <row gap="8" cross="center">
-        <badge variant="secondary">{profileFormsChangedCountLabel}</badge>
-        <text grow="1" wrap="true" foreground="text_muted">Nothing is saved until you choose Save.</text>
-      </row>
+      <!--
+        Side by side the sentence wraps to two lines in a box sized for one
+        once the badge has taken its width, so stack them where space is tight.
+      -->
+      <if test="{profileFormsHeaderStacked}">
+        <column gap="6">
+          <row>
+            <badge variant="secondary">{profileFormsChangedCountLabel}</badge>
+          </row>
+          <text wrap="true" foreground="text_muted">Nothing is saved until you choose Save.</text>
+        </column>
+      </if>
+      <else>
+        <row gap="8" cross="center">
+          <badge variant="secondary">{profileFormsChangedCountLabel}</badge>
+          <text grow="1" wrap="true" foreground="text_muted">Nothing is saved until you choose Save.</text>
+        </row>
+      </else>
     </if>
     <if test="{profileFormRowsEmpty}">
       <if test="{browsingProfileForms}">

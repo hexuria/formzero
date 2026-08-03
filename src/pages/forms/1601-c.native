@@ -208,7 +208,7 @@
         <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
         <separator/>
         <button variant="secondary" disabled="true">Save Draft</button>
-        <button variant="primary" disabled="true">Generate XML &amp; Submit</button>
+        <button variant="primary" disabled="true">Generate XML & Submit</button>
         </column>
       </column>
     </if>
@@ -227,7 +227,7 @@
         <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
         <spacer/>
         <button variant="secondary" disabled="true">Save Draft</button>
-        <button variant="primary" disabled="true">Generate XML &amp; Submit</button>
+        <button variant="primary" disabled="true">Generate XML & Submit</button>
         </row>
       </column>
     </else>

@@ -139,7 +139,26 @@ async function readRequiredFile(relativePath) {
   }
 
   const source = normalizeFragment(await readFile(absolutePath, "utf8"));
+  rejectXmlEntities(source, relativePath);
   return expandGeneratedTemplateIncludes(source, relativePath);
+}
+
+// The markup engine copies text through verbatim: it has no XML entity
+// decoder, so `&amp;` reaches the screen as those five characters. This is
+// easy to write by reflex and invisible until someone looks at the running
+// app, so refuse it at generation time and name the line.
+const xmlEntityPattern = /&(?:#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/;
+
+function rejectXmlEntities(source, relativePath) {
+  const lines = source.split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = xmlEntityPattern.exec(lines[index]);
+    if (!match) continue;
+    throw new Error(
+      `${relativePath}:${index + 1}: this markup never decodes XML entities, ` +
+        `so ${match[0]} renders literally - write the character itself`,
+    );
+  }
 }
 
 function generatedHeader() {
