@@ -415,6 +415,10 @@ pub const State = struct {
     notice: NoticeText = .{},
     notice_kind: NoticeKind = .neutral,
     notice_epoch: u64 = 0,
+    /// A composed failure message that outranks the generic error mapping,
+    /// used where the refusal can name the taxpayer involved.
+    pending_error_detail: NoticeText = .{},
+    has_pending_error_detail: bool = false,
 
     pub fn attach(
         self: *State,
@@ -937,6 +941,52 @@ pub const State = struct {
         return null;
     }
 
+    /// Refuses a second registration of one canonical TIN, naming the taxpayer
+    /// that already holds it.
+    ///
+    /// A TIN is issued once and never reassigned, so an archived taxpayer's
+    /// TIN is still theirs — the answer is to restore that taxpayer, not to
+    /// register a second one that its filings could never be told apart from.
+    fn rejectDuplicateTin(self: *State, tin: *const fields.Tin) !void {
+        if (self.profileWithTin(tin)) |row| {
+            var message: [256]u8 = undefined;
+            self.setErrorDetail(std.fmt.bufPrint(
+                &message,
+                "That TIN already belongs to {s}. Open it instead of adding it again.",
+                .{row.name.text()},
+            ) catch "That TIN already belongs to a taxpayer you have.");
+            return error.DuplicateTaxpayerIdentifier;
+        }
+
+        // The loaded rows are active-only and bounded; ask the store about
+        // every taxpayer, archived ones included. A failed read falls through
+        // to the store's own check, which refuses without naming anyone.
+        const allocator = self.allocator orelse return;
+        const store = self.store orelse return;
+        var owner = (store.findProfileWithCanonicalTin(
+            allocator,
+            tin.asDigits(),
+            null,
+        ) catch return) orelse return;
+        defer owner.deinit(allocator);
+
+        var message: [256]u8 = undefined;
+        const name = owner.display_name orelse "another taxpayer";
+        self.setErrorDetail(switch (owner.status) {
+            .archived => std.fmt.bufPrint(
+                &message,
+                "That TIN belongs to {s}, which is archived. Restore it instead of adding it again.",
+                .{name},
+            ) catch "That TIN belongs to an archived taxpayer. Restore it instead of adding it again.",
+            .active => std.fmt.bufPrint(
+                &message,
+                "That TIN already belongs to {s}. Open it instead of adding it again.",
+                .{name},
+            ) catch "That TIN already belongs to a taxpayer you have.",
+        });
+        return error.DuplicateTaxpayerIdentifier;
+    }
+
     pub fn editSelected(self: *State) void {
         if (!self.has_selection) {
             self.startNew();
@@ -1061,10 +1111,11 @@ pub const State = struct {
         if (creating) {
             // One registration per canonical TIN. Two profiles sharing a full
             // TIN would make filings and evidence ambiguous with no way to
-            // tell them apart afterwards.
-            if (self.profileWithTin(&tin) != null) {
-                return error.DuplicateTaxpayerIdentifier;
-            }
+            // tell them apart afterwards. The store repeats this check inside
+            // its write transaction; this one exists to name the taxpayer who
+            // already holds the TIN, including an archived one the loaded
+            // rows cannot see.
+            try self.rejectDuplicateTin(&tin);
             if (self.branch_mode) {
                 if (!std.mem.eql(u8, tin.root(), self.branch_source_root.text())) {
                     return error.BranchTinRootChanged;
@@ -2228,6 +2279,32 @@ pub const State = struct {
                 "Only the first 64 active tax profiles are shown.",
             );
         }
+        self.reportSharedTin();
+    }
+
+    /// Names a TIN held by two loaded taxpayers.
+    ///
+    /// Nothing can create this state now, but data written before the rule
+    /// existed still can hold it, and silently rendering two taxpayers that
+    /// cannot be told apart is worse than saying so. Never prints a full TIN.
+    fn reportSharedTin(self: *State) void {
+        const loaded = self.profiles[0..self.profile_count];
+        for (loaded, 0..) |*row, index| {
+            const left = fields.Tin.parse(row.tin.text()) catch continue;
+            for (loaded[index + 1 ..]) |*other| {
+                const right = fields.Tin.parse(other.tin.text()) catch continue;
+                if (!left.eql(&right)) continue;
+                var masked_buffer: [24]u8 = undefined;
+                const masked = left.writeMasked(&masked_buffer) catch return;
+                var message: [200]u8 = undefined;
+                self.setNotice(.failure, std.fmt.bufPrint(
+                    &message,
+                    "Two taxpayers share TIN {s}. Their filings cannot be told apart — review them.",
+                    .{masked},
+                ) catch "Two taxpayers share one TIN. Their filings cannot be told apart.");
+                return;
+            }
+        }
     }
 
     fn loadSelectedRevision(self: *State, load_editor: bool) !void {
@@ -2561,7 +2638,24 @@ pub const State = struct {
         self.notice_epoch +%= 1;
     }
 
+    /// Records a specific failure message for the error about to be returned.
+    /// Refusals that can name the taxpayer involved are far more useful than
+    /// the generic mapping, which cannot see the offending row.
+    fn setErrorDetail(self: *State, message: []const u8) void {
+        self.pending_error_detail.set(message) catch {
+            self.pending_error_detail.clear();
+            return;
+        };
+        self.has_pending_error_detail = true;
+    }
+
     fn setError(self: *State, err: anyerror) void {
+        if (self.has_pending_error_detail) {
+            self.has_pending_error_detail = false;
+            self.setNotice(.failure, self.pending_error_detail.text());
+            self.pending_error_detail.clear();
+            return;
+        }
         const message = switch (err) {
             persistence.Error.RevisionConflict => "This profile changed elsewhere. Reload it before saving a new revision.",
             error.UnknownFormCode => "One of the chosen forms is not in the 51-form catalog.",
@@ -2574,7 +2668,9 @@ pub const State = struct {
             error.UnsupportedRepeatedComponents => "This repeated-component revision is preserved, but cannot be rewritten by the single-activity editor.",
             error.UnsavedFormSetChanges => "Save or cancel your unsaved form changes before switching taxpayers.",
             error.UnsavedProfileChanges => "Save or cancel your unsaved taxpayer details before switching taxpayers.",
-            error.DuplicateTaxpayerIdentifier => "That TIN already belongs to a taxpayer you have. Open it instead of adding it again.",
+            error.DuplicateTaxpayerIdentifier,
+            persistence.Error.DuplicateCanonicalTin,
+            => "That TIN already belongs to a taxpayer you have. Open it instead of adding it again.",
             error.BranchTinRootChanged => "A branch keeps the same nine-digit TIN as its head office. Change only the branch code.",
             error.BranchCodeRequired => "Add the branch code after the nine-digit TIN, for example 123-456-789-002.",
             error.BranchLegalPersonChanged => "A branch is the same taxpayer. A different kind of taxpayer needs its own profile.",
@@ -3767,11 +3863,53 @@ test "one canonical TIN cannot be registered twice" {
     state.registered_address.set("Quezon City");
     state.effective_from.set("2026-01-01");
     try std.testing.expect(!state.save());
+    // The refusal names who holds the TIN, so the user has somewhere to go.
     try std.testing.expectEqualStrings(
-        "That TIN already belongs to a taxpayer you have. Open it instead of adding it again.",
+        "That TIN already belongs to Workspace Taxpayer. Open it instead of adding it again.",
         state.noticeText(),
     );
     try std.testing.expectEqual(@as(usize, 1), state.rows().len);
+}
+
+test "an archived taxpayer still owns its TIN" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    const owner_id = state.selectedProfileId().?;
+    var owner_storage: [64]u8 = undefined;
+    @memcpy(owner_storage[0..owner_id.len], owner_id);
+    const archived_id = owner_storage[0..owner_id.len];
+
+    // Archiving is not deletion: a TIN is issued once and never reassigned.
+    try store.setProfileStatus(archived_id, .archived);
+    try state.attach(allocator, &store, "2026-01-01", 2026);
+    try std.testing.expectEqual(@as(usize, 0), state.rows().len);
+
+    state.startNew();
+    state.tin.set("123-456-789-000");
+    state.rdo.set("040");
+    state.display_name.set("Different Taxpayer Same TIN");
+    state.registered_address.set("Quezon City");
+    state.effective_from.set("2020-01-01");
+    try std.testing.expect(!state.save());
+    try std.testing.expectEqualStrings(
+        "That TIN belongs to Workspace Taxpayer, which is archived. Restore it instead of adding it again.",
+        state.noticeText(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), state.rows().len);
+
+    // The store knows the owner independently of the loaded rows.
+    var owner = (try store.findProfileWithCanonicalTin(
+        allocator,
+        "123456789000",
+        null,
+    )).?;
+    defer owner.deinit(allocator);
+    try std.testing.expectEqual(persistence.ProfileStatus.archived, owner.status);
+    try std.testing.expectEqualStrings("Workspace Taxpayer", owner.display_name.?);
 }
 
 test "profile rows expose head office and branch identity" {

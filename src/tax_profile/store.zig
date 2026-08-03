@@ -74,6 +74,7 @@ pub const Error = error{
     DraftSchemaMismatch,
     DraftStaleRevision,
     DraftWorkspaceLimitExceeded,
+    DuplicateCanonicalTin,
     FormSetAlreadyExists,
     IdentityCorrectionConflict,
     InconsistentIdentityHistory,
@@ -720,6 +721,25 @@ pub const OwnedTaxpayerIdentityAnchor = struct {
         allocator.free(self.canonical_tin);
         freeOptional(allocator, self.established_from_revision_id);
         freeOptional(allocator, self.identity_correction_id);
+        self.* = undefined;
+    }
+};
+
+/// The taxpayer that already holds a canonical TIN, named well enough to send
+/// the user there instead of letting them register it twice. Archived owners
+/// are reported too: a TIN identifies one taxpayer for life and is never
+/// reassigned, so archiving cannot free it for a different taxpayer.
+pub const OwnedCanonicalTinOwner = struct {
+    profile_id: []u8,
+    status: ProfileStatus,
+    display_name: ?[]u8,
+
+    pub fn deinit(
+        self: *OwnedCanonicalTinOwner,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.profile_id);
+        freeOptional(allocator, self.display_name);
         self.* = undefined;
     }
 };
@@ -1519,6 +1539,16 @@ pub const Store = struct {
         var committed = false;
         errdefer if (!committed) self.rollbackNoFail();
 
+        // Inside the immediate transaction so a second window cannot register
+        // the same taxpayer between this check and the insert. Identity
+        // anchors only exist from v3, and migrations replay creates against
+        // older schemas, so skip the check where the table cannot be queried.
+        if (try self.schemaVersion() >= 3 and
+            try self.canonicalTinIsTaken(revision.identity.tin, null))
+        {
+            return Error.DuplicateCanonicalTin;
+        }
+
         const profile_sql: []const u8 = if (try self.schemaVersion() >= 6)
             "INSERT INTO tax_profiles(id, status, owner_id) VALUES (?, ?, (SELECT id FROM tax_profile_local_owner WHERE singleton = 1));"
         else
@@ -1645,6 +1675,62 @@ pub const Store = struct {
         return try readIdentityAnchor(allocator, statement.raw);
     }
 
+    /// Finds the taxpayer whose current identity anchor already holds this
+    /// canonical TIN, across every status.
+    ///
+    /// A TIN is issued once to one taxpayer and is never reassigned, so two
+    /// profiles sharing one would make their filings, evidence, and history
+    /// impossible to tell apart afterwards. Archived profiles are included
+    /// deliberately: archiving is not deletion, and its filings still refer to
+    /// that taxpayer.
+    pub fn findProfileWithCanonicalTin(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        canonical_tin: []const u8,
+        exclude_profile_id: ?[]const u8,
+    ) !?OwnedCanonicalTinOwner {
+        const tin = profile_field.Tin.parse(canonical_tin) catch
+            return Error.InvalidValue;
+        if (exclude_profile_id) |value| try validateOpaqueText(value);
+
+        var statement = try self.prepare(
+            \\SELECT anchor.profile_id, profile.status,
+            \\       COALESCE(revision.taxpayer_name, revision.registered_name)
+            \\FROM tax_profile_identity_anchors AS anchor
+            \\JOIN tax_profiles AS profile ON profile.id = anchor.profile_id
+            \\LEFT JOIN tax_profile_revisions AS revision
+            \\  ON revision.profile_id = profile.id
+            \\ AND revision.id = profile.current_revision_id
+            \\WHERE anchor.canonical_tin = ?
+            \\  AND anchor.sequence = (
+            \\      SELECT MAX(sequence)
+            \\      FROM tax_profile_identity_anchors
+            \\      WHERE profile_id = anchor.profile_id
+            \\  )
+            \\  AND (? IS NULL OR anchor.profile_id <> ?)
+            \\ORDER BY anchor.profile_id
+            \\LIMIT 1;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, tin.asDigits());
+        try statement.bindOptionalText(2, exclude_profile_id);
+        try statement.bindOptionalText(3, exclude_profile_id);
+        if (try statement.step() == .done) return null;
+
+        const profile_id = try dupColumn(allocator, statement.raw, 0);
+        errdefer allocator.free(profile_id);
+        const status_text = columnText(statement.raw, 1) orelse
+            return Error.SqliteFailure;
+        const status = std.meta.stringToEnum(ProfileStatus, status_text) orelse
+            return Error.InvalidValue;
+        const display_name = try dupOptionalColumn(allocator, statement.raw, 2);
+        return .{
+            .profile_id = profile_id,
+            .status = status,
+            .display_name = display_name,
+        };
+    }
+
     pub fn getIdentityAnchorAtSequence(
         self: *Store,
         allocator: std.mem.Allocator,
@@ -1708,6 +1794,14 @@ pub const Store = struct {
             current.legal_person_class == value.new_legal_person_class)
         {
             return Error.NoIdentityCorrection;
+        }
+        // A correction may not move this taxpayer onto a TIN another taxpayer
+        // already holds; that would merge two identities by side effect.
+        if (!same_tin and try self.canonicalTinIsTaken(
+            new_tin.asDigits(),
+            value.profile_id,
+        )) {
+            return Error.DuplicateCanonicalTin;
         }
         const next_sequence = current.sequence + 1;
 
@@ -4578,6 +4672,35 @@ pub const Store = struct {
         {
             return Error.LegalPersonClassChanged;
         }
+    }
+
+    /// Allocation-free form of `findProfileWithCanonicalTin` for use inside a
+    /// write transaction, where the caller only needs to know whether the TIN
+    /// is spoken for and must not risk an allocator failure mid-transaction.
+    fn canonicalTinIsTaken(
+        self: *Store,
+        canonical_tin: []const u8,
+        exclude_profile_id: ?[]const u8,
+    ) !bool {
+        const tin = profile_field.Tin.parse(canonical_tin) catch
+            return Error.InvalidValue;
+        var statement = try self.prepare(
+            \\SELECT 1
+            \\FROM tax_profile_identity_anchors AS anchor
+            \\WHERE anchor.canonical_tin = ?
+            \\  AND anchor.sequence = (
+            \\      SELECT MAX(sequence)
+            \\      FROM tax_profile_identity_anchors
+            \\      WHERE profile_id = anchor.profile_id
+            \\  )
+            \\  AND (? IS NULL OR anchor.profile_id <> ?)
+            \\LIMIT 1;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, tin.asDigits());
+        try statement.bindOptionalText(2, exclude_profile_id);
+        try statement.bindOptionalText(3, exclude_profile_id);
+        return try statement.step() == .row;
     }
 
     fn currentAnchorSnapshot(
@@ -9251,6 +9374,138 @@ test "civil status revisions resolve future single to married transition" {
     );
 }
 
+test "one canonical TIN cannot be held by two taxpayers" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    try store.createProfileWithRevision(
+        .{ .id = "tax-profile-first" },
+        testRevision("tax-profile-first", 0, "First Taxpayer", "2026-01-01"),
+        .{},
+    );
+    try std.testing.expectError(
+        Error.DuplicateCanonicalTin,
+        store.createProfileWithRevision(
+            .{ .id = "tax-profile-second" },
+            testRevision("tax-profile-second", 0, "Second", "2026-01-01"),
+            .{},
+        ),
+    );
+
+    // The refused profile left nothing behind.
+    var profiles = try store.listProfiles(allocator, true);
+    defer profiles.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), profiles.items.len);
+
+    // Archiving does not release the TIN: it still identifies that taxpayer.
+    try store.setProfileStatus("tax-profile-first", .archived);
+    try std.testing.expectError(
+        Error.DuplicateCanonicalTin,
+        store.createProfileWithRevision(
+            .{ .id = "tax-profile-third" },
+            testRevision("tax-profile-third", 0, "Third", "2026-01-01"),
+            .{},
+        ),
+    );
+
+    var owner = (try store.findProfileWithCanonicalTin(
+        allocator,
+        "123-456-789-000",
+        null,
+    )).?;
+    defer owner.deinit(allocator);
+    try std.testing.expectEqualStrings("tax-profile-first", owner.profile_id);
+    try std.testing.expectEqual(ProfileStatus.archived, owner.status);
+    try std.testing.expectEqualStrings("First Taxpayer", owner.display_name.?);
+
+    // Excluding the holder is how a correction asks "is it free for me?".
+    try std.testing.expect((try store.findProfileWithCanonicalTin(
+        allocator,
+        "123-456-789-000",
+        "tax-profile-first",
+    )) == null);
+}
+
+test "a correction cannot move a taxpayer onto an occupied TIN" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    try store.createProfileWithRevision(
+        .{ .id = "tax-profile-holder" },
+        testRevision("tax-profile-holder", 0, "Holder", "2026-01-01"),
+        .{},
+    );
+    try store.createProfileWithRevision(
+        .{ .id = "tax-profile-mover" },
+        testRevisionWithTin(
+            "tax-profile-mover",
+            0,
+            "Mover",
+            "2026-01-01",
+            "987654321000",
+        ),
+        .{},
+    );
+
+    // Correcting onto the holder's TIN would merge two identities by side
+    // effect, so it is refused even though it is an audited path.
+    try std.testing.expectError(
+        Error.DuplicateCanonicalTin,
+        store.recordIdentityCorrection(.{
+            .id = "identity-correction-collide",
+            .profile_id = "tax-profile-mover",
+            .expected_anchor_sequence = 1,
+            .new_canonical_tin = "123-456-789-000",
+            .new_legal_person_class = .natural_person,
+            .reason = "clerical correction confirmed by source record",
+            .actor_reference = "operator:test-reviewer",
+            .recorded_at_unix_seconds = 1_785_369_600,
+            .provenance = "synthetic reviewed identity source",
+        }),
+    );
+
+    // The mover keeps its own identity, unchanged.
+    var anchor = (try store.getIdentityAnchor(
+        allocator,
+        "tax-profile-mover",
+    )).?;
+    defer anchor.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 1), anchor.sequence);
+    try std.testing.expectEqualStrings("987654321000", anchor.canonical_tin);
+
+    // A correction onto a free TIN still succeeds, and moves the ownership.
+    try std.testing.expectEqual(
+        @as(u32, 2),
+        try store.recordIdentityCorrection(.{
+            .id = "identity-correction-free",
+            .profile_id = "tax-profile-mover",
+            .expected_anchor_sequence = 1,
+            .new_canonical_tin = "555-666-777-000",
+            .new_legal_person_class = .natural_person,
+            .reason = "clerical correction confirmed by source record",
+            .actor_reference = "operator:test-reviewer",
+            .recorded_at_unix_seconds = 1_785_369_600,
+            .provenance = "synthetic reviewed identity source",
+        }),
+    );
+    var moved = (try store.findProfileWithCanonicalTin(
+        allocator,
+        "555666777000",
+        null,
+    )).?;
+    defer moved.deinit(allocator);
+    try std.testing.expectEqualStrings("tax-profile-mover", moved.profile_id);
+
+    // The TIN it vacated is free again for the taxpayer it truly belongs to.
+    try std.testing.expect((try store.findProfileWithCanonicalTin(
+        allocator,
+        "987654321000",
+        null,
+    )) == null);
+}
+
 test "identity correction is audited and failed event rolls back anchor" {
     const allocator = std.testing.allocator;
     var store = try Store.openMemory(allocator);
@@ -10028,7 +10283,13 @@ test "draft role bindings are named and snapshots survive profile revision chang
     }};
     try store.createProfileWithRevision(
         .{ .id = employee_id },
-        testRevision(employee_id, 0, "Juan Dela Cruz", "2026-01-01"),
+        testRevisionWithTin(
+            employee_id,
+            0,
+            "Juan Dela Cruz",
+            "2026-01-01",
+            "987654321000",
+        ),
         .{
             .business_activities = &employee_activities,
             .registration_facts = &employee_facts,
@@ -10196,7 +10457,13 @@ test "draft role bindings are named and snapshots survive profile revision chang
     );
 
     try store.appendRevision(
-        testRevision(employee_id, 1, "Juan Dela Cruz Updated", "2027-01-01"),
+        testRevisionWithTin(
+            employee_id,
+            1,
+            "Juan Dela Cruz Updated",
+            "2027-01-01",
+            "987654321000",
+        ),
         .{},
     );
     var after_revision = (try store.getDraft(allocator, draft_id)).?;
@@ -12793,6 +13060,24 @@ fn testRevision(
     display_name: []const u8,
     effective_from: []const u8,
 ) RevisionWrite {
+    return testRevisionWithTin(
+        profile_id,
+        expected_current_sequence,
+        display_name,
+        effective_from,
+        "123456789000",
+    );
+}
+
+/// A fixture for stores that hold more than one taxpayer: each needs its own
+/// canonical TIN, because one TIN identifies exactly one taxpayer.
+fn testRevisionWithTin(
+    profile_id: []const u8,
+    expected_current_sequence: u32,
+    display_name: []const u8,
+    effective_from: []const u8,
+    tin: []const u8,
+) RevisionWrite {
     return .{
         .id = switch (expected_current_sequence) {
             0 => "revision-1",
@@ -12806,7 +13091,7 @@ fn testRevision(
         .effective = testPeriod(effective_from, null),
         .source = .{ .imported = "test fixture" },
         .identity = .{
-            .tin = "123456789000",
+            .tin = tin,
             .rdo_code = "040",
         },
         .contact = .{

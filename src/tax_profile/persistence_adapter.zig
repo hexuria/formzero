@@ -730,13 +730,21 @@ test "every legal entity subject kind round trips exactly" {
             "revision-legal-{d}",
             .{index},
         );
-        const base = try testBase(
+        var base = try testBase(
             profile_text,
             revision_text,
             .{ .migrated = try field.SourceReference.parse(
                 "legacy-profile-v1",
             ) },
         );
+        // Distinct taxpayers need distinct TINs: one canonical TIN identifies
+        // exactly one taxpayer, and the store now enforces it.
+        var tin_buffer: [16]u8 = undefined;
+        base.identity.tin = try field.Tin.parse(try std.fmt.bufPrint(
+            &tin_buffer,
+            "123-456-78{d}-000",
+            .{index},
+        ));
         const revision = try editor.begin(base).legalEntity(.{
             .registered_name = try field.RegisteredName.parse(
                 "EXAMPLE LEGAL ENTITY",
