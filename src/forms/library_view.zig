@@ -501,4 +501,3 @@ pub fn appendLibraryFilterLabelPart(
     if (label.items.len != 0) try label.appendSlice(allocator, " · ");
     try label.appendSlice(allocator, part);
 }
-
