@@ -158,9 +158,13 @@ Linux, Windows, and mobile are not supported targets for this app today.
 
 ### P0 — filing-safe calendar scope
 
-- Persist the taxpayer's per-year Forms Set.
-- Export zero events for an explicitly empty Forms Set.
+- **Done.** Persist the taxpayer's per-year Forms Set.
+- **Done.** Export zero events for an explicitly empty Forms Set. The taxpayer
+  calendar filters each deadline against its own taxable year, and the ICS
+  serializer independently enforces the profile's registered form scope.
 - Resolve fiscal-year, eFPS group, region, taxpayer scope, and effective dates.
+  Region, RDO, and taxpayer-type scopes resolve today; fiscal years and eFPS
+  groups do not.
 - Add official-source provenance and regression cases for every rule change.
 
 Exit gate: exported deadlines are demonstrably profile-specific and
@@ -168,7 +172,8 @@ source-backed.
 
 ### P1 — continuous quality
 
-- Add CI for generation drift, tests, strict checks, and the normal build.
+- **Done.** Add CI for generation drift, tests, strict checks, and the normal
+  build. See `.github/workflows/ci.yml`.
 - Add a committed automation smoke flow for desktop and compact widths.
 - Add real widget/full-loop tests for routing, disabled safety actions, theme,
   selection, and responsive layout.
@@ -189,11 +194,20 @@ behavior, and an explicit user-visible state model.
 
 ## Current verified baseline
 
-On 2026-07-29:
+On 2026-08-03, on macOS arm64 and on the `macos-latest` CI runner:
 
-- 72 of 72 tests passed;
+- the test graph reported 909 passed and 3 skipped across 13 build steps;
 - all 27 markup files and `app.zon` passed strict checking;
+- `npm run generate` reported no drift and the catalog check verified 51 codes;
 - the ReleaseFast binary built at `zig-out/bin/ebirforms-zero`.
+
+The 912 figure sums three overlapping roots — the application artifact plus the
+attached store and 1701Q persistence roots — so it is a graph total, not a
+count of unique tests. The three skips are screenshot generators that run only
+when their environment variable is set.
+
+This baseline is now reproduced by CI on every push and pull request rather
+than asserted by hand.
 
 These are development gates, not filing certification or production release
 approval.
