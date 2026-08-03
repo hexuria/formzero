@@ -45,6 +45,7 @@ pub const Error = error{
     UnsavedProfileChanges,
     NoFactsEffectiveForYear,
     DuplicateTaxpayerIdentifier,
+    NoProfileChanges,
     BranchTinRootChanged,
     BranchCodeRequired,
     BranchLegalPersonChanged,
@@ -385,6 +386,10 @@ pub const State = struct {
     /// Persisted registered tax type for header display, kept separate from
     /// the editable buffer so unsaved typing never reads as recorded fact.
     selected_tax_type: FixedText(80) = .{},
+    /// How many tax-type registrations the loaded revision carries. More than
+    /// one is a real state the single-value editor cannot show, and reporting
+    /// it as "not recorded" would deny a fact the taxpayer actually has.
+    selected_tax_type_count: usize = 0,
     change_intent: ChangeIntent = .record_change,
     /// Set while creating another registration of the taxpayer already
     /// selected. The nine-digit root and the legal person are fixed by that
@@ -762,6 +767,9 @@ pub const State = struct {
     /// must not assert a classification that was never recorded.
     pub fn selectedTaxTypeLabel(self: *const State) []const u8 {
         if (!self.has_selection) return "Tax type not recorded";
+        // Several registered tax types is a truthful state this header has no
+        // room for; saying "not recorded" would deny facts that exist.
+        if (self.selected_tax_type_count > 1) return "Multiple registered tax types";
         const value = self.selected_tax_type.text();
         return if (value.len == 0) "Tax type not recorded" else value;
     }
@@ -1046,6 +1054,13 @@ pub const State = struct {
             return true;
         }
         self.saveFallible() catch |err| {
+            // Nothing to record is a successful outcome, not a failure: the
+            // taxpayer's details already say what the user wants them to say.
+            if (err == error.NoProfileChanges) {
+                self.has_pending_error_detail = false;
+                self.setNotice(.neutral, "No changes to save.");
+                return true;
+            }
             self.setError(err);
             return false;
         };
@@ -1222,6 +1237,24 @@ pub const State = struct {
             .withBusinessActivities(activities[0..activity_count])
             .withRegistrationFacts(facts[0..fact_count])
             .build();
+
+        // The authority on "did anything change": the editor's text can differ
+        // from what was loaded while parsing to the very same facts, and a
+        // record that says a phone number changed when only its punctuation
+        // did is a lie in the history.
+        if (!creating) {
+            var current = try profile_persistence.loadCurrentRevision(
+                store,
+                allocator,
+                profile_id,
+            );
+            if (current) |*owned| {
+                defer owned.deinit(allocator);
+                if (revision.contentEquals(&owned.revision)) {
+                    return error.NoProfileChanges;
+                }
+            }
+        }
 
         if (creating) {
             try profile_persistence.createProfileWithRevision(
@@ -2435,6 +2468,10 @@ pub const State = struct {
         clearEditorBuffer(&self.tax_type);
         clearEditorBuffer(&self.special_rate_basis);
         self.selected_tax_type.clear();
+        self.selected_tax_type_count = registrationFactKindCount(
+            revision,
+            .tax_type,
+        );
         self.government_withholding_agent = .unset;
         for (revision.registration_facts) |fact| {
             switch (fact.value) {
@@ -2593,6 +2630,7 @@ pub const State = struct {
         self.branch_source_name.clear();
         self.change_intent = .record_change;
         self.selected_tax_type.clear();
+        self.selected_tax_type_count = 0;
         self.resetFormFilters();
         self.input_was_truncated = false;
     }
@@ -3638,6 +3676,107 @@ test "saving unchanged taxpayer details records no new revision" {
     try std.testing.expect(state.save());
     try std.testing.expectEqual(@as(u32, 2), state.selectedRevisionSequence().?);
     try std.testing.expect(!state.factsDirty());
+}
+
+test "the header states several registered tax types rather than none" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    try std.testing.expectEqualStrings(
+        "Tax type not recorded",
+        state.selectedTaxTypeLabel(),
+    );
+
+    state.tax_type.set("Percentage Tax");
+    try std.testing.expect(state.save());
+    try std.testing.expectEqualStrings(
+        "Percentage Tax",
+        state.selectedTaxTypeLabel(),
+    );
+
+    // A taxpayer registered for two tax types has facts the single-value
+    // editor cannot show; the header must not report that as having none.
+    const profile_id = state.selectedProfileDomainId().?;
+    const observed = state.selectedRevisionSequence().?;
+    const generated = try store.generateOpaqueId();
+    const facts = [_]model.RegistrationFact{
+        .{
+            .id = try model.RegistrationFactId.parse("tax-type-percentage"),
+            .effective = try model.EffectivePeriod.init(
+                try model.Date.parseIso("2026-01-01"),
+                try model.Date.parseIso("2026-06-30"),
+            ),
+            .value = .{ .tax_type = try fields.TaxType.parse("Percentage Tax") },
+        },
+        .{
+            .id = try model.RegistrationFactId.parse("tax-type-vat"),
+            .effective = try model.EffectivePeriod.init(
+                try model.Date.parseIso("2026-07-01"),
+                null,
+            ),
+            .value = .{ .tax_type = try fields.TaxType.parse("Value Added Tax") },
+        },
+    };
+    const revision: model.ProfileRevision = .{
+        .profile_id = profile_id,
+        .id = try model.RevisionId.parse(&generated),
+        .sequence = observed + 1,
+        .effective = try model.EffectivePeriod.init(
+            try model.Date.parseIso("2026-01-01"),
+            null,
+        ),
+        .source = .manual_entry,
+        .identity = .{
+            .tin = try fields.Tin.parse("123-456-789-000"),
+            .rdo_code = try fields.RdoCode.parse("040"),
+        },
+        .contact = .{
+            .address = try fields.RegisteredAddress.parse("Quezon City"),
+        },
+        .subject = .{ .individual = .{
+            .name = try fields.TaxpayerName.parse("Workspace Taxpayer"),
+        } },
+        .registration_facts = &facts,
+    };
+    try profile_persistence.appendRevision(
+        &store,
+        allocator,
+        &revision,
+        observed,
+    );
+    try state.attach(allocator, &store, "2026-01-01", 2026);
+    try std.testing.expectEqualStrings(
+        "Multiple registered tax types",
+        state.selectedTaxTypeLabel(),
+    );
+}
+
+test "reformatting a value is not a change worth recording" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    state.phone.set("+639171234567");
+    try std.testing.expect(state.save());
+    try std.testing.expectEqual(@as(u32, 2), state.selectedRevisionSequence().?);
+
+    // The same TIN written the way it is normally printed parses to the same
+    // canonical value, so appending would record a change nobody made.
+    state.tin.set("123456789000");
+    try std.testing.expect(state.factsDirty());
+    try std.testing.expect(state.save());
+    try std.testing.expectEqualStrings("No changes to save.", state.noticeText());
+    try std.testing.expectEqual(@as(u32, 2), state.selectedRevisionSequence().?);
+
+    // A genuinely different value still appends.
+    state.phone.set("+639179999999");
+    try std.testing.expect(state.save());
+    try std.testing.expectEqual(@as(u32, 3), state.selectedRevisionSequence().?);
 }
 
 test "unsaved taxpayer details block a profile switch instead of vanishing" {
