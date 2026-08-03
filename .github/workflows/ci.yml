@@ -1,0 +1,151 @@
+name: CI
+
+# Runs the quality gate documented in README.md and
+# docs/NATIVE_SDK_GUIDE_AND_IMPROVEMENT_PLAN.md on every change.
+#
+# The runner is macOS because that is the project's supported development and
+# build host; README.md states Linux, Windows, and mobile are not supported
+# targets today. scripts/setup-dev-env.sh already provisions Linux, so a Linux
+# job can be added once that path is exercised by the container work.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A superseded run proves nothing about the tip of a branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality-gate:
+    name: Quality gate (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          # Whitespace and conflict-marker checking compares against the merge
+          # base, which is unreachable in a shallow clone.
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22.15'
+          cache: npm
+
+      - name: Restore pinned Zig toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/zig
+          key: zig-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.zig.zon') }}
+
+      - name: Restore Zig package and build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/zig
+            .zig-cache
+          key: zig-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.zig.zon', 'build.zig') }}
+          restore-keys: |
+            zig-cache-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Provision toolchain
+        run: scripts/setup-dev-env.sh
+
+      - name: Report toolchain
+        run: |
+          zig version
+          node --version
+          npx native --version || true
+
+      # Gate 1 — the runtime entrypoint must match the editable fragments.
+      # src/app.native is generated and committed; a drift here means someone
+      # hand-edited generated output or forgot to regenerate.
+      - name: Generate and assert no drift
+        run: |
+          npm run generate
+          if [ -n "$(git status --porcelain)" ]; then
+            echo '::error::`npm run generate` produced changes. Commit the regenerated output.'
+            git status --short
+            git --no-pager diff
+            exit 1
+          fi
+          echo 'No generation drift.'
+
+      # Gate 2 — the tax catalog is authored in strict TypeScript and compiled
+      # to Zig. Typecheck it and prove the committed Zig matches.
+      - name: Check tax catalog
+        run: npm run check:tax-catalog
+
+      # Gate 3 — no whitespace damage or conflict markers in the change itself.
+      - name: Check diff hygiene
+        run: |
+          if [ '${{ github.event_name }}' = 'pull_request' ]; then
+            base='${{ github.event.pull_request.base.sha }}'
+          else
+            base="$(git rev-parse HEAD^ 2>/dev/null || git rev-parse HEAD)"
+          fi
+          echo "Comparing against $base"
+          git diff --check "$base" HEAD
+
+      # Gate 4 — model, calendar, storage, export, and component behaviour,
+      # including the SQLite-linked test roots registered in build.zig.
+      - name: Run headless tests
+        run: npx native test --yes -Dplatform=null
+
+      # Gate 5 — markup and manifest must match the model contract.
+      - name: Strict check
+        run: npx native check . --strict
+
+      # Gate 6 — the ReleaseFast application must compile. Zig's lazy analysis
+      # lets test and build each miss code reachable only from the other, so
+      # both gates are required.
+      - name: Build
+        run: npx native build . --yes
+
+  setup-script:
+    name: Setup script (${{ matrix.os }})
+    # Proves scripts/setup-dev-env.sh provisions a clean host on both the
+    # supported build host and the Linux images used by development
+    # containers, before any contributor or agent depends on it.
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22.15'
+
+      - name: Provision from a cold cache
+        run: scripts/setup-dev-env.sh
+
+      - name: Assert the pinned compiler is on PATH
+        run: |
+          zig version
+          test "$(zig version)" = '0.16.0'
+
+      - name: Assert a repeat run is idempotent and offline-clean
+        run: |
+          scripts/setup-dev-env.sh --skip-npm | tee second-run.log
+          grep -q 'already installed' second-run.log
+          if grep -q 'downloading' second-run.log; then
+            echo '::error::Re-running the setup script downloaded Zig again.'
+            exit 1
+          fi

@@ -1,5 +1,7 @@
 # eBIRForms Native
 
+[![CI](https://github.com/hexuria/formzero/actions/workflows/ci.yml/badge.svg)](https://github.com/hexuria/formzero/actions/workflows/ci.yml)
+
 Cross-platform reconstruction of eBIRForms, built with Native SDK 0.6.1 and
 Zig 0.16.0. The app includes responsive desktop UI, ten BIR form layouts, a
 global form/deadline dashboard, and a functional tax-calendar engine.
@@ -37,6 +39,17 @@ because source-app captures may contain private taxpayer data.
 Requirements: Node.js 22.15+ and Zig 0.16.0. macOS is the original development
 host. Windows ARM64 uses a pinned host-tool workaround documented in the
 [Windows development guide](docs/WINDOWS_DEVELOPMENT.md).
+
+On macOS or Linux, `scripts/setup-dev-env.sh` provisions the pinned Zig
+compiler (verified against its published SHA-256), checks the Node runtime, and
+installs the locked npm dependencies. It is idempotent, and it is the same
+script CI and the development container run:
+
+```sh
+scripts/setup-dev-env.sh
+```
+
+Otherwise, install the toolchain yourself and start from `npm ci`:
 
 ```sh
 npm ci

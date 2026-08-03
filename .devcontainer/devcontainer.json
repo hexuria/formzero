@@ -1,0 +1,36 @@
+{
+  "name": "eBIRForms Native",
+
+  // Debian-based Node 22 image. README.md requires Node 22.15+, and the
+  // devcontainers image tracks the latest 22.x release.
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+
+  "features": {
+    // Git is used by the quality gate itself: `npm run generate` drift is
+    // asserted with `git status`, and diff hygiene with `git diff --check`.
+    "ghcr.io/devcontainers/features/git:1": {}
+  },
+
+  // xz-utils unpacks the Zig archive; the setup script fails with a clear
+  // message if it is missing, so install it before provisioning.
+  "onCreateCommand": "sudo apt-get update && sudo apt-get install -y --no-install-recommends xz-utils",
+
+  // Single shared provisioning path with CI. --update-shell-profile is safe
+  // here because the container owns its own home directory; it is not passed
+  // on a contributor's own machine.
+  "postCreateCommand": "scripts/setup-dev-env.sh --update-shell-profile",
+
+  "remoteEnv": {
+    "PATH": "${containerEnv:HOME}/.local/bin:${containerEnv:PATH}"
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": ["ziglang.vscode-zig"],
+      "settings": {
+        "files.insertFinalNewline": true,
+        "files.trimTrailingWhitespace": true
+      }
+    }
+  }
+}
