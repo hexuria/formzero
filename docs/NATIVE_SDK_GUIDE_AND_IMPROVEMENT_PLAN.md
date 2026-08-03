@@ -8,7 +8,7 @@ This is the operational guide for contributors. The
 ## Non-negotiable boundaries
 
 - `src/app.native` is generated. Edit fragments and run
-  `rtk npm run generate`.
+  `npm run generate`.
 - Filing, payment, authentication, profile saving, import, and production print
   are not implemented. Keep those actions disabled until their domain and
   safety gates exist.
@@ -62,11 +62,11 @@ the product's own build targets remain macOS and Windows.
 Run after every code or markup change:
 
 ```sh
-rtk npm run generate
-rtk git diff --check
-rtk npx native test --yes -Dplatform=null
-rtk npx native check . --strict
-rtk npx native build . --yes
+npm run generate
+git diff --check main...HEAD
+npx native test --yes -Dplatform=null
+npx native check . --strict
+npx native build . --yes
 ```
 
 What each gate proves:
@@ -74,7 +74,7 @@ What each gate proves:
 | Gate | Proves |
 | --- | --- |
 | Generate | Runtime entrypoint matches editable fragments |
-| Diff check | No whitespace or conflict-marker damage |
+| Diff check | No whitespace or conflict-marker damage in the change itself |
 | Headless tests | Model, calendar, storage, export, and component behavior |
 | Strict check | Markup and manifest match the model contract |
 | Build | ReleaseFast application compiles |
@@ -82,26 +82,30 @@ What each gate proves:
 Test and build are both required. Zig's lazy analysis can allow either command
 alone to miss code used only by the other.
 
+`git diff --check` takes a range on purpose. With no arguments it compares the
+working tree against the index, so committed whitespace damage passes locally
+and then fails in CI, which compares against the merge base.
+
 ## Live UI verification
 
 Build with automation enabled:
 
 ```sh
-rtk npx native build . --yes -Dautomation=true
-rtk proxy ./zig-out/bin/ebirforms-zero
+npx native build . --yes -Dautomation=true
+./zig-out/bin/ebirforms-zero
 ```
 
 From another terminal in the same project directory:
 
 ```sh
-rtk npx native automate wait
-rtk npx native automate resize 1225 768
-rtk npx native automate assert \
+npx native automate wait
+npx native automate resize 1225 768
+npx native automate assert \
   'ready=true' \
   'gpu_nonblank=true' \
   'dispatch_errors=0' \
   'dropped_trace_records=0'
-rtk npx native automate screenshot main-canvas
+npx native automate screenshot main-canvas
 ```
 
 Resize to a known width before checking responsive behavior. Prefer semantic
@@ -134,9 +138,9 @@ external navigation, and add negative permission tests.
 Development package:
 
 ```sh
-rtk npx native doctor --manifest app.zon --strict
-rtk npx native package --target macos --signing adhoc
-rtk codesign --verify --deep --strict \
+npx native doctor --manifest app.zon --strict
+npx native package --target macos --signing adhoc
+codesign --verify --deep --strict \
   zig-out/package/ebirforms-zero.app
 ```
 

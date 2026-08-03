@@ -104,7 +104,7 @@ Before merging:
 ```sh
 npm run generate
 npm run check:tax-catalog
-git diff --check
+git diff --check main...HEAD
 npx native test --yes -Dplatform=null
 npx native check . --strict
 npx native build . --yes
