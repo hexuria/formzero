@@ -1,7 +1,8 @@
 # Taxpayer Setup UX Specification
 
 Date: 2026-08-04
-Status: decision-ready design; no implementation
+Status: **implemented except COR ingestion and filing-level exceptions** — see
+§21 for exactly what landed and what did not
 Prompt: `docs/tax-profile/CLAUDE_FABLE_5_TAXPAYER_SETUP_UX_PROMPT_2026-08-04.md`
 Repository baseline: branch `gol/taxpayer-setup-ux-153451` at `2ff21cb`
 
@@ -1281,3 +1282,58 @@ Forms → branches as isolated sibling profiles.* Codex should turn §19's
 phases into an execution plan, starting with Phase A, treating §20's
 defaults as approved, the A-questions as the only open inputs, and the 14
 walkthroughs as the acceptance suite.
+
+---
+
+## 21. Implementation status (2026-08-04)
+
+Phases A, B, C, D, and F of §19 are implemented on branch
+`gol/taxpayer-setup-ux-153451`. Phase E (COR ingestion) is not, and is not
+faked. The suite is green at 984 passing / 4 skipped, with strict markup and
+model-contract checks, catalog drift check, ReleaseFast build, and the
+generated `app.native` at 260,119 bytes against its 262,144-byte limit.
+
+### Landed
+
+| Area | Commit | Notes |
+|---|---|---|
+| Year workspace (§8, §9) | `f02608b` | Combobox, S1–S12, draft seeding, conflict recovery, `All configured years`. `beginManageFormsForYear` deleted. |
+| Facts over time (§10) | `3b6bdbc` | Diff-before-append, facts-for-year summary, record-change vs fix-a-mistake, Advanced disclosure, unsaved-facts guard, retroactive guard. |
+| IA + COR placement (§5, §11 partial) | `f02608b`, `3b6bdbc` | Three sections; COR tab removed; COR card states honestly that evidence storage does not exist. Hardcoded `Non-VAT` replaced by the persisted tax type. |
+| Branches (§12) | `28d8a71` | Duplicate-TIN refusal, branch flow with locked root and legal person, reviewed branch-specific facts, TIN-root sidebar grouping. |
+| Missing facts (§13) | `9caae77` | Missing details listed once with the active forms that need them. No override layer, per §13's verdict. |
+| Render-driven fixes | `ec86666` | Entity bug, duplicated actions, buried save, truncated year rows, phone width, branch kind lock. |
+
+### Deliberately not built
+
+- **Phase E, COR ingestion and review (§11).** Requires gap G1 (document,
+  extraction-run, candidate, and decision tables plus encrypted storage) and
+  G2 (the atomic apply transaction). The architecture's fail-closed key-custody
+  boundary must be satisfied before any claim of production-safe document
+  storage. The card therefore says no COR is on file and that attaching
+  evidence is not available yet, and its control is disabled. Scenarios 8 and 9
+  are unmet by design.
+- **Filing-scoped exceptions (§13, L4).** Provenance chips and
+  `Use profile value` need changes inside the exact 2551Q and 1701Q
+  transaction-value contracts. Scenario 12 is unmet. The decision *not* to add
+  a year-scoped per-form override layer is implemented by omission and holds.
+- **Gap G3 durable branch grouping.** Sidebar grouping is presentation-only, as
+  §12 permits for phase one. The duplicate-TIN check covers the loaded profile
+  set; a `branch_of` relationship kind and a uniqueness constraint remain
+  schema work.
+- **Gap G5 mid-year Forms Set intervals.** Unchanged, and no copy promises it.
+
+### Scenario coverage
+
+Automated: 1, 2, 3, 4, 5, 6, 7, 10, 11, 13. Scenario 14 is verified by a
+proof-shot test that renders six workspace states at 1400/768/408 px
+(`SETUP_WORKSPACE_SHOTS=1 npx native test --yes`); the images were reviewed and
+the defects they exposed are fixed in `ec86666`. Scenarios 8, 9, and 12 depend
+on the unbuilt work above.
+
+### Assumptions applied
+
+A1 minimum year 2000, A2 recent window 5, A3 no second confirm on discard,
+A4 no cloud provider, A6 presentation grouping, A7 correction exposed beside
+the change action rather than only under history. A5 (COR retention) is moot
+until Phase E.
