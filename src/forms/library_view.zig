@@ -501,3 +501,93 @@ pub fn appendLibraryFilterLabelPart(
     if (label.items.len != 0) try label.appendSlice(allocator, " · ");
     try label.appendSlice(allocator, part);
 }
+
+/// Filter and paging state for the tax form library.
+///
+/// This lived as twelve loose fields on the application model. It is one
+/// value here because the fields are only ever meaningful together: clearing a
+/// cadence clears its dependent month, quarter, or on-demand selection, and
+/// every filter change resets paging.
+///
+/// Markup binds to the model's accessor methods rather than these fields, so
+/// the model keeps its published surface while owning one field instead of
+/// twelve.
+pub const FilterState = struct {
+    filter_picker_visible: bool = false,
+    browse_cadence_mask: u8 = 0b1111,
+    manage_cadence_mask: u8 = 0b1111,
+    month_mask: u16 = 0,
+    quarter_mask: u8 = 0,
+    on_demand_mask: u64 = 0,
+    category_mask: u16 = 0,
+    visible_limit: usize = 12,
+    page_offset: usize = 0,
+    info_index: ?usize = null,
+    period_filter: LibraryPeriodFilter = .all,
+    period_picker_visible: bool = false,
+
+    /// Any filter change returns the list to its first page. A narrowed filter
+    /// can otherwise leave the view scrolled past the end of the new results.
+    pub fn resetPage(self: *FilterState) void {
+        self.visible_limit = 12;
+        self.page_offset = 0;
+    }
+
+    pub fn resetBrowseFilters(self: *FilterState) void {
+        self.browse_cadence_mask = 0b1111;
+        self.month_mask = 0;
+        self.quarter_mask = 0;
+        self.on_demand_mask = 0;
+        self.resetPage();
+    }
+
+    /// `managing` selects the manage-mode mask instead of the browse-mode one.
+    /// The caller supplies it rather than this type reaching for profile state.
+    ///
+    /// Turning a cadence off also clears the selection it scopes, so a hidden
+    /// month or quarter cannot keep filtering results the user can no longer
+    /// see. The last enabled cadence is not clearable: an empty cadence mask
+    /// would show nothing with no visible way back.
+    pub fn toggleCadence(self: *FilterState, bit: u8, managing: bool) void {
+        const mask = if (managing)
+            &self.manage_cadence_mask
+        else
+            &self.browse_cadence_mask;
+        if (mask.* & bit != 0) {
+            if (mask.* == bit) return;
+            mask.* &= ~bit;
+            if (!managing) {
+                switch (bit) {
+                    0b0001 => self.month_mask = 0,
+                    0b0010 => self.quarter_mask = 0,
+                    0b1000 => self.on_demand_mask = 0,
+                    else => {},
+                }
+            }
+        } else {
+            mask.* |= bit;
+        }
+        self.resetPage();
+    }
+};
+
+test "clearing a cadence clears the selection it scopes" {
+    var state: FilterState = .{ .month_mask = 0b101, .page_offset = 4 };
+    state.toggleCadence(0b0001, false);
+    try std.testing.expectEqual(@as(u16, 0), state.month_mask);
+    try std.testing.expectEqual(@as(usize, 0), state.page_offset);
+}
+
+test "the last enabled cadence cannot be cleared" {
+    var state: FilterState = .{ .browse_cadence_mask = 0b0010 };
+    state.toggleCadence(0b0010, false);
+    try std.testing.expectEqual(@as(u8, 0b0010), state.browse_cadence_mask);
+}
+
+test "manage mode uses its own mask and leaves browse selections alone" {
+    var state: FilterState = .{ .month_mask = 0b11 };
+    state.toggleCadence(0b0001, true);
+    try std.testing.expectEqual(@as(u8, 0b1110), state.manage_cadence_mask);
+    try std.testing.expectEqual(@as(u8, 0b1111), state.browse_cadence_mask);
+    try std.testing.expectEqual(@as(u16, 0b11), state.month_mask);
+}
