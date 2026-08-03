@@ -4197,6 +4197,204 @@ pub const Model = struct {
             self.taxProfiles.selectedProfileId() == null;
     }
 
+    pub fn profileCorReviewAvailable(self: *const Model) bool {
+        return !self.taxProfiles.corReviewOpen() and
+            self.taxProfiles.corEvidenceState() != .none;
+    }
+
+    pub fn profileCorReviewOpen(self: *const Model) bool {
+        return self.taxProfiles.corReviewOpen();
+    }
+
+    pub fn profileCorReviewTinValue(self: *const Model) []const u8 {
+        return self.taxProfiles.cor_review_tin.text();
+    }
+
+    pub fn profileCorMismatchVisible(self: *const Model) bool {
+        return self.taxProfiles.corReviewOpen() and
+            self.taxProfiles.corReviewTinMatch() == .mismatched;
+    }
+
+    /// States whose COR this is, in masked form. A refusal has to be specific
+    /// enough to act on without printing an identifier in full.
+    pub fn profileCorMismatchLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        var stated_buffer: [24]u8 = undefined;
+        var current_buffer: [24]u8 = undefined;
+        const stated = profile_fields.Tin.parse(
+            self.taxProfiles.cor_review_tin.text(),
+        ) catch return "That TIN is not a valid taxpayer identification number.";
+        const current = profile_fields.Tin.parse(
+            self.taxProfiles.tin.text(),
+        ) catch return "This COR belongs to a different taxpayer.";
+        return std.fmt.allocPrint(
+            arena,
+            "This COR belongs to TIN {s}, not this taxpayer ({s}).",
+            .{
+                stated.writeMasked(&stated_buffer) catch "***",
+                current.writeMasked(&current_buffer) catch "***",
+            },
+        ) catch "This COR belongs to a different taxpayer.";
+    }
+
+    /// Each reviewed detail names itself and what the taxpayer has on file,
+    /// so the user can see what accepting it would change before they do.
+    fn profileCorCandidateLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+        candidate: profile_ui.CorCandidateField,
+    ) []const u8 {
+        const key = candidate.reusable();
+        const current = self.taxProfiles.reusableValueText(key);
+        const name = profile_ui.reusableFieldLabel(key);
+        if (current.len == 0) {
+            return std.fmt.allocPrint(
+                arena,
+                "{s} - not recorded yet",
+                .{name},
+            ) catch name;
+        }
+        return std.fmt.allocPrint(
+            arena,
+            "{s} - on file: {s}",
+            .{ name, current },
+        ) catch name;
+    }
+
+    pub fn profileCorRdoLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return self.profileCorCandidateLabel(arena, .rdo_code);
+    }
+
+    pub fn profileCorRdoValue(self: *const Model) []const u8 {
+        return self.taxProfiles.corReviewValue(
+            @intFromEnum(profile_ui.CorCandidateField.rdo_code),
+        );
+    }
+
+    pub fn profileCorRdoAccepted(self: *const Model) bool {
+        return self.taxProfiles.corReviewAccepted(
+            @intFromEnum(profile_ui.CorCandidateField.rdo_code),
+        );
+    }
+
+    pub fn profileCorNameLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return self.profileCorCandidateLabel(arena, .taxpayer_name);
+    }
+
+    pub fn profileCorNameValue(self: *const Model) []const u8 {
+        return self.taxProfiles.corReviewValue(
+            @intFromEnum(profile_ui.CorCandidateField.taxpayer_name),
+        );
+    }
+
+    pub fn profileCorNameAccepted(self: *const Model) bool {
+        return self.taxProfiles.corReviewAccepted(
+            @intFromEnum(profile_ui.CorCandidateField.taxpayer_name),
+        );
+    }
+
+    pub fn profileCorAddressLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return self.profileCorCandidateLabel(arena, .registered_address);
+    }
+
+    pub fn profileCorAddressValue(self: *const Model) []const u8 {
+        return self.taxProfiles.corReviewValue(
+            @intFromEnum(profile_ui.CorCandidateField.registered_address),
+        );
+    }
+
+    pub fn profileCorAddressAccepted(self: *const Model) bool {
+        return self.taxProfiles.corReviewAccepted(
+            @intFromEnum(profile_ui.CorCandidateField.registered_address),
+        );
+    }
+
+    pub fn profileCorZipLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return self.profileCorCandidateLabel(arena, .zip_code);
+    }
+
+    pub fn profileCorZipValue(self: *const Model) []const u8 {
+        return self.taxProfiles.corReviewValue(
+            @intFromEnum(profile_ui.CorCandidateField.zip_code),
+        );
+    }
+
+    pub fn profileCorZipAccepted(self: *const Model) bool {
+        return self.taxProfiles.corReviewAccepted(
+            @intFromEnum(profile_ui.CorCandidateField.zip_code),
+        );
+    }
+
+    pub fn profileCorTaxTypeLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return self.profileCorCandidateLabel(arena, .tax_type);
+    }
+
+    pub fn profileCorTaxTypeValue(self: *const Model) []const u8 {
+        return self.taxProfiles.corReviewValue(
+            @intFromEnum(profile_ui.CorCandidateField.tax_type),
+        );
+    }
+
+    pub fn profileCorTaxTypeAccepted(self: *const Model) bool {
+        return self.taxProfiles.corReviewAccepted(
+            @intFromEnum(profile_ui.CorCandidateField.tax_type),
+        );
+    }
+
+    pub fn profileCorApplyFormsSelected(self: *const Model) bool {
+        return self.taxProfiles.corReviewApplyForms();
+    }
+
+    pub fn profileCorApplyDisabled(self: *const Model) bool {
+        return self.taxProfiles.corReviewApplyBlocked();
+    }
+
+    pub fn profileCorApplyLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const details = self.taxProfiles.corReviewAcceptedCount();
+        const forms: usize = if (self.taxProfiles.corReviewApplyForms())
+            self.taxProfiles.stagedFormCount()
+        else
+            0;
+        return std.fmt.allocPrint(
+            arena,
+            "Apply {d} detail changes and {d} forms",
+            .{ details, forms },
+        ) catch "Apply";
+    }
+
+    pub fn profileCorApplyFormsLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const year = self.taxProfiles.workspaceYear() orelse
+            return "Also apply the forms selected for this year";
+        return std.fmt.allocPrint(
+            arena,
+            "Also apply the forms selected for {d}",
+            .{year},
+        ) catch "Also apply the selected forms";
+    }
+
     pub fn profileEmailActive(self: *const Model) bool {
         return self.profileSetupSection == .email;
     }
@@ -5312,6 +5510,21 @@ fn resetProfileFormsPage(model: *Model) void {
     model.libraryFilter.resetPage();
 }
 
+fn toggleCorAccepted(
+    model: *Model,
+    field_key: profile_ui.CorCandidateField,
+) void {
+    model.taxProfiles.toggleCorReviewAccepted(@intFromEnum(field_key));
+}
+
+fn applyCorValue(
+    model: *Model,
+    field_key: profile_ui.CorCandidateField,
+    edit: canvas.TextInputEvent,
+) void {
+    model.taxProfiles.cor_review_values[@intFromEnum(field_key)].apply(edit);
+}
+
 /// Asks the platform for a document and attaches it as COR evidence.
 ///
 /// The dialog is a synchronous platform service reached through the effects
@@ -6005,6 +6218,23 @@ pub const Msg = union(enum) {
     show_profile_tax,
     show_profile_tax_forms,
     profile_cor_upload,
+    profile_cor_begin_review,
+    profile_cor_cancel_review,
+    profile_cor_tin_input: canvas.TextInputEvent,
+    // on-input requires a bare TextInputEvent payload, so each reviewed
+    // detail needs its own tag rather than one carrying an index.
+    profile_cor_rdo_input: canvas.TextInputEvent,
+    profile_cor_name_input: canvas.TextInputEvent,
+    profile_cor_address_input: canvas.TextInputEvent,
+    profile_cor_zip_input: canvas.TextInputEvent,
+    profile_cor_tax_type_input: canvas.TextInputEvent,
+    profile_cor_toggle_rdo,
+    profile_cor_toggle_name,
+    profile_cor_toggle_address,
+    profile_cor_toggle_zip,
+    profile_cor_toggle_tax_type,
+    profile_cor_toggle_apply_forms,
+    profile_cor_apply,
     show_profile_email,
     profile_subject_individual,
     profile_subject_sole_proprietor,
@@ -6659,6 +6889,31 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             ensureYearWorkspaceOpen(model);
         },
         .profile_cor_upload => attachCorDocument(model, fx),
+        .profile_cor_begin_review => _ = model.taxProfiles.beginCorReview(),
+        .profile_cor_cancel_review => model.taxProfiles.cancelCorReview(),
+        .profile_cor_tin_input => |edit| {
+            model.taxProfiles.cor_review_tin.apply(edit);
+        },
+        .profile_cor_rdo_input => |edit| applyCorValue(model, .rdo_code, edit),
+        .profile_cor_name_input => |edit| applyCorValue(model, .taxpayer_name, edit),
+        .profile_cor_address_input => |edit| applyCorValue(model, .registered_address, edit),
+        .profile_cor_zip_input => |edit| applyCorValue(model, .zip_code, edit),
+        .profile_cor_tax_type_input => |edit| applyCorValue(model, .tax_type, edit),
+        .profile_cor_toggle_rdo => toggleCorAccepted(model, .rdo_code),
+        .profile_cor_toggle_name => toggleCorAccepted(model, .taxpayer_name),
+        .profile_cor_toggle_address => toggleCorAccepted(model, .registered_address),
+        .profile_cor_toggle_zip => toggleCorAccepted(model, .zip_code),
+        .profile_cor_toggle_tax_type => toggleCorAccepted(model, .tax_type),
+        .profile_cor_toggle_apply_forms => {
+            model.taxProfiles.toggleCorReviewApplyForms();
+        },
+        .profile_cor_apply => {
+            if (model.taxProfiles.applyCorReview()) {
+                resetProfileFormsPage(model);
+                refreshSelectedProfileFormSet(model);
+                refreshSelectedProfileCalendar(model);
+            }
+        },
         .show_profile_email => model.profileSetupSection = .email,
         .toggle_profile_subject_picker => {
             model.profileSubjectPickerVisible =

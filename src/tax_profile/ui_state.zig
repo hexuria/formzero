@@ -73,6 +73,42 @@ pub const GovernmentWithholdingChoice = enum {
     yes,
 };
 
+/// The taxpayer details a COR states, which the user transcribes and reviews
+/// before any of them become authoritative.
+///
+/// Deliberately a short list: a COR carries registration facts, and filing
+/// amounts, schedules, and payments are not among them no matter what else
+/// the document shows.
+pub const CorCandidateField = enum {
+    rdo_code,
+    taxpayer_name,
+    registered_address,
+    zip_code,
+    tax_type,
+
+    pub fn reusable(self: CorCandidateField) fields.ReusableField {
+        return switch (self) {
+            .rdo_code => .rdo_code,
+            .taxpayer_name => .taxpayer_name,
+            .registered_address => .registered_address,
+            .zip_code => .zip_code,
+            .tax_type => .tax_type,
+        };
+    }
+};
+
+pub const cor_candidate_count = std.meta.tags(CorCandidateField).len;
+
+/// Whether the COR the user is transcribing belongs to this taxpayer.
+pub const CorTinMatch = enum {
+    /// No TIN entered yet, so nothing can be applied.
+    unknown,
+    /// The COR states this taxpayer's canonical TIN.
+    matches,
+    /// The COR belongs to a different taxpayer. Nothing may be applied.
+    mismatched,
+};
+
 /// Why the user is editing taxpayer details. Both append to the same
 /// append-only history; they differ in which period the new record claims and
 /// therefore in what the interface must tell the user about older filings.
@@ -397,6 +433,16 @@ pub const State = struct {
     cor_state: CorEvidenceState = .none,
     cor_file_name: FixedText(160) = .{},
     cor_attached_at: i64 = 0,
+    cor_digest: FixedText(64) = .{},
+    /// Transcription of the COR under review. Nothing here is authoritative:
+    /// it becomes a taxpayer record only through an explicit apply, and only
+    /// for the rows the user accepted.
+    cor_review_open: bool = false,
+    cor_review_tin: canvas.TextBuffer(32) = .{},
+    cor_review_values: [cor_candidate_count]canvas.TextBuffer(255) =
+        [_]canvas.TextBuffer(255){.{}} ** cor_candidate_count,
+    cor_review_accepted: [cor_candidate_count]bool = .{false} ** cor_candidate_count,
+    cor_review_apply_forms: bool = false,
     change_intent: ChangeIntent = .record_change,
     /// Set while creating another registration of the taxpayer already
     /// selected. The nine-digit root and the legal person are fixed by that
@@ -799,7 +845,9 @@ pub const State = struct {
     pub fn refreshCorEvidence(self: *State) void {
         self.cor_state = .none;
         self.cor_file_name.clear();
+        self.cor_digest.clear();
         self.cor_attached_at = 0;
+        self.cor_review_open = false;
         self.refreshCorEvidenceFallible() catch return;
     }
 
@@ -815,6 +863,7 @@ pub const State = struct {
         defer document.deinit(allocator);
 
         try self.cor_file_name.set(document.file_name);
+        try self.cor_digest.set(document.sha256);
         self.cor_attached_at = document.attached_at_unix_seconds;
         self.cor_state = verifyCorFile(document.file_path, document.sha256);
     }
@@ -850,6 +899,147 @@ pub const State = struct {
             .byte_size = measured,
         });
         self.refreshCorEvidence();
+    }
+
+    pub fn corReviewOpen(self: *const State) bool {
+        return self.cor_review_open;
+    }
+
+    /// Opens the review. The user reads the COR and types what it says; there
+    /// is no extraction engine behind this, and none is implied.
+    pub fn beginCorReview(self: *State) bool {
+        if (self.editing_new or !self.has_selection) {
+            self.setError(error.FormsRequireSavedProfile);
+            return false;
+        }
+        if (self.cor_state == .none) return false;
+        self.cor_review_open = true;
+        self.cor_review_tin.clear();
+        for (&self.cor_review_values) |*value| value.clear();
+        self.cor_review_accepted = .{false} ** cor_candidate_count;
+        self.cor_review_apply_forms = false;
+        return true;
+    }
+
+    pub fn cancelCorReview(self: *State) void {
+        self.cor_review_open = false;
+    }
+
+    pub fn corReviewValue(self: *const State, field_index: usize) []const u8 {
+        if (field_index >= cor_candidate_count) return "";
+        return self.cor_review_values[field_index].text();
+    }
+
+    pub fn corReviewAccepted(self: *const State, field_index: usize) bool {
+        if (field_index >= cor_candidate_count) return false;
+        return self.cor_review_accepted[field_index];
+    }
+
+    /// A row can only be accepted once it states something, and accepting a
+    /// value equal to the one on file is allowed but changes nothing.
+    pub fn toggleCorReviewAccepted(self: *State, field_index: usize) void {
+        if (field_index >= cor_candidate_count) return;
+        if (trimmed(self.cor_review_values[field_index].text()).len == 0) {
+            self.cor_review_accepted[field_index] = false;
+            return;
+        }
+        self.cor_review_accepted[field_index] =
+            !self.cor_review_accepted[field_index];
+    }
+
+    pub fn corReviewApplyForms(self: *const State) bool {
+        return self.cor_review_apply_forms;
+    }
+
+    pub fn toggleCorReviewApplyForms(self: *State) void {
+        self.cor_review_apply_forms = !self.cor_review_apply_forms;
+    }
+
+    pub fn corReviewAcceptedCount(self: *const State) usize {
+        var count: usize = 0;
+        for (self.cor_review_accepted, 0..) |accepted, index| {
+            if (accepted and
+                trimmed(self.cor_review_values[index].text()).len != 0) count += 1;
+        }
+        return count;
+    }
+
+    /// Whether the transcribed TIN is this taxpayer's.
+    ///
+    /// A COR naming a different taxpayer must never touch the selected one:
+    /// applying it would merge two identities through a form the user thought
+    /// was about details.
+    pub fn corReviewTinMatch(self: *const State) CorTinMatch {
+        const typed = trimmed(self.cor_review_tin.text());
+        if (typed.len == 0) return .unknown;
+        const stated = fields.Tin.parse(typed) catch return .mismatched;
+        const current = fields.Tin.parse(
+            trimmed(self.tin.text()),
+        ) catch return .mismatched;
+        return if (stated.eql(&current)) .matches else .mismatched;
+    }
+
+    pub fn corReviewApplyBlocked(self: *const State) bool {
+        if (self.corReviewTinMatch() != .matches) return true;
+        return self.corReviewAcceptedCount() == 0 and
+            !self.cor_review_apply_forms;
+    }
+
+    /// Applies exactly what the user accepted.
+    ///
+    /// Accepted details go through the ordinary save path, so identity limits,
+    /// validation, and the no-op check all still apply — which is why
+    /// accepting only forms appends no taxpayer record at all, and why
+    /// accepting a detail the taxpayer already has appends nothing either.
+    pub fn applyCorReview(self: *State) bool {
+        if (self.corReviewApplyBlocked()) return false;
+        const accepted = self.corReviewAcceptedCount();
+        const wants_forms = self.cor_review_apply_forms;
+
+        if (accepted != 0) {
+            for (self.cor_review_accepted, 0..) |is_accepted, index| {
+                if (!is_accepted) continue;
+                const value = trimmed(self.cor_review_values[index].text());
+                if (value.len == 0) continue;
+                self.applyCorCandidate(
+                    std.meta.tags(CorCandidateField)[index],
+                    value,
+                );
+            }
+            self.setSourceKind(.imported);
+            var reference: [160]u8 = undefined;
+            setEditorBuffer(&self.source_reference, std.fmt.bufPrint(
+                &reference,
+                "COR {s} sha256:{s}",
+                .{
+                    self.cor_file_name.text(),
+                    self.cor_digest.text()[0..@min(8, self.cor_digest.len)],
+                },
+            ) catch "COR");
+            if (!self.save()) return false;
+        }
+
+        if (wants_forms and !self.saveYearWorkspace()) return false;
+
+        self.cor_review_open = false;
+        if (accepted == 0) {
+            self.setNotice(.success, "The forms you accepted were saved.");
+        }
+        return true;
+    }
+
+    fn applyCorCandidate(
+        self: *State,
+        field_key: CorCandidateField,
+        value: []const u8,
+    ) void {
+        switch (field_key) {
+            .rdo_code => setEditorBuffer(&self.rdo, value),
+            .taxpayer_name => setEditorBuffer(&self.display_name, value),
+            .registered_address => setEditorBuffer(&self.registered_address, value),
+            .zip_code => setEditorBuffer(&self.zip_code, value),
+            .tax_type => setEditorBuffer(&self.tax_type, value),
+        }
     }
 
     /// The registered tax type as persisted, never as currently typed. A
@@ -4000,6 +4190,142 @@ test "an attached COR is a checked reference, not a copy" {
     try tmp.dir.deleteFile(std.testing.io, "cor.pdf");
     state.refreshCorEvidence();
     try std.testing.expectEqual(State.CorEvidenceState.moved, state.corEvidenceState());
+}
+
+fn attachTestCor(
+    state: *State,
+    tmp: *std.testing.TmpDir,
+) !void {
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "cor.pdf",
+        .data = "%PDF-1.4 registration",
+    });
+    var buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const document = try std.fmt.bufPrint(
+        &buffer,
+        ".zig-cache/tmp/{s}/cor.pdf",
+        .{tmp.sub_path},
+    );
+    try std.testing.expect(state.attachCorDocument(document));
+}
+
+test "accepting only forms from a COR records no taxpayer change" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    publishIo(std.testing.io);
+    defer app_io = null;
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try attachTestCor(&state, &tmp);
+    const sequence_before = state.selectedRevisionSequence().?;
+
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expect(state.chooseDraftEmpty());
+    state.toggleStagedForm(catalogIndexOf("2551Q"));
+
+    try std.testing.expect(state.beginCorReview());
+    state.cor_review_tin.set("123-456-789-000");
+    try std.testing.expectEqual(CorTinMatch.matches, state.corReviewTinMatch());
+
+    // Only the forms are accepted; no detail row is.
+    state.toggleCorReviewApplyForms();
+    try std.testing.expectEqual(@as(usize, 0), state.corReviewAcceptedCount());
+    try std.testing.expect(!state.corReviewApplyBlocked());
+    try std.testing.expect(state.applyCorReview());
+
+    // The forms were saved and the taxpayer's history gained nothing, because
+    // nothing about the taxpayer changed.
+    try std.testing.expectEqual(
+        sequence_before,
+        state.selectedRevisionSequence().?,
+    );
+    try std.testing.expect(state.formAvailable(2026, "2551Q"));
+}
+
+test "accepting details from a COR records one change with its provenance" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    publishIo(std.testing.io);
+    defer app_io = null;
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try attachTestCor(&state, &tmp);
+    const sequence_before = state.selectedRevisionSequence().?;
+
+    try std.testing.expect(state.beginCorReview());
+    state.cor_review_tin.set("123-456-789-000");
+    const address_index = @intFromEnum(CorCandidateField.registered_address);
+    state.cor_review_values[address_index].set("Makati City");
+    state.toggleCorReviewAccepted(address_index);
+    try std.testing.expectEqual(@as(usize, 1), state.corReviewAcceptedCount());
+    try std.testing.expect(state.applyCorReview());
+
+    try std.testing.expectEqual(
+        sequence_before + 1,
+        state.selectedRevisionSequence().?,
+    );
+    try std.testing.expectEqualStrings("Makati City", state.registered_address.text());
+
+    // The record says where the value came from, so the history can be read
+    // back to the document that justified it.
+    var current = (try profile_persistence.loadCurrentRevision(
+        &store,
+        allocator,
+        state.selectedProfileDomainId().?,
+    )).?;
+    defer current.deinit(allocator);
+    try std.testing.expectEqual(
+        std.meta.Tag(model.RevisionSource).imported,
+        std.meta.activeTag(current.revision.source),
+    );
+    try std.testing.expect(std.mem.startsWith(
+        u8,
+        current.revision.source.imported.asSlice(),
+        "COR cor.pdf sha256:",
+    ));
+}
+
+test "a COR for another taxpayer cannot change this one" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    publishIo(std.testing.io);
+    defer app_io = null;
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try attachTestCor(&state, &tmp);
+    const sequence_before = state.selectedRevisionSequence().?;
+
+    try std.testing.expect(state.beginCorReview());
+    state.cor_review_tin.set("987-654-321-000");
+    const address_index = @intFromEnum(CorCandidateField.registered_address);
+    state.cor_review_values[address_index].set("Somewhere Else");
+    state.toggleCorReviewAccepted(address_index);
+
+    // A document naming a different taxpayer has no path to this one, no
+    // matter what has been accepted.
+    try std.testing.expectEqual(CorTinMatch.mismatched, state.corReviewTinMatch());
+    try std.testing.expect(state.corReviewApplyBlocked());
+    try std.testing.expect(!state.applyCorReview());
+    try std.testing.expectEqual(
+        sequence_before,
+        state.selectedRevisionSequence().?,
+    );
+    try std.testing.expectEqualStrings("Quezon City", state.registered_address.text());
 }
 
 test "a COR must be a document, not any file" {

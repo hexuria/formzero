@@ -108,6 +108,12 @@
         <text><span weight="bold">Certificate of Registration</span></text>
         <text wrap="true" foreground="text_muted">{profileCorStatusLabel}</text>
       </column>
+      <if test="{profileCorReviewAvailable}">
+        <button
+          height="44"
+          variant="outline"
+          on-press="profile_cor_begin_review">Review against COR</button>
+      </if>
       <button
         height="44"
         variant="outline"
@@ -115,6 +121,81 @@
         disabled="{profileCorUploadDisabled}"
         on-press="profile_cor_upload">{profileCorActionLabel}</button>
     </row>
+  </card>
+</template>
+
+<template name="profile-setup-cor-review">
+  <card padding="0">
+    <column padding="16" gap="12">
+      <column gap="4">
+        <text><span weight="bold">Review against the COR</span></text>
+        <text wrap="true" foreground="text_muted">Type what the document says. Only the rows you accept are applied.</text>
+      </column>
+
+      <use template="profile-field" label="TIN shown on the COR">
+        <input
+          height="44"
+          text="{profileCorReviewTinValue}"
+          placeholder="000-000-000-000"
+          label="TIN shown on the COR"
+          on-input="profile_cor_tin_input"/>
+      </use>
+
+      <if test="{profileCorMismatchVisible}">
+        <card padding="0">
+          <column padding="12" gap="6">
+            <text><span weight="bold">{profileCorMismatchLabel}</span></text>
+            <text wrap="true" foreground="text_muted">Nothing here can be applied to this taxpayer.</text>
+          </column>
+        </card>
+      </if>
+      <else>
+        <column gap="10">
+          <column gap="6">
+            <text wrap="true" foreground="text_muted">{profileCorRdoLabel}</text>
+            <input height="44" text="{profileCorRdoValue}" placeholder="What the COR says" label="{profileCorRdoLabel}" on-input="profile_cor_rdo_input"/>
+            <checkbox height="44" checked="{profileCorRdoAccepted}" text="Use this value" on-toggle="profile_cor_toggle_rdo"/>
+          </column>
+          <column gap="6">
+            <text wrap="true" foreground="text_muted">{profileCorNameLabel}</text>
+            <input height="44" text="{profileCorNameValue}" placeholder="What the COR says" label="{profileCorNameLabel}" on-input="profile_cor_name_input"/>
+            <checkbox height="44" checked="{profileCorNameAccepted}" text="Use this value" on-toggle="profile_cor_toggle_name"/>
+          </column>
+          <column gap="6">
+            <text wrap="true" foreground="text_muted">{profileCorAddressLabel}</text>
+            <input height="44" text="{profileCorAddressValue}" placeholder="What the COR says" label="{profileCorAddressLabel}" on-input="profile_cor_address_input"/>
+            <checkbox height="44" checked="{profileCorAddressAccepted}" text="Use this value" on-toggle="profile_cor_toggle_address"/>
+          </column>
+          <column gap="6">
+            <text wrap="true" foreground="text_muted">{profileCorZipLabel}</text>
+            <input height="44" text="{profileCorZipValue}" placeholder="What the COR says" label="{profileCorZipLabel}" on-input="profile_cor_zip_input"/>
+            <checkbox height="44" checked="{profileCorZipAccepted}" text="Use this value" on-toggle="profile_cor_toggle_zip"/>
+          </column>
+          <column gap="6">
+            <text wrap="true" foreground="text_muted">{profileCorTaxTypeLabel}</text>
+            <input height="44" text="{profileCorTaxTypeValue}" placeholder="What the COR says" label="{profileCorTaxTypeLabel}" on-input="profile_cor_tax_type_input"/>
+            <checkbox height="44" checked="{profileCorTaxTypeAccepted}" text="Use this value" on-toggle="profile_cor_toggle_tax_type"/>
+          </column>
+          <checkbox
+            height="44"
+            checked="{profileCorApplyFormsSelected}"
+            text="{profileCorApplyFormsLabel}"
+            on-toggle="profile_cor_toggle_apply_forms"/>
+        </column>
+      </else>
+
+      <row gap="8">
+        <button
+          height="44"
+          variant="outline"
+          on-press="profile_cor_cancel_review">Cancel</button>
+        <button
+          height="44"
+          variant="primary"
+          disabled="{profileCorApplyDisabled}"
+          on-press="profile_cor_apply">{profileCorApplyLabel}</button>
+      </row>
+    </column>
   </card>
 </template>
 
@@ -582,6 +663,9 @@
         </if>
         <else>
           <use template="profile-setup-cor-card"/>
+          <if test="{profileCorReviewOpen}">
+            <use template="profile-setup-cor-review"/>
+          </if>
 
           <if test="{profileSetupPendingSwitchVisible}">
             <card padding="0">

@@ -524,7 +524,9 @@ pub fn periodStatusColor(label: []const u8) []const u8 {
     {
         return "warning";
     }
-    return "muted";
+    // A real token name, so markup can bind `foreground` directly instead of
+    // branching over every possible colour to reach the same text element.
+    return "text_muted";
 }
 
 

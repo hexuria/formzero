@@ -350,7 +350,7 @@
             <if test="{status_color == 'info'}"><text wrap="false" size="sm" text-alignment="center" foreground="info">{status}</text></if>
             <if test="{status_color == 'warning'}"><text wrap="false" size="sm" text-alignment="center" foreground="warning">{status}</text></if>
             <if test="{status_color == 'destructive'}"><text wrap="false" size="sm" text-alignment="center" foreground="destructive">{status}</text></if>
-            <if test="{status_color == 'muted'}"><text wrap="false" size="sm" text-alignment="center" foreground="text_muted">{status}</text></if>
+            <if test="{status_color == 'text_muted'}"><text wrap="false" size="sm" text-alignment="center" foreground="text_muted">{status}</text></if>
           </column>
         </if>
         <else>
@@ -368,7 +368,7 @@
             <if test="{status_color == 'info'}"><text wrap="false" size="sm" text-alignment="center" foreground="info">{status}</text></if>
             <if test="{status_color == 'warning'}"><text wrap="false" size="sm" text-alignment="center" foreground="warning">{status}</text></if>
             <if test="{status_color == 'destructive'}"><text wrap="false" size="sm" text-alignment="center" foreground="destructive">{status}</text></if>
-            <if test="{status_color == 'muted'}"><text wrap="false" size="sm" text-alignment="center" foreground="text_muted">{status}</text></if>
+            <if test="{status_color == 'text_muted'}"><text wrap="false" size="sm" text-alignment="center" foreground="text_muted">{status}</text></if>
           </column>
         </else>
       </panel>
