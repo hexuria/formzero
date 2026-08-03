@@ -71,6 +71,7 @@ const sourceFiles = sourceGroups.flatMap((group) => group.files);
 const generatedTemplateIncludes = new Set([
   "multi-select-combobox",
   "tax-profile-form-context",
+  "taxpayer-form-library-section",
 ]);
 
 function normalizeFragment(source) {

@@ -1,76 +1,3 @@
-<template name="tax-calendar-deadlines-section">
-  <column gap="12">
-    <if test="{constrainedLayout}">
-      <row cross="center" gap="10">
-        <text grow="1"><span weight="bold">Deadlines</span></text>
-        <badge variant="secondary">{calendarVisibleDeadlineCount}</badge>
-      </row>
-    </if>
-    <else>
-      <row cross="center" gap="12">
-        <column grow="1" gap="4">
-          <text><span weight="bold">{currentCalendarMonth} {currentCalendarYear} Deadlines</span></text>
-          <text wrap="true" foreground="text_muted">
-            The complete year is resolved and exported together. The explorer renders
-            one month at a time to keep the native schedule fast and accessible.
-          </text>
-        </column>
-        <badge variant="secondary">{calendarVisibleDeadlineCount}</badge>
-      </row>
-
-      <row gap="12" cross="center">
-        <button
-          width="44"
-          height="44"
-          size="icon"
-          variant="outline"
-          icon="chevron-left"
-          label="Previous calendar month"
-          on-press="calendar_previous_month"/>
-        <column grow="1" gap="3" cross="center">
-          <text><span weight="bold">{currentCalendarMonth} {currentCalendarYear}</span></text>
-          <text foreground="text_muted">{calendarVisibleDeadlineCount}</text>
-        </column>
-        <button
-          width="44"
-          height="44"
-          size="icon"
-          variant="outline"
-          icon="chevron-right"
-          label="Next calendar month"
-          on-press="calendar_next_month"/>
-      </row>
-    </else>
-
-    <for each="calendarDeadlines" key="id" as="deadline">
-      <card>
-        <row padding="16" gap="12" cross="center">
-          <column width="72" gap="3" cross="center">
-            <text text-alignment="center"><span weight="bold">{deadline.dateLabel}</span></text>
-            <text text-alignment="center" foreground="text_muted">{deadline.yearLabel}</text>
-          </column>
-          <separator/>
-          <column grow="1" gap="6">
-            <row gap="8" cross="center">
-              <badge variant="{deadline.tone}">{deadline.display_form_no}</badge>
-              <badge variant="{deadline.tone}">{deadline.statusLabel}</badge>
-            </row>
-            <text><span weight="bold">{deadline.form_name}</span></text>
-            <text wrap="true" foreground="text_muted">Taxable period: {deadline.periodLabel}</text>
-            <text wrap="true" foreground="text_muted">{deadline.description}</text>
-            <if test="{deadline.adjustmentVisible}">
-              <text wrap="true" foreground="accent">{deadline.adjustmentLabel}</text>
-            </if>
-            <if test="{deadline.sourceVisible}">
-              <text wrap="true" foreground="text_muted">Source: {deadline.sourceLabel}</text>
-            </if>
-          </column>
-        </row>
-      </card>
-    </for>
-  </column>
-</template>
-
 <template name="tax-calendar-rules-section">
   <column gap="12">
     <column gap="4">
@@ -402,23 +329,7 @@
   <column padding="{padding}" gap="{dashboardContentGap}">
     <if test="{constrainedLayout}">
       <row gap="8" cross="center">
-        <tabs grow="1" gap="2" label="Tax calendar sections">
-          <button
-            height="44"
-            variant="ghost"
-            selected="{calendarDeadlinesActive}"
-            on-press="show_calendar_deadlines">Deadlines</button>
-          <button
-            height="44"
-            variant="ghost"
-            selected="{calendarRulesActive}"
-            on-press="show_calendar_rules">Rules</button>
-          <button
-            height="44"
-            variant="ghost"
-            selected="{calendarOverridesActive}"
-            on-press="show_calendar_overrides">Overrides</button>
-        </tabs>
+        <spacer grow="1"/>
         <button
           width="44"
           height="44"
@@ -441,112 +352,17 @@
       </row>
     </else>
 
-    <if test="{constrainedLayout}">
-      <if test="{calendarDeadlinesActive}">
-        <row gap="4" cross="center">
-          <button
-            width="44"
-            height="44"
-            size="icon"
-            variant="outline"
-            icon="chevron-left"
-            label="Previous calendar year"
-            on-press="calendar_previous_year"/>
-          <button
-            width="44"
-            height="44"
-            size="icon"
-            variant="ghost"
-            icon="chevron-left"
-            label="Previous calendar month"
-            on-press="calendar_previous_month"/>
-          <column grow="1" gap="2" cross="center">
-            <text><span weight="bold">{currentCalendarMonth} {currentCalendarYear}</span></text>
-            <text foreground="text_muted">{calendarVisibleDeadlineCount}</text>
-          </column>
-          <button
-            width="44"
-            height="44"
-            size="icon"
-            variant="ghost"
-            icon="chevron-right"
-            label="Next calendar month"
-            on-press="calendar_next_month"/>
-          <button
-            width="44"
-            height="44"
-            size="icon"
-            variant="outline"
-            icon="chevron-right"
-            label="Next calendar year"
-            on-press="calendar_next_year"/>
-        </row>
-      </if>
-      <else>
-        <row gap="8" cross="center">
-          <button
-            width="44"
-            height="44"
-            size="icon"
-            variant="outline"
-            icon="chevron-left"
-            label="Previous calendar year"
-            on-press="calendar_previous_year"/>
-          <text grow="1" text-alignment="center"><span weight="bold">Calendar Year {currentCalendarYear}</span></text>
-          <button
-            width="44"
-            height="44"
-            size="icon"
-            variant="outline"
-            icon="chevron-right"
-            label="Next calendar year"
-            on-press="calendar_next_year"/>
-        </row>
-      </else>
-    </if>
-    <else>
-      <tabs gap="4" label="Tax calendar sections">
-        <button
-          variant="ghost"
-          selected="{calendarDeadlinesActive}"
-          on-press="show_calendar_deadlines">Deadlines</button>
-        <button
-          variant="ghost"
-          selected="{calendarRulesActive}"
-          on-press="show_calendar_rules">Rules</button>
-        <button
-          variant="ghost"
-          selected="{calendarOverridesActive}"
-          on-press="show_calendar_overrides">Overrides</button>
-      </tabs>
+    <tabs gap="4" label="Tax calendar sections">
+      <button
+        variant="ghost"
+        selected="{calendarRulesActive}"
+        on-press="show_calendar_rules">Rules</button>
+      <button
+        variant="ghost"
+        selected="{calendarOverridesActive}"
+        on-press="show_calendar_overrides">Overrides</button>
+    </tabs>
 
-      <row gap="12" cross="center">
-        <button
-          width="44"
-          height="44"
-          size="icon"
-          variant="outline"
-          icon="chevron-left"
-          label="Previous calendar year"
-          on-press="calendar_previous_year"/>
-        <column grow="1" gap="3" cross="center">
-          <text><span weight="bold">Calendar Year {currentCalendarYear}</span></text>
-          <text foreground="text_muted">{calendarDeadlineCount} in the full export</text>
-        </column>
-        <button
-          width="44"
-          height="44"
-          size="icon"
-          variant="outline"
-          icon="chevron-right"
-          label="Next calendar year"
-          on-press="calendar_next_year"/>
-      </row>
-    </else>
-
-    <if test="{calendarDeadlinesActive}">
-      <use template="tax-calendar-deadlines-section"/>
-    </if>
     <if test="{calendarRulesActive}">
       <use template="tax-calendar-rules-section"/>
     </if>

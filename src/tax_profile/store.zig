@@ -74,6 +74,7 @@ pub const Error = error{
     DraftSchemaMismatch,
     DraftStaleRevision,
     DraftWorkspaceLimitExceeded,
+    FormSetAlreadyExists,
     IdentityCorrectionConflict,
     InconsistentIdentityHistory,
     InvalidDate,
@@ -329,6 +330,27 @@ pub const FormSetState = enum {
 
     fn text(self: FormSetState) []const u8 {
         return @tagName(self);
+    }
+};
+
+/// A persisted yearly Forms Set summary. The parent row is authoritative even
+/// when `active_form_count` is zero, so an explicitly empty year remains
+/// distinguishable from an unconfigured year.
+pub const FormSetSummary = struct {
+    tax_year: i32,
+    state: FormSetState,
+    active_form_count: usize,
+};
+
+pub const FormSetSummaryList = struct {
+    items: []FormSetSummary,
+
+    pub fn deinit(
+        self: *FormSetSummaryList,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.items);
+        self.* = undefined;
     }
 };
 
@@ -2285,6 +2307,120 @@ pub const Store = struct {
 
         try self.commit();
         committed = true;
+    }
+
+    /// Creates a yearly Forms Set without allowing an existing year to be
+    /// overwritten. The immediate transaction makes the duplicate check and
+    /// parent insert one operation for concurrent local writers.
+    pub fn createFormSet(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: i32,
+        forms: []const FormRegistrationWrite,
+    ) !void {
+        try validateOpaqueText(profile_id);
+        try validateTaxYear(tax_year);
+        for (forms) |form| {
+            try requireValue(form.form_code);
+            try requireValue(form.form_revision);
+        }
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        var parent = try self.prepare(
+            \\INSERT INTO tax_profile_form_sets(profile_id, tax_year, state)
+            \\VALUES (?, ?, ?);
+        );
+        defer parent.deinit();
+        try parent.bindText(1, profile_id);
+        try parent.bindInt64(2, tax_year);
+        try parent.bindText(
+            3,
+            if (forms.len == 0) "active_empty" else "active_nonempty",
+        );
+        parent.expectDone() catch |err| {
+            if (err == Error.SqliteConstraint) return Error.FormSetAlreadyExists;
+            return err;
+        };
+
+        var add = try self.prepare(
+            \\INSERT INTO tax_profile_form_set_entries (
+            \\    profile_id, tax_year, form_code, form_revision
+            \\) VALUES (?, ?, ?, ?);
+        );
+        defer add.deinit();
+        for (forms) |form| {
+            try add.bindText(1, profile_id);
+            try add.bindInt64(2, tax_year);
+            try add.bindText(3, form.form_code);
+            try add.bindText(4, form.form_revision);
+            try add.expectDone();
+            try add.reset();
+        }
+
+        try self.commit();
+        committed = true;
+    }
+
+    /// Updates an existing yearly Forms Set. Missing years are rejected so
+    /// the Add Tax Year flow cannot silently turn into an overwrite.
+    pub fn updateFormSet(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: i32,
+        forms: []const FormRegistrationWrite,
+    ) !void {
+        try validateOpaqueText(profile_id);
+        try validateTaxYear(tax_year);
+        var exists = try self.prepare(
+            \\SELECT 1 FROM tax_profile_form_sets
+            \\WHERE profile_id = ? AND tax_year = ?;
+        );
+        defer exists.deinit();
+        try exists.bindText(1, profile_id);
+        try exists.bindInt64(2, tax_year);
+        if (try exists.step() == .done) return Error.NotFound;
+        try self.replaceFormSet(profile_id, tax_year, forms);
+    }
+
+    /// Lists only explicit yearly parent rows, newest tax year first.
+    pub fn listFormSetSummaries(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+    ) !FormSetSummaryList {
+        try validateOpaqueText(profile_id);
+        var statement = try self.prepare(
+            \\SELECT fs.tax_year, fs.state, COUNT(entry.form_code)
+            \\FROM tax_profile_form_sets AS fs
+            \\LEFT JOIN tax_profile_form_set_entries AS entry
+            \\  ON entry.profile_id = fs.profile_id
+            \\ AND entry.tax_year = fs.tax_year
+            \\WHERE fs.profile_id = ?
+            \\GROUP BY fs.tax_year, fs.state
+            \\ORDER BY fs.tax_year DESC;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+
+        var items: std.ArrayList(FormSetSummary) = .empty;
+        errdefer items.deinit(allocator);
+        while (try statement.step() == .row) {
+            const state_text = columnText(statement.raw, 1) orelse
+                return Error.InvalidValue;
+            const state = std.meta.stringToEnum(FormSetState, state_text) orelse
+                return Error.InvalidValue;
+            const count = sqlite.sqlite3_column_int64(statement.raw, 2);
+            if (count < 0) return Error.InvalidValue;
+            try items.append(allocator, .{
+                .tax_year = @intCast(sqlite.sqlite3_column_int64(statement.raw, 0)),
+                .state = state,
+                .active_form_count = @intCast(count),
+            });
+        }
+        return .{ .items = try items.toOwnedSlice(allocator) };
     }
 
     /// `null` means no Forms Set is configured and callers may use their

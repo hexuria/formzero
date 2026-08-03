@@ -38,6 +38,12 @@
       </button>
       <button
         height="44"
+        selected="{profileTaxFormsActive}"
+        on-press="show_profile_tax_forms">
+        Tax Forms
+      </button>
+      <button
+        height="44"
         selected="{profileCertificateActive}"
         on-press="show_profile_certificate">
         COR
@@ -312,12 +318,10 @@
 
         <column gap="16">
             <column gap="4">
-              <text><span weight="bold">Revision and registered Forms Set</span></text>
+              <text><span weight="bold">Revision and registration evidence</span></text>
               <text wrap="true" foreground="text_muted">
-                Forms are managed in the Tax Form Library for the selected tax
-                year. New profiles start with Needs configuration. Saving zero
-                forms creates an explicitly empty library and calendar; only
-                legacy-compatible profiles can use catalog fallback.
+                Each saved revision records the effective period and source
+                evidence for this taxpayer.
               </text>
             </column>
             <if test="{constrainedLayout}">
@@ -328,9 +332,6 @@
                 <use template="profile-field" label="Revision effective until">
                   <input height="44" text="{profileEffectiveUntilValue}" placeholder="YYYY-MM-DD or empty" label="Revision effective until" on-input="profile_effective_until_input"/>
                 </use>
-                <use template="profile-field" label="Forms Set tax year">
-                  <input height="44" text="{profileTaxYearValue}" placeholder="YYYY" label="Forms Set tax year" on-input="profile_tax_year_input"/>
-                </use>
               </column>
             </if>
             <else>
@@ -340,9 +341,6 @@
                 </use>
                 <use template="profile-field" label="Revision effective until" grow="1">
                   <input height="44" text="{profileEffectiveUntilValue}" placeholder="YYYY-MM-DD or empty" label="Revision effective until" on-input="profile_effective_until_input"/>
-                </use>
-                <use template="profile-field" label="Forms Set tax year" grow="1">
-                  <input height="44" text="{profileTaxYearValue}" placeholder="YYYY" label="Forms Set tax year" on-input="profile_tax_year_input"/>
                 </use>
               </row>
             </else>
@@ -372,21 +370,90 @@
                 disabled="{profileSourceReferenceDisabled}"
                 on-input="profile_source_reference_input"/>
             </use>
-            <card padding="0">
-              <row padding="14" gap="12" cross="center">
-                <column grow="1" gap="4">
-                  <text><span weight="bold">Forms Set</span></text>
-                  <text wrap="true" foreground="text_muted">{profileFormsSetValue}</text>
-                </column>
-                <if test="{editingNewProfile}">
-                  <button height="44" variant="outline" icon="settings" disabled="true">Save profile to manage forms</button>
-                </if>
-                <else>
-                  <button height="44" variant="outline" icon="settings" on-press="manage_profile_forms">Manage Forms</button>
-                </else>
-              </row>
-            </card>
         </column>
+      </column>
+    </if>
+
+    <if test="{profileTaxFormsActive}">
+      <column gap="16">
+        <column gap="4">
+          <text><span weight="bold">Yearly tax forms</span></text>
+          <text wrap="true" foreground="text_muted">
+            Activate a separate Forms Set for each tax year. A year can be
+            added once, then edited later; an explicitly empty set keeps that
+            year out of the taxpayer calendar.
+          </text>
+        </column>
+        <if test="{managingProfileForms}">
+          <!-- @include-template taxpayer-form-library-section -->
+        </if>
+        <else>
+          <row gap="10" cross="end">
+            <use template="profile-field" label="New tax year" grow="1">
+              <input
+                height="44"
+                text="{profileTaxYearValue}"
+                placeholder="YYYY"
+                label="New tax year"
+                on-input="profile_tax_year_input"/>
+            </use>
+            <button
+              height="44"
+              variant="primary"
+              icon="plus"
+              disabled="{profileFormsAddYearDisabled}"
+              on-press="profile_forms_add_year">Add yearly form set</button>
+          </row>
+          <if test="{editingNewProfile}">
+            <card padding="0">
+              <column padding="20" gap="6">
+                <text><span weight="bold">Save the tax profile first</span></text>
+                <text wrap="true" foreground="text_muted">
+                  Yearly forms belong to a saved taxpayer profile. Save this
+                  profile, then return here to activate its forms.
+                </text>
+              </column>
+            </card>
+          </if>
+          <else>
+            <if test="{profileFormSetRowsEmpty}">
+              <card padding="0">
+                <column padding="24" gap="8" main="center" cross="center">
+                  <icon name="file-text" foreground="text_muted" width="28" height="28"/>
+                  <text text-alignment="center"><span weight="bold">No yearly form sets yet</span></text>
+                  <text wrap="true" text-alignment="center" foreground="text_muted">
+                    Add a year to create its independent tax form library.
+                  </text>
+                </column>
+              </card>
+            </if>
+            <else>
+              <column gap="10">
+                <for each="profileFormSetRows" key="id" as="set">
+                  <card padding="0">
+                    <row padding="14" gap="14" cross="center">
+                      <column width="76" gap="2" cross="center">
+                        <text text-alignment="center"><span weight="bold" scale="1.2">{set.yearLabel}</span></text>
+                        <text text-alignment="center" size="sm" foreground="text_muted">Tax year</text>
+                      </column>
+                      <column width="1" height="54" background="border"></column>
+                      <column grow="1" gap="4">
+                        <row gap="8" cross="center">
+                          <badge variant="secondary">{set.stateLabel}</badge>
+                          <text foreground="text_muted">{set.formsLabel}</text>
+                        </row>
+                        <text wrap="true" foreground="text_muted">
+                          Only the active forms for this year appear in the taxpayer calendar.
+                        </text>
+                      </column>
+                      <button height="44" variant="outline" on-press="profile_forms_edit_year:{set.tax_year}">{set.editorLabel}</button>
+                    </row>
+                  </card>
+                </for>
+              </column>
+            </else>
+          </else>
+        </else>
       </column>
     </if>
 
@@ -413,7 +480,8 @@
       </column>
     </if>
 
-    <if test="{constrainedLayout}">
+    <if test="{profileTaxActive or profileCertificateActive or profileEmailActive}">
+      <if test="{constrainedLayout}">
       <column gap="10">
         <button height="44" variant="outline" on-press="cancel_profile_edit">Cancel</button>
         <button
@@ -438,7 +506,8 @@
           {profileSaveLabel}
         </button>
       </row>
-    </else>
+      </else>
+    </if>
   </column>
 </template>
 

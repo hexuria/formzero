@@ -23,10 +23,12 @@ global form/deadline dashboard, and a functional tax-calendar engine.
 | Distribution | macOS development build and Windows ARM64 development executable; neither is signed or production-ready |
 
 **Do not use this app as an authoritative filing plan yet.** The taxpayer
-calendar and its `.ics` export are both limited to the profile's Forms Set,
-resolved against each deadline's own taxable year. A profile with no configured
-Forms Set therefore shows no deadlines; only a profile migrated from an older
-store falls back to the full catalog, and only until its Forms Set is saved.
+calendar is limited to an explicitly configured, per-tax-year Forms Set and
+resolves each deadline against that deadline's own taxable year. A taxpayer
+year with no Forms Set, including a newly created year, shows no profile
+deadlines and is not offered by the profile calendar year picker. The `.ics`
+export preserves a compatibility fallback for legacy stores that have not yet
+been configured, but newly saved yearly sets are always authoritative.
 The app does not yet fully model fiscal periods, eFPS groups, every scoped
 policy, filing submission, or official print/file parity. Always confirm
 deadlines and filing requirements with official BIR guidance.

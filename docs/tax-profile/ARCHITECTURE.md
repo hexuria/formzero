@@ -191,11 +191,12 @@ Forms Set. Selecting zero forms creates `active_empty` and must never widen
 back to the catalog. The legacy catalog fallback is an explicit compatibility
 behavior, not the default for newly created profiles.
 
-Forms Set currently feeds the Tax Form Library and editor availability. The
-profile calendar ships with a separate per-profile selection over all 51
-catalog forms. Follow-up work must intersect the calendar picker and export
-with the authoritative tax-year Forms Set once profile form entitlement is
-complete; the Global Dashboard and Global Tax Calendar remain unfiltered.
+Forms Set currently feeds the Tax Form Library, editor availability, and the
+profile calendar. The profile Calendar year picker exposes only explicitly
+configured, non-future years; each deadline is then filtered against the Forms
+Set for its own taxable year. The Global Dashboard and Global Tax Calendar
+remain unfiltered. Calendar export retains a separate legacy-store fallback so
+an old profile is not silently narrowed before it is configured.
 
 ## Catalog coverage
 

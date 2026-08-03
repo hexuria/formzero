@@ -1,5 +1,11 @@
 # Calendar and profile layout audit
 
+> Superseded by the 2026-08-04 yearly Forms Set/calendar consolidation. The
+> historical screenshots and measurements below document the earlier
+> three-lane taxpayer layout; the current UI uses a single selected-year
+> deadline list, a configured-year picker, and puts Forms Set management in
+> Profile Settings → Tax Forms.
+
 Date: 2026-08-01  
 App under test: `/Volumes/goldcoders/Projects/ebirforms.0/zig-out/eBIRForms Verify.app`  
 Test data: isolated temporary `EBIRFORMS_DATA_DIR`; no user profile data was used.

@@ -1,7 +1,14 @@
 # Tax Form Library, Forms Set, and COR-assisted Profile Setup
 
-Status: proposed architecture and execution handoff  
+Status: implemented yearly Forms Set baseline; COR workflow remains follow-up  
 Repository baseline reviewed: `main` at `895415d` on 2026-08-01
+
+The yearly Forms Set and profile-calendar consolidation described in the
+2026-08-04 implementation is now the UI contract: yearly sets are created
+once, edited from Profile Settings → Tax Forms, and filtered into the profile
+Calendar by deadline taxable year. The historical design notes below remain
+useful for the COR workflow, but older references to a raw Forms Set field or a
+Tax Form Library management entry point are superseded.
 
 ## Purpose
 
@@ -84,17 +91,17 @@ The repository already contains important foundations:
 - Ten form codes currently have Native editor layouts; 41 are explicitly
   `calendar_only` and must not be represented as fillable forms.
 - `src/tax_profile/store.zig` persists per-profile, per-tax-year Forms Sets
-  through `replaceFormSet`, `getFormSet`, and `clearFormSet`.
+  through insert-only `createFormSet`, atomic `updateFormSet`, and the existing
+  compatibility helpers.
 - The store preserves three distinct states: no configured row, configured
   non-empty, and configured empty.
 - `src/tax_profile/ui_state.zig` uses the Forms Set for form availability.
-- `src/pages/profile-setup.native` currently exposes the Forms Set as a raw,
-  comma-separated field. This is an implementation surface, not the desired
-  final UX.
-- `src/pages/taxpayer-dashboard.native` currently renders the available Native
-  form editors as static cards.
-- The profile calendar currently has a separate persisted form selection over
-  the 51-code catalog. It must be bounded by the authoritative Forms Set.
+- `src/pages/profile-setup.native` exposes newest-first yearly Forms Set cards
+  and a create/edit flow backed by the full catalog manager.
+- `src/pages/taxpayer-dashboard.native` renders active forms as cards and
+  opens exact filing periods in their form workspace.
+- The profile calendar is bounded by the authoritative yearly Forms Set; an
+  unconfigured year is not offered by its searchable year picker.
 - Global calendar rules, resolved deadlines, and SQLite overrides are global.
   The Global Dashboard form picker is a global display filter and must stay
   independent from the selected taxpayer profile.
@@ -182,8 +189,8 @@ containers:
 - search field;
 - filter control;
 - active count, for example `2 of 51 active`;
-- `Manage Forms` action; and
-- `Import from COR` action.
+- Forms Set management is reached through Profile Settings → Tax Forms.
+- Add to Calendar is available only in the profile Calendar tab.
 
 On a phone, profile settings and form-management actions should live in the
 existing compact action button/menu rather than consuming header width.
@@ -230,9 +237,11 @@ exports but does not have an implemented editor. It must not expose a misleading
 - Switching taxpayer profiles clears every transient selection and search state
   that could expose the previous profile's information.
 
-The raw comma-separated Forms Set input in profile setup should be removed from
-the end-user UI. Profile settings can instead show a summary and a scoped
-`Manage Forms` link into the Tax Form Library.
+The raw comma-separated Forms Set input is removed from the end-user UI.
+Profile Settings shows newest-first yearly summaries and opens a scoped full
+catalog manager for the selected year. Duplicate years are rejected before a
+new manager is opened, and the store's insert-only path remains the final
+concurrency guard.
 
 ## COR-assisted setup
 

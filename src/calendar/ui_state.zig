@@ -950,10 +950,9 @@ pub const State = struct {
 
         if (event_count == 0) return error.NoCalendarEvents;
 
-        // The caller supplies the profile's persisted calendar selection.
-        // When Forms Sets become the authoritative profile-form source, pass
-        // the intersection here together with region, taxpayer type, fiscal
-        // year, and eFPS group before treating this as a filing plan.
+        // The caller supplies the profile's persisted calendar selection and
+        // the year-aware Forms Set intersection. Region, taxpayer type, fiscal
+        // year, and eFPS group remain additional filing-plan boundaries.
         return ics.generate(
             allocator,
             events[0..event_count],

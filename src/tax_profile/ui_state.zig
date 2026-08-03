@@ -18,6 +18,7 @@ const canvas = native_sdk.canvas;
 
 pub const max_profiles: usize = 64;
 pub const max_registered_forms: usize = catalog.registry_count;
+pub const max_form_set_summaries: usize = 128;
 /// Covers every recurring catalog slot (51 forms × 12 periods) plus a
 /// bounded on-demand history window. If that window is exceeded the library
 /// reports status as unavailable instead of falsely labelling omitted work
@@ -268,6 +269,7 @@ pub const State = struct {
     saved_forms: FormSelectionState = .{},
     staged_forms: FormSelectionState = .{},
     managing_forms: bool = false,
+    form_set_create_mode: bool = false,
     form_activity_filter: FormActivityFilter = .active,
     form_capability_filter: FormCapabilityFilter = .all,
     input_was_truncated: bool = false,
@@ -281,6 +283,10 @@ pub const State = struct {
     /// performs persistence I/O and an explicitly empty set stays distinct
     /// from the catalog fallback.
     cached_calendar_form_sets: [2]CalendarFormSetCache = .{ .{}, .{} },
+
+    form_set_summaries: [max_form_set_summaries]persistence.FormSetSummary = undefined,
+    form_set_summary_count: usize = 0,
+    form_set_summaries_truncated: bool = false,
 
     draft_summaries: [max_draft_summaries]DraftSummaryRow = undefined,
     draft_summary_count: usize = 0,
@@ -448,6 +454,7 @@ pub const State = struct {
         self.markActiveRow();
         try self.loadSelectedRevision(true);
         try self.refreshCalendarFormSet(self.default_tax_year);
+        try self.refreshFormSetSummaries();
         try self.refreshDraftSummariesForYear(self.default_tax_year);
     }
 
@@ -478,6 +485,9 @@ pub const State = struct {
         self.saved_forms = .{};
         self.staged_forms = .{};
         self.managing_forms = false;
+        self.form_set_create_mode = false;
+        self.form_set_summary_count = 0;
+        self.form_set_summaries_truncated = false;
         self.updateFormSetSummary() catch |err| self.setError(err);
         self.setNotice(
             .neutral,
@@ -711,6 +721,7 @@ pub const State = struct {
         setTaxYearBuffer(&self.tax_year, year);
         try self.loadEditorFormSet(year);
         try self.refreshCalendarFormSet(year);
+        try self.refreshFormSetSummaries();
         try self.refreshDraftSummariesForYear(year);
     }
 
@@ -781,6 +792,88 @@ pub const State = struct {
         return true;
     }
 
+    pub fn formSetSummaries(
+        self: *const State,
+    ) []const persistence.FormSetSummary {
+        return self.form_set_summaries[0..self.form_set_summary_count];
+    }
+
+    pub fn formSetSummariesTruncated(self: *const State) bool {
+        return self.form_set_summaries_truncated;
+    }
+
+    pub fn hasExplicitFormSet(self: *const State, tax_year: i32) bool {
+        for (self.form_set_summaries[0..self.form_set_summary_count]) |summary| {
+            if (summary.tax_year == tax_year) return true;
+        }
+        return false;
+    }
+
+    pub fn formSetYearInput(self: *const State) ?i32 {
+        return parseTaxYear(self.tax_year.text()) catch null;
+    }
+
+    pub fn refreshFormSetSummaries(self: *State) !void {
+        self.form_set_summary_count = 0;
+        self.form_set_summaries_truncated = false;
+        const allocator = self.allocator orelse return error.NotAttached;
+        const store = self.store orelse return error.NotAttached;
+        const profile_id = self.selectedProfileId() orelse return;
+        var summaries = try store.listFormSetSummaries(allocator, profile_id);
+        defer summaries.deinit(allocator);
+        self.form_set_summaries_truncated =
+            summaries.items.len > self.form_set_summaries.len;
+        for (
+            summaries.items[0..@min(
+                summaries.items.len,
+                self.form_set_summaries.len,
+            )],
+            0..,
+        ) |summary, slot| {
+            self.form_set_summaries[slot] = summary;
+            self.form_set_summary_count += 1;
+        }
+    }
+
+    pub fn beginManageFormsForYear(
+        self: *State,
+        year: i32,
+        creating: bool,
+    ) bool {
+        if (self.editing_new or !self.has_selection) {
+            self.setError(error.FormsRequireSavedProfile);
+            return false;
+        }
+        if (self.formsDirty()) {
+            self.setError(error.UnsavedFormSetChanges);
+            return false;
+        }
+        if (year < 1 or year > 9999) {
+            self.setError(error.InvalidTaxYear);
+            return false;
+        }
+        setTaxYearBuffer(&self.tax_year, year);
+        if (creating) {
+            self.saved_forms = .{};
+            self.staged_forms = .{};
+            self.form_set_state = .needs_configuration;
+            self.forms_set_configured = false;
+            self.legacy_form_set_reset_allowed = false;
+            self.form_set_create_mode = true;
+            self.managing_forms = true;
+            self.resetFormFilters();
+            return true;
+        }
+        self.loadEditorFormSet(year) catch |err| {
+            self.setError(err);
+            return false;
+        };
+        self.form_set_create_mode = false;
+        self.managing_forms = true;
+        self.resetFormFilters();
+        return true;
+    }
+
     pub fn beginManageForms(self: *State) bool {
         if (self.editing_new or !self.has_selection) {
             self.setError(error.FormsRequireSavedProfile);
@@ -789,6 +882,9 @@ pub const State = struct {
         self.staged_forms.copySelectionFrom(&self.saved_forms);
         self.staged_forms.resetInteraction();
         self.managing_forms = true;
+        self.form_set_create_mode =
+            self.form_set_state == .needs_configuration or
+            self.form_set_state == .legacy_catalog_default;
         self.resetFormFilters();
         return true;
     }
@@ -874,6 +970,7 @@ pub const State = struct {
         self.staged_forms.copySelectionFrom(&self.saved_forms);
         self.staged_forms.resetInteraction();
         self.managing_forms = false;
+        self.form_set_create_mode = false;
         self.resetFormFilters();
     }
 
@@ -985,14 +1082,23 @@ pub const State = struct {
             };
             count += 1;
         }
-        try store.replaceFormSet(profile_id, year, writes[0..count]);
+        if (self.form_set_create_mode or
+            self.form_set_state == .needs_configuration or
+            self.form_set_state == .legacy_catalog_default)
+        {
+            try store.createFormSet(profile_id, year, writes[0..count]);
+        } else {
+            try store.updateFormSet(profile_id, year, writes[0..count]);
+        }
         self.saved_forms.copySelectionFrom(&self.staged_forms);
         self.staged_forms.resetInteraction();
         self.form_set_state = if (count == 0) .active_empty else .active_nonempty;
         self.forms_set_configured = true;
         self.managing_forms = false;
+        self.form_set_create_mode = false;
         self.resetFormFilters();
         try self.updateFormSetSummary();
+        try self.refreshFormSetSummaries();
         try self.refreshCalendarFormSet(year);
     }
 
@@ -1018,6 +1124,7 @@ pub const State = struct {
         self.form_set_state = .legacy_catalog_default;
         self.forms_set_configured = false;
         self.managing_forms = false;
+        self.form_set_create_mode = false;
         self.resetFormFilters();
         try self.updateFormSetSummary();
         try self.refreshCalendarFormSet(year);
@@ -1572,6 +1679,7 @@ pub const State = struct {
         self.staged_forms.copySelectionFrom(&self.saved_forms);
         self.staged_forms.resetInteraction();
         self.managing_forms = false;
+        self.form_set_create_mode = false;
         self.resetFormFilters();
         try self.updateFormSetSummary();
     }
@@ -1644,6 +1752,7 @@ pub const State = struct {
         self.saved_forms = .{};
         self.staged_forms = .{};
         self.managing_forms = false;
+        self.form_set_create_mode = false;
         self.resetFormFilters();
         self.input_was_truncated = false;
     }
@@ -1702,6 +1811,7 @@ pub const State = struct {
             error.UnsupportedRepeatedComponents => "This repeated-component revision is preserved, but cannot be rewritten by the single-activity editor.",
             error.UnsavedFormSetChanges => "Save or cancel the staged Forms Set before switching profiles or creating another profile.",
             error.FormsRequireSavedProfile => "Create this profile before managing its Forms Set.",
+            persistence.Error.FormSetAlreadyExists => "That tax year already has a Forms Set. Choose it from the list to edit the active forms.",
             error.FieldTooLong => "One or more profile fields exceed their supported length.",
             else => "Profile was not saved. Check required fields and field formats.",
         };

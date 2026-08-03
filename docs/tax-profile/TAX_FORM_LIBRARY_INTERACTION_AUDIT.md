@@ -1,5 +1,11 @@
 # Tax Form Library Interaction Audit
 
+> Superseded for yearly Forms Set navigation by the 2026-08-04 consolidation.
+> The current contract uses month chevrons inside the profile Calendar and a
+> searchable configured-year picker; Forms Set management is under Profile
+> Settings → Tax Forms. The interaction details below document the earlier
+> library-only management surface and remain historical evidence.
+
 Date: 2026-08-01  
 Branch: `codex/tax-form-library-forms-set`  
 Commit under review: current branch (feature base: `b9dea48`)

@@ -70,6 +70,21 @@
     </use>
   </if>
 
+  <if test="{contentPage == 'taxpayer_dashboard'}">
+    <if test="{profileFormInfoDialogOpen}">
+      <dialog width="{profileFormInfoDialogWidth}" on-dismiss="profile_forms_close_info">
+        <use
+          template="taxpayer-form-info-content"
+          code="{profileFormInfoCode}"
+          title="{profileFormInfoTitle}"
+          category="{profileFormInfoCategory}"
+          cadence="{profileFormInfoCadence}"
+          capability="{profileFormInfoCapability}"
+          revision="{profileFormInfoRevision}"/>
+      </dialog>
+    </if>
+  </if>
+
     <if test="{page == 'aux_lock_screen'}">
       <use template="lock-screen-page"/>
     </if>

@@ -21,13 +21,17 @@ SQLite deadline overrides, and non-working-day policy.
 ## Taxpayer Dashboard
 
 - The selected tax profile's effective Forms Set is the only form scope.
-- The Calendar view contains Upcoming Deadlines, Action Required, and Overdue.
-- An unconfigured Forms Set uses the catalog fallback; an explicitly empty
-  Forms Set intentionally shows no obligations.
-- Global form-picker changes never alter these three columns.
-- Calendar and Profile Settings actions stay on the taxpayer header (inside
-  the compact wrench menu on phones); they are not duplicated in the global
-  dashboard.
+- The Calendar view has one selected-year schedule list. It keeps due,
+  overdue, paid, and in-progress rows together, with an action that opens the
+  exact form period when an editor exists.
+- Only an explicitly configured yearly Forms Set can contribute profile
+  deadlines. An explicitly empty set shows no obligations, and an unconfigured
+  year is unavailable in the profile calendar year picker.
+- The calendar year picker lists configured years only, omits future years,
+  and filters older configured years as the user types.
+- Global form-picker changes never alter the profile calendar.
+- Add to Calendar is a profile Calendar action; Forms Set management lives in
+  Profile Settings → Tax Forms.
 
 ## Responsive and accessibility evidence
 
@@ -37,8 +41,9 @@ SQLite deadline overrides, and non-working-day policy.
 - Calendar day and navigation targets are at least 44 x 44 points.
 - The Global Dashboard uses two content lanes only when each lane remains at
   least 320 points wide; otherwise Calendar and Important News stack.
-- The taxpayer dashboard uses three columns only while the available content
-  width can carry them without clipping; otherwise they stack.
+- The taxpayer dashboard keeps its calendar and selected-year schedule list in
+  one readable flow; the calendar width is capped and the shell's phone,
+  compact, and desktop paddings keep controls at the same 44-point targets.
 - Loading, empty, error, selected, disabled, focus, and offline-cache states
   are part of parity, not optional polish.
 

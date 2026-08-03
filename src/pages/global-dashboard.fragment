@@ -129,24 +129,26 @@
                   </if>
                   <else>
                     <text text-alignment="end">{cell.dayLabel}</text>
-                  </else>
-                  <if test="{cell.hasDeadlines}">
-                    <if test="{cell.overdue}">
-                      <text text-alignment="center" foreground="destructive">{cell.marker}</text>
-                    </if>
-                    <else>
-                      <if test="{cell.dueSoon}">
-                        <text text-alignment="center" foreground="warning">{cell.marker}</text>
+                </else>
+                <if test="{cell.hasDeadlines}">
+                    <row grow="1" main="center" cross="center">
+                      <if test="{cell.overdue}">
+                        <text foreground="destructive">{cell.marker}</text>
                       </if>
                       <else>
-                        <if test="{cell.approaching}">
-                          <text text-alignment="center" foreground="success">{cell.marker}</text>
+                        <if test="{cell.dueSoon}">
+                          <text foreground="warning">{cell.marker}</text>
                         </if>
                         <else>
-                          <text text-alignment="center">{cell.marker}</text>
+                          <if test="{cell.approaching}">
+                            <text foreground="success">{cell.marker}</text>
+                          </if>
+                          <else>
+                            <text>{cell.marker}</text>
+                          </else>
                         </else>
                       </else>
-                    </else>
+                    </row>
                   </if>
                 </column>
               </else>
