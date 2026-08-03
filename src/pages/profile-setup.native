@@ -169,6 +169,29 @@
           </card>
         </if>
 
+        <if test="{profileMissingFactsVisible}">
+          <card padding="0">
+            <column padding="14" gap="10">
+              <text><span weight="bold">{profileMissingFactsTitle}</span></text>
+              <text wrap="true" foreground="text_muted">
+                These details are shared. Fill each one once here and every form
+                that needs it is covered.
+              </text>
+              <column gap="8">
+                <for each="profileMissingFactRows" key="id" as="missing">
+                  <row gap="10" cross="start">
+                    <icon name="alert" foreground="warning" width="18" height="18"/>
+                    <column grow="1" gap="2">
+                      <text wrap="true">{missing.fieldLabel}</text>
+                      <text wrap="true" size="sm" foreground="text_muted">Used by {missing.usedByLabel}</text>
+                    </column>
+                  </row>
+                </for>
+              </column>
+            </column>
+          </card>
+        </if>
+
         <column gap="16">
             <column gap="4">
               <text><span weight="bold">Identity and registration</span></text>

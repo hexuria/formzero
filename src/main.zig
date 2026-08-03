@@ -625,6 +625,24 @@ fn activeFormCountLabel(
         "Active forms";
 }
 
+/// One taxpayer detail that an active form requires and the profile does not
+/// have yet, named alongside every active form that consumes it. Showing where
+/// a detail is used is what makes it obvious the fix belongs to the taxpayer,
+/// not to one form.
+pub const ProfileMissingFactRow = struct {
+    id: usize,
+    field_label: []const u8,
+    used_by: []const u8,
+
+    pub fn fieldLabel(self: *const ProfileMissingFactRow) []const u8 {
+        return self.field_label;
+    }
+
+    pub fn usedByLabel(self: *const ProfileMissingFactRow) []const u8 {
+        return self.used_by;
+    }
+};
+
 pub const ImportantNewsRow = struct {
     id: usize,
     notice: *const news_domain.OwnedNotice,
@@ -3025,6 +3043,89 @@ pub const Model = struct {
             "Keep the nine-digit TIN {s} and add this branch's code. Its RDO, address, and registration details start blank because they often differ — review them before saving.",
             .{self.taxProfiles.branchSourceRoot()},
         ) catch "Keep the nine-digit TIN and add this branch's code.";
+    }
+
+    /// Active forms for the year on screen. A form the taxpayer does not file
+    /// must never demand a detail, which is what kept the old surface from
+    /// asking for all 16 canonical facts at once.
+    fn activeFormRequiresKey(
+        definition: *const form_catalog.FormDefinition,
+        key: profile_fields.ReusableField,
+    ) bool {
+        for (definition.fields) |item| {
+            const profile_key = item.profile_key orelse continue;
+            if (item.profile_presence != .required) continue;
+            const parsed = std.meta.stringToEnum(
+                profile_fields.ReusableField,
+                profile_key,
+            ) orelse continue;
+            if (parsed == key) return true;
+        }
+        return false;
+    }
+
+    fn activeFormsUsingKey(
+        self: *const Model,
+        arena: std.mem.Allocator,
+        key: profile_fields.ReusableField,
+    ) []const u8 {
+        var list: std.ArrayList(u8) = .empty;
+        for (&form_catalog.forms) |*definition| {
+            if (!self.taxProfiles.formAvailable(
+                self.calendar.selected_year,
+                definition.code,
+            )) continue;
+            if (!activeFormRequiresKey(definition, key)) continue;
+            if (list.items.len != 0) list.appendSlice(arena, ", ") catch break;
+            list.appendSlice(arena, definition.code) catch break;
+        }
+        return list.items;
+    }
+
+    /// Every required detail an active form is missing, listed once with the
+    /// forms that need it. The user fixes one shared editor rather than
+    /// maintaining a taxpayer profile per form.
+    pub fn profileMissingFactRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const ProfileMissingFactRow {
+        if (self.taxProfiles.editing_new) return &.{};
+        const keys = std.meta.tags(profile_fields.ReusableField);
+        const rows = arena.alloc(ProfileMissingFactRow, keys.len) catch
+            return &.{};
+        var count: usize = 0;
+        for (keys) |key| {
+            if (self.taxProfiles.reusableValueText(key).len != 0) continue;
+            const used_by = self.activeFormsUsingKey(arena, key);
+            if (used_by.len == 0) continue;
+            rows[count] = .{
+                .id = count,
+                .field_label = profile_ui.reusableFieldLabel(key),
+                .used_by = used_by,
+            };
+            count += 1;
+        }
+        return rows[0..count];
+    }
+
+    pub fn profileMissingFactsVisible(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) bool {
+        return self.profileMissingFactRows(arena).len != 0;
+    }
+
+    pub fn profileMissingFactsTitle(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const count = self.profileMissingFactRows(arena).len;
+        if (count == 1) return "1 detail is missing for your active forms";
+        return std.fmt.allocPrint(
+            arena,
+            "{d} details are missing for your active forms",
+            .{count},
+        ) catch "Details are missing for your active forms";
     }
 
     pub fn profileBranchCopyNote(self: *const Model) []const u8 {
@@ -13823,6 +13924,62 @@ test "global calendar day widget toggles exact-date rows and heading" {
     try std.testing.expect(selected_widget.state.selected);
     update(&model, selected_tree.msgForPointer(selected_widget.id, .up).?);
     try std.testing.expect(model.globalDashboard.selectedDay() == null);
+}
+
+test "missing taxpayer details are listed once with the forms that need them" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+
+    var model = Model{};
+    model.calendar.selected_year = 2026;
+    try model.taxProfiles.attach(allocator, &store, "2026-01-01", 2026);
+    model.taxProfiles.tin.set("123-456-789-000");
+    model.taxProfiles.rdo.set("040");
+    model.taxProfiles.display_name.set("Missing Details Taxpayer");
+    model.taxProfiles.registered_address.set("Quezon City");
+    model.taxProfiles.effective_from.set("2026-01-01");
+    try std.testing.expect(model.taxProfiles.save());
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Nothing is active yet, so nothing may be demanded.
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        model.profileMissingFactRows(arena).len,
+    );
+
+    // 2551Q requires ZIP code, contact number, and email address.
+    try store.replaceFormSet(
+        model.taxProfiles.selectedProfileId().?,
+        2026,
+        &.{.{ .form_code = "2551Q", .form_revision = "2018-01-ENCS" }},
+    );
+    try model.taxProfiles.refreshCalendarFormSet(2026);
+
+    const rows = model.profileMissingFactRows(arena);
+    try std.testing.expect(rows.len >= 3);
+    var saw_email = false;
+    for (rows) |row| {
+        // Every listed detail names at least one active form that needs it,
+        // so the user can see the fix is shared rather than per-form.
+        try std.testing.expect(row.usedByLabel().len != 0);
+        if (std.mem.eql(u8, row.fieldLabel(), "Registered email address")) {
+            saw_email = true;
+            try std.testing.expectEqualStrings("2551Q", row.usedByLabel());
+        }
+    }
+    try std.testing.expect(saw_email);
+
+    // Filling the shared editor once clears it for every form that uses it.
+    model.taxProfiles.email.set("taxpayer@example.ph");
+    for (model.profileMissingFactRows(arena)) |row| {
+        try std.testing.expect(
+            !std.mem.eql(u8, row.fieldLabel(), "Registered email address"),
+        );
+    }
 }
 
 test "profile calendar year picker is configured and future bounded" {

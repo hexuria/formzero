@@ -542,6 +542,40 @@ pub const State = struct {
         return self.editorFingerprint() != self.baseline_fingerprint;
     }
 
+    /// The editor's current value for one canonical reusable fact. Forms
+    /// consume these facts through named roles; they never own a private copy,
+    /// so there is exactly one place to fix a missing one.
+    pub fn reusableValueText(
+        self: *const State,
+        key: fields.ReusableField,
+    ) []const u8 {
+        return switch (key) {
+            .tin => trimmed(self.tin.text()),
+            .rdo_code => trimmed(self.rdo.text()),
+            .taxpayer_name => trimmed(self.display_name.text()),
+            .registered_name => if (self.subject_kind == .sole_proprietor)
+                trimmed(self.trade_name.text())
+            else
+                trimmed(self.display_name.text()),
+            .registered_address => trimmed(self.registered_address.text()),
+            .zip_code => trimmed(self.zip_code.text()),
+            .contact_number => trimmed(self.phone.text()),
+            .email_address => trimmed(self.email.text()),
+            .date_of_birth => trimmed(self.birth_date.text()),
+            .citizenship => trimmed(self.citizenship.text()),
+            .foreign_tax_number => trimmed(self.foreign_tax_number.text()),
+            .line_of_business => trimmed(self.business_line.text()),
+            .atc => trimmed(self.atc.text()),
+            .tax_type => trimmed(self.tax_type.text()),
+            // Recorded either way; only "not recorded" counts as missing.
+            .government_withholding_agent => if (self.government_withholding_agent == .unset)
+                ""
+            else
+                "recorded",
+            .special_rate_basis => trimmed(self.special_rate_basis.text()),
+        };
+    }
+
     pub fn changeIntent(self: *const State) ChangeIntent {
         return self.change_intent;
     }
@@ -2696,6 +2730,29 @@ fn subjectKindToDomain(kind: persistence.SubjectKind) model.SubjectKind {
         .estate => .estate,
         .trust => .trust,
         .other_legal_entity => .other_legal_entity,
+    };
+}
+
+/// End-user names for the canonical reusable facts. These are the words the
+/// editor uses, so a missing-detail message points at a field the user can see.
+pub fn reusableFieldLabel(key: fields.ReusableField) []const u8 {
+    return switch (key) {
+        .tin => "Taxpayer Identification Number (TIN)",
+        .rdo_code => "Revenue District Office (RDO) code",
+        .taxpayer_name => "Taxpayer or registered name",
+        .registered_name => "Registered name",
+        .registered_address => "Registered address",
+        .zip_code => "ZIP code",
+        .contact_number => "Contact number",
+        .email_address => "Registered email address",
+        .date_of_birth => "Birth date",
+        .citizenship => "Citizenship",
+        .foreign_tax_number => "Foreign tax number",
+        .line_of_business => "Line of business",
+        .atc => "Alphanumeric Tax Code (ATC)",
+        .tax_type => "Registered tax type",
+        .government_withholding_agent => "Government withholding agent",
+        .special_rate_basis => "Special-rate basis",
     };
 }
 
