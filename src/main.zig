@@ -14394,6 +14394,59 @@ test "global calendar day widget toggles exact-date rows and heading" {
     try std.testing.expect(model.globalDashboard.selectedDay() == null);
 }
 
+test "the sidebar keeps a taxpayer's registrations together, head office first" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+
+    // Deliberately created out of order, and named so that sorting by name
+    // alone would interleave the two taxpayers.
+    try addTestProfile(
+        &store,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "Zeta Branch Two",
+        "123-456-789-002",
+        .individual,
+    );
+    try addTestProfile(
+        &store,
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "Alpha Other Taxpayer",
+        "987-654-321-000",
+        .individual,
+    );
+    try addTestProfile(
+        &store,
+        "cccccccccccccccccccccccccccccccc",
+        "Mid Head Office",
+        "123-456-789-000",
+        .individual,
+    );
+
+    var model = Model{};
+    try model.taxProfiles.attach(allocator, &store, "2026-01-01", 2026);
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const rows = model.visibleProfileRows(arena);
+    try std.testing.expectEqual(@as(usize, 3), rows.len);
+    // One taxpayer's registrations are adjacent with the head office leading,
+    // and the unrelated taxpayer does not land between them.
+    try std.testing.expectEqualStrings("Mid Head Office", rows[0].nameLabel());
+    try std.testing.expectEqualStrings("Zeta Branch Two", rows[1].nameLabel());
+    try std.testing.expectEqualStrings("Alpha Other Taxpayer", rows[2].nameLabel());
+    try std.testing.expect(!rows[0].isBranch());
+    try std.testing.expect(rows[1].isBranch());
+
+    // Ordering is presentation only: each row still selects its own taxpayer.
+    for (rows) |row| {
+        const source = model.taxProfiles.rowAt(row.slot).?;
+        try std.testing.expectEqualStrings(source.idLabel(), row.idLabel());
+    }
+}
+
 test "missing taxpayer details are listed once with the forms that need them" {
     const allocator = std.testing.allocator;
     var store = try profile_store.Store.openMemory(allocator);

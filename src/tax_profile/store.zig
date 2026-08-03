@@ -2425,13 +2425,28 @@ pub const Store = struct {
         allocator: std.mem.Allocator,
         include_archived: bool,
     ) !ProfileSummaryList {
+        // The identity anchor is the authority on a taxpayer's canonical TIN,
+        // not the current revision. An audited correction writes a new anchor
+        // and deliberately appends no revision, so reading the revision's TIN
+        // would keep reporting the identifier that was corrected away - and
+        // anything keyed on it, such as grouping a head office with its
+        // branches, would follow the superseded value. The join is outer and
+        // the value coalesced so a profile carrying no anchor row still lists
+        // with the TIN it has, rather than vanishing from the sidebar.
         var statement = try self.prepare(
             \\SELECT p.id, p.status, p.current_revision_id, r.sequence,
             \\       COALESCE(r.taxpayer_name, r.registered_name),
-            \\       r.tin, r.subject_kind
+            \\       COALESCE(anchor.canonical_tin, r.tin), r.subject_kind
             \\FROM tax_profiles AS p
             \\JOIN tax_profile_revisions AS r
             \\  ON r.profile_id = p.id AND r.id = p.current_revision_id
+            \\LEFT JOIN tax_profile_identity_anchors AS anchor
+            \\  ON anchor.profile_id = p.id
+            \\ AND anchor.sequence = (
+            \\     SELECT MAX(sequence)
+            \\     FROM tax_profile_identity_anchors
+            \\     WHERE profile_id = p.id
+            \\ )
             \\WHERE (? = 1 OR p.status = 'active')
             \\ORDER BY COALESCE(
             \\    r.taxpayer_name, r.registered_name
@@ -9516,6 +9531,38 @@ test "civil status revisions resolve future single to married transition" {
             \\);
         ),
     );
+}
+
+test "listing a taxpayer reports its corrected TIN, not the superseded one" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    try store.createProfileWithRevision(
+        .{ .id = "tax-profile-corrected" },
+        testRevision("tax-profile-corrected", 0, "Corrected Person", "2026-01-01"),
+        .{},
+    );
+
+    // An audited correction records a new identity anchor and deliberately
+    // appends no revision: a correction is not an ordinary edit of the
+    // taxpayer's details. Listing must still follow the identity.
+    _ = try store.recordIdentityCorrection(.{
+        .id = "identity-correction-listing",
+        .profile_id = "tax-profile-corrected",
+        .expected_anchor_sequence = 1,
+        .new_canonical_tin = "987-654-321-000",
+        .new_legal_person_class = .natural_person,
+        .reason = "clerical correction confirmed by source record",
+        .actor_reference = "operator:test-reviewer",
+        .recorded_at_unix_seconds = 1_785_369_600,
+        .provenance = "synthetic reviewed identity source",
+    });
+
+    var profiles = try store.listProfiles(allocator, false);
+    defer profiles.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), profiles.items.len);
+    try std.testing.expectEqualStrings("987654321000", profiles.items[0].tin);
 }
 
 test "one canonical TIN cannot be held by two taxpayers" {

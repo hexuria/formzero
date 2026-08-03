@@ -4672,6 +4672,60 @@ test "an archived taxpayer still owns its TIN" {
     try std.testing.expectEqualStrings("Workspace Taxpayer", owner.display_name.?);
 }
 
+test "a corrected TIN reaches the sidebar and regroups its registrations" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    var owner_storage: [64]u8 = undefined;
+    const selected = state.selectedProfileId().?;
+    @memcpy(owner_storage[0..selected.len], selected);
+    const head_office_id = owner_storage[0..selected.len];
+
+    try std.testing.expect(state.beginAddBranch());
+    state.rdo.set("043");
+    state.registered_address.set("Makati City");
+    state.tin.set("123-456-789-002");
+    try std.testing.expect(state.save());
+    try std.testing.expectEqual(@as(usize, 2), state.rows().len);
+
+    // Correcting the head office's TIN is audited and appends no revision, so
+    // a sidebar reading the revision would keep the old identifier - and its
+    // branch, still on the old root, would keep looking like family.
+    _ = try store.recordIdentityCorrection(.{
+        .id = "identity-correction-sidebar",
+        .profile_id = head_office_id,
+        .expected_anchor_sequence = 1,
+        .new_canonical_tin = "555-666-777-000",
+        .new_legal_person_class = .natural_person,
+        .reason = "clerical correction confirmed by source record",
+        .actor_reference = "operator:test-reviewer",
+        .recorded_at_unix_seconds = 1_785_369_600,
+        .provenance = "synthetic reviewed identity source",
+    });
+    try state.attach(allocator, &store, "2026-01-01", 2026);
+
+    var corrected: ?*const ProfileRow = null;
+    var branch: ?*const ProfileRow = null;
+    for (state.rows()) |*row| {
+        if (std.mem.eql(u8, row.stable_id.text(), head_office_id)) {
+            corrected = row;
+        } else {
+            branch = row;
+        }
+    }
+    try std.testing.expect(corrected != null);
+    try std.testing.expect(branch != null);
+    // The sidebar follows the identity, and the two no longer group together
+    // because the recorded identities no longer say they belong to one
+    // taxpayer.
+    try std.testing.expectEqualStrings("555666777000", corrected.?.tin.text());
+    try std.testing.expectEqualStrings("555666777", corrected.?.tinRoot());
+    try std.testing.expectEqualStrings("123456789", branch.?.tinRoot());
+}
+
 test "profile rows expose head office and branch identity" {
     const allocator = std.testing.allocator;
     var store = try persistence.Store.openMemory(allocator);
