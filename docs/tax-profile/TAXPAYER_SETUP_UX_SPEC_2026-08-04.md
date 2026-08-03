@@ -1386,8 +1386,9 @@ added here; 14 by the always-on layout audit plus the opt-in proof shots.
   still the one attached.
 - **1701Q filing exceptions.** The contact-exception pattern is implemented for
   2551Q. 1701Q renders its profile-derived values through a different
-  presenter (`ControlRow`) and its unbound header inputs would need binding
-  first.
+  presenter (`ControlRow`). See §23 for why this waits on the key-custody gate
+  rather than on presenter work — and note that the "unbound header inputs"
+  named here are dead declaration markup, not a rendered surface.
 - **Mid-year Forms Set intervals (G5)** and **owner scoping (G4)** are
   unchanged, and no copy promises either.
 
@@ -1460,10 +1461,36 @@ false. Recorded here so nobody re-opens them from the earlier text.
 
 ### Still open
 
-- **1701Q filing-specific contact exceptions** (scenario 12 parity). The exact
-  editor validates its stored value set against the canonical branch and rejects
-  unknown rows by design, so hosting `filing_override` rows means changing that
-  validation plus both adapters against the 242-test exact-persistence suite.
-  Scenario 12 is satisfied by 2551Q; this is parity work with its own track.
-- **Machine extraction (E4/E5)**, **encrypted COR copies**, **mid-year Forms Set
-  intervals (G5)**, and **owner scoping (G4)** are unchanged from §22.
+- **1701Q filing-specific contact exceptions** (scenario 12 parity) — **blocked
+  on key custody, not on editor work.** An earlier draft of this section named
+  the exact editor's canonical-branch validation as the obstacle. That was the
+  wrong blocker, and the correction matters because it changes what has to
+  happen first:
+  - 1701Q does not use `tax_form_draft_values` at all. Its filing state persists
+    through a separate subsystem, `src/forms/form_1701q_exact_persistence.zig`
+    (candidate artifacts and sidecars), so the 2551Q override pattern —
+    `DraftValueWrite` rows carrying `filing_override` provenance — has nothing
+    to attach to here.
+  - That subsystem declares itself unfit for real data:
+    `synthetic_test_only_at_rest = true` and
+    `production_key_custody_qualified = false`
+    (`form_1701q_exact_persistence.zig:30-40`).
+  - The gate behind it is fail-closed by construction:
+    `key_custody.current_production_storage_state` is
+    `.unavailable_authenticated_storage_backend_unselected`, and **every**
+    `ProductionStorageState` is deliberately an unavailable variant, guarded at
+    comptime against a ready state being added by accident
+    (`src/security/key_custody.zig:36-51`).
+
+  So 1701Q filing data is not production-persistable at all today. Adding
+  filing-specific values would mean writing them into storage the codebase
+  itself declares synthetic. This waits on the **same** gate as encrypted COR
+  copies — the two open items share one prerequisite, and neither is editor
+  work. Scenario 12 remains satisfied by 2551Q, whose draft values are ordinary
+  SQLite alongside the profile tables and carry no such declaration.
+- **Owner scoping (G4) is narrower than §18 states.** `tax_profiles` already
+  carries an `owner_id`, populated from a singleton `tax_profile_local_owner`
+  since schema v6 (`src/tax_profile/store.zig:1547`). What remains is auditing
+  that every read path is owner-scoped, not adding the column.
+- **Machine extraction (E4/E5)** and **mid-year Forms Set intervals (G5)** are
+  unchanged from §22.
