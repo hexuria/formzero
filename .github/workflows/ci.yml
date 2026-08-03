@@ -58,6 +58,13 @@ jobs:
           restore-keys: |
             zig-cache-${{ runner.os }}-${{ runner.arch }}-
 
+      # A restored cache can recreate ~/.cache/zig without the scratch
+      # subdirectories Zig expects, which surfaces when it fetches the SQLite
+      # amalgamation as:
+      #   error: failed to create temporary zip file: FileNotFound
+      - name: Prepare Zig cache directories
+        run: mkdir -p "$HOME/.cache/zig/tmp" "$HOME/.cache/zig/p"
+
       - name: Provision toolchain
         run: scripts/setup-dev-env.sh
 
