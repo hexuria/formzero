@@ -36,6 +36,27 @@ Reusable features must keep state and behavior separate from page wiring. A
 selection that affects deadlines or calendar markers must drive every output
 from the same state, not duplicate UI-only state.
 
+## Environment provisioning
+
+`scripts/setup-dev-env.sh` is the single provisioning path. It installs the Zig
+version declared by `build.zig.zon`, verifies the download against its
+published SHA-256 before extracting it, refuses to run against a mismatched
+Node, and installs locked npm dependencies with `npm ci`. Re-running it
+downloads nothing.
+
+`.github/workflows/ci.yml` and `.devcontainer/devcontainer.json` both call it,
+so a green pipeline and a working container cannot drift apart. The script does
+not touch a contributor's shell profile unless `--update-shell-profile` is
+passed, which only the container does.
+
+## Continuous integration
+
+Every push to `main` and every pull request runs the gate below on
+`macos-latest`, the supported build host. A second job provisions a cold
+`macos-latest` and `ubuntu-latest` runner from the setup script and asserts
+that a repeat run is idempotent, so the container path stays proven even though
+the product's own build targets remain macOS and Windows.
+
 ## Required validation
 
 Run after every code or markup change:
