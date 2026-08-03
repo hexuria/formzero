@@ -10,7 +10,9 @@ const runner = @import("runner");
 const native_sdk = @import("native_sdk");
 const multi_select = @import("components/multi_select.zig");
 const calendar_domain = @import("calendar/domain.zig");
+const calendar_marker = @import("calendar/marker.zig");
 const calendar_ui = @import("calendar/ui_state.zig");
+const period_name = @import("domain/period_name.zig");
 const global_dashboard_ui = @import("global_dashboard/ui_state.zig");
 const news_domain = @import("news/domain.zig");
 const news_feed = @import("news/feed.zig");
@@ -28,6 +30,7 @@ const form_persistence = @import("forms/persistence_adapter.zig");
 const form_runtime = @import("forms/runtime.zig");
 const form_period = @import("forms/filing_period.zig");
 const form_catalog = @import("forms/generated/catalog.zig");
+const library_view = @import("forms/library_view.zig");
 const income_tax_ui = @import("forms/income_tax_ui_state.zig");
 const key_custody = @import("security/key_custody.zig");
 const exact_1701q_native = @import(
@@ -45,6 +48,33 @@ pub const panic = std.debug.FullPanic(native_sdk.debug.capturePanic);
 
 const canvas = native_sdk.canvas;
 const geometry = native_sdk.geometry;
+
+// The tax form library's presentation vocabulary now lives in
+// `forms/library_view.zig`, and calendar/date presentation in
+// `calendar/marker.zig` and `domain/period_name.zig`. The row and cell types
+// stay re-exported here because the model contract binds markup to them
+// through this module.
+pub const LibraryPeriodFilter = library_view.LibraryPeriodFilter;
+pub const TaxFormLibraryPeriodCell = library_view.TaxFormLibraryPeriodCell;
+pub const TaxFormLibraryRow = library_view.TaxFormLibraryRow;
+pub const LibraryOnDemandFilterRow = library_view.LibraryOnDemandFilterRow;
+
+const taxCategoryLabel = library_view.taxCategoryLabel;
+const filingLifecycleLabel = library_view.filingLifecycleLabel;
+const filingLifecycleTone = library_view.filingLifecycleTone;
+const compactPeriodStatus = library_view.compactPeriodStatus;
+const periodStatusColor = library_view.periodStatusColor;
+const firstSelectedMonth = library_view.firstSelectedMonth;
+const firstSelectedQuarter = library_view.firstSelectedQuarter;
+const appendLibraryFilterLabelPart = library_view.appendLibraryFilterLabelPart;
+
+const CalendarMarkerTone = calendar_marker.CalendarMarkerTone;
+const deadlineMarker = calendar_marker.deadlineMarker;
+const calendarMarkerTone = calendar_marker.calendarMarkerTone;
+
+const fullMonthName = period_name.fullMonthName;
+const shortMonthName = period_name.shortMonthName;
+const shortQuarterName = period_name.shortQuarterName;
 
 const calendar_icon = canvas.svg_icon.parseComptime(
     @embedFile("icons/calendar.svg"),
@@ -434,417 +464,6 @@ pub const FormProfileChoiceRow = struct {
 /// The Tax Form Library's period picker is a display/opening context. It
 /// never changes the authoritative Forms Set; it only narrows the cadence
 /// cards shown for the selected taxpayer and tax year.
-pub const LibraryPeriodFilter = union(enum) {
-    all,
-    monthly: u8,
-    quarterly: u8,
-    annual,
-    on_demand,
-
-    pub fn label(self: LibraryPeriodFilter) []const u8 {
-        return switch (self) {
-            .all => "All filing periods",
-            .monthly => |month| form_period.monthName(month),
-            .quarterly => |quarter| switch (quarter) {
-                1 => "Quarter 1",
-                2 => "Quarter 2",
-                3 => "Quarter 3",
-                4 => "Quarter 4",
-                else => "Quarter",
-            },
-            .annual => "Annual",
-            .on_demand => "On-demand",
-        };
-    }
-
-    pub fn summary(self: LibraryPeriodFilter) []const u8 {
-        return switch (self) {
-            .all => "All periods",
-            .monthly => |month| form_period.monthName(month),
-            .quarterly => |quarter| switch (quarter) {
-                1 => "Q1",
-                2 => "Q2",
-                3 => "Q3",
-                4 => "Q4",
-                else => "Quarter",
-            },
-            .annual => "Annual",
-            .on_demand => "On-demand",
-        };
-    }
-
-    pub fn matches(self: LibraryPeriodFilter, cadence: form_catalog.FilingCadence) bool {
-        return switch (self) {
-            .all => true,
-            .monthly => cadence == .monthly,
-            .quarterly => cadence == .quarterly,
-            .annual => cadence == .annual,
-            .on_demand => cadence == .on_demand,
-        };
-    }
-};
-
-fn taxCategoryLabel(category: form_catalog.TaxCategory) []const u8 {
-    return switch (category) {
-        .payment => "Payment",
-        .registration => "Registration",
-        .withholding_tax => "Withholding tax",
-        .income_tax => "Income tax",
-        .value_added_tax => "Value-added tax",
-        .percentage_tax => "Percentage tax",
-        .documentary_stamp_tax => "Documentary stamp tax",
-        .excise_tax => "Excise tax",
-        .capital_gains_tax => "Capital gains tax",
-        .estate_and_donors_tax => "Estate and donor's tax",
-    };
-}
-
-pub const TaxFormLibraryPeriodCell = struct {
-    id: usize = 0,
-    action_id: usize = 0,
-    label: []const u8 = "",
-    status: []const u8 = "",
-    visual_status: []const u8 = "",
-    status_color: []const u8 = "muted",
-    tile_width: u16 = 64,
-    tone: []const u8 = "outline",
-    selected: bool = false,
-    available: bool = false,
-    visible: bool = false,
-    filtered_out: bool = false,
-    actionable: bool = false,
-    calendar_only: bool = false,
-    accessible_label: []const u8 = "Filing period",
-
-    pub fn key(self: *const TaxFormLibraryPeriodCell) canvas.UiKey {
-        return canvas.uiKey(self.id);
-    }
-
-    pub fn actionId(self: *const TaxFormLibraryPeriodCell) usize {
-        return self.action_id;
-    }
-
-    pub fn filteredOut(self: *const TaxFormLibraryPeriodCell) bool {
-        return self.filtered_out;
-    }
-
-    pub fn launchDisabled(self: *const TaxFormLibraryPeriodCell) bool {
-        return !self.actionable or self.filtered_out;
-    }
-
-    pub fn disabled(self: *const TaxFormLibraryPeriodCell) bool {
-        return self.launchDisabled();
-    }
-
-    pub fn editorAction(self: *const TaxFormLibraryPeriodCell) bool {
-        return !self.calendar_only;
-    }
-
-    pub fn calendarOnly(self: *const TaxFormLibraryPeriodCell) bool {
-        return self.calendar_only;
-    }
-
-    pub fn accessibleLabel(self: *const TaxFormLibraryPeriodCell) []const u8 {
-        return self.accessible_label;
-    }
-
-    pub fn actionLabel(self: *const TaxFormLibraryPeriodCell) []const u8 {
-        return self.accessible_label;
-    }
-
-    pub fn visualStatus(self: *const TaxFormLibraryPeriodCell) []const u8 {
-        return if (self.visual_status.len == 0) self.status else self.visual_status;
-    }
-
-    pub fn statusColor(self: *const TaxFormLibraryPeriodCell) []const u8 {
-        return self.status_color;
-    }
-
-    pub fn tileWidth(self: *const TaxFormLibraryPeriodCell) u16 {
-        return self.tile_width;
-    }
-
-    pub fn statusWarning(self: *const TaxFormLibraryPeriodCell) bool {
-        const status = self.visualStatus();
-        return std.mem.eql(u8, status, "Draft") or
-            std.mem.eql(u8, status, "Queued") or
-            std.mem.eql(u8, status, "Due") or
-            std.mem.eql(u8, status, "Unknown");
-    }
-
-    pub fn statusInfo(self: *const TaxFormLibraryPeriodCell) bool {
-        return std.mem.eql(u8, self.visualStatus(), "Sent");
-    }
-
-    pub fn statusSuccess(self: *const TaxFormLibraryPeriodCell) bool {
-        const status = self.visualStatus();
-        return std.mem.eql(u8, status, "Confirmed") or
-            std.mem.eql(u8, status, "Paid");
-    }
-
-    pub fn statusDestructive(self: *const TaxFormLibraryPeriodCell) bool {
-        return std.mem.eql(u8, self.visualStatus(), "Cancelled");
-    }
-
-    pub fn statusNeutral(self: *const TaxFormLibraryPeriodCell) bool {
-        return !self.statusWarning() and
-            !self.statusInfo() and
-            !self.statusSuccess() and
-            !self.statusDestructive();
-    }
-};
-
-pub const TaxFormLibraryRow = struct {
-    id: usize,
-    definition: *const form_catalog.FormDefinition,
-    active: bool,
-    selected: bool,
-    launch_disabled: bool,
-    launch_assessment: form_ui.LaunchAssessment = .{},
-    period_cells: [12]TaxFormLibraryPeriodCell = undefined,
-    period_cell_count: u8 = 0,
-    period1: TaxFormLibraryPeriodCell = .{},
-    period2: TaxFormLibraryPeriodCell = .{},
-    period3: TaxFormLibraryPeriodCell = .{},
-    period4: TaxFormLibraryPeriodCell = .{},
-    period5: TaxFormLibraryPeriodCell = .{},
-    period6: TaxFormLibraryPeriodCell = .{},
-    period7: TaxFormLibraryPeriodCell = .{},
-    period8: TaxFormLibraryPeriodCell = .{},
-    period9: TaxFormLibraryPeriodCell = .{},
-    period10: TaxFormLibraryPeriodCell = .{},
-    period11: TaxFormLibraryPeriodCell = .{},
-    period12: TaxFormLibraryPeriodCell = .{},
-    period_summary: []const u8 = "",
-    period_grid_columns: u8 = 4,
-    manage_status: profile_ui.ManagedFormStatus = .inactive,
-
-    pub fn key(self: *const TaxFormLibraryRow) canvas.UiKey {
-        return canvas.uiKey(self.id);
-    }
-
-    pub fn code(self: *const TaxFormLibraryRow) []const u8 {
-        return self.definition.code;
-    }
-
-    pub fn title(
-        self: *const TaxFormLibraryRow,
-    ) []const u8 {
-        return self.definition.display_title;
-    }
-
-    pub fn taxCategory(self: *const TaxFormLibraryRow) []const u8 {
-        return taxCategoryLabel(self.definition.tax_category);
-    }
-
-    pub fn categoryLabel(self: *const TaxFormLibraryRow) []const u8 {
-        return self.taxCategory();
-    }
-
-    pub fn capability(self: *const TaxFormLibraryRow) []const u8 {
-        return if (self.definition.status == .static_layout)
-            "Editor available"
-        else
-            "Calendar only";
-    }
-
-    pub fn cadenceLabel(self: *const TaxFormLibraryRow) []const u8 {
-        return switch (self.definition.cadence) {
-            .monthly => "Monthly",
-            .quarterly => "Quarterly",
-            .annual => "Annual",
-            .on_demand => "On-demand",
-        };
-    }
-
-    pub fn periodCells(self: *const TaxFormLibraryRow) []const TaxFormLibraryPeriodCell {
-        return self.period_cells[0..self.period_cell_count];
-    }
-
-    pub fn setPeriodCell(
-        self: *TaxFormLibraryRow,
-        slot: usize,
-        cell: TaxFormLibraryPeriodCell,
-    ) void {
-        if (slot >= self.period_cells.len) return;
-        self.period_cells[slot] = cell;
-        switch (slot) {
-            0 => self.period1 = cell,
-            1 => self.period2 = cell,
-            2 => self.period3 = cell,
-            3 => self.period4 = cell,
-            4 => self.period5 = cell,
-            5 => self.period6 = cell,
-            6 => self.period7 = cell,
-            7 => self.period8 = cell,
-            8 => self.period9 = cell,
-            9 => self.period10 = cell,
-            10 => self.period11 = cell,
-            11 => self.period12 = cell,
-            else => unreachable,
-        }
-    }
-
-    pub fn hasPeriodCells(self: *const TaxFormLibraryRow) bool {
-        return self.period_cell_count != 0;
-    }
-
-    pub fn periodSummary(self: *const TaxFormLibraryRow) []const u8 {
-        return self.period_summary;
-    }
-
-    pub fn periodGridColumns(self: *const TaxFormLibraryRow) u8 {
-        return self.period_grid_columns;
-    }
-
-    pub fn filingProgress(
-        self: *const TaxFormLibraryRow,
-        arena: std.mem.Allocator,
-    ) []const u8 {
-        var filed: usize = 0;
-        for (self.periodCells()) |cell| {
-            if (std.mem.eql(u8, cell.status, "Sent") or
-                std.mem.eql(u8, cell.status, "Confirmed") or
-                std.mem.eql(u8, cell.status, "Paid"))
-            {
-                filed += 1;
-            }
-        }
-        return std.fmt.allocPrint(
-            arena,
-            "{d}/{d} filed",
-            .{ filed, self.period_cell_count },
-        ) catch "Filing progress";
-    }
-
-    pub fn infoLabel(
-        self: *const TaxFormLibraryRow,
-        arena: std.mem.Allocator,
-    ) []const u8 {
-        return std.fmt.allocPrint(
-            arena,
-            "About BIR Form {s}",
-            .{self.definition.code},
-        ) catch "About this form";
-    }
-
-    pub fn activeLabel(self: *const TaxFormLibraryRow) []const u8 {
-        return if (self.active) "Active" else "Inactive";
-    }
-
-    pub fn editorAvailable(self: *const TaxFormLibraryRow) bool {
-        return self.definition.status == .static_layout;
-    }
-
-    pub fn calendarOnly(self: *const TaxFormLibraryRow) bool {
-        return self.definition.status == .calendar_only;
-    }
-
-    pub fn selectionLabel(
-        self: *const TaxFormLibraryRow,
-        arena: std.mem.Allocator,
-    ) []const u8 {
-        return std.fmt.allocPrint(
-            arena,
-            "{s} BIR Form {s}",
-            .{
-                if (self.selected) "Deselect" else "Select",
-                self.definition.code,
-            },
-        ) catch "Toggle form selection";
-    }
-
-    pub fn manageStatusLabel(self: *const TaxFormLibraryRow) []const u8 {
-        return self.manage_status.label();
-    }
-
-    pub fn manageStatusTone(self: *const TaxFormLibraryRow) []const u8 {
-        return switch (self.manage_status) {
-            .active => "secondary",
-            .inactive => "outline",
-            .will_activate => "secondary",
-            .will_deactivate => "destructive",
-        };
-    }
-
-    pub fn selectedCard(self: *const TaxFormLibraryRow) bool {
-        return self.selected;
-    }
-
-    pub fn launchLabel(self: *const TaxFormLibraryRow) []const u8 {
-        if (!self.active) return "Inactive";
-        if (!self.editorAvailable()) return "Calendar only";
-        return switch (self.launch_assessment.status) {
-            .ready_new => "Open Form",
-            .ready_resume => "Resume Draft",
-            .needs_profile => "Complete profile",
-            .needs_activity_selection => "Choose activity",
-            .profile_not_eligible => "Profile not eligible",
-            .unavailable => "Unavailable",
-        };
-    }
-
-    pub fn launchStatus(self: *const TaxFormLibraryRow) []const u8 {
-        if (!self.active) return "Inactive";
-        if (!self.editorAvailable()) return "Calendar only";
-        return switch (self.launch_assessment.status) {
-            .ready_new => "Ready",
-            .ready_resume => "Draft available",
-            .needs_profile => "Needs profile",
-            .needs_activity_selection => "Choose activity",
-            .profile_not_eligible => "Not eligible",
-            .unavailable => "Launch blocked",
-        };
-    }
-
-    pub fn launchActionVisible(self: *const TaxFormLibraryRow) bool {
-        return self.active and self.editorAvailable();
-    }
-
-    pub fn launchDisabled(self: *const TaxFormLibraryRow) bool {
-        return self.launch_disabled;
-    }
-};
-
-pub const LibraryOnDemandFilterRow = struct {
-    id: usize,
-    definition: *const form_catalog.FormDefinition,
-    selected: bool,
-
-    pub fn key(self: *const LibraryOnDemandFilterRow) canvas.UiKey {
-        return canvas.uiKey(self.id);
-    }
-
-    pub fn code(self: *const LibraryOnDemandFilterRow) []const u8 {
-        return self.definition.code;
-    }
-
-    pub fn title(self: *const LibraryOnDemandFilterRow) []const u8 {
-        return self.definition.display_title;
-    }
-
-    pub fn label(
-        self: *const LibraryOnDemandFilterRow,
-        arena: std.mem.Allocator,
-    ) []const u8 {
-        return std.fmt.allocPrint(
-            arena,
-            "{s} - {s}",
-            .{ self.definition.code, self.definition.display_title },
-        ) catch self.definition.code;
-    }
-
-    pub fn selectionLabel(
-        self: *const LibraryOnDemandFilterRow,
-        arena: std.mem.Allocator,
-    ) []const u8 {
-        return std.fmt.allocPrint(
-            arena,
-            "Filter on-demand filings by BIR Form {s}, {s}",
-            .{ self.definition.code, self.definition.display_title },
-        ) catch "Filter on-demand form";
-    }
-};
 
 pub const Model = struct {
     page: Page = .global_dashboard,
@@ -4982,28 +4601,6 @@ fn libraryDraftStatus(
     return .{ .label = "New", .tone = "outline" };
 }
 
-fn filingLifecycleLabel(lifecycle: []const u8) []const u8 {
-    if (std.mem.eql(u8, lifecycle, "editing") or
-        std.mem.eql(u8, lifecycle, "prepared")) return "Draft";
-    if (std.mem.eql(u8, lifecycle, "queued")) return "Queued";
-    if (std.mem.eql(u8, lifecycle, "submitted")) return "Sent";
-    if (std.mem.eql(u8, lifecycle, "confirmed")) return "Confirmed";
-    if (std.mem.eql(u8, lifecycle, "paid")) return "Paid";
-    if (std.mem.eql(u8, lifecycle, "cancelled")) return "Cancelled";
-    return "New";
-}
-
-fn filingLifecycleTone(lifecycle: []const u8) []const u8 {
-    if (std.mem.eql(u8, lifecycle, "submitted")) return "secondary";
-    if (std.mem.eql(u8, lifecycle, "confirmed") or
-        std.mem.eql(u8, lifecycle, "paid")) return "primary";
-    if (std.mem.eql(u8, lifecycle, "cancelled")) return "destructive";
-    if (std.mem.eql(u8, lifecycle, "editing") or
-        std.mem.eql(u8, lifecycle, "prepared") or
-        std.mem.eql(u8, lifecycle, "queued")) return "secondary";
-    return "outline";
-}
-
 fn resetProfileFormsPage(model: *Model) void {
     model.profileFormsVisibleLimit = 12;
     model.profileFormsPageOffset = 0;
@@ -5199,31 +4796,6 @@ fn libraryPeriodForSlot(
         else
             null,
     };
-}
-
-fn compactPeriodStatus(label: []const u8) []const u8 {
-    // Period tiles are intentionally compact (four columns even on a phone),
-    // so keep their visual status to a short token while the full status
-    // remains in the accessible action label and the card capability copy.
-    if (std.mem.eql(u8, label, "Deadline only")) return "Due";
-    if (std.mem.eql(u8, label, "Status unavailable")) return "Unknown";
-    return label;
-}
-
-fn periodStatusColor(label: []const u8) []const u8 {
-    if (std.mem.eql(u8, label, "Sent")) return "info";
-    if (std.mem.eql(u8, label, "Confirmed") or std.mem.eql(u8, label, "Paid")) {
-        return "success";
-    }
-    if (std.mem.eql(u8, label, "Cancelled")) return "destructive";
-    if (std.mem.eql(u8, label, "Draft") or
-        std.mem.eql(u8, label, "Queued") or
-        std.mem.eql(u8, label, "Due") or
-        std.mem.eql(u8, label, "Unknown"))
-    {
-        return "warning";
-    }
-    return "muted";
 }
 
 fn periodLaunchNote(
@@ -5437,117 +5009,6 @@ fn populateLibraryPeriodCells(
     row.period_summary = summary_buffer[0..summary_len];
 }
 
-fn deadlineMarker(count: usize) []const u8 {
-    return switch (count) {
-        0 => "",
-        1 => "•",
-        2 => "••",
-        3 => "•••",
-        4 => "••••",
-        else => "•••• +",
-    };
-}
-
-const CalendarMarkerTone = enum {
-    normal,
-    approaching,
-    due_soon,
-    overdue,
-};
-
-/// Calendar deadlines currently resolve to a civil date, not a clock time.
-/// Treat today and tomorrow as the date-level approximation of "within 24
-/// hours", then keep the inclusive seven-day window green.
-fn calendarMarkerTone(
-    deadline: calendar_domain.Date,
-    today: calendar_domain.Date,
-) CalendarMarkerTone {
-    if (calendar_domain.Date.compare(deadline, today) == .lt) {
-        return .overdue;
-    }
-    const due_soon_through = today.addDays(1) catch today;
-    if (calendar_domain.Date.compare(deadline, due_soon_through) != .gt) {
-        return .due_soon;
-    }
-    const approaching_through = today.addDays(7) catch due_soon_through;
-    if (calendar_domain.Date.compare(deadline, approaching_through) != .gt) {
-        return .approaching;
-    }
-    return .normal;
-}
-
-fn fullMonthName(month: u8) []const u8 {
-    return switch (month) {
-        1 => "January",
-        2 => "February",
-        3 => "March",
-        4 => "April",
-        5 => "May",
-        6 => "June",
-        7 => "July",
-        8 => "August",
-        9 => "September",
-        10 => "October",
-        11 => "November",
-        12 => "December",
-        else => "Unknown month",
-    };
-}
-
-fn shortMonthName(month: u8) []const u8 {
-    return switch (month) {
-        1 => "Jan",
-        2 => "Feb",
-        3 => "Mar",
-        4 => "Apr",
-        5 => "May",
-        6 => "Jun",
-        7 => "Jul",
-        8 => "Aug",
-        9 => "Sep",
-        10 => "Oct",
-        11 => "Nov",
-        12 => "Dec",
-        else => "",
-    };
-}
-
-fn shortQuarterName(quarter: u8) []const u8 {
-    return switch (quarter) {
-        1 => "Q1",
-        2 => "Q2",
-        3 => "Q3",
-        4 => "Q4",
-        else => "",
-    };
-}
-
-fn firstSelectedMonth(mask: u16) u8 {
-    for (1..13) |month| {
-        if (mask & (@as(u16, 1) << @intCast(month - 1)) != 0) {
-            return @intCast(month);
-        }
-    }
-    return 0;
-}
-
-fn firstSelectedQuarter(mask: u8) u8 {
-    for (1..5) |quarter| {
-        if (mask & (@as(u8, 1) << @intCast(quarter - 1)) != 0) {
-            return @intCast(quarter);
-        }
-    }
-    return 0;
-}
-
-fn appendLibraryFilterLabelPart(
-    label: *std.ArrayList(u8),
-    allocator: std.mem.Allocator,
-    part: []const u8,
-) !void {
-    if (label.items.len != 0) try label.appendSlice(allocator, " · ");
-    try label.appendSlice(allocator, part);
-}
 
 fn formatNewsTimestamp(
     allocator: std.mem.Allocator,
