@@ -18,24 +18,13 @@ const key_custody = @import("../security/key_custody.zig");
 const sensitive_memory = @import("../security/sensitive_memory.zig");
 const draft = @import("../form_engine/draft.zig");
 const occurrence = @import("../form_engine/occurrence.zig");
-const evidence = @import(
-    "../form_engine/forms/form_1701q_2018/evidence.zig",
-);
-const occurrences = @import(
-    "../form_engine/forms/form_1701q_2018/occurrences.zig",
-);
-const profile_mapping = @import(
-    "../form_engine/forms/form_1701q_2018/profile_mapping.zig",
-);
-const transaction = @import(
-    "../form_engine/forms/form_1701q_2018/transaction.zig",
-);
-const workflow = @import(
-    "../form_engine/forms/form_1701q_2018/workflow.zig",
-);
-const validation = @import(
-    "../form_engine/forms/form_1701q_2018/validation.zig",
-);
+const form_1701q_2018 = @import("../form_engine/forms/form_1701q_2018/mod.zig");
+const evidence = form_1701q_2018.evidence;
+const occurrences = form_1701q_2018.occurrences;
+const profile_mapping = form_1701q_2018.profile_mapping;
+const transaction = form_1701q_2018.transaction;
+const workflow = form_1701q_2018.workflow;
+const validation = form_1701q_2018.validation;
 const ui = @import("form_1701q_exact_ui_state.zig");
 
 pub const synthetic_test_only_at_rest = true;

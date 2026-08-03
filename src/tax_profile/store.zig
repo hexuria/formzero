@@ -23,14 +23,11 @@ const form_ids = @import("../forms/id.zig");
 const key_custody = @import("../security/key_custody.zig");
 const repository_opening = @import("../security/repository_opening.zig");
 const sensitive_memory = @import("../security/sensitive_memory.zig");
-const exact_document =
-    @import("../form_engine/forms/form_1701q_2018/document.zig");
-const exact_validation =
-    @import("../form_engine/forms/form_1701q_2018/validation.zig");
-const exact_form_occurrences =
-    @import("../form_engine/forms/form_1701q_2018/occurrences.zig");
-const exact_transaction =
-    @import("../form_engine/forms/form_1701q_2018/transaction.zig");
+const form_1701q_2018 = @import("../form_engine/forms/form_1701q_2018/mod.zig");
+const exact_document = form_1701q_2018.document;
+const exact_validation = form_1701q_2018.validation;
+const exact_form_occurrences = form_1701q_2018.occurrences;
+const exact_transaction = form_1701q_2018.transaction;
 
 const sqlite = @cImport({
     @cInclude("sqlite3.h");

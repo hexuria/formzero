@@ -29,42 +29,19 @@ const model = @import("../tax_profile/model.zig");
 const projection = @import("../tax_profile/projection.zig");
 const occurrence = @import("../form_engine/occurrence.zig");
 const draft = @import("../form_engine/draft.zig");
-const profile_mapping = @import(
-    "../form_engine/forms/form_1701q_2018/profile_mapping.zig",
-);
-const workflow = @import(
-    "../form_engine/forms/form_1701q_2018/workflow.zig",
-);
-const transaction = @import(
-    "../form_engine/forms/form_1701q_2018/transaction.zig",
-);
-const calculations = @import(
-    "../form_engine/forms/form_1701q_2018/calculations.zig",
-);
-const occurrences = @import(
-    "../form_engine/forms/form_1701q_2018/occurrences.zig",
-);
-const control_contract = @import(
-    "../form_engine/forms/form_1701q_2018/control_contract.zig",
-);
-const validation = @import(
-    "../form_engine/forms/form_1701q_2018/validation.zig",
-);
-const interaction = @import(
-    "../form_engine/forms/form_1701q_2018/interaction.zig",
-);
-const event_contract = @import(
-    "../form_engine/forms/form_1701q_2018/event_contract.zig",
-);
-const rdo_options = @import(
-    "../form_engine/forms/form_1701q_2018/rdo_options.zig",
-);
-const editable_codec = @import(
-    "../form_engine/forms/form_1701q_2018/editable_codec.zig",
-);
-const final_copy_codec = @import(
-    "../form_engine/forms/form_1701q_2018/final_copy_codec.zig",
-);
+const form_1701q_2018 = @import("../form_engine/forms/form_1701q_2018/mod.zig");
+const profile_mapping = form_1701q_2018.profile_mapping;
+const workflow = form_1701q_2018.workflow;
+const transaction = form_1701q_2018.transaction;
+const calculations = form_1701q_2018.calculations;
+const occurrences = form_1701q_2018.occurrences;
+const control_contract = form_1701q_2018.control_contract;
+const validation = form_1701q_2018.validation;
+const interaction = form_1701q_2018.interaction;
+const event_contract = form_1701q_2018.event_contract;
+const rdo_options = form_1701q_2018.rdo_options;
+const editable_codec = form_1701q_2018.editable_codec;
+const final_copy_codec = form_1701q_2018.final_copy_codec;
 const artifact_lab = @import("../artifact_lab/session.zig");
 const legacy_container = @import("../container_codec/legacy.zig");
 
