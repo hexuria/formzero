@@ -65,6 +65,40 @@ pub const GovernmentWithholdingChoice = enum {
 pub const FormActivityFilter = enum { active, inactive, all };
 pub const FormCapabilityFilter = enum { all, editor, calendar_only };
 
+/// Oldest tax year the setup UI offers. The storage layer accepts 1-9999,
+/// but that is a data bound rather than a product promise: the oldest catalog
+/// revision is 1999-07-ENCS, so older years would only add unreachable rows.
+pub const minimum_setup_year: i32 = 2000;
+
+/// The yearly setup workspace. Exactly one mode is active while a year is
+/// open, and only `draft_*` modes may create a Forms Set. A year is never
+/// classified from a cached summary: `openYearWorkspace` resolves the store
+/// first, so a configured year cannot present a create action.
+pub const YearWorkspaceMode = enum {
+    /// A configured year (including explicitly empty and the legacy catalog
+    /// compatibility state) is loaded for editing.
+    viewing,
+    /// An unconfigured year is open, but the user has not chosen how to start.
+    draft_choice,
+    /// An unconfigured year started from no forms.
+    draft_empty,
+    /// An unconfigured year seeded from another year's active forms.
+    draft_seeded,
+    /// Saving a draft lost the race with another writer. The staged selection
+    /// is preserved until the user reviews or discards it.
+    conflict,
+    /// The year could not be read. No create action may be offered, because an
+    /// unknown year must never be treated as unconfigured.
+    open_failed,
+
+    pub fn isDraft(self: YearWorkspaceMode) bool {
+        return switch (self) {
+            .draft_choice, .draft_empty, .draft_seeded => true,
+            .viewing, .conflict, .open_failed => false,
+        };
+    }
+};
+
 /// Presentation status for one catalog form while the Forms Set editor is
 /// open. Persisted membership and staged membership stay separate so Manage
 /// mode can describe the pending effect without changing Browse mode.
@@ -270,6 +304,13 @@ pub const State = struct {
     staged_forms: FormSelectionState = .{},
     managing_forms: bool = false,
     form_set_create_mode: bool = false,
+    year_workspace: YearWorkspaceMode = .viewing,
+    /// The source year a draft copied its forms from. Presentation only: no
+    /// facts are duplicated and the source year is never opened for writing.
+    draft_source_year: ?i32 = null,
+    /// A year the user selected while the workspace still held unsaved work.
+    /// Nothing is discarded until they answer the prompt.
+    pending_year_switch: ?i32 = null,
     form_activity_filter: FormActivityFilter = .active,
     form_capability_filter: FormCapabilityFilter = .all,
     input_was_truncated: bool = false,
@@ -770,12 +811,6 @@ pub const State = struct {
         }
     }
 
-    pub fn taxYearInputChanged(self: *State) void {
-        if (self.editing_new or !self.has_selection) return;
-        const year = parseTaxYear(self.tax_year.text()) catch return;
-        self.loadEditorFormSet(year) catch |err| self.setError(err);
-    }
-
     pub fn rejectIfFormsDirty(self: *State) bool {
         if (!self.formsDirty()) return false;
         self.setError(error.UnsavedFormSetChanges);
@@ -835,43 +870,311 @@ pub const State = struct {
         }
     }
 
-    pub fn beginManageFormsForYear(
-        self: *State,
-        year: i32,
-        creating: bool,
-    ) bool {
+    /// Reverts edits without leaving the year. A configured year returns to
+    /// its saved membership; a draft returns to its starting choice, because
+    /// there is no earlier state to restore.
+    pub fn cancelYearWorkspaceEdits(self: *State) void {
+        switch (self.year_workspace) {
+            .viewing => {
+                self.staged_forms.copySelectionFrom(&self.saved_forms);
+                self.staged_forms.resetInteraction();
+            },
+            .draft_choice, .draft_empty, .draft_seeded => {
+                _ = self.staged_forms.clear();
+                self.staged_forms.resetInteraction();
+                self.draft_source_year = null;
+                self.year_workspace = .draft_choice;
+            },
+            .conflict, .open_failed => {},
+        }
+        self.resetFormFilters();
+    }
+
+    /// The newest year the setup UI may open. A Forms Set is never created
+    /// for a year that has not started.
+    pub fn maximumSetupYear(self: *const State) i32 {
+        return self.default_tax_year;
+    }
+
+    pub fn workspaceYear(self: *const State) ?i32 {
+        return self.formSetYearInput();
+    }
+
+    /// True when the workspace holds work that a year switch would destroy.
+    /// A draft that has only been opened holds nothing worth a prompt.
+    pub fn workspaceDirty(self: *const State) bool {
+        return switch (self.year_workspace) {
+            .open_failed, .draft_choice => false,
+            .viewing, .draft_empty, .draft_seeded, .conflict =>
+                self.changedFormCount() > 0,
+        };
+    }
+
+    pub fn pendingYearSwitch(self: *const State) ?i32 {
+        return self.pending_year_switch;
+    }
+
+    pub fn cancelPendingYearSwitch(self: *State) void {
+        self.pending_year_switch = null;
+    }
+
+    /// Applies a year switch the user confirmed after being warned. Staged
+    /// work is dropped only on this explicit path.
+    pub fn confirmPendingYearSwitch(self: *State) bool {
+        const year = self.pending_year_switch orelse return false;
+        self.pending_year_switch = null;
+        self.staged_forms.copySelectionFrom(&self.saved_forms);
+        return self.openYearWorkspace(year);
+    }
+
+    /// The single entry point for the yearly setup workspace.
+    ///
+    /// The create-versus-edit decision is always resolved against the store,
+    /// never against the cached yearly summaries: a summary cache that has
+    /// not caught up must not be able to present a blank create workspace for
+    /// a year that already exists.
+    pub fn openYearWorkspace(self: *State, year: i32) bool {
         if (self.editing_new or !self.has_selection) {
             self.setError(error.FormsRequireSavedProfile);
             return false;
         }
-        if (self.formsDirty()) {
-            self.setError(error.UnsavedFormSetChanges);
-            return false;
-        }
-        if (year < 1 or year > 9999) {
+        if (year < minimum_setup_year or year > self.maximumSetupYear()) {
             self.setError(error.InvalidTaxYear);
             return false;
         }
-        setTaxYearBuffer(&self.tax_year, year);
-        if (creating) {
+        if (self.workspaceDirty() and self.workspaceYear() != year) {
+            self.pending_year_switch = year;
+            return false;
+        }
+        self.pending_year_switch = null;
+        self.openYearWorkspaceFallible(year) catch |err| {
+            // Fail closed: an unreadable year keeps no selection at all and
+            // offers no create action, so it can never be mistaken for one
+            // that is merely unconfigured.
+            setTaxYearBuffer(&self.tax_year, year);
             self.saved_forms = .{};
             self.staged_forms = .{};
-            self.form_set_state = .needs_configuration;
-            self.forms_set_configured = false;
-            self.legacy_form_set_reset_allowed = false;
-            self.form_set_create_mode = true;
-            self.managing_forms = true;
-            self.resetFormFilters();
-            return true;
-        }
-        self.loadEditorFormSet(year) catch |err| {
+            self.managing_forms = false;
+            self.form_set_create_mode = false;
+            self.draft_source_year = null;
+            self.year_workspace = .open_failed;
             self.setError(err);
             return false;
         };
-        self.form_set_create_mode = false;
+        return true;
+    }
+
+    fn openYearWorkspaceFallible(self: *State, year: i32) !void {
+        try self.loadEditorFormSet(year);
+        setTaxYearBuffer(&self.tax_year, year);
+        self.draft_source_year = null;
         self.managing_forms = true;
         self.resetFormFilters();
+        if (self.form_set_state == .needs_configuration) {
+            self.saved_forms = .{};
+            self.staged_forms = .{};
+            self.form_set_create_mode = true;
+            self.year_workspace = .draft_choice;
+        } else {
+            self.form_set_create_mode = false;
+            self.year_workspace = .viewing;
+        }
+    }
+
+    /// Starts an unconfigured year from no forms. Saving this is a deliberate
+    /// empty configuration, not an absence of one.
+    pub fn chooseDraftEmpty(self: *State) bool {
+        if (!self.year_workspace.isDraft()) return false;
+        _ = self.staged_forms.clear();
+        self.draft_source_year = null;
+        self.year_workspace = .draft_empty;
         return true;
+    }
+
+    /// Copies another year's active forms into this draft's staged selection.
+    /// Only form membership is copied: taxpayer facts are resolved from the
+    /// effective history for the target period, never duplicated.
+    pub fn chooseDraftSeed(self: *State, source_year: i32) bool {
+        if (!self.year_workspace.isDraft()) return false;
+        self.chooseDraftSeedFallible(source_year) catch |err| {
+            self.setError(err);
+            return false;
+        };
+        return true;
+    }
+
+    fn chooseDraftSeedFallible(self: *State, source_year: i32) !void {
+        const allocator = self.allocator orelse return error.NotAttached;
+        const store = self.store orelse return error.NotAttached;
+        const profile_id = self.selectedProfileId() orelse
+            return error.NoSelectedProfile;
+        const target_year = self.workspaceYear() orelse
+            return error.InvalidTaxYear;
+        if (source_year == target_year) return error.InvalidTaxYear;
+
+        var resolved = try store.resolveFormSet(
+            allocator,
+            profile_id,
+            source_year,
+        );
+        defer resolved.deinit(allocator);
+        if (resolved.state == .needs_configuration) {
+            return persistence.Error.NotFound;
+        }
+
+        var seeded: FormSelectionState = if (resolved.state == .legacy_catalog_default)
+            FormSelectionState.allSelected()
+        else
+            FormSelectionState{};
+        for (resolved.forms.items) |item| {
+            for (&catalog.forms, 0..) |*form, index| {
+                if (!std.ascii.eqlIgnoreCase(item.form_code, form.code)) continue;
+                _ = seeded.set(index, true);
+                break;
+            }
+        }
+        self.staged_forms.copySelectionFrom(&seeded);
+        self.draft_source_year = source_year;
+        self.year_workspace = .draft_seeded;
+    }
+
+    pub fn draftSourceYear(self: *const State) ?i32 {
+        return self.draft_source_year;
+    }
+
+    /// The year a draft should offer as its recommended source: the newest
+    /// configured year that is not the year being set up.
+    pub fn recommendedSeedYear(self: *const State) ?i32 {
+        const target = self.workspaceYear();
+        for (self.form_set_summaries[0..self.form_set_summary_count]) |summary| {
+            if (target != null and summary.tax_year == target.?) continue;
+            return summary.tax_year;
+        }
+        return null;
+    }
+
+    /// Recovers from a duplicate created by another window. The persisted set
+    /// becomes the comparison baseline while the user's staged choices are
+    /// preserved as pending changes they can still save or abandon.
+    pub fn reviewConflictingYear(self: *State) bool {
+        if (self.year_workspace != .conflict) return false;
+        const year = self.workspaceYear() orelse return false;
+        self.rebaseOnPersisted(year) catch |err| {
+            self.setError(err);
+            return false;
+        };
+        self.setNotice(
+            .neutral,
+            "Loaded the saved setup. Your choices are shown as pending changes.",
+        );
+        return true;
+    }
+
+    /// Abandons the staged draft and adopts the setup another window saved.
+    pub fn discardConflictingDraft(self: *State) bool {
+        if (self.year_workspace != .conflict) return false;
+        const year = self.workspaceYear() orelse return false;
+        if (!self.openYearWorkspaceAfterConflict(year)) return false;
+        self.setNotice(.neutral, "Your draft was discarded.");
+        return true;
+    }
+
+    fn openYearWorkspaceAfterConflict(self: *State, year: i32) bool {
+        self.year_workspace = .viewing;
+        self.staged_forms.copySelectionFrom(&self.saved_forms);
+        return self.openYearWorkspace(year);
+    }
+
+    /// Loads persisted membership into the saved baseline only. The staged
+    /// selection is deliberately untouched so a conflict never discards work.
+    fn rebaseOnPersisted(self: *State, year: i32) !void {
+        const allocator = self.allocator orelse return error.NotAttached;
+        const store = self.store orelse return error.NotAttached;
+        const profile_id = self.selectedProfileId() orelse
+            return error.NoSelectedProfile;
+        var resolved = try store.resolveFormSet(allocator, profile_id, year);
+        defer resolved.deinit(allocator);
+
+        self.form_set_state = resolved.state;
+        self.legacy_form_set_reset_allowed = resolved.legacy_reset_allowed;
+        self.forms_set_configured = switch (resolved.state) {
+            .active_empty, .active_nonempty => true,
+            .needs_configuration, .legacy_catalog_default => false,
+        };
+        self.saved_forms = if (resolved.state == .legacy_catalog_default)
+            FormSelectionState.allSelected()
+        else
+            FormSelectionState{};
+        for (resolved.forms.items) |item| {
+            for (&catalog.forms, 0..) |*form, index| {
+                if (!std.ascii.eqlIgnoreCase(item.form_code, form.code)) continue;
+                _ = self.saved_forms.set(index, true);
+                break;
+            }
+        }
+        self.form_set_create_mode = false;
+        self.managing_forms = true;
+        self.year_workspace = .viewing;
+        self.draft_source_year = null;
+        try self.updateFormSetSummary();
+        try self.refreshFormSetSummaries();
+    }
+
+    /// Saves the open year. A draft creates; a configured year updates. A
+    /// duplicate created concurrently becomes a recoverable conflict rather
+    /// than a lost draft or a silent overwrite.
+    pub fn saveYearWorkspace(self: *State) bool {
+        if (self.year_workspace == .draft_choice or
+            self.year_workspace == .open_failed or
+            self.year_workspace == .conflict)
+        {
+            return false;
+        }
+        const creating = self.year_workspace.isDraft();
+        const year = self.workspaceYear();
+        self.saveManagedFormsFallible() catch |err| {
+            if (creating and err == persistence.Error.FormSetAlreadyExists) {
+                self.year_workspace = .conflict;
+                self.managing_forms = true;
+                self.setNotice(
+                    .failure,
+                    "This year was set up in another window while you were working. Your choices are still here.",
+                );
+                return false;
+            }
+            self.setError(err);
+            return false;
+        };
+        self.year_workspace = .viewing;
+        self.draft_source_year = null;
+        self.managing_forms = true;
+        self.resetFormFilters();
+        self.setSaveNotice(year);
+        return true;
+    }
+
+    fn setSaveNotice(self: *State, year: ?i32) void {
+        var message: [128]u8 = undefined;
+        const active = self.saved_forms.selectedCount();
+        const rendered = if (year) |value| (if (active == 0)
+            std.fmt.bufPrint(
+                &message,
+                "Forms for {d} saved · no active forms.",
+                .{value},
+            ) catch "Your forms were saved."
+        else if (active == 1)
+            std.fmt.bufPrint(
+                &message,
+                "Forms for {d} saved · 1 active form.",
+                .{value},
+            ) catch "Your forms were saved."
+        else
+            std.fmt.bufPrint(
+                &message,
+                "Forms for {d} saved · {d} active forms.",
+                .{ value, active },
+            ) catch "Your forms were saved.") else "Your forms were saved.";
+        self.setNotice(.success, rendered);
     }
 
     pub fn beginManageForms(self: *State) bool {
@@ -1061,7 +1364,7 @@ pub const State = struct {
             self.setError(err);
             return false;
         };
-        self.setNotice(.success, "Forms Set saved for this profile and tax year.");
+        self.setNotice(.success, "Your forms were saved for this tax year.");
         return true;
     }
 
@@ -1107,7 +1410,7 @@ pub const State = struct {
             self.setError(err);
             return false;
         };
-        self.setNotice(.success, "Legacy catalog default restored.");
+        self.setNotice(.success, "The original catalog default was restored.");
         return true;
     }
 
@@ -1680,6 +1983,8 @@ pub const State = struct {
         self.staged_forms.resetInteraction();
         self.managing_forms = false;
         self.form_set_create_mode = false;
+        self.year_workspace = .viewing;
+        self.draft_source_year = null;
         self.resetFormFilters();
         try self.updateFormSetSummary();
     }
@@ -1753,6 +2058,9 @@ pub const State = struct {
         self.staged_forms = .{};
         self.managing_forms = false;
         self.form_set_create_mode = false;
+        self.year_workspace = .viewing;
+        self.draft_source_year = null;
+        self.pending_year_switch = null;
         self.resetFormFilters();
         self.input_was_truncated = false;
     }
@@ -1801,7 +2109,7 @@ pub const State = struct {
     fn setError(self: *State, err: anyerror) void {
         const message = switch (err) {
             persistence.Error.RevisionConflict => "This profile changed elsewhere. Reload it before saving a new revision.",
-            error.UnknownFormCode => "The Forms Set contains a code that is not in the 51-form catalog.",
+            error.UnknownFormCode => "One of the chosen forms is not in the 51-form catalog.",
             error.InvalidTaxYear => "Tax year must be a four-digit year from 0001 through 9999.",
             error.ActivityRequiresBusinessLine => "An activity ATC requires a line of business. Tax type remains an independent registration fact.",
             error.PersonalFieldsNotApplicable => "Birth date, citizenship, and foreign tax number apply only to individual subjects.",
@@ -1809,9 +2117,9 @@ pub const State = struct {
             error.SourceReferenceRequired => "Imported and migrated revisions require a source reference.",
             error.ManualSourceHasReference => "Manual entry has no external source reference. Choose Imported or Migrated.",
             error.UnsupportedRepeatedComponents => "This repeated-component revision is preserved, but cannot be rewritten by the single-activity editor.",
-            error.UnsavedFormSetChanges => "Save or cancel the staged Forms Set before switching profiles or creating another profile.",
-            error.FormsRequireSavedProfile => "Create this profile before managing its Forms Set.",
-            persistence.Error.FormSetAlreadyExists => "That tax year already has a Forms Set. Choose it from the list to edit the active forms.",
+            error.UnsavedFormSetChanges => "Save or cancel your unsaved form changes before switching taxpayers.",
+            error.FormsRequireSavedProfile => "Save this taxpayer profile before choosing its forms.",
+            persistence.Error.FormSetAlreadyExists => "That year is already set up. Choose it from the year list to edit its forms.",
             error.FieldTooLong => "One or more profile fields exceed their supported length.",
             else => "Profile was not saved. Check required fields and field formats.",
         };
@@ -2456,6 +2764,267 @@ test "profile state appends immutable source-aware revision" {
         std.meta.Tag(model.RevisionSource).imported,
         std.meta.activeTag(current.revision.source),
     );
+}
+
+fn workspaceFixture(
+    state: *State,
+    allocator: std.mem.Allocator,
+    store: *persistence.Store,
+) !void {
+    try state.attach(allocator, store, "2026-01-01", 2026);
+    state.tin.set("123-456-789-000");
+    state.rdo.set("040");
+    state.display_name.set("Workspace Taxpayer");
+    state.registered_address.set("Quezon City");
+    state.effective_from.set("2026-01-01");
+    try std.testing.expect(state.save());
+}
+
+fn catalogIndexOf(code: []const u8) usize {
+    for (&catalog.forms, 0..) |*form, index| {
+        if (std.mem.eql(u8, form.code, code)) return index;
+    }
+    unreachable;
+}
+
+test "configured year opens for editing and never offers a create workspace" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    const profile_id = state.selectedProfileId().?;
+    try store.createFormSet(profile_id, 2026, &.{.{
+        .form_code = "2551Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+    try state.refreshFormSetSummaries();
+
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expectEqual(YearWorkspaceMode.viewing, state.year_workspace);
+    try std.testing.expect(!state.year_workspace.isDraft());
+    try std.testing.expect(!state.form_set_create_mode);
+    try std.testing.expectEqual(@as(usize, 1), state.activeFormCount());
+    // Editing an existing year takes the update path: the insert-only create
+    // path is unreachable, so a save can never collide with itself.
+    try std.testing.expect(state.saveYearWorkspace());
+    try std.testing.expectEqual(YearWorkspaceMode.viewing, state.year_workspace);
+    try std.testing.expectEqual(@as(usize, 1), state.activeFormCount());
+
+    // Even a stale summary cache cannot reclassify a configured year, because
+    // the workspace resolves membership from the store on every open.
+    state.form_set_summary_count = 0;
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expectEqual(YearWorkspaceMode.viewing, state.year_workspace);
+    try std.testing.expectEqual(@as(usize, 1), state.activeFormCount());
+}
+
+test "a duplicate created elsewhere becomes a recoverable conflict" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    const profile_id = state.selectedProfileId().?;
+    const index_2551q = catalogIndexOf("2551Q");
+    const index_1701q = catalogIndexOf("1701Q");
+
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expectEqual(YearWorkspaceMode.draft_choice, state.year_workspace);
+    try std.testing.expect(state.chooseDraftEmpty());
+    state.toggleStagedForm(index_2551q);
+    try std.testing.expect(state.stagedFormSelected(index_2551q));
+
+    // Another window configures the same year first.
+    try store.createFormSet(profile_id, 2026, &.{.{
+        .form_code = "1701Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+
+    try std.testing.expect(!state.saveYearWorkspace());
+    try std.testing.expectEqual(YearWorkspaceMode.conflict, state.year_workspace);
+    // The staged work survives the collision.
+    try std.testing.expect(state.stagedFormSelected(index_2551q));
+
+    try std.testing.expect(state.reviewConflictingYear());
+    try std.testing.expectEqual(YearWorkspaceMode.viewing, state.year_workspace);
+    // The saved setup is the new baseline; the user's pick reads as pending.
+    try std.testing.expect(state.persistedFormSelected(index_1701q));
+    try std.testing.expectEqual(
+        ManagedFormStatus.will_activate,
+        state.managedFormStatus(index_2551q).?,
+    );
+    try std.testing.expectEqual(
+        ManagedFormStatus.will_deactivate,
+        state.managedFormStatus(index_1701q).?,
+    );
+    try std.testing.expect(state.saveYearWorkspace());
+    try std.testing.expect(state.persistedFormSelected(index_2551q));
+    try std.testing.expect(!state.persistedFormSelected(index_1701q));
+}
+
+test "discarding a conflicting draft adopts the setup saved elsewhere" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    const profile_id = state.selectedProfileId().?;
+    const index_2551q = catalogIndexOf("2551Q");
+    const index_1701q = catalogIndexOf("1701Q");
+
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expect(state.chooseDraftEmpty());
+    state.toggleStagedForm(index_2551q);
+    try store.createFormSet(profile_id, 2026, &.{.{
+        .form_code = "1701Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+    try std.testing.expect(!state.saveYearWorkspace());
+
+    try std.testing.expect(state.discardConflictingDraft());
+    try std.testing.expectEqual(YearWorkspaceMode.viewing, state.year_workspace);
+    try std.testing.expect(state.persistedFormSelected(index_1701q));
+    try std.testing.expect(!state.stagedFormSelected(index_2551q));
+    try std.testing.expect(!state.workspaceDirty());
+}
+
+test "a missing year seeded from another year saves without touching the source" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    const profile_id = state.selectedProfileId().?;
+    const index_2551q = catalogIndexOf("2551Q");
+    const index_1701q = catalogIndexOf("1701Q");
+    try store.createFormSet(profile_id, 2026, &.{
+        .{ .form_code = "2551Q", .form_revision = "2018-01-ENCS" },
+        .{ .form_code = "1701Q", .form_revision = "2018-01-ENCS" },
+    });
+    try state.refreshFormSetSummaries();
+
+    try std.testing.expect(state.openYearWorkspace(2025));
+    try std.testing.expectEqual(YearWorkspaceMode.draft_choice, state.year_workspace);
+    try std.testing.expectEqual(@as(i32, 2026), state.recommendedSeedYear().?);
+
+    try std.testing.expect(state.chooseDraftSeed(2026));
+    try std.testing.expectEqual(YearWorkspaceMode.draft_seeded, state.year_workspace);
+    try std.testing.expectEqual(@as(i32, 2026), state.draftSourceYear().?);
+    try std.testing.expectEqual(@as(usize, 2), state.stagedFormCount());
+
+    state.toggleStagedForm(index_1701q);
+    try std.testing.expectEqual(@as(usize, 1), state.stagedFormCount());
+    try std.testing.expect(state.saveYearWorkspace());
+    try std.testing.expectEqual(YearWorkspaceMode.viewing, state.year_workspace);
+
+    var saved_2025 = (try store.getFormSet(allocator, profile_id, 2025)).?;
+    defer saved_2025.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), saved_2025.items.len);
+    try std.testing.expectEqualStrings("2551Q", saved_2025.items[0].form_code);
+
+    // The source year is read-only during a copy.
+    var saved_2026 = (try store.getFormSet(allocator, profile_id, 2026)).?;
+    defer saved_2026.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), saved_2026.items.len);
+    _ = index_2551q;
+}
+
+test "an explicitly empty year stays configured and never widens" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expect(state.chooseDraftEmpty());
+    try std.testing.expectEqual(YearWorkspaceMode.draft_empty, state.year_workspace);
+    try std.testing.expect(state.saveYearWorkspace());
+
+    try std.testing.expectEqual(
+        persistence.FormSetState.active_empty,
+        state.form_set_state,
+    );
+    try std.testing.expect(state.forms_set_configured);
+    try std.testing.expect(!state.formAvailable(2026, "2551Q"));
+    // Reopening keeps it configured rather than reverting to a setup draft.
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expectEqual(YearWorkspaceMode.viewing, state.year_workspace);
+}
+
+test "the year workspace rejects future and out-of-range years" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+
+    try std.testing.expect(!state.openYearWorkspace(2027));
+    try std.testing.expect(state.noticeFailure());
+    try std.testing.expect(!state.openYearWorkspace(minimum_setup_year - 1));
+    try std.testing.expectEqual(@as(i32, 2026), state.maximumSetupYear());
+}
+
+test "switching year with unsaved work prompts instead of discarding" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    const index_2551q = catalogIndexOf("2551Q");
+
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expect(state.chooseDraftEmpty());
+    try std.testing.expect(!state.workspaceDirty());
+    state.toggleStagedForm(index_2551q);
+    try std.testing.expect(state.workspaceDirty());
+
+    // The switch is withheld, not applied, and nothing is written.
+    try std.testing.expect(!state.openYearWorkspace(2025));
+    try std.testing.expectEqual(@as(i32, 2025), state.pendingYearSwitch().?);
+    try std.testing.expectEqual(@as(i32, 2026), state.workspaceYear().?);
+    try std.testing.expect(state.stagedFormSelected(index_2551q));
+
+    state.cancelPendingYearSwitch();
+    try std.testing.expect(state.pendingYearSwitch() == null);
+    try std.testing.expectEqual(@as(i32, 2026), state.workspaceYear().?);
+
+    try std.testing.expect(!state.openYearWorkspace(2025));
+    try std.testing.expect(state.confirmPendingYearSwitch());
+    try std.testing.expectEqual(@as(i32, 2025), state.workspaceYear().?);
+    try std.testing.expectEqual(YearWorkspaceMode.draft_choice, state.year_workspace);
+    try std.testing.expect(!state.stagedFormSelected(index_2551q));
+}
+
+test "an unreadable year fails closed instead of offering setup" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    try store.createFormSet(state.selectedProfileId().?, 2026, &.{.{
+        .form_code = "2551Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expectEqual(@as(usize, 1), state.activeFormCount());
+
+    store.close();
+    try std.testing.expect(!state.openYearWorkspace(2025));
+    try std.testing.expectEqual(YearWorkspaceMode.open_failed, state.year_workspace);
+    try std.testing.expect(!state.year_workspace.isDraft());
+    try std.testing.expect(!state.form_set_create_mode);
+    // No selection from the previous year survives an unreadable one.
+    try std.testing.expectEqual(@as(usize, 0), state.stagedFormCount());
+    try std.testing.expectEqual(@as(usize, 0), state.activeFormCount());
 }
 
 test "calendar form selection refresh fails closed" {

@@ -1815,6 +1815,90 @@ on-press="show_dashboard_forms">Tax Form Library</button>
 <slot/>
 </column>
 </template>
+<template name="profile-setup-year-combobox">
+<stack width="176">
+<select
+height="44"
+label="Tax year for forms setup"
+on-press="profile_setup_toggle_year_picker">{profileSetupYearLabel}</select>
+<if test="{profileSetupYearPickerOpen}">
+<dropdown-menu
+anchor="below"
+anchor-alignment="stretch"
+anchor-offset="4"
+height="300"
+on-dismiss="profile_setup_close_year_picker">
+<column padding="8" gap="8">
+<input
+height="40"
+text="{profileSetupYearQueryValue}"
+placeholder="Type a year"
+label="Filter tax years"
+on-input="profile_setup_year_query"/>
+<if test="{profileSetupYearHelperVisible}">
+<text wrap="true" foreground="text_muted">{profileSetupYearHelperText}</text>
+</if>
+<scroll height="200" label="Tax years">
+<column gap="4">
+<for each="profileSetupYearOptions" key="id" as="option">
+<menu-item
+height="44"
+selected="{option.selected}"
+label="{option.accessibleLabel}"
+on-press="profile_setup_select_year:{option.year}">{option.rowLabel}</menu-item>
+</for>
+</column>
+</scroll>
+</column>
+</dropdown-menu>
+</if>
+</stack>
+</template>
+<template name="profile-setup-source-picker">
+<stack width="220">
+<select
+height="44"
+label="Change the year this setup copies from"
+on-press="profile_setup_toggle_source_picker">Change source</select>
+<if test="{profileSetupSourcePickerOpen}">
+<dropdown-menu
+anchor="below"
+anchor-alignment="stretch"
+anchor-offset="4"
+height="240"
+on-dismiss="profile_setup_close_source_picker">
+<scroll height="220" label="Years you can copy from">
+<column padding="8" gap="4">
+<for each="profileSetupSourceOptions" key="id" as="source">
+<menu-item
+height="44"
+selected="{source.selected}"
+label="{source.accessibleLabel}"
+on-press="profile_setup_draft_seed:{source.year}">{source.rowLabel}</menu-item>
+</for>
+</column>
+</scroll>
+</dropdown-menu>
+</if>
+</stack>
+</template>
+<template name="profile-setup-cor-card">
+<card padding="0">
+<row padding="14" gap="12" cross="center">
+<icon name="file-text" foreground="text_muted" width="22" height="22"/>
+<column grow="1" gap="4">
+<text><span weight="bold">Certificate of Registration</span></text>
+<text wrap="true" foreground="text_muted">{profileCorStatusLabel}</text>
+</column>
+<button
+height="44"
+variant="outline"
+icon="folder-open"
+disabled="{profileCorUploadDisabled}"
+on-press="profile_cor_upload">{profileCorActionLabel}</button>
+</row>
+</card>
+</template>
 <template name="profile-setup-content">
 <column gap="24">
 <if test="{profileInlineBackVisible}">
@@ -1849,13 +1933,7 @@ Tax Profile
 height="44"
 selected="{profileTaxFormsActive}"
 on-press="show_profile_tax_forms">
-Tax Forms
-</button>
-<button
-height="44"
-selected="{profileCertificateActive}"
-on-press="show_profile_certificate">
-COR
+Registration &amp; Forms
 </button>
 <button
 height="44"
@@ -2174,95 +2252,218 @@ on-input="profile_source_reference_input"/>
 </if>
 <if test="{profileTaxFormsActive}">
 <column gap="16">
+<if test="{profileFormsHeaderStacked}">
+<column gap="10">
 <column gap="4">
-<text><span weight="bold">Yearly tax forms</span></text>
+<text><span weight="bold">Registration &amp; Forms</span></text>
 <text wrap="true" foreground="text_muted">
-Activate a separate Forms Set for each tax year. A year can be
-added once, then edited later; an explicitly empty set keeps that
-year out of the taxpayer calendar.
+Choose which BIR forms apply to this taxpayer in each tax year.
 </text>
 </column>
-<if test="{managingProfileForms}">
-<use template="taxpayer-form-library-section"/>
+<use template="profile-setup-year-combobox"/>
+</column>
 </if>
 <else>
-<row gap="10" cross="end">
-<use template="profile-field" label="New tax year" grow="1">
-<input
-height="44"
-text="{profileTaxYearValue}"
-placeholder="YYYY"
-label="New tax year"
-on-input="profile_tax_year_input"/>
-</use>
-<button
-height="44"
-variant="primary"
-icon="plus"
-disabled="{profileFormsAddYearDisabled}"
-on-press="profile_forms_add_year">Add yearly form set</button>
+<row gap="12" cross="center">
+<column grow="1" gap="4">
+<text><span weight="bold">Registration &amp; Forms</span></text>
+<text wrap="true" foreground="text_muted">
+Choose which BIR forms apply to this taxpayer in each tax year.
+</text>
+</column>
+<use template="profile-setup-year-combobox"/>
 </row>
+</else>
 <if test="{editingNewProfile}">
 <card padding="0">
 <column padding="20" gap="6">
-<text><span weight="bold">Save the tax profile first</span></text>
+<text><span weight="bold">Save this taxpayer first</span></text>
 <text wrap="true" foreground="text_muted">
-Yearly forms belong to a saved taxpayer profile. Save this
-profile, then return here to activate its forms.
+Yearly forms belong to a saved taxpayer. Save this taxpayer,
+then return here to choose its forms.
 </text>
 </column>
 </card>
 </if>
 <else>
-<if test="{profileFormSetRowsEmpty}">
+<use template="profile-setup-cor-card"/>
+<if test="{profileSetupPendingSwitchVisible}">
 <card padding="0">
-<column padding="24" gap="8" main="center" cross="center">
-<icon name="file-text" foreground="text_muted" width="28" height="28"/>
-<text text-alignment="center"><span weight="bold">No yearly form sets yet</span></text>
-<text wrap="true" text-alignment="center" foreground="text_muted">
-Add a year to create its independent tax form library.
-</text>
+<column padding="16" gap="10">
+<text><span weight="bold">{profileSetupPendingSwitchTitle}</span></text>
+<text wrap="true" foreground="text_muted">{profileSetupPendingSwitchBody}</text>
+<row gap="8">
+<button
+height="44"
+variant="primary"
+autofocus="true"
+on-press="profile_setup_cancel_year_switch">Keep editing</button>
+<button
+height="44"
+variant="outline"
+on-press="profile_setup_confirm_year_switch">Discard changes</button>
+</row>
+</column>
+</card>
+</if>
+<if test="{profileSetupOpenFailedVisible}">
+<card padding="0">
+<column padding="16" gap="10">
+<text><span weight="bold">{profileSetupStatusLabel}</span></text>
+<row>
+<button
+height="44"
+variant="outline"
+on-press="profile_setup_retry_year">Try again</button>
+</row>
 </column>
 </card>
 </if>
 <else>
+<text wrap="true" foreground="text_muted">{profileSetupStatusLabel}</text>
+</else>
+<if test="{profileSetupConflictVisible}">
+<card padding="0">
+<column padding="16" gap="10">
+<text><span weight="bold">{profileSetupConflictTitle}</span></text>
+<text wrap="true" foreground="text_muted">
+Your choices are still here. Review the saved setup, then keep
+or change it.
+</text>
+<row gap="8">
+<button
+height="44"
+variant="primary"
+on-press="profile_setup_conflict_review">{profileSetupConflictReviewLabel}</button>
+<button
+height="44"
+variant="outline"
+on-press="profile_setup_conflict_discard">Discard my draft</button>
+</row>
+</column>
+</card>
+</if>
+<if test="{profileSetupDraftBannerVisible}">
+<card padding="0">
+<column padding="16" gap="10">
+<text><span weight="bold">{profileSetupDraftTitle}</span></text>
+<if test="{profileSetupDraftChoiceVisible}">
+<column gap="8">
+<text wrap="true" foreground="text_muted">
+Start from scratch, or copy the forms you already set up
+for another year.
+</text>
+<if test="{profileFormsHeaderStacked}">
+<column gap="8">
+<button
+height="44"
+variant="outline"
+on-press="profile_setup_draft_empty">Start empty</button>
+<if test="{profileSetupSeedAvailable}">
+<button
+height="44"
+variant="primary"
+on-press="profile_setup_draft_seed:{profileSetupSeedYear}">{profileSetupSeedLabel}</button>
+</if>
+</column>
+</if>
+<else>
+<row gap="8">
+<button
+height="44"
+variant="outline"
+on-press="profile_setup_draft_empty">Start empty</button>
+<if test="{profileSetupSeedAvailable}">
+<button
+height="44"
+variant="primary"
+on-press="profile_setup_draft_seed:{profileSetupSeedYear}">{profileSetupSeedLabel}</button>
+</if>
+</row>
+</else>
+</column>
+</if>
+<if test="{profileSetupSeededVisible}">
+<column gap="8">
+<text><span weight="bold">{profileSetupSourceLabel}</span></text>
+<text wrap="true" foreground="text_muted">{profileSetupSourceSummary}</text>
+<use template="profile-setup-source-picker"/>
+</column>
+</if>
+<text wrap="true" foreground="text_muted">{profileSetupInheritanceNote}</text>
+<text wrap="true" foreground="text_muted">
+Filings, drafts, payments, deadlines, COR files, and email
+settings never copy between years.
+</text>
+</column>
+</card>
+</if>
+<if test="{profileSetupManagerVisible}">
+<use template="taxpayer-form-library-section"/>
+<if test="{profileSetupZeroFormsHelperVisible}">
+<text wrap="true" foreground="text_muted">{profileSetupZeroFormsHelperText}</text>
+</if>
+<if test="{profileFormsHeaderStacked}">
 <column gap="10">
+<button
+height="44"
+variant="outline"
+on-press="profile_forms_cancel">Cancel</button>
+<button
+height="44"
+variant="primary"
+icon="save"
+disabled="{profileSetupPrimaryDisabled}"
+on-press="profile_setup_save">{profileSetupPrimaryLabel}</button>
+</column>
+</if>
+<else>
+<row main="end" gap="12">
+<button
+height="44"
+variant="outline"
+on-press="profile_forms_cancel">Cancel</button>
+<button
+height="44"
+variant="primary"
+icon="save"
+disabled="{profileSetupPrimaryDisabled}"
+on-press="profile_setup_save">{profileSetupPrimaryLabel}</button>
+</row>
+</else>
+</if>
+<if test="{profileSetupYearsDisclosureVisible}">
+<column gap="8">
+<row>
+<button
+height="44"
+variant="ghost"
+icon="chevron-right"
+on-press="profile_setup_toggle_years_disclosure">{profileSetupYearsDisclosureLabel}</button>
+</row>
+<if test="{profileSetupYearsExpandedVisible}">
+<column gap="8">
 <for each="profileFormSetRows" key="id" as="set">
 <card padding="0">
-<row padding="14" gap="14" cross="center">
-<column width="76" gap="2" cross="center">
-<text text-alignment="center"><span weight="bold" scale="1.2">{set.yearLabel}</span></text>
-<text text-alignment="center" size="sm" foreground="text_muted">Tax year</text>
-</column>
-<column width="1" height="54" background="border"></column>
-<column grow="1" gap="4">
-<row gap="8" cross="center">
-<badge variant="secondary">{set.stateLabel}</badge>
+<row padding="12" gap="12" cross="center">
+<text width="60" text-alignment="center"><span weight="bold">{set.yearLabel}</span></text>
+<column width="1" height="36" background="border"></column>
+<column grow="1" gap="2">
 <text foreground="text_muted">{set.formsLabel}</text>
-</row>
-<text wrap="true" foreground="text_muted">
-Only the active forms for this year appear in the taxpayer calendar.
-</text>
 </column>
-<button height="44" variant="outline" on-press="profile_forms_edit_year:{set.tax_year}">{set.editorLabel}</button>
+<badge variant="secondary">{set.stateLabel}</badge>
+<button
+height="44"
+variant="outline"
+on-press="profile_setup_select_year:{set.tax_year}">Open</button>
 </row>
 </card>
 </for>
 </column>
-</else>
-</else>
-</else>
+</if>
 </column>
 </if>
-<if test="{profileCertificateActive}">
-<column gap="12">
-<text><span weight="bold">Certificate of Registration evidence</span></text>
-<text wrap="true" foreground="text_muted">
-COR attachments and extraction evidence are intentionally stored
-separately from reusable tax facts. This surface will attach
-evidence without changing a filed form snapshot.
-</text>
-<button height="44" variant="outline" icon="folder-open" disabled="true">Attach COR evidence</button>
+</else>
 </column>
 </if>
 <if test="{profileEmailActive}">
@@ -2275,7 +2476,7 @@ facts. They are not stored in the tax-profile revision tables.
 <button height="44" variant="outline" icon="send" disabled="true">Configure secure mailbox connection</button>
 </column>
 </if>
-<if test="{profileTaxActive or profileCertificateActive or profileEmailActive}">
+<if test="{profileTaxActive or profileEmailActive}">
 <if test="{constrainedLayout}">
 <column gap="10">
 <button height="44" variant="outline" on-press="cancel_profile_edit">Cancel</button>

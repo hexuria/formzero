@@ -86,6 +86,29 @@ pub const app_icons = [_]canvas.icons.Entry{
 const canvas_label = "main-canvas";
 const window_width: f32 = 1225;
 const window_height: f32 = 768;
+/// Bounds the yearly setup combobox: every configured year plus the current
+/// year, a short recent window, and one typed year.
+const max_setup_year_options: usize = profile_ui.max_form_set_summaries + 8;
+/// Unconfigured years offered without typing. Older years remain reachable by
+/// typing a full year.
+const setup_year_recent_window: i32 = 5;
+
+/// Keeps the setup year list sorted newest-first without duplicates. The list
+/// is short and bounded, so an insertion walk is cheaper than a sort plus a
+/// separate dedupe pass.
+fn insertYearDescending(list: []i32, count: *usize, year: i32) void {
+    if (count.* == list.len) return;
+    var index: usize = 0;
+    while (index < count.*) : (index += 1) {
+        if (list[index] == year) return;
+        if (list[index] < year) break;
+    }
+    var shift = count.*;
+    while (shift > index) : (shift -= 1) list[shift] = list[shift - 1];
+    list[index] = year;
+    count.* += 1;
+}
+
 const phone_breakpoint: f32 = 600;
 const compact_shell_breakpoint: f32 = 768;
 const rail_shell_breakpoint: f32 = 1320;
@@ -183,7 +206,6 @@ pub const DashboardSection = enum {
 pub const ProfileSetupSection = enum {
     tax_profile,
     tax_forms,
-    certificate,
     email,
 };
 
@@ -489,6 +511,120 @@ pub const ProfileCalendarYearOption = struct {
     }
 };
 
+/// One row of the yearly setup combobox. Configured and unconfigured years
+/// differ by icon and by their own words, never by color alone.
+pub const ProfileSetupYearOption = struct {
+    id: u64,
+    year: i32,
+    selected: bool,
+    configured: bool,
+    active_form_count: usize,
+
+    pub fn label(self: *const ProfileSetupYearOption) i32 {
+        return self.year;
+    }
+
+    pub fn missing(self: *const ProfileSetupYearOption) bool {
+        return !self.configured;
+    }
+
+    pub fn metaLabel(
+        self: *const ProfileSetupYearOption,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (!self.configured) {
+            return std.fmt.allocPrint(
+                arena,
+                "Set up forms for {d}",
+                .{self.year},
+            ) catch "Set up forms";
+        }
+        return activeFormCountLabel(arena, self.active_form_count);
+    }
+
+    /// A configured year and one that still needs setup are told apart by
+    /// their own words, never by color alone.
+    pub fn rowLabel(
+        self: *const ProfileSetupYearOption,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "{d} · {s}",
+            .{ self.year, self.metaLabel(arena) },
+        ) catch "Tax year";
+    }
+
+    pub fn accessibleLabel(
+        self: *const ProfileSetupYearOption,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (!self.configured) {
+            return std.fmt.allocPrint(
+                arena,
+                "{d}, not set up. Set up forms for {d}",
+                .{ self.year, self.year },
+            ) catch "Not set up";
+        }
+        return std.fmt.allocPrint(
+            arena,
+            "{d}, configured, {s}",
+            .{ self.year, activeFormCountLabel(arena, self.active_form_count) },
+        ) catch "Configured";
+    }
+};
+
+/// A configured year offered as the starting point for a year being set up.
+pub const ProfileSetupSourceOption = struct {
+    id: u64,
+    year: i32,
+    active_form_count: usize,
+    selected: bool,
+
+    pub fn label(self: *const ProfileSetupSourceOption) i32 {
+        return self.year;
+    }
+
+    pub fn metaLabel(
+        self: *const ProfileSetupSourceOption,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return activeFormCountLabel(arena, self.active_form_count);
+    }
+
+    pub fn rowLabel(
+        self: *const ProfileSetupSourceOption,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "{d} · {s}",
+            .{ self.year, activeFormCountLabel(arena, self.active_form_count) },
+        ) catch "Tax year";
+    }
+
+    pub fn accessibleLabel(
+        self: *const ProfileSetupSourceOption,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "Use setup from {d}, {s}",
+            .{ self.year, activeFormCountLabel(arena, self.active_form_count) },
+        ) catch "Use this year's setup";
+    }
+};
+
+fn activeFormCountLabel(
+    arena: std.mem.Allocator,
+    count: usize,
+) []const u8 {
+    if (count == 0) return "No active forms";
+    if (count == 1) return "1 active form";
+    return std.fmt.allocPrint(arena, "{d} active forms", .{count}) catch
+        "Active forms";
+}
+
 pub const ImportantNewsRow = struct {
     id: usize,
     notice: *const news_domain.OwnedNotice,
@@ -596,6 +732,10 @@ pub const Model = struct {
     profileCalendarSelectedDate: ?calendar_domain.Date = null,
     profileCalendarYearPickerVisible: bool = false,
     profileCalendarYearQuery: canvas.TextBuffer(16) = .{},
+    profileSetupYearPickerVisible: bool = false,
+    profileSetupYearQuery: canvas.TextBuffer(4) = .{},
+    profileSetupSourcePickerVisible: bool = false,
+    profileSetupYearsExpanded: bool = false,
     profileNoticeTimerKey: u64 = 0,
     calendarToday: calendar_domain.Date = .{
         .year = 2026,
@@ -2348,15 +2488,397 @@ pub const Model = struct {
         return self.taxProfiles.source_reference.text();
     }
 
-    pub fn profileTaxYearValue(self: *const Model) []const u8 {
+
+    fn profileSetupTypedYear(self: *const Model) ?i32 {
+        const query = self.profileSetupYearQuery.text();
+        if (query.len != 4) return null;
+        return std.fmt.parseInt(i32, query, 10) catch null;
+    }
+
+    fn profileSetupConfiguredCount(self: *const Model, year: i32) ?usize {
+        for (self.taxProfiles.formSetSummaries()) |summary| {
+            if (summary.tax_year == year) return summary.active_form_count;
+        }
+        return null;
+    }
+
+    pub fn profileSetupYearLabel(self: *const Model) []const u8 {
         return self.taxProfiles.tax_year.text();
     }
 
-    pub fn profileFormsAddYearDisabled(self: *const Model) bool {
-        if (self.taxProfiles.editing_new) return true;
-        const year = self.taxProfiles.formSetYearInput() orelse return false;
-        return year > self.calendarToday.year or
-            self.taxProfiles.hasExplicitFormSet(year);
+    pub fn profileSetupYearPickerOpen(self: *const Model) bool {
+        return self.profileSetupYearPickerVisible;
+    }
+
+    pub fn profileSetupYearQueryValue(self: *const Model) []const u8 {
+        return self.profileSetupYearQuery.text();
+    }
+
+    /// Rows for the yearly setup combobox: the current year first, then every
+    /// other configured year and a short recent window, descending. Older
+    /// years stay reachable by typing rather than filling the list with
+    /// decades of empty history.
+    pub fn profileSetupYearOptions(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const ProfileSetupYearOption {
+        const maximum = self.taxProfiles.maximumSetupYear();
+        var years: [max_setup_year_options]i32 = undefined;
+        var count: usize = 0;
+
+        insertYearDescending(&years, &count, maximum);
+        for (self.taxProfiles.formSetSummaries()) |summary| {
+            if (summary.tax_year > maximum) continue;
+            insertYearDescending(&years, &count, summary.tax_year);
+        }
+        var recent = maximum - 1;
+        while (recent >= maximum - setup_year_recent_window and
+            recent >= profile_ui.minimum_setup_year) : (recent -= 1)
+        {
+            insertYearDescending(&years, &count, recent);
+        }
+        if (self.profileSetupTypedYear()) |typed| {
+            if (typed >= profile_ui.minimum_setup_year and typed <= maximum) {
+                insertYearDescending(&years, &count, typed);
+            }
+        }
+
+        const query = self.profileSetupYearQuery.text();
+        const selected = self.taxProfiles.workspaceYear();
+        const rows = arena.alloc(ProfileSetupYearOption, count) catch return &.{};
+        var emitted: usize = 0;
+        for (years[0..count]) |year| {
+            var text: [16]u8 = undefined;
+            const rendered = std.fmt.bufPrint(&text, "{d}", .{year}) catch continue;
+            if (query.len != 0 and
+                !std.mem.startsWith(u8, rendered, query)) continue;
+            const configured = self.profileSetupConfiguredCount(year);
+            rows[emitted] = .{
+                .id = @intCast(year),
+                .year = year,
+                .selected = selected != null and selected.? == year,
+                .configured = configured != null,
+                .active_form_count = configured orelse 0,
+            };
+            emitted += 1;
+        }
+        return rows[0..emitted];
+    }
+
+    pub fn profileSetupYearOptionsEmpty(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) bool {
+        return self.profileSetupYearOptions(arena).len == 0;
+    }
+
+    pub fn profileSetupYearHelperVisible(self: *const Model) bool {
+        const typed = self.profileSetupTypedYear() orelse return false;
+        return typed > self.taxProfiles.maximumSetupYear() or
+            typed < profile_ui.minimum_setup_year;
+    }
+
+    pub fn profileSetupYearHelperText(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const typed = self.profileSetupTypedYear() orelse return "";
+        const maximum = self.taxProfiles.maximumSetupYear();
+        if (typed > maximum) {
+            return std.fmt.allocPrint(
+                arena,
+                "{d} hasn't started. You can set up years through {d}.",
+                .{ typed, maximum },
+            ) catch "That year has not started yet.";
+        }
+        return std.fmt.allocPrint(
+            arena,
+            "Years before {d} aren't supported.",
+            .{profile_ui.minimum_setup_year},
+        ) catch "That year is not supported.";
+    }
+
+    pub fn profileSetupWorkspaceVisible(self: *const Model) bool {
+        return !self.taxProfiles.editing_new and
+            self.taxProfiles.selectedProfileId() != null;
+    }
+
+    pub fn profileSetupDraftChoiceVisible(self: *const Model) bool {
+        return self.taxProfiles.year_workspace == .draft_choice;
+    }
+
+    pub fn profileSetupDraftBannerVisible(self: *const Model) bool {
+        return self.taxProfiles.year_workspace.isDraft();
+    }
+
+    pub fn profileSetupSeededVisible(self: *const Model) bool {
+        return self.taxProfiles.year_workspace == .draft_seeded;
+    }
+
+    pub fn profileSetupManagerVisible(self: *const Model) bool {
+        return switch (self.taxProfiles.year_workspace) {
+            .viewing, .draft_empty, .draft_seeded => true,
+            .draft_choice, .conflict, .open_failed => false,
+        };
+    }
+
+    pub fn profileSetupConflictVisible(self: *const Model) bool {
+        return self.taxProfiles.year_workspace == .conflict;
+    }
+
+    pub fn profileSetupOpenFailedVisible(self: *const Model) bool {
+        return self.taxProfiles.year_workspace == .open_failed;
+    }
+
+    pub fn profileSetupPendingSwitchVisible(self: *const Model) bool {
+        return self.taxProfiles.pendingYearSwitch() != null;
+    }
+
+    pub fn profileSetupPendingSwitchTitle(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const year = self.taxProfiles.workspaceYear() orelse
+            return "Unsaved changes";
+        return std.fmt.allocPrint(
+            arena,
+            "Unsaved changes for {d}",
+            .{year},
+        ) catch "Unsaved changes";
+    }
+
+    pub fn profileSetupPendingSwitchBody(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "You have {d} unsaved changes. Switching years won't save them.",
+            .{self.taxProfiles.changedFormCount()},
+        ) catch "Switching years will not save your changes.";
+    }
+
+    pub fn profileSetupStatusLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const workspace = self.taxProfiles.year_workspace;
+        const year = self.taxProfiles.workspaceYear();
+        if (workspace == .open_failed) {
+            if (year) |value| {
+                return std.fmt.allocPrint(
+                    arena,
+                    "Couldn't open {d}. Nothing was changed.",
+                    .{value},
+                ) catch "That year could not be opened.";
+            }
+            return "That year could not be opened.";
+        }
+        const base: []const u8 = if (workspace.isDraft())
+            "Not set up"
+        else switch (self.taxProfiles.form_set_state) {
+            .needs_configuration => "Not set up",
+            .legacy_catalog_default => "Original catalog default",
+            .active_empty => "Configured · no active forms",
+            .active_nonempty => std.fmt.allocPrint(
+                arena,
+                "Configured · {s}",
+                .{activeFormCountLabel(arena, self.taxProfiles.activeFormCount())},
+            ) catch "Configured",
+        };
+        const changed = self.taxProfiles.changedFormCount();
+        if (changed == 0) return base;
+        return std.fmt.allocPrint(
+            arena,
+            "{s} · {d} unsaved changes",
+            .{ base, changed },
+        ) catch base;
+    }
+
+    pub fn profileSetupDraftTitle(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const year = self.taxProfiles.workspaceYear() orelse
+            return "Nothing is saved yet";
+        return std.fmt.allocPrint(
+            arena,
+            "Setting up {d} — nothing is saved yet",
+            .{year},
+        ) catch "Nothing is saved yet";
+    }
+
+    pub fn profileSetupSeedAvailable(self: *const Model) bool {
+        return self.taxProfiles.recommendedSeedYear() != null;
+    }
+
+    pub fn profileSetupSeedLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const source = self.taxProfiles.recommendedSeedYear() orelse
+            return "Use another year's setup";
+        return std.fmt.allocPrint(
+            arena,
+            "Use setup from {d}",
+            .{source},
+        ) catch "Use another year's setup";
+    }
+
+    pub fn profileSetupSeedYear(self: *const Model) i32 {
+        return self.taxProfiles.recommendedSeedYear() orelse 0;
+    }
+
+    pub fn profileSetupSourceLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const source = self.taxProfiles.draftSourceYear() orelse
+            return "Starting from another year";
+        return std.fmt.allocPrint(
+            arena,
+            "Starting from {d}",
+            .{source},
+        ) catch "Starting from another year";
+    }
+
+    pub fn profileSetupSourceSummary(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "{d} forms copied · you can change anything before saving",
+            .{self.taxProfiles.stagedFormCount()},
+        ) catch "Forms copied. You can change anything before saving.";
+    }
+
+    /// Explains that facts are referenced by date rather than duplicated,
+    /// without exposing revision vocabulary.
+    pub fn profileSetupInheritanceNote(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const year = self.taxProfiles.workspaceYear() orelse
+            return "Your taxpayer details aren't copied between years.";
+        return std.fmt.allocPrint(
+            arena,
+            "Your taxpayer details aren't copied — this year uses whatever was true during {d}.",
+            .{year},
+        ) catch "Your taxpayer details aren't copied between years.";
+    }
+
+    pub fn profileSetupSourcePickerOpen(self: *const Model) bool {
+        return self.profileSetupSourcePickerVisible;
+    }
+
+    pub fn profileSetupSourceOptions(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const ProfileSetupSourceOption {
+        const summaries = self.taxProfiles.formSetSummaries();
+        const target = self.taxProfiles.workspaceYear();
+        const rows = arena.alloc(ProfileSetupSourceOption, summaries.len) catch
+            return &.{};
+        var count: usize = 0;
+        for (summaries) |summary| {
+            if (target != null and summary.tax_year == target.?) continue;
+            rows[count] = .{
+                .id = @intCast(summary.tax_year),
+                .year = summary.tax_year,
+                .active_form_count = summary.active_form_count,
+                .selected = self.taxProfiles.draftSourceYear() == summary.tax_year,
+            };
+            count += 1;
+        }
+        return rows[0..count];
+    }
+
+    pub fn profileSetupPrimaryLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (!self.taxProfiles.year_workspace.isDraft()) return "Save changes";
+        const year = self.taxProfiles.workspaceYear() orelse return "Save setup";
+        return std.fmt.allocPrint(
+            arena,
+            "Save setup for {d}",
+            .{year},
+        ) catch "Save setup";
+    }
+
+    pub fn profileSetupPrimaryDisabled(self: *const Model) bool {
+        return switch (self.taxProfiles.year_workspace) {
+            .draft_choice, .conflict, .open_failed => true,
+            .draft_empty, .draft_seeded => false,
+            .viewing => !self.taxProfiles.formsDirty(),
+        };
+    }
+
+    /// Shown beside Save when a save would deliberately configure no forms, so
+    /// an explicit empty year is never an accident.
+    pub fn profileSetupZeroFormsHelperVisible(self: *const Model) bool {
+        return self.profileSetupManagerVisible() and
+            self.taxProfiles.stagedFormCount() == 0 and
+            !self.profileSetupPrimaryDisabled();
+    }
+
+    pub fn profileSetupZeroFormsHelperText(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const year = self.taxProfiles.workspaceYear() orelse
+            return "Saving with no forms keeps this year configured but empty.";
+        return std.fmt.allocPrint(
+            arena,
+            "Saving with no forms keeps {d} configured but empty — no forms in the library and no deadlines on the calendar.",
+            .{year},
+        ) catch "Saving with no forms keeps this year configured but empty.";
+    }
+
+    pub fn profileSetupConflictTitle(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const year = self.taxProfiles.workspaceYear() orelse
+            return "This year was set up in another window.";
+        return std.fmt.allocPrint(
+            arena,
+            "{d} was set up in another window while you were working.",
+            .{year},
+        ) catch "This year was set up in another window.";
+    }
+
+    pub fn profileSetupConflictReviewLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const year = self.taxProfiles.workspaceYear() orelse
+            return "Review the saved setup";
+        return std.fmt.allocPrint(
+            arena,
+            "Review saved {d} setup",
+            .{year},
+        ) catch "Review the saved setup";
+    }
+
+    pub fn profileSetupYearsExpandedVisible(self: *const Model) bool {
+        return self.profileSetupYearsExpanded;
+    }
+
+    pub fn profileSetupYearsDisclosureLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "All configured years ({d})",
+            .{self.taxProfiles.formSetSummaries().len},
+        ) catch "All configured years";
+    }
+
+    pub fn profileSetupYearsDisclosureVisible(self: *const Model) bool {
+        return self.taxProfiles.formSetSummaries().len != 0;
     }
 
     pub fn profileFormSetRows(
@@ -2381,12 +2903,27 @@ pub const Model = struct {
         return self.taxProfiles.formSetSummaries().len == 0;
     }
 
+    /// True only while the taxpayer's yearly setup workspace is the surface on
+    /// screen. The Tax Form Library markup is shared with the taxpayer
+    /// dashboard, which is browse-only, so an unsaved staged selection must
+    /// never turn that dashboard tab into a form manager. Staged work is kept
+    /// in state either way, so leaving and returning loses nothing.
+    fn yearWorkspaceContextActive(self: *const Model) bool {
+        return self.page == .profile_setup and
+            self.profileSetupSection == .tax_forms;
+    }
+
+    fn formsManageMode(self: *const Model) bool {
+        return self.taxProfiles.managing_forms and
+            self.yearWorkspaceContextActive();
+    }
+
     pub fn managingProfileForms(self: *const Model) bool {
-        return self.taxProfiles.managing_forms;
+        return self.formsManageMode();
     }
 
     pub fn browsingProfileForms(self: *const Model) bool {
-        return !self.taxProfiles.managing_forms;
+        return !self.formsManageMode();
     }
 
     pub fn profileFormsSaveDisabled(self: *const Model) bool {
@@ -2401,7 +2938,7 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
-        if (self.taxProfiles.managing_forms) {
+        if (self.formsManageMode()) {
             return std.fmt.allocPrint(
                 arena,
                 "{d} selected · {d} unsaved changes",
@@ -2433,7 +2970,7 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
-        if (self.taxProfiles.managing_forms) {
+        if (self.formsManageMode()) {
             return self.taxProfiles.tax_year.text();
         }
         return std.fmt.allocPrint(
@@ -2457,14 +2994,14 @@ pub const Model = struct {
     }
 
     pub fn profileFormsHeading(self: *const Model) []const u8 {
-        return if (self.taxProfiles.managing_forms)
+        return if (self.formsManageMode())
             "Manage active forms"
         else
             "Tax Form Library";
     }
 
     pub fn profileFormsModeDescription(self: *const Model) []const u8 {
-        return if (self.taxProfiles.managing_forms)
+        return if (self.formsManageMode())
             "Choose which forms apply to this taxpayer. Changes stay staged until Save."
         else
             "Choose a month, quarter, annual return, or on-demand filing to open that exact workspace.";
@@ -2582,7 +3119,7 @@ pub const Model = struct {
     }
 
     pub fn profileFormInfoDialogOpen(self: *const Model) bool {
-        return !self.taxProfiles.managing_forms and
+        return !self.formsManageMode() and
             self.profileFormInfoDefinition() != null;
     }
 
@@ -2659,7 +3196,7 @@ pub const Model = struct {
     }
 
     fn currentProfileFormsCadenceMask(self: *const Model) u8 {
-        return if (self.taxProfiles.managing_forms)
+        return if (self.formsManageMode())
             self.libraryFilter.manage_cadence_mask
         else
             self.libraryFilter.browse_cadence_mask;
@@ -2702,13 +3239,13 @@ pub const Model = struct {
     }
 
     fn profileFormsAllMonthsSelected(self: *const Model) bool {
-        return !self.taxProfiles.managing_forms and
+        return !self.formsManageMode() and
             self.profileFormsCadenceMonthlySelected() and
             self.libraryFilter.month_mask == 0;
     }
 
     fn profileFormsAllQuartersSelected(self: *const Model) bool {
-        return !self.taxProfiles.managing_forms and
+        return !self.formsManageMode() and
             self.profileFormsCadenceQuarterlySelected() and
             self.libraryFilter.quarter_mask == 0;
     }
@@ -3007,7 +3544,7 @@ pub const Model = struct {
     }
 
     pub fn profileFormsFilterSummaryLabel(self: *const Model) []const u8 {
-        if (!self.taxProfiles.managing_forms) {
+        if (!self.formsManageMode()) {
             if (self.libraryFilter.browse_cadence_mask == 0b1111 and
                 self.libraryFilter.month_mask == 0 and
                 self.libraryFilter.quarter_mask == 0 and
@@ -3040,7 +3577,7 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
-        if (self.taxProfiles.managing_forms) {
+        if (self.formsManageMode()) {
             return self.profileFormsFilterSummaryLabel();
         }
         if (self.libraryFilter.browse_cadence_mask == 0b1111 and
@@ -3116,7 +3653,7 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
-        if (!self.taxProfiles.managing_forms) {
+        if (!self.formsManageMode()) {
             if (self.libraryFilter.browse_cadence_mask == 0b1111 and
                 self.libraryFilter.month_mask == 0 and
                 self.libraryFilter.quarter_mask == 0 and
@@ -3369,14 +3906,14 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const TaxFormLibraryRow {
-        return if (self.taxProfiles.managing_forms)
+        return if (self.formsManageMode())
             self.profileManageFormRows(arena)
         else
             self.profileBrowseFormRows(arena);
     }
 
     pub fn profileFormsShowMoreVisible(self: *const Model) bool {
-        if (self.taxProfiles.managing_forms) return false;
+        if (self.formsManageMode()) return false;
         var count: usize = 0;
         for (&form_catalog.forms, 0..) |*definition, index| {
             if (self.browseFormMatches(definition, index)) count += 1;
@@ -3389,7 +3926,7 @@ pub const Model = struct {
     }
 
     pub fn profileFormsHasPreviousRows(self: *const Model) bool {
-        return !self.taxProfiles.managing_forms and
+        return !self.formsManageMode() and
             self.libraryFilter.page_offset != 0;
     }
 
@@ -3435,7 +3972,7 @@ pub const Model = struct {
     }
 
     pub fn profileBrowseActiveEmpty(self: *const Model) bool {
-        if (self.taxProfiles.managing_forms) return false;
+        if (self.formsManageMode()) return false;
         for (&form_catalog.forms) |*definition| {
             if (self.taxProfiles.formAvailable(
                 self.calendar.selected_year,
@@ -3461,8 +3998,24 @@ pub const Model = struct {
         return self.profileSetupSection == .tax_forms;
     }
 
-    pub fn profileCertificateActive(self: *const Model) bool {
-        return self.profileSetupSection == .certificate;
+    /// COR evidence has no storage yet: the document tables, encryption, and
+    /// key custody are unbuilt. The card therefore states the real state and
+    /// keeps its action disabled rather than implying an upload would persist.
+    pub fn profileCorStatusLabel(self: *const Model) []const u8 {
+        if (self.taxProfiles.editing_new) {
+            return "Save this taxpayer first, then attach its COR.";
+        }
+        return "No COR on file. Attaching evidence is not available yet.";
+    }
+
+    pub fn profileCorActionLabel(self: *const Model) []const u8 {
+        _ = self;
+        return "Upload COR";
+    }
+
+    pub fn profileCorUploadDisabled(self: *const Model) bool {
+        _ = self;
+        return true;
     }
 
     pub fn profileEmailActive(self: *const Model) bool {
@@ -4580,6 +5133,46 @@ fn resetProfileFormsPage(model: *Model) void {
     model.libraryFilter.resetPage();
 }
 
+/// Mirrors one text edit and then keeps only digits, so the year filter can
+/// never hold arbitrary text no matter how the bytes arrived (typing, paste,
+/// or an input method).
+fn applyDigitsOnly(buffer: anytype, edit: canvas.TextInputEvent) void {
+    buffer.apply(edit);
+    const current = buffer.text();
+    var digits: [8]u8 = undefined;
+    var count: usize = 0;
+    for (current) |byte| {
+        if (!std.ascii.isDigit(byte)) continue;
+        if (count == digits.len) break;
+        digits[count] = byte;
+        count += 1;
+    }
+    if (count != current.len) buffer.set(digits[0..count]);
+}
+
+fn openProfileSetupYear(model: *Model, year: i32) void {
+    if (!model.taxProfiles.openYearWorkspace(year)) return;
+    model.libraryFilter.filter_picker_visible = false;
+    model.libraryFilter.period_picker_visible = false;
+    model.libraryFilter.info_index = null;
+    model.libraryFilter.manage_cadence_mask = 0b1111;
+    model.libraryFilter.category_mask = 0;
+    resetProfileFormsPage(model);
+}
+
+/// Opens the yearly setup workspace when its section becomes visible, so the
+/// user always lands on a concrete year instead of an empty surface with no
+/// visible next step.
+fn ensureYearWorkspaceOpen(model: *Model) void {
+    if (model.taxProfiles.editing_new) return;
+    if (model.taxProfiles.selectedProfileId() == null) return;
+    if (model.taxProfiles.managing_forms and
+        model.taxProfiles.year_workspace != .open_failed) return;
+    const maximum = model.taxProfiles.maximumSetupYear();
+    const year = model.taxProfiles.workspaceYear() orelse maximum;
+    openProfileSetupYear(model, if (year > maximum) maximum else year);
+}
+
 fn toggleLibraryCadence(model: *Model, bit: u8) void {
     model.libraryFilter.toggleCadence(bit, model.taxProfiles.managing_forms);
 }
@@ -5130,7 +5723,7 @@ pub const Msg = union(enum) {
     show_dashboard_forms,
     show_profile_tax,
     show_profile_tax_forms,
-    show_profile_certificate,
+    profile_cor_upload,
     show_profile_email,
     profile_subject_individual,
     profile_subject_sole_proprietor,
@@ -5165,9 +5758,21 @@ pub const Msg = union(enum) {
     profile_effective_from_input: canvas.TextInputEvent,
     profile_effective_until_input: canvas.TextInputEvent,
     profile_source_reference_input: canvas.TextInputEvent,
-    profile_tax_year_input: canvas.TextInputEvent,
-    profile_forms_add_year,
-    profile_forms_edit_year: i32,
+    profile_setup_toggle_year_picker,
+    profile_setup_close_year_picker,
+    profile_setup_year_query: canvas.TextInputEvent,
+    profile_setup_select_year: i32,
+    profile_setup_retry_year,
+    profile_setup_draft_empty,
+    profile_setup_draft_seed: i32,
+    profile_setup_toggle_source_picker,
+    profile_setup_close_source_picker,
+    profile_setup_save,
+    profile_setup_conflict_review,
+    profile_setup_conflict_discard,
+    profile_setup_confirm_year_switch,
+    profile_setup_cancel_year_switch,
+    profile_setup_toggle_years_disclosure,
     profile_forms_search_input: canvas.TextInputEvent,
     toggle_profile_form: usize,
     profile_forms_select_all,
@@ -5782,8 +6387,16 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .show_dashboard_forms => model.dashboardSection = .forms,
         .show_profile_tax => model.profileSetupSection = .tax_profile,
-        .show_profile_tax_forms => model.profileSetupSection = .tax_forms,
-        .show_profile_certificate => model.profileSetupSection = .certificate,
+        .show_profile_tax_forms => {
+            model.profileSetupSection = .tax_forms;
+            model.profileSetupYearPickerVisible = false;
+            model.profileSetupSourcePickerVisible = false;
+            model.profileSetupYearQuery.clear();
+            ensureYearWorkspaceOpen(model);
+        },
+        // The control is disabled until COR evidence has real storage; the
+        // message exists so the card is wired rather than decorative.
+        .profile_cor_upload => {},
         .show_profile_email => model.profileSetupSection = .email,
         .toggle_profile_subject_picker => {
             model.profileSubjectPickerVisible =
@@ -5838,35 +6451,74 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .profile_gwa_yes => {
             model.taxProfiles.setGovernmentWithholdingAgent(.yes);
         },
-        .profile_forms_add_year => {
-            const year = model.taxProfiles.formSetYearInput() orelse {
-                model.taxProfiles.reportFormLaunchFailure("Enter a valid tax year from 1 to 9999.");
-                return;
-            };
-            if (year > model.calendarToday.year) {
-                model.taxProfiles.reportFormLaunchFailure("A yearly Forms Set cannot be created for a future tax year.");
-                return;
-            }
-            if (model.taxProfiles.hasExplicitFormSet(year)) {
-                model.taxProfiles.reportFormLaunchFailure("That tax year already has a Forms Set. Use Edit forms on its yearly card.");
-                return;
-            }
-            if (!model.taxProfiles.beginManageFormsForYear(year, true)) return;
-            model.libraryFilter.filter_picker_visible = false;
-            model.libraryFilter.period_picker_visible = false;
-            model.libraryFilter.info_index = null;
-            model.libraryFilter.manage_cadence_mask = 0b1111;
-            model.libraryFilter.category_mask = 0;
+        .profile_setup_toggle_year_picker => {
+            model.profileSetupYearPickerVisible =
+                !model.profileSetupYearPickerVisible;
+            model.profileSetupYearQuery.clear();
+            model.profileSetupSourcePickerVisible = false;
+        },
+        .profile_setup_close_year_picker => {
+            model.profileSetupYearPickerVisible = false;
+            model.profileSetupYearQuery.clear();
+        },
+        .profile_setup_year_query => |edit| {
+            applyDigitsOnly(&model.profileSetupYearQuery, edit);
+        },
+        .profile_setup_select_year => |year| {
+            model.profileSetupYearPickerVisible = false;
+            model.profileSetupYearQuery.clear();
+            model.profileSetupSourcePickerVisible = false;
+            openProfileSetupYear(model, year);
+        },
+        .profile_setup_retry_year => {
+            const year = model.taxProfiles.workspaceYear() orelse
+                model.taxProfiles.maximumSetupYear();
+            openProfileSetupYear(model, year);
+        },
+        .profile_setup_draft_empty => {
+            _ = model.taxProfiles.chooseDraftEmpty();
             resetProfileFormsPage(model);
         },
-        .profile_forms_edit_year => |year| {
-            if (!model.taxProfiles.beginManageFormsForYear(year, false)) return;
-            model.libraryFilter.filter_picker_visible = false;
-            model.libraryFilter.period_picker_visible = false;
-            model.libraryFilter.info_index = null;
-            model.libraryFilter.manage_cadence_mask = 0b1111;
-            model.libraryFilter.category_mask = 0;
+        .profile_setup_draft_seed => |source| {
+            model.profileSetupSourcePickerVisible = false;
+            _ = model.taxProfiles.chooseDraftSeed(source);
             resetProfileFormsPage(model);
+        },
+        .profile_setup_toggle_source_picker => {
+            model.profileSetupSourcePickerVisible =
+                !model.profileSetupSourcePickerVisible;
+        },
+        .profile_setup_close_source_picker => {
+            model.profileSetupSourcePickerVisible = false;
+        },
+        .profile_setup_save => {
+            if (model.taxProfiles.saveYearWorkspace()) {
+                model.libraryFilter.filter_picker_visible = false;
+                resetProfileFormsPage(model);
+                refreshSelectedProfileFormSet(model);
+                refreshSelectedProfileCalendar(model);
+            }
+        },
+        .profile_setup_conflict_review => {
+            _ = model.taxProfiles.reviewConflictingYear();
+            resetProfileFormsPage(model);
+        },
+        .profile_setup_conflict_discard => {
+            if (model.taxProfiles.discardConflictingDraft()) {
+                resetProfileFormsPage(model);
+                refreshSelectedProfileFormSet(model);
+                refreshSelectedProfileCalendar(model);
+            }
+        },
+        .profile_setup_confirm_year_switch => {
+            _ = model.taxProfiles.confirmPendingYearSwitch();
+            resetProfileFormsPage(model);
+        },
+        .profile_setup_cancel_year_switch => {
+            model.taxProfiles.cancelPendingYearSwitch();
+        },
+        .profile_setup_toggle_years_disclosure => {
+            model.profileSetupYearsExpanded = !model.profileSetupYearsExpanded;
         },
         .profile_forms_search_input => |edit| {
             model.taxProfiles.applyFormsQuery(edit);
@@ -5887,7 +6539,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             }
         },
         .profile_forms_cancel => {
-            model.taxProfiles.cancelManageForms();
+            model.taxProfiles.cancelYearWorkspaceEdits();
             model.libraryFilter.filter_picker_visible = false;
             resetProfileFormsPage(model);
         },
@@ -6096,11 +6748,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .profile_source_reference_input => |edit| {
             model.taxProfiles.source_reference.apply(edit);
             model.taxProfiles.captureInputTruncation();
-        },
-        .profile_tax_year_input => |edit| {
-            model.taxProfiles.tax_year.apply(edit);
-            model.taxProfiles.captureInputTruncation();
-            model.taxProfiles.taxYearInputChanged();
         },
         .save_profile => {
             const exact_material =
@@ -8925,9 +9572,9 @@ test "tax form library composes status type and search over staged forms" {
     try std.testing.expectEqualStrings("Quarter 2", model.profileFormsPeriodFilterLabel());
 
     update(&model, .profile_forms_period_all);
-    try std.testing.expect(
-        model.taxProfiles.beginManageFormsForYear(2026, false),
-    );
+    model.page = .profile_setup;
+    update(&model, .show_profile_tax_forms);
+    update(&model, .{ .profile_setup_select_year = 2026 });
     resetProfileFormsPage(&model);
     try std.testing.expect(model.taxProfiles.managing_forms);
     try std.testing.expectEqual(
@@ -8950,7 +9597,16 @@ test "tax form library composes status type and search over staged forms" {
     try std.testing.expectEqual(@as(usize, 1), staged_rows.len);
     try std.testing.expectEqualStrings("1905", staged_rows[0].code());
 
+    // Cancel reverts the staged change without leaving the year, so the
+    // manager stays open on the same year with its saved membership restored.
     update(&model, .profile_forms_cancel);
+    try std.testing.expect(model.taxProfiles.managing_forms);
+    try std.testing.expect(!model.taxProfiles.formsDirty());
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        model.taxProfiles.activeFormCount(),
+    );
+    update(&model, .profile_forms_toggle_filter_inactive);
     try std.testing.expectEqual(@as(usize, 2), model.profileFormRows(arena).len);
 }
 
@@ -12230,7 +12886,7 @@ test "render form activation flow proof shots when requested" {
     // Enter the yearly Forms Set editor through Profile Settings → Tax Forms.
     update(&model, .show_profile_setup);
     update(&model, .show_profile_tax_forms);
-    update(&model, .{ .profile_forms_edit_year = 2026 });
+    update(&model, .{ .profile_setup_select_year = 2026 });
     model.taxProfiles.applyFormsQuery(.{ .insert_text = "2551Q" });
     try writeFormActivationProofShots(&model, "02-manage");
     update(&model, .{ .viewport_width_changed = 1176 });
@@ -12482,9 +13138,9 @@ test "tax form library keeps browse and manage trees within widget budget" {
         ).?.state.disabled,
     );
 
-    try std.testing.expect(
-        model.taxProfiles.beginManageFormsForYear(2026, false),
-    );
+    model.page = .profile_setup;
+    update(&model, .show_profile_tax_forms);
+    update(&model, .{ .profile_setup_select_year = 2026 });
     resetProfileFormsPage(&model);
     var manage_ui = canvas.Ui(Msg).init(arena);
     const manage_tree = try manage_ui.finalize(try view.build(&manage_ui, &model));
@@ -12985,10 +13641,50 @@ test "profile calendar year picker is configured and future bounded" {
     try std.testing.expectEqual(@as(usize, 1), filtered.len);
     try std.testing.expectEqual(@as(i32, 2020), filtered[0].year);
 
-    model.taxProfiles.tax_year.set("2026");
-    try std.testing.expect(model.profileFormsAddYearDisabled());
-    model.taxProfiles.tax_year.set("2024");
-    try std.testing.expect(!model.profileFormsAddYearDisabled());
+    // The yearly setup combobox opens on the current year, distinguishes
+    // configured years from ones that still need setup, and never lists a year
+    // that has not started.
+    const setup_options = model.profileSetupYearOptions(arena);
+    try std.testing.expect(setup_options.len >= 3);
+    try std.testing.expectEqual(@as(i32, 2026), setup_options[0].year);
+    try std.testing.expect(setup_options[0].configured);
+    var saw_unconfigured_2024 = false;
+    var saw_configured_2020 = false;
+    for (setup_options) |option| {
+        try std.testing.expect(option.year <= 2026);
+        try std.testing.expect(option.year >= profile_ui.minimum_setup_year);
+        if (option.year == 2024) {
+            saw_unconfigured_2024 = true;
+            try std.testing.expect(option.missing());
+        }
+        if (option.year == 2020) {
+            saw_configured_2020 = true;
+            try std.testing.expect(option.configured);
+        }
+    }
+    try std.testing.expect(saw_unconfigured_2024);
+    try std.testing.expect(saw_configured_2020);
+
+    // A future year is explained rather than offered, so no create action for
+    // it can exist anywhere in the list.
+    update(&model, .{
+        .profile_setup_year_query = .{ .insert_text = "2027" },
+    });
+    try std.testing.expect(model.profileSetupYearHelperVisible());
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        model.profileSetupYearOptions(arena).len,
+    );
+
+    // The filter holds digits only, however the bytes arrived.
+    update(&model, .profile_setup_close_year_picker);
+    update(&model, .{
+        .profile_setup_year_query = .{ .insert_text = "20a4" },
+    });
+    try std.testing.expectEqualStrings(
+        "204",
+        model.profileSetupYearQueryValue(),
+    );
 }
 
 test "profile calendar lanes use injected date and persisted filer lifecycle" {
