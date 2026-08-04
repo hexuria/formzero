@@ -447,6 +447,7 @@ pub const State = struct {
     cor_file_name: FixedText(160) = .{},
     cor_attached_at: i64 = 0,
     cor_digest: FixedText(64) = .{},
+    cor_document_id: FixedText(64) = .{},
     /// Transcription of the COR under review. Nothing here is authoritative:
     /// it becomes a taxpayer record only through an explicit apply, and only
     /// for the rows the user accepted.
@@ -870,6 +871,7 @@ pub const State = struct {
         self.cor_state = .none;
         self.cor_file_name.clear();
         self.cor_digest.clear();
+        self.cor_document_id.clear();
         self.cor_attached_at = 0;
         self.cor_review_open = false;
         self.refreshCorEvidenceFallible() catch return;
@@ -888,6 +890,7 @@ pub const State = struct {
 
         try self.cor_file_name.set(document.file_name);
         try self.cor_digest.set(document.sha256);
+        try self.cor_document_id.set(document.id);
         self.cor_attached_at = document.attached_at_unix_seconds;
         self.cor_state = verifyCorFile(document.file_path, document.sha256);
     }
@@ -1020,35 +1023,84 @@ pub const State = struct {
         const accepted = self.corReviewAcceptedCount();
         const wants_forms = self.cor_review_apply_forms;
 
-        if (accepted != 0) {
-            for (self.cor_review_accepted, 0..) |is_accepted, index| {
-                if (!is_accepted) continue;
-                const value = trimmed(self.cor_review_values[index].text());
-                if (value.len == 0) continue;
-                self.applyCorCandidate(
-                    std.meta.tags(CorCandidateField)[index],
-                    value,
-                );
-            }
-            self.setSourceKind(.imported);
-            var reference: [160]u8 = undefined;
-            setEditorBuffer(&self.source_reference, std.fmt.bufPrint(
-                &reference,
-                "COR {s} sha256:{s}",
-                .{
-                    self.cor_file_name.text(),
-                    self.cor_digest.text()[0..@min(8, self.cor_digest.len)],
-                },
-            ) catch "COR");
-            if (!self.save()) return false;
-        }
-
-        if (wants_forms and !self.saveYearWorkspace()) return false;
-
-        self.cor_review_open = false;
         if (accepted == 0) {
+            // Forms alone are already one transaction, and nothing on this
+            // path may create a profile revision.
+            if (wants_forms and !self.saveYearWorkspace()) return false;
+            self.cor_review_open = false;
             self.setNotice(.success, "The forms you accepted were saved.");
+            return true;
         }
+
+        for (self.cor_review_accepted, 0..) |is_accepted, index| {
+            if (!is_accepted) continue;
+            const value = trimmed(self.cor_review_values[index].text());
+            if (value.len == 0) continue;
+            self.applyCorCandidate(
+                std.meta.tags(CorCandidateField)[index],
+                value,
+            );
+        }
+        self.setSourceKind(.imported);
+        var reference: [160]u8 = undefined;
+        setEditorBuffer(&self.source_reference, std.fmt.bufPrint(
+            &reference,
+            "COR {s} sha256:{s}",
+            .{
+                self.cor_file_name.text(),
+                self.cor_digest.text()[0..@min(8, self.cor_digest.len)],
+            },
+        ) catch "COR");
+
+        if (!wants_forms) {
+            if (!self.saveWithCor(.{
+                .document_id = self.cor_document_id.text(),
+                .include_forms = false,
+            })) return false;
+        } else if (!self.applyCorReviewWithForms(self.cor_document_id.text())) {
+            return false;
+        }
+        self.cor_review_open = false;
+        return true;
+    }
+
+    /// The combined details-and-forms half of a COR decision: one store
+    /// transaction, wrapped in the same guards, conflict handling, and
+    /// afterwards-state as the standalone forms save.
+    fn applyCorReviewWithForms(self: *State, document_id: []const u8) bool {
+        if (self.year_workspace == .draft_choice or
+            self.year_workspace == .open_failed or
+            self.year_workspace == .conflict)
+        {
+            return false;
+        }
+        const creating_year = self.year_workspace.isDraft();
+        const notice_year = self.workspaceYear();
+        // Accepted values identical to what is already recorded from this
+        // document: nothing to append, the forms half is the whole decision.
+        if (!self.factsDirty()) return self.saveYearWorkspace();
+        self.saveFallible(.{
+            .document_id = document_id,
+            .include_forms = true,
+        }) catch |err| {
+            if (err == error.NoProfileChanges) return self.saveYearWorkspace();
+            if (creating_year and err == persistence.Error.FormSetAlreadyExists) {
+                self.year_workspace = .conflict;
+                self.managing_forms = true;
+                self.setNotice(
+                    .failure,
+                    "This year was set up in another window while you were working. Your choices are still here.",
+                );
+                return false;
+            }
+            self.setError(err);
+            return false;
+        };
+        self.year_workspace = .viewing;
+        self.draft_source_year = null;
+        self.managing_forms = true;
+        self.resetFormFilters();
+        self.setSaveNotice(notice_year);
         return true;
     }
 
@@ -1350,7 +1402,19 @@ pub const State = struct {
         self.government_withholding_agent = value;
     }
 
+    /// What a save carries when it applies a reviewed COR decision: the
+    /// durable document key, and whether the accepted forms ride in the same
+    /// store transaction.
+    const CorApply = struct {
+        document_id: []const u8,
+        include_forms: bool,
+    };
+
     pub fn save(self: *State) bool {
+        return self.saveWithCor(null);
+    }
+
+    fn saveWithCor(self: *State, cor: ?CorApply) bool {
         const was_new = self.editing_new;
         // Reopening a taxpayer and saving must not record a change that did
         // not happen: history stays a log of real events, not of visits.
@@ -1358,7 +1422,7 @@ pub const State = struct {
             self.setNotice(.neutral, "No changes to save.");
             return true;
         }
-        self.saveFallible() catch |err| {
+        self.saveFallible(cor) catch |err| {
             // Nothing to record is a successful outcome, not a failure: the
             // taxpayer's details already say what the user wants them to say.
             if (err == error.NoProfileChanges) {
@@ -1385,7 +1449,7 @@ pub const State = struct {
         return true;
     }
 
-    fn saveFallible(self: *State) !void {
+    fn saveFallible(self: *State, cor: ?CorApply) !void {
         const allocator = self.allocator orelse return error.NotAttached;
         const store = self.store orelse return error.NotAttached;
         if (!self.loaded_shape_supported) {
@@ -1409,6 +1473,21 @@ pub const State = struct {
             else
                 null,
         );
+
+        if (cor) |apply| {
+            // The forms half of a combined apply carries the same reviewed-
+            // retroactive guard as the standalone forms save — checked before
+            // commit, because one transaction refuses everything where the
+            // old two-step flow would have committed the revision and then
+            // refused the forms. The pending revision itself may be what
+            // gives the year its facts.
+            if (apply.include_forms and self.year_workspace.isDraft() and
+                self.factsMissingForYear() and
+                !effectiveCoversYearBoundary(effective, year))
+            {
+                return error.NoFactsEffectiveForYear;
+            }
+        }
 
         const contact: model.RegisteredContact = .{
             .address = address,
@@ -1568,6 +1647,42 @@ pub const State = struct {
                 .active,
                 &revision,
             );
+        } else if (cor) |apply| {
+            if (apply.include_forms) {
+                // Staged writes and the create-vs-update mode are computed
+                // before any refresh below can rewrite workspace state; the
+                // old two-step flow reloaded the workspace between the
+                // halves and wiped the staged selection it was about to
+                // save.
+                var writes: [max_registered_forms]persistence.FormRegistrationWrite =
+                    undefined;
+                const count = self.stagedFormWrites(&writes);
+                const mode: persistence.FormSetApplyMode =
+                    if (self.form_set_create_mode or
+                        self.form_set_state == .needs_configuration or
+                        self.form_set_state == .legacy_catalog_default)
+                        .create
+                    else
+                        .update;
+                try profile_persistence.applyCorReview(
+                    store,
+                    allocator,
+                    &revision,
+                    observed_sequence,
+                    apply.document_id,
+                    year,
+                    writes[0..count],
+                    mode,
+                );
+            } else {
+                try profile_persistence.appendRevisionLinked(
+                    store,
+                    allocator,
+                    &revision,
+                    observed_sequence,
+                    apply.document_id,
+                );
+            }
         } else {
             try profile_persistence.appendRevision(
                 store,
@@ -2197,6 +2312,24 @@ pub const State = struct {
         return true;
     }
 
+    /// Collects the staged catalog selection as store writes. Callers copy
+    /// before any reload can rewrite `staged_forms` underneath them.
+    fn stagedFormWrites(
+        self: *const State,
+        output: *[max_registered_forms]persistence.FormRegistrationWrite,
+    ) usize {
+        var count: usize = 0;
+        for (&catalog.forms, 0..) |*form, index| {
+            if (!self.staged_forms.isSelected(index)) continue;
+            output[count] = .{
+                .form_code = form.code,
+                .form_revision = form.revision orelse "calendar-only",
+            };
+            count += 1;
+        }
+        return count;
+    }
+
     fn saveManagedFormsFallible(self: *State) !void {
         const store = self.store orelse return error.NotAttached;
         if (self.editing_new) return error.FormsRequireSavedProfile;
@@ -2205,15 +2338,7 @@ pub const State = struct {
         const year = try parseTaxYear(self.tax_year.text());
         var writes: [max_registered_forms]persistence.FormRegistrationWrite =
             undefined;
-        var count: usize = 0;
-        for (&catalog.forms, 0..) |*form, index| {
-            if (!self.staged_forms.isSelected(index)) continue;
-            writes[count] = .{
-                .form_code = form.code,
-                .form_revision = form.revision orelse "calendar-only",
-            };
-            count += 1;
-        }
+        const count = self.stagedFormWrites(&writes);
         if (self.form_set_create_mode or
             self.form_set_state == .needs_configuration or
             self.form_set_state == .legacy_catalog_default)
@@ -3123,6 +3248,16 @@ fn parseTaxYear(raw: []const u8) Error!i32 {
         return error.InvalidTaxYear;
     if (value < 1 or value > 9999) return error.InvalidTaxYear;
     return value;
+}
+
+/// The facts-summary boundary rule: a year has facts when a revision is
+/// effective on its first or its last day. A period from June to June covers
+/// neither, so the disjunction must not collapse.
+fn effectiveCoversYearBoundary(effective: model.EffectivePeriod, year: i32) bool {
+    if (year < 1 or year > 9999) return false;
+    const opening = model.Date.init(@intCast(year), 1, 1) catch return false;
+    const closing = model.Date.init(@intCast(year), 12, 31) catch return false;
+    return effective.contains(opening) or effective.contains(closing);
 }
 
 fn parseFormsSet(
@@ -4348,6 +4483,157 @@ test "accepting details from a COR records one change with its provenance" {
         current.revision.source.imported.asSlice(),
         "COR cor.pdf sha256:",
     ));
+
+    // Alongside the readable reference, the durable key points at the exact
+    // evidence row.
+    const linked = (try store.corDocumentIdForRevision(
+        allocator,
+        state.selectedProfileId().?,
+        current.revision.id.asSlice(),
+    )).?;
+    defer allocator.free(linked);
+    try std.testing.expectEqualStrings(state.cor_document_id.text(), linked);
+}
+
+test "applying details and forms from a COR is one decision" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    publishIo(std.testing.io);
+    defer app_io = null;
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try attachTestCor(&state, &tmp);
+    const sequence_before = state.selectedRevisionSequence().?;
+
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expect(state.chooseDraftEmpty());
+    state.toggleStagedForm(catalogIndexOf("2551Q"));
+
+    try std.testing.expect(state.beginCorReview());
+    state.cor_review_tin.set("123-456-789-000");
+    const address_index = @intFromEnum(CorCandidateField.registered_address);
+    state.cor_review_values[address_index].set("Makati City");
+    state.toggleCorReviewAccepted(address_index);
+    state.toggleCorReviewApplyForms();
+    try std.testing.expect(state.applyCorReview());
+
+    // Both halves of the decision landed: the detail change and the staged
+    // forms, which the old two-step flow wiped before writing.
+    try std.testing.expectEqual(
+        sequence_before + 1,
+        state.selectedRevisionSequence().?,
+    );
+    try std.testing.expectEqualStrings(
+        "Makati City",
+        state.registered_address.text(),
+    );
+    try std.testing.expect(state.formAvailable(2026, "2551Q"));
+    try std.testing.expect(!state.corReviewOpen());
+
+    var current = (try profile_persistence.loadCurrentRevision(
+        &store,
+        allocator,
+        state.selectedProfileDomainId().?,
+    )).?;
+    defer current.deinit(allocator);
+    const linked = (try store.corDocumentIdForRevision(
+        allocator,
+        state.selectedProfileId().?,
+        current.revision.id.asSlice(),
+    )).?;
+    defer allocator.free(linked);
+    try std.testing.expectEqualStrings(state.cor_document_id.text(), linked);
+}
+
+test "a year conflict leaves a COR review unapplied and recoverable" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    publishIo(std.testing.io);
+    defer app_io = null;
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try attachTestCor(&state, &tmp);
+    const sequence_before = state.selectedRevisionSequence().?;
+
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expect(state.chooseDraftEmpty());
+    state.toggleStagedForm(catalogIndexOf("2551Q"));
+
+    try std.testing.expect(state.beginCorReview());
+    state.cor_review_tin.set("123-456-789-000");
+    const address_index = @intFromEnum(CorCandidateField.registered_address);
+    state.cor_review_values[address_index].set("Makati City");
+    state.toggleCorReviewAccepted(address_index);
+    state.toggleCorReviewApplyForms();
+
+    // The year is set up in another window while the review is open.
+    try store.createFormSet(state.selectedProfileId().?, 2026, &.{});
+
+    // The apply fails as one decision: no revision, review still open, the
+    // staged choices intact behind the conflict card.
+    try std.testing.expect(!state.applyCorReview());
+    try std.testing.expectEqual(
+        sequence_before,
+        state.selectedRevisionSequence().?,
+    );
+    try std.testing.expect(state.corReviewOpen());
+    try std.testing.expectEqual(YearWorkspaceMode.conflict, state.year_workspace);
+    try std.testing.expect(
+        state.staged_forms.isSelected(catalogIndexOf("2551Q")),
+    );
+}
+
+test "re-applying the same COR decision appends nothing new" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    publishIo(std.testing.io);
+    defer app_io = null;
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try attachTestCor(&state, &tmp);
+
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expect(state.chooseDraftEmpty());
+    state.toggleStagedForm(catalogIndexOf("2551Q"));
+
+    const address_index = @intFromEnum(CorCandidateField.registered_address);
+    try std.testing.expect(state.beginCorReview());
+    state.cor_review_tin.set("123-456-789-000");
+    state.cor_review_values[address_index].set("Makati City");
+    state.toggleCorReviewAccepted(address_index);
+    state.toggleCorReviewApplyForms();
+    try std.testing.expect(state.applyCorReview());
+    const sequence_after_first = state.selectedRevisionSequence().?;
+
+    // The same decision again — same value, same document — records nothing:
+    // the history logs events, not repetitions.
+    try std.testing.expect(state.beginCorReview());
+    state.cor_review_tin.set("123-456-789-000");
+    state.cor_review_values[address_index].set("Makati City");
+    state.toggleCorReviewAccepted(address_index);
+    state.toggleCorReviewApplyForms();
+    try std.testing.expect(state.applyCorReview());
+    try std.testing.expectEqual(
+        sequence_after_first,
+        state.selectedRevisionSequence().?,
+    );
+    try std.testing.expect(state.formAvailable(2026, "2551Q"));
+    try std.testing.expect(!state.corReviewOpen());
 }
 
 test "a COR for another taxpayer cannot change this one" {
