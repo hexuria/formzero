@@ -277,6 +277,7 @@ fn roleAllowsSubject(
         .sole_proprietor => .sole_proprietor,
         .corporation => .corporation,
         .partnership => .partnership,
+        .cooperative => .cooperative,
         .estate => .estate,
         .trust => .trust,
         .other_legal_entity => .other_legal_entity,

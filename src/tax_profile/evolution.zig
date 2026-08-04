@@ -68,11 +68,24 @@ pub const TaxpayerIdentityAnchor = struct {
 pub fn legalPersonClass(subject: *const model.Subject) LegalPersonClass {
     return switch (subject.kind()) {
         .individual, .sole_proprietor => .natural_person,
-        .corporation, .partnership => .juridical_person,
+        .corporation, .partnership, .cooperative => .juridical_person,
         .estate => .estate,
         .trust => .trust,
         .other_legal_entity => .reviewed_other,
     };
+}
+
+test "cooperative belongs to the juridical identity class" {
+    const subject: model.Subject = .{ .legal_entity = .{
+        .registered_name = try field.RegisteredName.parse(
+            "EXAMPLE WORKERS COOPERATIVE",
+        ),
+        .kind = .cooperative,
+    } };
+    try std.testing.expectEqual(
+        LegalPersonClass.juridical_person,
+        legalPersonClass(&subject),
+    );
 }
 
 pub const TransitionError = error{

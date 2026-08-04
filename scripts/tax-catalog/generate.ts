@@ -951,12 +951,12 @@ function validateCatalog(forms: readonly FormDefinition[]): void {
     null,
   );
   expectOwnership(
-    "2551Q.2018-01-ENCS.input.income_tax_rate_election",
+    "2551Q.2018-01-ENCS.input.what_income_tax_rates_are_you_availing",
     "taxpayer_year",
     "filing",
   );
   expectSourceContract(
-    "2551Q.2018-01-ENCS.input.income_tax_rate_election",
+    "2551Q.2018-01-ENCS.input.what_income_tax_rates_are_you_availing",
     "income_tax_rate_election",
     null,
     null,

@@ -452,9 +452,9 @@
 </template>
 
 <template name="taxpayer-form-info-content" args="code title category cadence capability revision">
-  <column>
-    <row padding="16" gap="12" cross="center">
-      <column grow="1" gap="4">
+  <column min-width="0">
+    <row min-width="0" padding="16" gap="12" cross="center">
+      <column grow="1" min-width="0" gap="4">
         <text><span weight="bold" scale="1.2">BIR Form {code}</span></text>
         <text wrap="true" foreground="text_muted">Form details</text>
       </column>
@@ -468,30 +468,32 @@
         on-press="profile_forms_close_info"></button>
     </row>
     <separator/>
-    <column padding="16" gap="14">
-      <column gap="4">
-        <text size="sm" foreground="text_muted">DESCRIPTION</text>
-        <text wrap="true">{title}</text>
+    <scroll height="280" overscroll="none" label="Form details">
+      <column min-width="0" padding="16" gap="14">
+        <column min-width="0" gap="4">
+          <text size="sm" foreground="text_muted">DESCRIPTION</text>
+          <text wrap="true">{title}</text>
+        </column>
+        <grid columns="{profileReadColumns}" gap="12">
+          <column min-width="0" gap="4">
+            <text size="sm" foreground="text_muted">TAX TYPE</text>
+            <text wrap="true">{category}</text>
+          </column>
+          <column min-width="0" gap="4">
+            <text size="sm" foreground="text_muted">FILING FREQUENCY</text>
+            <text wrap="true">{cadence}</text>
+          </column>
+          <column min-width="0" gap="4">
+            <text size="sm" foreground="text_muted">CATALOG REVISION</text>
+            <text wrap="true">{revision}</text>
+          </column>
+          <column min-width="0" gap="4">
+            <text size="sm" foreground="text_muted">AVAILABILITY</text>
+            <text wrap="true">{capability}</text>
+          </column>
+        </grid>
       </column>
-      <column gap="12">
-        <column gap="4">
-          <text size="sm" foreground="text_muted">TAX TYPE</text>
-          <text wrap="true">{category}</text>
-        </column>
-        <column gap="4">
-          <text size="sm" foreground="text_muted">FILING FREQUENCY</text>
-          <text wrap="true">{cadence}</text>
-        </column>
-        <column gap="4">
-          <text size="sm" foreground="text_muted">CATALOG REVISION</text>
-          <text wrap="true">{revision}</text>
-        </column>
-        <column gap="4">
-          <text size="sm" foreground="text_muted">AVAILABILITY</text>
-          <text wrap="true">{capability}</text>
-        </column>
-      </column>
-    </column>
+    </scroll>
   </column>
 </template>
 

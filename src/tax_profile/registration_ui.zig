@@ -18,6 +18,7 @@ pub const max_business_activities: usize = 24;
 pub const max_registration_obligations: usize = 48;
 pub const max_review_rows: usize = 96;
 pub const max_read_only_facts: usize = 16;
+pub const primary_business_activity_anchor = "primary";
 
 pub const Error = registration.Error || field.TextError || field.AtcError ||
     error{
@@ -81,6 +82,60 @@ pub const RegistrationObligationRow = struct {
     effective: registration.EffectivePeriod,
     kind: registration.RegistrationObligationKind,
     origin: ?Origin = null,
+};
+
+/// Closed input vocabulary for the EOPT taxpayer classification control.
+/// The legacy `unknown_requires_review` value intentionally has no member:
+/// imported ambiguity stays in `ReviewRow` until an explicit review workflow
+/// resolves its evidence.
+pub const EditableEoptTier = enum {
+    not_applicable,
+    micro,
+    small,
+    medium,
+    large,
+
+    pub fn label(self: EditableEoptTier) []const u8 {
+        return switch (self) {
+            .not_applicable => "Not applicable",
+            .micro => "Micro",
+            .small => "Small",
+            .medium => "Medium",
+            .large => "Large",
+        };
+    }
+
+    pub fn toDomain(self: EditableEoptTier) registration.EoptTier {
+        return switch (self) {
+            .not_applicable => .not_applicable,
+            .micro => .micro,
+            .small => .small,
+            .medium => .medium,
+            .large => .large,
+        };
+    }
+
+    pub fn fromDomain(value: registration.EoptTier) ?EditableEoptTier {
+        return switch (value) {
+            .not_applicable => .not_applicable,
+            .micro => .micro,
+            .small => .small,
+            .medium => .medium,
+            .large => .large,
+            .unknown_requires_review => null,
+        };
+    }
+};
+
+/// One effective confirmed EOPT fact. `origin_source` is presentation-only
+/// provenance from the immutable event being edited. A changed value is
+/// appended as a new manual confirmed event and supersedes `origin` without
+/// rewriting that original evidence.
+pub const EoptTierRow = struct {
+    effective: registration.EffectivePeriod,
+    value: EditableEoptTier,
+    origin: ?Origin = null,
+    origin_source: ?registration.RecordSource = null,
 };
 
 /// Closed input vocabulary for newly confirmed obligations. The ambiguous
@@ -157,9 +212,9 @@ pub const ReviewRow = union(enum) {
     }
 };
 
-/// Confirmed auxiliary registration facts are shown but are not collapsed
-/// into the activity/obligation editor. They need dedicated evidence-aware
-/// controls before they can safely become mutable.
+/// Confirmed auxiliary registration facts remain available to legacy read-only
+/// renderers. EOPT also has a dedicated evidence-aware edit value below; the
+/// remaining fact kinds still require their own controls before mutation.
 pub const ReadOnlyFact = union(enum) {
     agent_designation: registration.AgentDesignationRevision,
     eopt_tier: registration.EoptTierRevision,
@@ -180,6 +235,9 @@ pub const SaveIntent = struct {
     /// compares them with persisted state and appends changes/retirements.
     business_activities: []const BusinessActivityRow,
     registration_obligations: []const RegistrationObligationRow,
+    /// The effective desired EOPT classification. Null means no confirmed
+    /// value has been selected; it never means "delete historical evidence".
+    eopt_tier: ?EoptTierRow = null,
     /// Review-required rows are deliberately carried through untouched so a
     /// save implementation cannot accidentally treat absence as resolution.
     retained_review_rows: []const ReviewRow,
@@ -194,6 +252,7 @@ pub const Affordances = struct {
     can_add_registration_obligation: bool,
     can_modify_business_activities: bool,
     can_modify_registration_obligations: bool,
+    can_modify_eopt_tier: bool,
     can_save: bool,
     can_cancel: bool,
     can_reload_conflict: bool,
@@ -251,6 +310,9 @@ pub const State = struct {
         undefined,
     draft_obligation_count: usize = 0,
 
+    baseline_eopt_tier: ?EoptTierRow = null,
+    draft_eopt_tier: ?EoptTierRow = null,
+
     review_rows: [max_review_rows]ReviewRow = undefined,
     review_row_count: usize = 0,
     read_only_facts: [max_read_only_facts]ReadOnlyFact = undefined,
@@ -290,6 +352,50 @@ pub const State = struct {
             self.baseline_activities[0..self.baseline_activity_count];
     }
 
+    /// The complete Tax Profile surfaces one explicitly-owned primary
+    /// activity. Additional activities remain managed in Registration & Forms
+    /// and are never guessed from array order.
+    pub fn primaryBusinessActivity(
+        self: *const State,
+    ) ?*const BusinessActivityRow {
+        const anchor = registration.ActivityAnchorId.parse(
+            primary_business_activity_anchor,
+        ) catch unreachable;
+        return findActivityConst(self.businessActivities(), &anchor);
+    }
+
+    pub fn setPrimaryBusinessActivity(
+        self: *State,
+        line_of_business: []const u8,
+        atc: ?[]const u8,
+        effective: registration.EffectivePeriod,
+    ) Error!void {
+        const anchor = registration.ActivityAnchorId.parse(
+            primary_business_activity_anchor,
+        ) catch unreachable;
+        if (findActivity(self.draftActivitiesMut(), &anchor) != null) {
+            return self.updateBusinessActivity(
+                anchor,
+                line_of_business,
+                atc,
+                effective,
+            );
+        }
+        return self.addBusinessActivity(
+            anchor,
+            line_of_business,
+            atc,
+            effective,
+        );
+    }
+
+    pub fn removePrimaryBusinessActivity(self: *State) Error!void {
+        const anchor = registration.ActivityAnchorId.parse(
+            primary_business_activity_anchor,
+        ) catch unreachable;
+        return self.removeBusinessActivity(anchor);
+    }
+
     pub fn registrationObligations(
         self: *const State,
     ) []const RegistrationObligationRow {
@@ -307,6 +413,43 @@ pub const State = struct {
         return self.read_only_facts[0..self.read_only_fact_count];
     }
 
+    /// Authoritative EOPT value for the dedicated control. The legacy
+    /// `ReadOnlyFact.eopt_tier` mirror remains available for old callers while
+    /// the complete-profile UI migrates to this method.
+    pub fn eoptTier(self: *const State) ?EditableEoptTier {
+        const row = self.currentEoptTierRow() orelse return null;
+        return row.value;
+    }
+
+    pub fn eoptTierLabel(self: *const State) []const u8 {
+        const value = self.eoptTier() orelse return "Not recorded";
+        return value.label();
+    }
+
+    pub fn eoptTierEffective(
+        self: *const State,
+    ) ?registration.EffectivePeriod {
+        const row = self.currentEoptTierRow() orelse return null;
+        return row.effective;
+    }
+
+    /// Source of the immutable confirmed value being viewed or superseded.
+    /// New unsaved values have no origin source yet.
+    pub fn eoptTierOriginSource(
+        self: *const State,
+    ) ?*const registration.RecordSource {
+        const row = self.currentEoptTierRow() orelse return null;
+        return if (row.origin_source) |*source| source else null;
+    }
+
+    pub fn eoptTierNeedsReview(self: *const State) bool {
+        for (self.reviewRequiredRows()) |row| switch (row) {
+            .eopt_tier => return true,
+            else => {},
+        };
+        return false;
+    }
+
     pub fn beginEdit(self: *State) Error!void {
         if (!self.opened or self.page_state != .viewing) {
             return error.NotViewing;
@@ -315,6 +458,18 @@ pub const State = struct {
         self.page_state = .editing;
         self.save_status = .idle;
         self.conflict = null;
+    }
+
+    /// Keeps Registration applicability aligned with selectors in the
+    /// composed Tax Profile editor. This changes presentation and mutation
+    /// policy only; it never rewrites or retires a registration component.
+    pub fn setTaxpayerContext(
+        self: *State,
+        subject_kind: model.SubjectKind,
+        natural_person_classification: model.NaturalPersonClassification,
+    ) void {
+        self.subject_kind = subject_kind;
+        self.natural_person_classification = natural_person_classification;
     }
 
     pub fn addBusinessActivity(
@@ -459,6 +614,38 @@ pub const State = struct {
         self.noteMutation();
     }
 
+    /// Selects an EOPT tier while preserving the current fact's effectivity.
+    /// For a first value, effectivity starts on the date the editor is viewing.
+    pub fn selectEoptTier(
+        self: *State,
+        value: EditableEoptTier,
+    ) Error!void {
+        const effective = if (self.draft_eopt_tier) |row|
+            row.effective
+        else
+            try registration.EffectivePeriod.init(self.viewed_on, null);
+        try self.setEoptTier(value, effective);
+    }
+
+    /// Explicit-effectivity variant used by registration evidence workflows.
+    pub fn setEoptTier(
+        self: *State,
+        value: EditableEoptTier,
+        effective: registration.EffectivePeriod,
+    ) Error!void {
+        try self.requireEditing();
+        if (self.save_status == .saving) return error.ActionDisabled;
+        const normalized_effective = try normalizePeriod(effective);
+        const prior = self.draft_eopt_tier;
+        self.draft_eopt_tier = .{
+            .effective = normalized_effective,
+            .value = value,
+            .origin = if (prior) |row| row.origin else null,
+            .origin_source = if (prior) |row| row.origin_source else null,
+        };
+        self.noteMutation();
+    }
+
     /// Parsed values and stable-anchor sets are compared independent of row
     /// ordering and immutable origin metadata.
     pub fn dirty(self: *const State) bool {
@@ -469,6 +656,9 @@ pub const State = struct {
         ) or !obligationSetsEqual(
             self.baseline_obligations[0..self.baseline_obligation_count],
             self.draft_obligations[0..self.draft_obligation_count],
+        ) or !eoptTierRowsEqual(
+            self.baseline_eopt_tier,
+            self.draft_eopt_tier,
         );
     }
 
@@ -511,6 +701,7 @@ pub const State = struct {
                 subject_allows_mutation,
             .can_modify_registration_obligations = editing and idle_enough and
                 subject_allows_mutation,
+            .can_modify_eopt_tier = editing and idle_enough,
             .can_save = editing and idle_enough and self.dirty() and valid and
                 !has_conflict,
             .can_cancel = editing and idle_enough and self.dirty(),
@@ -542,6 +733,7 @@ pub const State = struct {
             .expected_sequence = self.expected_sequence,
             .business_activities = self.draft_activities[0..self.draft_activity_count],
             .registration_obligations = self.draft_obligations[0..self.draft_obligation_count],
+            .eopt_tier = self.draft_eopt_tier,
             .retained_review_rows = self.reviewRequiredRows(),
         };
     }
@@ -624,6 +816,7 @@ pub const State = struct {
             self.draft_obligations[0..self.draft_obligation_count],
         );
         self.baseline_obligation_count = self.draft_obligation_count;
+        self.baseline_eopt_tier = self.draft_eopt_tier;
         self.expected_sequence = new_sequence;
         self.page_state = .viewing;
         self.save_status = .idle;
@@ -691,6 +884,18 @@ pub const State = struct {
         self: *State,
         aggregate: *const registration.RegistrationAggregate,
     ) Error!void {
+        if ((try aggregate.resolveEoptTier(self.viewed_on)).confirmed) |value| {
+            self.baseline_eopt_tier = .{
+                .effective = value.metadata.effective,
+                .value = EditableEoptTier.fromDomain(value.value) orelse
+                    return error.InvalidTransition,
+                .origin = .{
+                    .revision_id = value.metadata.revision_id,
+                    .sequence = value.metadata.sequence,
+                },
+                .origin_source = value.metadata.source,
+            };
+        }
         if (self.selected_tax_year != null) {
             for (aggregate.agent_designations) |value| {
                 if (value.metadata.review.isConfirmed()) {
@@ -853,6 +1058,7 @@ pub const State = struct {
             self.baseline_obligations[0..self.baseline_obligation_count],
         );
         self.draft_obligation_count = self.baseline_obligation_count;
+        self.draft_eopt_tier = self.baseline_eopt_tier;
     }
 
     fn requireEditing(self: *const State) Error!void {
@@ -895,6 +1101,12 @@ pub const State = struct {
 
     fn draftObligationsMut(self: *State) []RegistrationObligationRow {
         return self.draft_obligations[0..self.draft_obligation_count];
+    }
+
+    fn currentEoptTierRow(self: *const State) ?*const EoptTierRow {
+        return if (self.page_state == .editing)
+            if (self.draft_eopt_tier) |*row| row else null
+        else if (self.baseline_eopt_tier) |*row| row else null;
     }
 
     fn baselineActivityOrigin(
@@ -1044,6 +1256,16 @@ fn findActivity(
     return null;
 }
 
+fn findActivityConst(
+    rows: []const BusinessActivityRow,
+    anchor: *const registration.ActivityAnchorId,
+) ?*const BusinessActivityRow {
+    for (rows) |*row| {
+        if (row.anchor_id.eql(anchor)) return row;
+    }
+    return null;
+}
+
 fn findActivityIndex(
     rows: []const BusinessActivityRow,
     anchor: *const registration.ActivityAnchorId,
@@ -1125,6 +1347,15 @@ fn obligationContentEqual(
     return left.anchor_id.eql(&right.anchor_id) and
         left.effective.eql(right.effective) and
         obligationKindsEqual(&left.kind, &right.kind);
+}
+
+fn eoptTierRowsEqual(left: ?EoptTierRow, right: ?EoptTierRow) bool {
+    if (left) |left_row| {
+        const right_row = right orelse return false;
+        return left_row.value == right_row.value and
+            left_row.effective.eql(right_row.effective);
+    }
+    return right == null;
 }
 
 fn obligationKindsEqual(
@@ -1315,6 +1546,151 @@ test "registration editor defaults to read only and exposes effective confirmed 
     try std.testing.expect(!state.affordances().can_cancel);
 }
 
+test "registration editor edits and cancels evidence-backed EOPT tier" {
+    const profile_id = try testProfileId();
+    const period = try testPeriod("2026-01-01", null);
+    var metadata = try testMetadata(
+        profile_id,
+        "eopt-documented-micro",
+        1,
+        period,
+        confirmed(),
+    );
+    metadata.source = .{ .documented = try field.SourceReference.parse(
+        "COR-2026",
+    ) };
+    const tiers = [_]registration.EoptTierRevision{.{
+        .metadata = metadata,
+        .value = .micro,
+    }};
+    const aggregate: registration.RegistrationAggregate = .{
+        .profile_id = profile_id,
+        .eopt_tiers = &tiers,
+    };
+    var state = try State.open(.{
+        .aggregate = &aggregate,
+        .viewed_on = try testDate("2026-08-04"),
+        .subject_kind = .corporation,
+        .expected_sequence = 8,
+    });
+
+    try std.testing.expectEqual(EditableEoptTier.micro, state.eoptTier().?);
+    try std.testing.expectEqualStrings("Micro", state.eoptTierLabel());
+    try std.testing.expect(state.eoptTierEffective().?.eql(period));
+    const source = state.eoptTierOriginSource().?;
+    try std.testing.expect(source.* == .documented);
+    try std.testing.expectEqualStrings(
+        "COR-2026",
+        source.documented.asSlice(),
+    );
+
+    try state.beginEdit();
+    try state.selectEoptTier(.micro);
+    try std.testing.expect(!state.dirty());
+    try std.testing.expectError(error.ActionDisabled, state.beginSave());
+    try state.selectEoptTier(.small);
+    try std.testing.expect(state.dirty());
+    try std.testing.expect(state.affordances().can_modify_eopt_tier);
+    const intent = try state.beginSave();
+    try std.testing.expectEqual(EditableEoptTier.small, intent.eopt_tier.?.value);
+    try std.testing.expect(intent.eopt_tier.?.effective.eql(period));
+    try state.saveFailed();
+    try state.cancel();
+    try std.testing.expectEqual(PageState.viewing, state.page_state);
+    try std.testing.expectEqual(EditableEoptTier.micro, state.eoptTier().?);
+    try std.testing.expect(state.eoptTierOriginSource().?.* == .documented);
+}
+
+test "complete profile edits only the explicitly anchored primary activity" {
+    const profile_id = try testProfileId();
+    const aggregate = emptyAggregate(profile_id);
+    var state = try State.open(.{
+        .aggregate = &aggregate,
+        .viewed_on = try testDate("2026-08-04"),
+        .subject_kind = .corporation,
+    });
+    try std.testing.expect(state.primaryBusinessActivity() == null);
+
+    try state.beginEdit();
+    try state.setPrimaryBusinessActivity(
+        "Professional services",
+        "PT010",
+        try testPeriod("2026-01-01", null),
+    );
+    const primary = state.primaryBusinessActivity().?;
+    try std.testing.expectEqualStrings(
+        primary_business_activity_anchor,
+        primary.anchor_id.asSlice(),
+    );
+    try std.testing.expectEqualStrings(
+        "Professional services",
+        primary.line_of_business.asSlice(),
+    );
+
+    try state.addBusinessActivity(
+        try registration.ActivityAnchorId.parse("additional-activity"),
+        "Retail",
+        null,
+        try testPeriod("2026-07-01", null),
+    );
+    try state.setPrimaryBusinessActivity(
+        "Primary consulting",
+        null,
+        try testPeriod("2026-01-01", null),
+    );
+    try std.testing.expectEqual(@as(usize, 2), state.businessActivities().len);
+    try std.testing.expectEqualStrings(
+        "Primary consulting",
+        state.primaryBusinessActivity().?.line_of_business.asSlice(),
+    );
+    try std.testing.expectEqualStrings(
+        "Retail",
+        state.businessActivities()[1].line_of_business.asSlice(),
+    );
+}
+
+test "registration editor retains review EOPT and excludes unknown from input" {
+    const profile_id = try testProfileId();
+    const period = try testPeriod("2026-01-01", null);
+    const tiers = [_]registration.EoptTierRevision{.{
+        .metadata = try testMetadata(
+            profile_id,
+            "eopt-import-needs-review",
+            1,
+            period,
+            needsReview(),
+        ),
+        .value = .unknown_requires_review,
+    }};
+    const aggregate: registration.RegistrationAggregate = .{
+        .profile_id = profile_id,
+        .eopt_tiers = &tiers,
+    };
+    var state = try State.open(.{
+        .aggregate = &aggregate,
+        .viewed_on = try testDate("2026-08-04"),
+        .subject_kind = .corporation,
+        .expected_sequence = 3,
+    });
+
+    try std.testing.expect(state.eoptTier() == null);
+    try std.testing.expectEqualStrings("Not recorded", state.eoptTierLabel());
+    try std.testing.expect(state.eoptTierNeedsReview());
+    try std.testing.expectEqual(@as(usize, 1), state.reviewRequiredRows().len);
+    try std.testing.expect(
+        EditableEoptTier.fromDomain(.unknown_requires_review) == null,
+    );
+
+    try state.beginEdit();
+    try state.setEoptTier(.large, period);
+    const intent = try state.beginSave();
+    try std.testing.expectEqual(EditableEoptTier.large, intent.eopt_tier.?.value);
+    try std.testing.expectEqual(@as(usize, 1), intent.retained_review_rows.len);
+    try std.testing.expect(
+        intent.retained_review_rows[0].isUnsupportedLegacyValue(),
+    );
+}
+
 test "registration year workspace keeps finite confirmed intervals editable" {
     const profile_id = try testProfileId();
     const finite_period = try testPeriod("2026-01-01", "2026-06-30");
@@ -1438,6 +1814,7 @@ test "registration editor applicability hides pure compensation controls" {
         .{ model.SubjectKind.sole_proprietor, model.NaturalPersonClassification.self_employed },
         .{ model.SubjectKind.corporation, model.NaturalPersonClassification.classification_unknown },
         .{ model.SubjectKind.partnership, model.NaturalPersonClassification.classification_unknown },
+        .{ model.SubjectKind.cooperative, model.NaturalPersonClassification.classification_unknown },
         .{ model.SubjectKind.other_legal_entity, model.NaturalPersonClassification.classification_unknown },
         .{ model.SubjectKind.individual, model.NaturalPersonClassification.self_employed },
         .{ model.SubjectKind.individual, model.NaturalPersonClassification.mixed_income },

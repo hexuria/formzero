@@ -50,6 +50,7 @@ export const profileSubjectKindValues = [
   "sole_proprietor",
   "corporation",
   "partnership",
+  "cooperative",
   "estate",
   "trust",
   "other_legal_entity",
@@ -461,6 +462,7 @@ const spouseSubjectKinds = [
 const corporateReturnSubjectKinds = [
   "corporation",
   "partnership",
+  "cooperative",
   "other_legal_entity",
 ] as const satisfies readonly ProfileSubjectKind[];
 
@@ -916,7 +918,7 @@ const explicitInputFields = defineInputFields([
     sourceKey: "income_tax_rate_election",
     ids: [
       "1701Q.2018-01-ENCS.input.income_tax_rate_election",
-      "2551Q.2018-01-ENCS.input.income_tax_rate_election",
+      "2551Q.2018-01-ENCS.input.what_income_tax_rates_are_you_availing",
     ],
   },
   {

@@ -158,30 +158,30 @@ excluded even when a selected registration may help compose a row.
 
 | Form revision | Named role | Cardinality | Allowed subjects | Presence | Canonical profile key | Stable target field |
 |---|---|---|---|---|---|---|
-| 0605 1999-07-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `tin` | `0605.1999-07-ENCS.input.tin` |
-| 0605 1999-07-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `rdo_code` | `0605.1999-07-ENCS.input.rdo_code` |
-| 0605 1999-07-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `taxpayer_name` | `0605.1999-07-ENCS.input.taxpayer_name` |
-| 0605 1999-07-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `registered_address` | `0605.1999-07-ENCS.input.registered_address` |
-| 0605 1999-07-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `zip_code` | `0605.1999-07-ENCS.input.zip_code` |
-| 0605 1999-07-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `contact_number` | `0605.1999-07-ENCS.input.contact_number` |
-| 0605 1999-07-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `email_address` | `0605.1999-07-ENCS.input.email_address` |
-| 1601C 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `tin` | `1601C.2018-01-ENCS.input.tin` |
-| 1601C 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `rdo_code` | `1601C.2018-01-ENCS.input.rdo_code` |
-| 1601C 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `taxpayer_name` | `1601C.2018-01-ENCS.input.taxpayer_name` |
-| 1601C 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `registered_address` | `1601C.2018-01-ENCS.input.registered_address` |
-| 1601C 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `zip_code` | `1601C.2018-01-ENCS.input.zip_code` |
-| 1601C 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `line_of_business` | `1601C.2018-01-ENCS.input.line_of_business` |
-| 1601C 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `contact_number` | `1601C.2018-01-ENCS.input.contact_number` |
-| 1601C 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `email_address` | `1601C.2018-01-ENCS.input.email_address` |
-| 0619F 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `government_withholding_agent` | `0619F.2018-01-ENCS.input.government_withholding_agent` |
-| 0619F 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `tin` | `0619F.2018-01-ENCS.input.tin` |
-| 0619F 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `rdo_code` | `0619F.2018-01-ENCS.input.rdo_code` |
-| 0619F 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `taxpayer_name` | `0619F.2018-01-ENCS.input.registered_taxpayer_name` |
-| 0619F 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `line_of_business` | `0619F.2018-01-ENCS.input.line_of_business` |
-| 0619F 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `registered_address` | `0619F.2018-01-ENCS.input.registered_address` |
-| 0619F 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `zip_code` | `0619F.2018-01-ENCS.input.zip_code` |
-| 0619F 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `contact_number` | `0619F.2018-01-ENCS.input.contact_number` |
-| 0619F 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `email_address` | `0619F.2018-01-ENCS.input.email_address` |
+| 0605 1999-07-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `tin` | `0605.1999-07-ENCS.input.tin` |
+| 0605 1999-07-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `rdo_code` | `0605.1999-07-ENCS.input.rdo_code` |
+| 0605 1999-07-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `taxpayer_name` | `0605.1999-07-ENCS.input.taxpayer_name` |
+| 0605 1999-07-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `registered_address` | `0605.1999-07-ENCS.input.registered_address` |
+| 0605 1999-07-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `zip_code` | `0605.1999-07-ENCS.input.zip_code` |
+| 0605 1999-07-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `contact_number` | `0605.1999-07-ENCS.input.contact_number` |
+| 0605 1999-07-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `email_address` | `0605.1999-07-ENCS.input.email_address` |
+| 1601C 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `tin` | `1601C.2018-01-ENCS.input.tin` |
+| 1601C 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `rdo_code` | `1601C.2018-01-ENCS.input.rdo_code` |
+| 1601C 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `taxpayer_name` | `1601C.2018-01-ENCS.input.taxpayer_name` |
+| 1601C 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `registered_address` | `1601C.2018-01-ENCS.input.registered_address` |
+| 1601C 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `zip_code` | `1601C.2018-01-ENCS.input.zip_code` |
+| 1601C 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `line_of_business` | `1601C.2018-01-ENCS.input.line_of_business` |
+| 1601C 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `contact_number` | `1601C.2018-01-ENCS.input.contact_number` |
+| 1601C 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `email_address` | `1601C.2018-01-ENCS.input.email_address` |
+| 0619F 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `government_withholding_agent` | `0619F.2018-01-ENCS.input.government_withholding_agent` |
+| 0619F 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `tin` | `0619F.2018-01-ENCS.input.tin` |
+| 0619F 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `rdo_code` | `0619F.2018-01-ENCS.input.rdo_code` |
+| 0619F 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `taxpayer_name` | `0619F.2018-01-ENCS.input.registered_taxpayer_name` |
+| 0619F 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `line_of_business` | `0619F.2018-01-ENCS.input.line_of_business` |
+| 0619F 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `registered_address` | `0619F.2018-01-ENCS.input.registered_address` |
+| 0619F 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `zip_code` | `0619F.2018-01-ENCS.input.zip_code` |
+| 0619F 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `contact_number` | `0619F.2018-01-ENCS.input.contact_number` |
+| 0619F 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `email_address` | `0619F.2018-01-ENCS.input.email_address` |
 | 1701Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, estate, trust | required | `tin` | `1701Q.2018-01-ENCS.input.tin` |
 | 1701Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, estate, trust | required | `rdo_code` | `1701Q.2018-01-ENCS.input.rdo_code` |
 | 1701Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, estate, trust | required | `taxpayer_name` | `1701Q.2018-01-ENCS.input.taxpayer_filer_name` |
@@ -209,46 +209,46 @@ excluded even when a selected registration may help compose a row.
 | 1701 2018-01-ENCS | spouse | zero_or_one | individual, sole_proprietor | required | `tin` | `1701.2018-01-ENCS.input.spouse_tin` |
 | 1701 2018-01-ENCS | spouse | zero_or_one | individual, sole_proprietor | required | `rdo_code` | `1701.2018-01-ENCS.input.spouse_rdo_code` |
 | 1701 2018-01-ENCS | spouse | zero_or_one | individual, sole_proprietor | required | `taxpayer_name` | `1701.2018-01-ENCS.input.spouse_name` |
-| 1702RT 2018-01-ENCS | filer | exactly_one | corporation, partnership, other_legal_entity | required | `tin` | `1702RT.2018-01-ENCS.input.tin` |
-| 1702RT 2018-01-ENCS | filer | exactly_one | corporation, partnership, other_legal_entity | required | `rdo_code` | `1702RT.2018-01-ENCS.input.rdo_code` |
-| 1702RT 2018-01-ENCS | filer | exactly_one | corporation, partnership, other_legal_entity | required | `registered_name` | `1702RT.2018-01-ENCS.input.registered_name` |
-| 1702RT 2018-01-ENCS | filer | exactly_one | corporation, partnership, other_legal_entity | required | `registered_address` | `1702RT.2018-01-ENCS.input.registered_address` |
-| 1702RT 2018-01-ENCS | filer | exactly_one | corporation, partnership, other_legal_entity | optional | `zip_code` | `1702RT.2018-01-ENCS.input.zip_code` |
-| 1702RT 2018-01-ENCS | filer | exactly_one | corporation, partnership, other_legal_entity | optional | `contact_number` | `1702RT.2018-01-ENCS.input.contact_number` |
-| 1702RT 2018-01-ENCS | filer | exactly_one | corporation, partnership, other_legal_entity | optional | `email_address` | `1702RT.2018-01-ENCS.input.email_address` |
-| 1702RT 2018-01-ENCS | filer | exactly_one | corporation, partnership, other_legal_entity | required | `line_of_business` | `1702RT.2018-01-ENCS.input.line_of_business` |
-| 1702MX 2018-01-ENCS | filer | exactly_one | corporation, partnership, other_legal_entity | required | `tin` | `1702MX.2018-01-ENCS.input.tin` |
-| 1702MX 2018-01-ENCS | filer | exactly_one | corporation, partnership, other_legal_entity | required | `rdo_code` | `1702MX.2018-01-ENCS.input.rdo_code` |
-| 1702MX 2018-01-ENCS | filer | exactly_one | corporation, partnership, other_legal_entity | required | `registered_name` | `1702MX.2018-01-ENCS.input.registered_name` |
-| 1702MX 2018-01-ENCS | filer | exactly_one | corporation, partnership, other_legal_entity | required | `registered_address` | `1702MX.2018-01-ENCS.input.registered_address` |
-| 1702MX 2018-01-ENCS | filer | exactly_one | corporation, partnership, other_legal_entity | optional | `zip_code` | `1702MX.2018-01-ENCS.input.zip_code` |
-| 1702MX 2018-01-ENCS | filer | exactly_one | corporation, partnership, other_legal_entity | optional | `contact_number` | `1702MX.2018-01-ENCS.input.contact_number` |
-| 1702MX 2018-01-ENCS | filer | exactly_one | corporation, partnership, other_legal_entity | optional | `email_address` | `1702MX.2018-01-ENCS.input.email_address` |
-| 1702MX 2018-01-ENCS | filer | exactly_one | corporation, partnership, other_legal_entity | required | `line_of_business` | `1702MX.2018-01-ENCS.input.line_of_business` |
-| 1702MX 2018-01-ENCS | filer | exactly_one | corporation, partnership, other_legal_entity | optional | `special_rate_basis` | `1702MX.2018-01-ENCS.input.special_preferential_rate_basis` |
-| 2550Q 2024-04-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `tin` | `2550Q.2024-04-ENCS.input.tin` |
-| 2550Q 2024-04-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `rdo_code` | `2550Q.2024-04-ENCS.input.rdo_code` |
-| 2550Q 2024-04-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `taxpayer_name` | `2550Q.2024-04-ENCS.input.taxpayer_name` |
-| 2550Q 2024-04-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `registered_address` | `2550Q.2024-04-ENCS.input.registered_address` |
-| 2550Q 2024-04-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `zip_code` | `2550Q.2024-04-ENCS.input.zip_code` |
-| 2550Q 2024-04-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `contact_number` | `2550Q.2024-04-ENCS.input.contact_number` |
-| 2550Q 2024-04-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `email_address` | `2550Q.2024-04-ENCS.input.email_address` |
-| 2551Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `tin` | `2551Q.2018-01-ENCS.input.tin` |
-| 2551Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `rdo_code` | `2551Q.2018-01-ENCS.input.rdo_code` |
-| 2551Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `taxpayer_name` | `2551Q.2018-01-ENCS.input.taxpayers_name` |
-| 2551Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `registered_address` | `2551Q.2018-01-ENCS.input.registered_address` |
-| 2551Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `zip_code` | `2551Q.2018-01-ENCS.input.zip_code` |
-| 2551Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `contact_number` | `2551Q.2018-01-ENCS.input.contact_number` |
-| 2551Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `email_address` | `2551Q.2018-01-ENCS.input.email_address` |
-| 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `tin` | `0619E.2018-01-ENCS.input.tin` |
-| 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `rdo_code` | `0619E.2018-01-ENCS.input.rdo_code` |
-| 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `taxpayer_name` | `0619E.2018-01-ENCS.input.registered_taxpayer_name` |
-| 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `line_of_business` | `0619E.2018-01-ENCS.input.line_of_business` |
-| 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `registered_address` | `0619E.2018-01-ENCS.input.registered_address` |
-| 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `zip_code` | `0619E.2018-01-ENCS.input.zip_code` |
-| 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `contact_number` | `0619E.2018-01-ENCS.input.contact_number` |
-| 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | optional | `email_address` | `0619E.2018-01-ENCS.input.email_address` |
-| 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity | required | `government_withholding_agent` | `0619E.2018-01-ENCS.input.government_withholding_agent` |
+| 1702RT 2018-01-ENCS | filer | exactly_one | corporation, partnership, cooperative, other_legal_entity | required | `tin` | `1702RT.2018-01-ENCS.input.tin` |
+| 1702RT 2018-01-ENCS | filer | exactly_one | corporation, partnership, cooperative, other_legal_entity | required | `rdo_code` | `1702RT.2018-01-ENCS.input.rdo_code` |
+| 1702RT 2018-01-ENCS | filer | exactly_one | corporation, partnership, cooperative, other_legal_entity | required | `registered_name` | `1702RT.2018-01-ENCS.input.registered_name` |
+| 1702RT 2018-01-ENCS | filer | exactly_one | corporation, partnership, cooperative, other_legal_entity | required | `registered_address` | `1702RT.2018-01-ENCS.input.registered_address` |
+| 1702RT 2018-01-ENCS | filer | exactly_one | corporation, partnership, cooperative, other_legal_entity | optional | `zip_code` | `1702RT.2018-01-ENCS.input.zip_code` |
+| 1702RT 2018-01-ENCS | filer | exactly_one | corporation, partnership, cooperative, other_legal_entity | optional | `contact_number` | `1702RT.2018-01-ENCS.input.contact_number` |
+| 1702RT 2018-01-ENCS | filer | exactly_one | corporation, partnership, cooperative, other_legal_entity | optional | `email_address` | `1702RT.2018-01-ENCS.input.email_address` |
+| 1702RT 2018-01-ENCS | filer | exactly_one | corporation, partnership, cooperative, other_legal_entity | required | `line_of_business` | `1702RT.2018-01-ENCS.input.line_of_business` |
+| 1702MX 2018-01-ENCS | filer | exactly_one | corporation, partnership, cooperative, other_legal_entity | required | `tin` | `1702MX.2018-01-ENCS.input.tin` |
+| 1702MX 2018-01-ENCS | filer | exactly_one | corporation, partnership, cooperative, other_legal_entity | required | `rdo_code` | `1702MX.2018-01-ENCS.input.rdo_code` |
+| 1702MX 2018-01-ENCS | filer | exactly_one | corporation, partnership, cooperative, other_legal_entity | required | `registered_name` | `1702MX.2018-01-ENCS.input.registered_name` |
+| 1702MX 2018-01-ENCS | filer | exactly_one | corporation, partnership, cooperative, other_legal_entity | required | `registered_address` | `1702MX.2018-01-ENCS.input.registered_address` |
+| 1702MX 2018-01-ENCS | filer | exactly_one | corporation, partnership, cooperative, other_legal_entity | optional | `zip_code` | `1702MX.2018-01-ENCS.input.zip_code` |
+| 1702MX 2018-01-ENCS | filer | exactly_one | corporation, partnership, cooperative, other_legal_entity | optional | `contact_number` | `1702MX.2018-01-ENCS.input.contact_number` |
+| 1702MX 2018-01-ENCS | filer | exactly_one | corporation, partnership, cooperative, other_legal_entity | optional | `email_address` | `1702MX.2018-01-ENCS.input.email_address` |
+| 1702MX 2018-01-ENCS | filer | exactly_one | corporation, partnership, cooperative, other_legal_entity | required | `line_of_business` | `1702MX.2018-01-ENCS.input.line_of_business` |
+| 1702MX 2018-01-ENCS | filer | exactly_one | corporation, partnership, cooperative, other_legal_entity | optional | `special_rate_basis` | `1702MX.2018-01-ENCS.input.special_preferential_rate_basis` |
+| 2550Q 2024-04-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `tin` | `2550Q.2024-04-ENCS.input.tin` |
+| 2550Q 2024-04-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `rdo_code` | `2550Q.2024-04-ENCS.input.rdo_code` |
+| 2550Q 2024-04-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `taxpayer_name` | `2550Q.2024-04-ENCS.input.taxpayer_name` |
+| 2550Q 2024-04-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `registered_address` | `2550Q.2024-04-ENCS.input.registered_address` |
+| 2550Q 2024-04-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `zip_code` | `2550Q.2024-04-ENCS.input.zip_code` |
+| 2550Q 2024-04-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `contact_number` | `2550Q.2024-04-ENCS.input.contact_number` |
+| 2550Q 2024-04-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `email_address` | `2550Q.2024-04-ENCS.input.email_address` |
+| 2551Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `tin` | `2551Q.2018-01-ENCS.input.tin` |
+| 2551Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `rdo_code` | `2551Q.2018-01-ENCS.input.rdo_code` |
+| 2551Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `taxpayer_name` | `2551Q.2018-01-ENCS.input.taxpayers_name` |
+| 2551Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `registered_address` | `2551Q.2018-01-ENCS.input.registered_address` |
+| 2551Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `zip_code` | `2551Q.2018-01-ENCS.input.zip_code` |
+| 2551Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `contact_number` | `2551Q.2018-01-ENCS.input.contact_number` |
+| 2551Q 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `email_address` | `2551Q.2018-01-ENCS.input.email_address` |
+| 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `tin` | `0619E.2018-01-ENCS.input.tin` |
+| 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `rdo_code` | `0619E.2018-01-ENCS.input.rdo_code` |
+| 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `taxpayer_name` | `0619E.2018-01-ENCS.input.registered_taxpayer_name` |
+| 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `line_of_business` | `0619E.2018-01-ENCS.input.line_of_business` |
+| 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `registered_address` | `0619E.2018-01-ENCS.input.registered_address` |
+| 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `zip_code` | `0619E.2018-01-ENCS.input.zip_code` |
+| 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `contact_number` | `0619E.2018-01-ENCS.input.contact_number` |
+| 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `email_address` | `0619E.2018-01-ENCS.input.email_address` |
+| 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `government_withholding_agent` | `0619E.2018-01-ENCS.input.government_withholding_agent` |
 
 ## 0605 — 1999-07-ENCS
 
@@ -264,7 +264,7 @@ Profile binding policy:
 
 | Profile role | Cardinality | Allowed subject kinds |
 |---|---|---|
-| filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity |
+| filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity |
 
 | Stable field ID | Label | Provenance | Profile key | Presence | Source key | Fixed value | Optional seed source | Role | Type | Status | Source |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -307,7 +307,7 @@ Profile binding policy:
 
 | Profile role | Cardinality | Allowed subject kinds |
 |---|---|---|
-| filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity |
+| filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity |
 
 | Stable field ID | Label | Provenance | Profile key | Presence | Source key | Fixed value | Optional seed source | Role | Type | Status | Source |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -363,7 +363,7 @@ Profile binding policy:
 
 | Profile role | Cardinality | Allowed subject kinds |
 |---|---|---|
-| filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity |
+| filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity |
 
 | Stable field ID | Label | Provenance | Profile key | Presence | Source key | Fixed value | Optional seed source | Role | Type | Status | Source |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -556,7 +556,7 @@ Profile binding policy:
 
 | Profile role | Cardinality | Allowed subject kinds |
 |---|---|---|
-| filer | exactly_one | corporation, partnership, other_legal_entity |
+| filer | exactly_one | corporation, partnership, cooperative, other_legal_entity |
 
 | Stable field ID | Label | Provenance | Profile key | Presence | Source key | Fixed value | Optional seed source | Role | Type | Status | Source |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -614,7 +614,7 @@ Profile binding policy:
 
 | Profile role | Cardinality | Allowed subject kinds |
 |---|---|---|
-| filer | exactly_one | corporation, partnership, other_legal_entity |
+| filer | exactly_one | corporation, partnership, cooperative, other_legal_entity |
 
 | Stable field ID | Label | Provenance | Profile key | Presence | Source key | Fixed value | Optional seed source | Role | Type | Status | Source |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -670,7 +670,7 @@ Profile binding policy:
 
 | Profile role | Cardinality | Allowed subject kinds |
 |---|---|---|
-| filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity |
+| filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity |
 
 | Stable field ID | Label | Provenance | Profile key | Presence | Source key | Fixed value | Optional seed source | Role | Type | Status | Source |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -739,7 +739,7 @@ Profile binding policy:
 
 | Profile role | Cardinality | Allowed subject kinds |
 |---|---|---|
-| filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity |
+| filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity |
 
 | Stable field ID | Label | Provenance | Profile key | Presence | Source key | Fixed value | Optional seed source | Role | Type | Status | Source |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -752,7 +752,7 @@ Profile binding policy:
 | `2551Q.2018-01-ENCS.input.amended_return` | Amended Return? | filing_context | — | — | — | — | — | filing | boolean | unbound_input | `src/pages/forms/2551q.native:42` |
 | `2551Q.2018-01-ENCS.input.tax_relief` | Tax Relief? | transaction | — | — | — | — | — | filing | boolean | unbound_input | `src/pages/forms/2551q.native:45` |
 | `2551Q.2018-01-ENCS.input.tax_relief_specification` | 12A Tax Relief Specification | transaction | — | — | — | — | — | filing | text | unbound_input | `src/pages/forms/2551q.native:65` |
-| `2551Q.2018-01-ENCS.input.income_tax_rate_election` | 13 Income-tax-rate election | taxpayer_year | — | — | income_tax_rate_election | — | — | filing | choice | unbound_input | `src/pages/forms/2551q.native:73` |
+| `2551Q.2018-01-ENCS.input.what_income_tax_rates_are_you_availing` | 13 What income tax rates are you availing? | taxpayer_year | — | — | income_tax_rate_election | — | — | filing | choice | unbound_input | `src/pages/forms/2551q.native:73` |
 | `2551Q.2018-01-ENCS.input.tin` | TIN | profile | tin | required | — | — | — | filer | tin | unbound_input | `src/pages/forms/2551q.native:81` |
 | `2551Q.2018-01-ENCS.input.rdo_code` | RDO Code | profile | rdo_code | required | — | — | — | filer | rdo_code | unbound_input | `src/pages/forms/2551q.native:82` |
 | `2551Q.2018-01-ENCS.input.taxpayers_name` | Taxpayer's Name | profile | taxpayer_name | required | — | — | — | filer | text | unbound_input | `src/pages/forms/2551q.native:83` |
@@ -797,7 +797,7 @@ Profile binding policy:
 
 | Profile role | Cardinality | Allowed subject kinds |
 |---|---|---|
-| filer | exactly_one | individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity |
+| filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity |
 
 | Stable field ID | Label | Provenance | Profile key | Presence | Source key | Fixed value | Optional seed source | Role | Type | Status | Source |
 |---|---|---|---|---|---|---|---|---|---|---|---|

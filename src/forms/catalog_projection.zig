@@ -116,6 +116,7 @@ pub fn domainSubjectKind(
         .sole_proprietor => .sole_proprietor,
         .corporation => .corporation,
         .partnership => .partnership,
+        .cooperative => .cooperative,
         .estate => .estate,
         .trust => .trust,
         .other_legal_entity => .other_legal_entity,
@@ -942,7 +943,7 @@ test "corrected ownership source contracts stay outside direct profile projectio
         },
         .{
             .code = "2551Q",
-            .id = "2551Q.2018-01-ENCS.input.income_tax_rate_election",
+            .id = "2551Q.2018-01-ENCS.input.what_income_tax_rates_are_you_availing",
             .provenance = .taxpayer_year,
             .source_key = "income_tax_rate_election",
         },

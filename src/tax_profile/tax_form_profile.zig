@@ -197,7 +197,11 @@ pub const Revision = struct {
         if (!periodWithinTaxYear(self.effective, self.stream.tax_year)) {
             return error.EffectivePeriodOutsideTaxYear;
         }
-        if (self.values.len == 0) return error.EmptySetupRevision;
+        // A revision with no values is an explicit clearing revision for a
+        // setup contract made entirely of optional or runtime-conditional
+        // fields. It remains an append-only historical fact: callers can
+        // distinguish it from an absent revision, while required generated
+        // fields are still rejected by the validation loop below.
         switch (self.review_state) {
             .requires_review => if (self.confirmed_at_unix != null) {
                 return error.InvalidConfirmation;
@@ -412,17 +416,14 @@ test "no-setup and calendar-only forms cannot manufacture revision streams" {
     try std.testing.expect(revisionStreamAllowed(catalog.findForm("1601C").?));
 }
 
-test "generated setup contract validates exact typed binding" {
+test "generated setup contract validates exact typed binding and an optional clear" {
     var revision = try fixtureRevision("setup-1", 1, "2026-01-01", null);
     defer std.testing.allocator.free(revision.values);
     try revision.validate(catalog.findForm("1601C").?);
 
     var empty = revision;
     empty.values = &.{};
-    try std.testing.expectError(
-        error.EmptySetupRevision,
-        empty.validate(catalog.findForm("1601C").?),
-    );
+    try empty.validate(catalog.findForm("1601C").?);
 
     var wrong = revision;
     var wrong_values = [_]SetupValue{revision.values[0]};

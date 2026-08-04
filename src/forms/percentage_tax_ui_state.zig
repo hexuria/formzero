@@ -9,6 +9,10 @@ const std = @import("std");
 const native_sdk = @import("native_sdk");
 const form_2551q = @import("form_2551q.zig");
 const field = @import("../tax_profile/field.zig");
+const annual_income_tax_election = @import(
+    "../tax_profile/annual_income_tax_election.zig",
+);
+const tax_profile_model = @import("../tax_profile/model.zig");
 const store_module = @import("../tax_profile/store.zig");
 const Money = @import("../domain/money.zig").Money;
 
@@ -68,6 +72,8 @@ pub const max_persisted_field_id_len = 96;
 
 pub const Error = error{
     DivisionByZero,
+    AnnualElectionConflict,
+    AnnualElectionNotReady,
     DuplicateDraftField,
     Empty,
     FieldTooLong,
@@ -165,7 +171,7 @@ pub const PersistedField = enum {
             .amended_return => "2551Q.2018-01-ENCS.input.amended_return",
             .tax_relief => "2551Q.2018-01-ENCS.input.tax_relief",
             .tax_relief_reference => "2551Q.2018-01-ENCS.input.tax_relief_specification",
-            .income_tax_rate_election => "2551Q.2018-01-ENCS.input.income_tax_rate_election",
+            .income_tax_rate_election => "2551Q.2018-01-ENCS.input.what_income_tax_rates_are_you_availing",
             .total_percentage_tax_due => "2551Q.2018-01-ENCS.input.total_percentage_tax_due",
             .creditable_percentage_tax_withheld => "2551Q.2018-01-ENCS.input.creditable_percentage_tax_withheld",
             .paid_in_previous_return => "2551Q.2018-01-ENCS.input.tax_paid_in_previous_return",
@@ -455,6 +461,26 @@ pub const State = struct {
         self: *State,
         draft: *const store_module.OwnedDraft,
     ) Error!void {
+        return self.loadFromDraftInternal(draft, null);
+    }
+
+    /// Resumes a 2551Q draft against the authoritative annual stream. This is
+    /// required for later quarters because Item 13 is intentionally absent
+    /// from their stored/printed payload even though calculations and the UI
+    /// may still use the confirmed inherited choice.
+    pub fn loadFromDraftForAnnualElection(
+        self: *State,
+        draft: *const store_module.OwnedDraft,
+        election: ?*const annual_income_tax_election.Event,
+    ) Error!void {
+        return self.loadFromDraftInternal(draft, election);
+    }
+
+    fn loadFromDraftInternal(
+        self: *State,
+        draft: *const store_module.OwnedDraft,
+        election: ?*const annual_income_tax_election.Event,
+    ) Error!void {
         if (!std.mem.eql(
             u8,
             draft.form_code,
@@ -473,6 +499,13 @@ pub const State = struct {
         }
         const period = try parsePeriodKey(draft.period_key);
         try self.reset(period.year, period.number);
+        const item_13 = if (election) |current|
+            try resolveAnnualItem13(current, period)
+        else
+            null;
+        if (item_13) |projection| {
+            self.income_tax_rate_election = formChoice(projection.choice());
+        }
         if (!validDraftLifecycle(draft.lifecycle)) {
             return error.InvalidDraftLifecycle;
         }
@@ -528,7 +561,10 @@ pub const State = struct {
         }
 
         var canonical: DraftValueSet = .{};
-        const expected = try self.draftValueWrites(&canonical);
+        const expected = if (election) |current|
+            try self.draftValueWritesForAnnualElection(&canonical, current)
+        else
+            try self.draftValueWrites(&canonical);
         if (draft.values.len != expected.len) {
             return error.InvalidDraftValue;
         }
@@ -874,6 +910,36 @@ pub const State = struct {
         self: *const State,
         output: *DraftValueSet,
     ) Error![]const store_module.DraftValueWrite {
+        return self.draftValueWritesInternal(output, true);
+    }
+
+    /// Builds the persisted/printed 2551Q payload against the authoritative
+    /// annual stream. Item 13 is written for the initial applicable quarter
+    /// only. A confirmed later quarter still binds the inherited choice for
+    /// validation and calculations, while omitting that official field.
+    pub fn draftValueWritesForAnnualElection(
+        self: *const State,
+        output: *DraftValueSet,
+        election: ?*const annual_income_tax_election.Event,
+    ) Error![]const store_module.DraftValueWrite {
+        const context = self.context orelse return error.InvalidPeriodContext;
+        const item_13 = try resolveAnnualItem13(election, context);
+        const inherited_choice = formChoice(item_13.choice());
+        if (self.income_tax_rate_election) |current_choice| {
+            if (current_choice != inherited_choice) {
+                return error.AnnualElectionConflict;
+            }
+        }
+        var bound = self.*;
+        bound.income_tax_rate_election = inherited_choice;
+        return bound.draftValueWritesInternal(output, item_13.included());
+    }
+
+    fn draftValueWritesInternal(
+        self: *const State,
+        output: *DraftValueSet,
+        include_item_13: bool,
+    ) Error![]const store_module.DraftValueWrite {
         var schedule: [max_schedule_rows]form_2551q.ScheduleLine = undefined;
         const transaction = try self.buildTransaction(&schedule);
         const calculation = try self.calculate();
@@ -915,10 +981,12 @@ pub const State = struct {
                 .specified => |reference| reference.asSlice(),
             },
         );
-        try output.append(
-            .income_tax_rate_election,
-            @tagName(transaction.income_tax_rate_election),
-        );
+        if (include_item_13) {
+            try output.append(
+                .income_tax_rate_election,
+                @tagName(transaction.income_tax_rate_election),
+            );
+        }
         var packed_line_index: usize = 0;
         for (&self.schedule_rows) |*row| {
             if (row.isEmpty()) continue;
@@ -1374,6 +1442,37 @@ pub const State = struct {
     }
 };
 
+fn resolveAnnualItem13(
+    election: ?*const annual_income_tax_election.Event,
+    period: field.Quarter,
+) Error!annual_income_tax_election.Item13Projection {
+    return annual_income_tax_election.project2551qItem13(
+        election,
+        period.year,
+        period.number,
+    ) catch |err| switch (err) {
+        error.ElectionTaxYearMismatch,
+        error.FilingBeforeBusinessCommencement,
+        error.InvalidTaxYear,
+        error.InvalidQuarter,
+        => error.InvalidPeriodContext,
+        error.ElectionUnresolved,
+        error.ElectionNotConfirmedForLaterQuarter,
+        error.ReviewRequired,
+        => error.AnnualElectionNotReady,
+        else => error.InvalidDraftValue,
+    };
+}
+
+fn formChoice(
+    choice: annual_income_tax_election.Choice,
+) form_2551q.IncomeTaxRateElection {
+    return switch (choice) {
+        .graduated => .graduated,
+        .eight_percent => .eight_percent,
+    };
+}
+
 fn parsePeriodKey(raw: []const u8) Error!field.Quarter {
     if (raw.len != 7 or raw[4] != '-' or raw[5] != 'Q') {
         return error.InvalidPeriodContext;
@@ -1583,6 +1682,8 @@ fn validationMessage(err: anyerror) []const u8 {
         error.UnsupportedFiscalPeriod => "Fiscal-quarter profile dates are not supported yet. Choose Calendar so the tax-profile snapshot uses the correct effective date.",
         error.InvalidYearEndMonth, error.InvalidDraftValue => "Enter a valid year-end month and whole-number sheet count.",
         error.MissingIncomeTaxRateElection => "Choose the income-tax-rate election for this filing.",
+        error.AnnualElectionNotReady => "Resolve and confirm the initial-quarter income tax rate before preparing this later-quarter return.",
+        error.AnnualElectionConflict => "The filing value conflicts with the authoritative annual income tax rate.",
         error.MissingScheduleAtc => "Enter at least one valid Schedule 1 percentage-tax code.",
         error.MissingScheduleTaxBase => "Enter the Schedule 1 tax base.",
         error.MissingExternalRate => "Enter a current policy-supplied Schedule 1 rate. No rate is assumed.",
@@ -1608,6 +1709,86 @@ fn configuredState() !State {
     state.schedule_rows[0].rate.set("3.00");
     state.refresh();
     return state;
+}
+
+fn testAnnualElection(
+    state: annual_income_tax_election.State,
+    choice: annual_income_tax_election.Choice,
+    initial_quarter: u8,
+) !annual_income_tax_election.Event {
+    return .{
+        .stream = .{
+            .profile_id = try tax_profile_model.ProfileId.parse(
+                "percentage-tax-item-13-profile",
+            ),
+            .tax_year = 2026,
+        },
+        .sequence = 1,
+        .state = state,
+        .choice = choice,
+        .initial_applicable_quarter = initial_quarter,
+        .provenance = .{
+            .kind = .form_2551q,
+            .form_revision = try annual_income_tax_election.FormRevision.parse(
+                "2018-01-ENCS",
+            ),
+            .filing_quarter = initial_quarter,
+            .draft_id = try annual_income_tax_election.DraftId.parse(
+                "percentage-tax-item-13-draft",
+            ),
+        },
+        .occurred_at_unix_seconds = 1,
+    };
+}
+
+test "2551Q Item 13 payload is initial-quarter only" {
+    const confirmed = try testAnnualElection(.confirmed, .graduated, 1);
+    var state = try configuredState();
+
+    var initial_values: DraftValueSet = .{};
+    const initial = try state.draftValueWritesForAnnualElection(
+        &initial_values,
+        &confirmed,
+    );
+    try std.testing.expect(
+        findWrite(initial, PersistedField.income_tax_rate_election.id()) != null,
+    );
+
+    state.context = try field.Quarter.init(2026, 2);
+    state.refresh();
+    var later_values: DraftValueSet = .{};
+    const later = try state.draftValueWritesForAnnualElection(
+        &later_values,
+        &confirmed,
+    );
+    try std.testing.expect(
+        findWrite(later, PersistedField.income_tax_rate_election.id()) == null,
+    );
+    try std.testing.expectEqual(initial.len - 1, later.len);
+}
+
+test "Q2 commencement projects Item 13 in Q2 while later candidate fails closed" {
+    const candidate = try testAnnualElection(.candidate, .graduated, 2);
+    var state = try configuredState();
+    state.context = try field.Quarter.init(2026, 2);
+    state.refresh();
+
+    var initial_values: DraftValueSet = .{};
+    const initial = try state.draftValueWritesForAnnualElection(
+        &initial_values,
+        &candidate,
+    );
+    try std.testing.expect(
+        findWrite(initial, PersistedField.income_tax_rate_election.id()) != null,
+    );
+
+    state.context = try field.Quarter.init(2026, 3);
+    state.refresh();
+    var later_values: DraftValueSet = .{};
+    try std.testing.expectError(
+        error.AnnualElectionNotReady,
+        state.draftValueWritesForAnnualElection(&later_values, &candidate),
+    );
 }
 
 test "2551Q refuses to invent a percentage-tax rate" {

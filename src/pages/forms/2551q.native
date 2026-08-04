@@ -69,9 +69,9 @@
         on-input="percentage_tax_relief_reference_input"/>
     </column>
     <column gap="4">
-      <text foreground="text_muted">13 Income-tax-rate election</text>
-      <input height="44" text="{percentageTaxElection}" placeholder="Set in Taxpayer-Year Settings" disabled="true" />
-      <text wrap="true" foreground="text_muted">Saved in this taxpayer's Taxpayer-Year Settings for the selected year.</text>
+      <text foreground="text_muted">13 What income tax rates are you availing?</text>
+      <input height="44" text="{percentageTaxElection}" placeholder="Set in the annual Income tax rate profile" disabled="true" />
+      <text wrap="true" foreground="text_muted">The eligible initial quarter sets this choice for the taxable year. Later quarters inherit the saved annual rate.</text>
     </column>
   </grid>
 </template>

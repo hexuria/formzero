@@ -79,7 +79,7 @@
     </if>
     <if test="{profileFormInfoDialogOpen}">
       <column grow="1" padding="16" main="center" cross="center" label="Dismiss dialog" on-press="profile_forms_close_info">
-        <dialog width="{profileFormInfoDialogWidth}" height="400" on-dismiss="profile_forms_close_info">
+        <dialog width="{profileFormInfoDialogWidth}" on-dismiss="profile_forms_close_info">
           <use
             template="taxpayer-form-info-content"
             code="{profileFormInfoCode}"

@@ -12,6 +12,9 @@ const editor = @import("editor.zig");
 const fields = @import("field.zig");
 const model = @import("model.zig");
 const applicability = @import("applicability.zig");
+const registration = @import("registration.zig");
+const registration_ui = @import("registration_ui.zig");
+const rdo_reference = @import("rdo_reference.zig");
 const catalog = @import("../forms/generated/catalog.zig");
 const multi_select = @import("../components/multi_select.zig");
 
@@ -64,6 +67,8 @@ pub const Error = error{
     BranchTinRootChanged,
     BranchCodeRequired,
     BranchLegalPersonChanged,
+    InvalidRdoSelection,
+    NewProfileTinMustHaveFourteenDigits,
 } || persistence.Error;
 
 pub const NoticeKind = enum {
@@ -250,7 +255,6 @@ const ProfileEditorSnapshot = struct {
     government_withholding_agent: GovernmentWithholdingChoice = .unset,
     tin: canvas.TextBuffer(32) = .{},
     rdo: canvas.TextBuffer(8) = .{},
-    profile_label: canvas.TextBuffer(160) = .{},
     display_name: canvas.TextBuffer(160) = .{},
     trade_name: canvas.TextBuffer(160) = .{},
     registered_address: canvas.TextBuffer(255) = .{},
@@ -442,9 +446,6 @@ pub const State = struct {
     government_withholding_agent: GovernmentWithholdingChoice = .unset,
     tin: canvas.TextBuffer(32) = .{},
     rdo: canvas.TextBuffer(8) = .{},
-    /// Mutable local metadata used by the app shell. It is deliberately
-    /// separate from the legal/taxpayer name stored in immutable revisions.
-    profile_label: canvas.TextBuffer(160) = .{},
     display_name: canvas.TextBuffer(160) = .{},
     trade_name: canvas.TextBuffer(160) = .{},
     registered_address: canvas.TextBuffer(255) = .{},
@@ -496,7 +497,6 @@ pub const State = struct {
     /// against it so reopening a taxpayer and pressing save cannot append a
     /// revision that records no actual change.
     baseline_fingerprint: u64 = 0,
-    baseline_profile_label: NameText = .{},
     editor_baseline: ProfileEditorSnapshot = .{},
     /// Which taxpayer facts apply to the workspace year, summarized without
     /// revision vocabulary.
@@ -661,9 +661,49 @@ pub const State = struct {
         if (self.store == null or !self.loaded_shape_supported) return true;
         return switch (self.profile_mode) {
             .viewing => true,
-            .editing => !self.profileDirty(),
-            .creating => false,
+            .editing => !self.profileDirty() or !self.profileDraftValid(),
+            .creating => !self.profileDraftValid(),
         };
+    }
+
+    /// Fast, allocation-free syntax gate for the Native Save affordance.
+    /// Domain construction and SQLite constraints remain authoritative at
+    /// commit time; this prevents offering Save for inputs already known to
+    /// be invalid.
+    pub fn profileDraftValid(self: *const State) bool {
+        const parsed_tin = fields.Tin.parse(trimmed(self.tin.text())) catch
+            return false;
+        if (self.editing_new and parsed_tin.asDigits().len != 14) return false;
+        if (rdo_reference.findByCode(trimmed(self.rdo.text())) == null) {
+            return false;
+        }
+        _ = fields.RegisteredAddress.parse(
+            trimmed(self.registered_address.text()),
+        ) catch return false;
+        if (trimmed(self.display_name.text()).len == 0) return false;
+        if (self.subject_kind == .individual and
+            self.natural_person_classification == .classification_unknown)
+        {
+            return false;
+        }
+        const from = model.Date.parseIso(
+            trimmed(self.effective_from.text()),
+        ) catch return false;
+        const until = if (optionalTrimmed(self.effective_until.text())) |raw|
+            model.Date.parseIso(raw) catch return false
+        else
+            null;
+        _ = model.EffectivePeriod.init(from, until) catch return false;
+        if (optionalTrimmed(self.zip_code.text())) |raw| {
+            _ = fields.ZipCode.parse(raw) catch return false;
+        }
+        if (optionalTrimmed(self.phone.text())) |raw| {
+            _ = fields.ContactNumber.parse(raw) catch return false;
+        }
+        if (optionalTrimmed(self.email.text())) |raw| {
+            _ = fields.EmailAddress.parse(raw) catch return false;
+        }
+        return true;
     }
 
     pub fn cancelDisabled(self: *const State) bool {
@@ -794,9 +834,6 @@ pub const State = struct {
 
     fn captureBaseline(self: *State) void {
         self.baseline_fingerprint = self.editorFingerprint();
-        self.baseline_profile_label.set(
-            trimmed(self.profile_label.text()),
-        ) catch self.baseline_profile_label.clear();
     }
 
     fn captureEditorSnapshot(self: *State) void {
@@ -809,7 +846,6 @@ pub const State = struct {
             .government_withholding_agent = self.government_withholding_agent,
             .tin = self.tin,
             .rdo = self.rdo,
-            .profile_label = self.profile_label,
             .display_name = self.display_name,
             .trade_name = self.trade_name,
             .registered_address = self.registered_address,
@@ -845,7 +881,6 @@ pub const State = struct {
             baseline.government_withholding_agent;
         self.tin = baseline.tin;
         self.rdo = baseline.rdo;
-        self.profile_label = baseline.profile_label;
         self.display_name = baseline.display_name;
         self.trade_name = baseline.trade_name;
         self.registered_address = baseline.registered_address;
@@ -878,19 +913,8 @@ pub const State = struct {
         return self.editorFingerprint() != self.baseline_fingerprint;
     }
 
-    /// Local labels participate in editor dirty/cancel/navigation behavior,
-    /// but never masquerade as an immutable taxpayer-fact change.
-    pub fn profileLabelDirty(self: *const State) bool {
-        if (!self.editor_baseline.valid) return false;
-        return !std.mem.eql(
-            u8,
-            trimmed(self.profile_label.text()),
-            self.baseline_profile_label.text(),
-        );
-    }
-
     pub fn profileDirty(self: *const State) bool {
-        return self.factsDirty() or self.profileLabelDirty();
+        return self.factsDirty();
     }
 
     /// The editor's current value for one canonical reusable fact. Forms
@@ -909,6 +933,7 @@ pub const State = struct {
                     trimmed(self.display_name.text()),
                 .corporation,
                 .partnership,
+                .cooperative,
                 .estate,
                 .trust,
                 .other_legal_entity,
@@ -1364,10 +1389,10 @@ pub const State = struct {
             if (!self.managing_forms) return true;
             return self.saveYearWorkspace();
         }
-        self.saveFallible(.{
+        _ = self.saveFallible(.{
             .document_id = document_id,
             .include_forms = true,
-        }) catch |err| {
+        }, null) catch |err| {
             if (err == error.NoProfileChanges) return self.saveYearWorkspace();
             if (creating_year and err == persistence.Error.FormSetAlreadyExists) {
                 self.year_workspace = .conflict;
@@ -1733,6 +1758,65 @@ pub const State = struct {
         return self.saveWithCor(null);
     }
 
+    /// Saves the complete editor. The immutable base revision and normalized
+    /// Registration changes share one store transaction whenever both
+    /// changed. A registration-only edit advances only that stream; a
+    /// base-only edit advances only the profile stream. During creation the
+    /// intent's placeholder profile id is rebound to the newly generated id,
+    /// then shell, revision 1, and registration stream commit atomically.
+    ///
+    /// The returned sequence lets the caller acknowledge the same
+    /// `registration_ui.SaveIntent` with `saveSucceeded` without re-reading or
+    /// guessing the stream position.
+    pub fn saveCompleteProfile(
+        self: *State,
+        intent: *const registration_ui.SaveIntent,
+    ) ?u32 {
+        const was_new = self.editing_new;
+        if (!was_new) {
+            const selected = self.selectedProfileDomainId() orelse {
+                self.setError(error.NoSelectedProfile);
+                return null;
+            };
+            if (!selected.eql(&intent.profile_id)) {
+                self.setError(persistence.Error.InvalidValue);
+                return null;
+            }
+        }
+
+        const profile_was_dirty = self.profileDirty();
+        const registration_sequence = self.saveFallible(
+            null,
+            intent,
+        ) catch |err| {
+            if (err == error.NoProfileChanges or
+                err == persistence.Error.RegistrationNoChanges)
+            {
+                _ = self.restoreEditorSnapshot();
+                self.profile_mode = .viewing;
+                self.setNotice(.neutral, "No changes to save.");
+                return intent.expected_sequence;
+            }
+            self.setError(err);
+            return null;
+        } orelse intent.expected_sequence;
+
+        self.branch_mode = false;
+        self.branch_source_root.clear();
+        self.branch_source_name.clear();
+        self.profile_mode = .viewing;
+        self.setNotice(
+            .success,
+            if (was_new)
+                "Taxpayer and registration details were created."
+            else if (profile_was_dirty)
+                "Tax Profile and registration details were saved."
+            else
+                "Registration details were saved.",
+        );
+        return registration_sequence;
+    }
+
     fn saveWithCor(self: *State, cor: ?CorApply) bool {
         const was_new = self.editing_new;
         // Reopening a taxpayer and saving must not record a change that did
@@ -1742,19 +1826,7 @@ pub const State = struct {
             return true;
         }
 
-        // A local-label-only edit updates Layer 0 metadata without appending a
-        // fake taxpayer revision. The same editor can still save both kinds
-        // of change; `saveFallible` updates the label after the fact revision.
-        if (!was_new and !self.factsDirty() and self.profileLabelDirty()) {
-            self.saveProfileLabelOnly() catch |err| {
-                self.setError(err);
-                return false;
-            };
-            self.profile_mode = .viewing;
-            self.setNotice(.success, "Profile label updated.");
-            return true;
-        }
-        self.saveFallible(cor) catch |err| {
+        _ = self.saveFallible(cor, null) catch |err| {
             // Nothing to record is a successful outcome, not a failure: the
             // taxpayer's details already say what the user wants them to say.
             if (err == error.NoProfileChanges) {
@@ -1785,7 +1857,11 @@ pub const State = struct {
         return true;
     }
 
-    fn saveFallible(self: *State, cor: ?CorApply) !void {
+    fn saveFallible(
+        self: *State,
+        cor: ?CorApply,
+        registration_intent: ?*const registration_ui.SaveIntent,
+    ) !?u32 {
         const allocator = self.allocator orelse return error.NotAttached;
         const store = self.store orelse return error.NotAttached;
         if (!self.loaded_shape_supported) {
@@ -1798,6 +1874,12 @@ pub const State = struct {
         const year = try parseTaxYear(self.tax_year.text());
 
         const tin = try fields.Tin.parse(trimmed(self.tin.text()));
+        if (self.editing_new and tin.asDigits().len != 14) {
+            return error.NewProfileTinMustHaveFourteenDigits;
+        }
+        if (rdo_reference.findByCode(trimmed(self.rdo.text())) == null) {
+            return error.InvalidRdoSelection;
+        }
         const rdo = try fields.RdoCode.parse(trimmed(self.rdo.text()));
         const address = try fields.RegisteredAddress.parse(
             trimmed(self.registered_address.text()),
@@ -1843,7 +1925,6 @@ pub const State = struct {
 
         const source = try self.buildSource();
         const creating = self.editing_new;
-        const label_changed = self.profileLabelDirty();
         if (creating) {
             // One registration per canonical TIN. Two profiles sharing a full
             // TIN would make filings and evidence ambiguous with no way to
@@ -1893,71 +1974,13 @@ pub const State = struct {
             .contact = contact,
         };
 
-        var activities: [1]model.BusinessActivity = undefined;
-        var activity_count: usize = 0;
-        const business_line = optionalTrimmed(self.business_line.text());
-        const atc = optionalTrimmed(self.atc.text());
-        if (business_line) |line| {
-            activities[0] = .{
-                .id = try model.BusinessActivityId.parse("primary"),
-                .line_of_business = try fields.LineOfBusiness.parse(line),
-                .atc = if (atc) |value|
-                    try fields.Atc.parse(value)
-                else
-                    null,
-                .effective = effective,
-            };
-            activity_count = 1;
-        } else if (atc != null) {
-            return error.ActivityRequiresBusinessLine;
-        }
-
-        var facts: [3]model.RegistrationFact = undefined;
-        var fact_count: usize = 0;
-        if (optionalTrimmed(self.tax_type.text())) |value| {
-            facts[fact_count] = .{
-                .id = try model.RegistrationFactId.parse("tax-type"),
-                .effective = effective,
-                .value = .{
-                    .tax_type = try fields.TaxType.parse(value),
-                },
-            };
-            fact_count += 1;
-        }
-        if (self.government_withholding_agent != .unset) {
-            facts[fact_count] = .{
-                .id = try model.RegistrationFactId.parse(
-                    "government-withholding-agent",
-                ),
-                .effective = effective,
-                .value = .{
-                    .government_withholding_agent = switch (self.government_withholding_agent) {
-                        .unset => unreachable,
-                        .no => .no,
-                        .yes => .yes,
-                    },
-                },
-            };
-            fact_count += 1;
-        }
-        if (optionalTrimmed(self.special_rate_basis.text())) |value| {
-            facts[fact_count] = .{
-                .id = try model.RegistrationFactId.parse(
-                    "special-rate-basis",
-                ),
-                .effective = effective,
-                .value = .{
-                    .special_rate_basis = try fields.SpecialRateBasis.parse(value),
-                },
-            };
-            fact_count += 1;
-        }
-
         const ready = try self.buildSubject(base);
-        const revision = try ready
-            .withBusinessActivities(activities[0..activity_count])
-            .withRegistrationFacts(facts[0..fact_count])
-            .build();
+        // v1 profile-attached activities and registration facts are a legacy
+        // read model only. Existing rows remain on their immutable historical
+        // revisions, while every newly written base revision is intentionally
+        // component-free. Mutable activity/EOPT/obligation data belongs to
+        // the normalized Registration stream passed as `registration_intent`.
+        const revision = try ready.build();
 
         // The authority on "did anything change": the editor's text can differ
         // from what was loaded while parsing to the very same facts, and a
@@ -1972,27 +1995,46 @@ pub const State = struct {
             if (current) |*owned| {
                 defer owned.deinit(allocator);
                 if (revision.contentEquals(&owned.revision)) {
-                    if (label_changed) {
-                        try self.updatePersistedProfileLabel(
-                            store,
-                            profile_id.asSlice(),
-                        );
+                    if (registration_intent) |intent| {
+                        const registration_sequence =
+                            profile_persistence.saveRegistrationIntent(
+                                store,
+                                allocator,
+                                intent,
+                            ) catch |err| switch (err) {
+                                persistence.Error.RegistrationNoChanges => intent.expected_sequence,
+                                else => return err,
+                            };
                         try self.reloadRows();
                         try self.loadSelectedRevision(true);
-                        return;
+                        return registration_sequence;
                     }
                     return error.NoProfileChanges;
                 }
             }
         }
 
+        var registration_sequence: ?u32 = null;
         if (creating) {
-            try profile_persistence.createProfileWithRevision(
-                store,
-                allocator,
-                .active,
-                &revision,
-            );
+            if (registration_intent) |intent| {
+                var rebound_intent = intent.*;
+                rebound_intent.profile_id = profile_id;
+                registration_sequence = try profile_persistence
+                    .createProfileAndRegistrationIntent(
+                    store,
+                    allocator,
+                    .active,
+                    &revision,
+                    &rebound_intent,
+                );
+            } else {
+                try profile_persistence.createProfileWithRevision(
+                    store,
+                    allocator,
+                    .active,
+                    &revision,
+                );
+            }
         } else if (cor) |apply| {
             if (apply.include_forms) {
                 // Staged writes and the create-vs-update mode are computed
@@ -2029,19 +2071,21 @@ pub const State = struct {
                     apply.document_id,
                 );
             }
+        } else if (registration_intent) |intent| {
+            registration_sequence =
+                try profile_persistence.saveProfileAndRegistrationIntent(
+                    store,
+                    allocator,
+                    &revision,
+                    observed_sequence,
+                    intent,
+                );
         } else {
             try profile_persistence.appendRevision(
                 store,
                 allocator,
                 &revision,
                 observed_sequence,
-            );
-        }
-
-        if (creating or label_changed) {
-            try self.updatePersistedProfileLabel(
-                store,
-                profile_id.asSlice(),
             );
         }
 
@@ -2054,31 +2098,7 @@ pub const State = struct {
         try self.refreshCalendarFormSet(year);
         try self.refreshFormSetSummaries();
         try self.refreshDraftSummariesForYear(year);
-    }
-
-    fn effectiveProfileLabel(self: *const State) []const u8 {
-        return optionalTrimmed(self.profile_label.text()) orelse
-            trimmed(self.display_name.text());
-    }
-
-    fn updatePersistedProfileLabel(
-        self: *const State,
-        store: *persistence.Store,
-        profile_id: []const u8,
-    ) !void {
-        try store.updateProfileLabel(.{
-            .profile_id = profile_id,
-            .label = self.effectiveProfileLabel(),
-        });
-    }
-
-    fn saveProfileLabelOnly(self: *State) !void {
-        const store = self.store orelse return error.NotAttached;
-        const profile_id = self.selectedProfileId() orelse
-            return error.NoSelectedProfile;
-        try self.updatePersistedProfileLabel(store, profile_id);
-        try self.reloadRows();
-        try self.loadSelectedRevision(true);
+        return registration_sequence;
     }
 
     /// Compatibility wrapper for screens that still follow the application's
@@ -3034,6 +3054,7 @@ pub const State = struct {
             },
             .corporation,
             .partnership,
+            .cooperative,
             .estate,
             .trust,
             .other_legal_entity,
@@ -3051,6 +3072,7 @@ pub const State = struct {
                     .kind = switch (self.subject_kind) {
                         .corporation => .corporation,
                         .partnership => .partnership,
+                        .cooperative => .cooperative,
                         .estate => .estate,
                         .trust => .trust,
                         .other_legal_entity => .other,
@@ -3356,7 +3378,7 @@ pub const State = struct {
                 .subject_kind = subjectKindToDomain(item.subject_kind),
             };
             try row.stable_id.set(item.id);
-            try row.name.set(item.profile_label);
+            try row.name.set(item.display_name);
             try row.tin.set(item.tin);
             if (fields.Tin.parse(item.tin)) |parsed| {
                 try row.tin_root.set(parsed.root());
@@ -3364,7 +3386,7 @@ pub const State = struct {
                     try row.branch_code.set(segment);
                 }
             } else |_| {}
-            try setInitials(&row.initials, item.profile_label);
+            try setInitials(&row.initials, item.display_name);
             row.active = self.has_selection and
                 std.mem.eql(u8, self.selected_id.text(), item.id);
             self.profiles[self.profile_count] = row;
@@ -3500,15 +3522,6 @@ pub const State = struct {
                 clearEditorBuffer(&self.foreign_tax_number);
             },
         }
-        var owned_label = (try store.getProfileLabel(
-            allocator,
-            profile_id.asSlice(),
-        )) orelse return persistence.Error.NotFound;
-        defer owned_label.deinit(allocator);
-        setEditorBuffer(
-            &self.profile_label,
-            owned_label.label orelse trimmed(self.display_name.text()),
-        );
         setEditorBuffer(
             &self.registered_address,
             revision.contact.address.asSlice(),
@@ -3700,7 +3713,6 @@ pub const State = struct {
     fn clearEditor(self: *State) void {
         clearEditorBuffer(&self.tin);
         clearEditorBuffer(&self.rdo);
-        clearEditorBuffer(&self.profile_label);
         clearEditorBuffer(&self.display_name);
         clearEditorBuffer(&self.trade_name);
         clearEditorBuffer(&self.registered_address);
@@ -3751,7 +3763,6 @@ pub const State = struct {
     fn inputsTruncated(self: *const State) bool {
         return self.tin.truncated or
             self.rdo.truncated or
-            self.profile_label.truncated or
             self.display_name.truncated or
             self.trade_name.truncated or
             self.registered_address.truncated or
@@ -3805,6 +3816,7 @@ pub const State = struct {
         }
         const message = switch (err) {
             persistence.Error.RevisionConflict => "This profile changed elsewhere. Reload it before saving a new revision.",
+            persistence.Error.RegistrationStreamConflict => "Registration details changed elsewhere. Reload them before saving the complete Tax Profile.",
             error.UnknownFormCode => "One of the chosen forms is not in the 51-form catalog.",
             error.InvalidTaxYear => "Tax year must be a four-digit year from 0001 through 9999.",
             error.ActivityRequiresBusinessLine => "An activity ATC requires a line of business. Tax type remains an independent registration fact.",
@@ -3821,6 +3833,8 @@ pub const State = struct {
             error.BranchTinRootChanged => "A branch keeps the same nine-digit TIN as its head office. Change only the branch code.",
             error.BranchCodeRequired => "Add the branch code after the nine-digit TIN, for example 123-456-789-002.",
             error.BranchLegalPersonChanged => "A branch is the same taxpayer. A different kind of taxpayer needs its own profile.",
+            error.InvalidRdoSelection => "Choose an RDO from the official code and office list.",
+            error.NewProfileTinMustHaveFourteenDigits => "New taxpayer profiles require an exact 3-3-3-5, 14-digit TIN. Existing legacy TINs remain unchanged until an audited correction.",
             error.NoFactsEffectiveForYear => "No taxpayer details exist for that year yet. Record what was true then before setting up its forms.",
             error.CorFileUnreadable => "That file could not be opened. Check it is still where you chose it from.",
             error.CorFileEmpty => "That file is empty.",
@@ -3994,6 +4008,7 @@ fn subjectKindToDomain(kind: persistence.SubjectKind) model.SubjectKind {
         .sole_proprietor => .sole_proprietor,
         .corporation => .corporation,
         .partnership => .partnership,
+        .cooperative => .cooperative,
         .estate => .estate,
         .trust => .trust,
         .other_legal_entity => .other_legal_entity,
@@ -4029,6 +4044,7 @@ fn subjectKindLabel(kind: model.SubjectKind) []const u8 {
         .sole_proprietor => "Sole proprietor",
         .corporation => "Corporation",
         .partnership => "Partnership",
+        .cooperative => "Cooperative",
         .estate => "Estate",
         .trust => "Trust",
         .other_legal_entity => "Other legal entity",
@@ -4411,9 +4427,10 @@ test "profile state builds domain revision and explicit empty Forms Set" {
 
     var state = State{};
     try state.attach(allocator, &store, "2026-07-29", 2026);
-    state.tin.set("123-456-789-000");
+    state.tin.set("123-456-789-00000");
     state.rdo.set("040");
     state.display_name.set("Maria Santos");
+    state.setNaturalPersonClassification(.self_employed);
     state.registered_address.set("Quezon City");
     state.email.set("maria@example.ph");
     state.effective_from.set("2026-01-01");
@@ -4440,9 +4457,11 @@ test "profile state builds domain revision and explicit empty Forms Set" {
     )).?;
     defer loaded.deinit(allocator);
     try std.testing.expectEqual(@as(u32, 1), loaded.revision.sequence);
+    // The old Tax Type buffer is migration input only. New base revisions do
+    // not create hidden profile-attached registration components.
     try std.testing.expectEqual(
-        model.RegistrationFactKind.tax_type,
-        loaded.revision.registration_facts[0].kind(),
+        @as(usize, 0),
+        loaded.revision.registration_facts.len,
     );
     try std.testing.expectEqual(@as(usize, 0), loaded.revision.business_activities.len);
 
@@ -4482,6 +4501,30 @@ test "profile state builds domain revision and explicit empty Forms Set" {
     try std.testing.expectEqualStrings("1701Q", prior_codes[0]);
 }
 
+test "new profile rejects a legacy-length TIN without padding it" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try state.attach(allocator, &store, "2026-08-05", 2026);
+    state.tin.set("123-456-789-000");
+    state.rdo.set("040");
+    state.display_name.set("Legacy Length New Profile");
+    state.registered_address.set("Quezon City");
+    state.effective_from.set("2026-01-01");
+    state.setNaturalPersonClassification(.pure_compensation);
+
+    try std.testing.expect(state.saveDisabled());
+    try std.testing.expect(!state.save());
+    try std.testing.expectEqualStrings(
+        "New taxpayer profiles require an exact 3-3-3-5, 14-digit TIN. Existing legacy TINs remain unchanged until an audited correction.",
+        state.noticeText(),
+    );
+    try std.testing.expectEqualStrings("123-456-789-000", state.tin.text());
+    try std.testing.expectEqual(@as(usize, 0), state.rows().len);
+}
+
 test "staged Forms Set is isolated until save and blocks context switches" {
     const allocator = std.testing.allocator;
     var store = try persistence.Store.openMemory(allocator);
@@ -4489,7 +4532,7 @@ test "staged Forms Set is isolated until save and blocks context switches" {
 
     var state = State{};
     try state.attach(allocator, &store, "2026-07-29", 2026);
-    state.tin.set("123-456-789-000");
+    state.tin.set("123-456-789-00000");
     state.rdo.set("040");
     state.display_name.set("Staged Forms Taxpayer");
     state.registered_address.set("Quezon City");
@@ -4562,7 +4605,7 @@ test "new profile cannot manage or save the prior profile Forms Set" {
 
     var state = State{};
     try state.attach(allocator, &store, "2026-07-29", 2026);
-    state.tin.set("123-456-789-000");
+    state.tin.set("123-456-789-00000");
     state.rdo.set("040");
     state.display_name.set("Existing Taxpayer");
     state.registered_address.set("Quezon City");
@@ -4602,7 +4645,7 @@ test "profile state appends immutable source-aware revision" {
 
     var state = State{};
     try state.attach(allocator, &store, "2026-01-01", 2026);
-    state.tin.set("123-456-789-000");
+    state.tin.set("123-456-789-00000");
     state.rdo.set("040");
     state.display_name.set("Maria Santos");
     state.registered_address.set("Quezon City");
@@ -4651,14 +4694,256 @@ fn workspaceFixture(
     store: *persistence.Store,
 ) !void {
     try state.attach(allocator, store, "2026-01-01", 2026);
-    state.tin.set("123-456-789-000");
+    state.tin.set("123-456-789-00000");
     state.rdo.set("040");
     state.display_name.set("Workspace Taxpayer");
+    state.setNaturalPersonClassification(.pure_compensation);
     state.registered_address.set("Quezon City");
     // Registered well before the years these tests set up, so historical years
     // resolve real facts instead of hitting the retroactive-record guard.
     state.effective_from.set("2020-01-01");
     try std.testing.expect(state.save());
+}
+
+test "complete profile save rolls back base when registration stream is stale" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    const profile_id = state.selectedProfileDomainId().?;
+    const primary = [_]persistence.RegistrationActivityRevisionWrite{.{
+        .anchor_id = "primary",
+        .metadata = .{
+            .id = "complete-save-primary-v1",
+            .expected_component_sequence = 0,
+            .effective = .{ .from = "2020-01-01".* },
+            .source = .manual_entry,
+            .review_state = .confirmed,
+            .confirmed_at_unix_seconds = 1,
+        },
+        .line_of_business = "Consulting",
+    }};
+    _ = try store.appendRegistrationCommit(.{
+        .profile_id = profile_id.asSlice(),
+        .expected_current_sequence = 0,
+        .activities = &primary,
+    });
+
+    state.editSelected();
+    state.display_name.set("Must Roll Back");
+    const stale_intent: registration_ui.SaveIntent = .{
+        .profile_id = profile_id,
+        .viewed_on = try model.Date.parseIso("2026-12-31"),
+        .selected_tax_year = 2026,
+        .expected_sequence = 0,
+        .business_activities = &.{},
+        .registration_obligations = &.{},
+        .retained_review_rows = &.{},
+    };
+    try std.testing.expect(state.saveCompleteProfile(&stale_intent) == null);
+    try std.testing.expect(state.noticeFailure());
+
+    var current = (try profile_persistence.loadCurrentRevision(
+        &store,
+        allocator,
+        profile_id,
+    )).?;
+    defer current.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 1), current.revision.sequence);
+    try std.testing.expectEqualStrings(
+        "Workspace Taxpayer",
+        current.revision.subject.taxpayerName().asSlice(),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 1),
+        try store.registrationStreamSequence(profile_id.asSlice()),
+    );
+}
+
+test "complete profile creation commits base and normalized registration together" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try state.attach(allocator, &store, "2026-08-05", 2026);
+    state.tin.set("123-456-789-00000");
+    state.rdo.set("040");
+    state.display_name.set("New Complete Taxpayer");
+    state.setNaturalPersonClassification(.self_employed);
+    state.registered_address.set("Quezon City");
+    state.effective_from.set("2026-01-01");
+
+    const activity = [_]registration_ui.BusinessActivityRow{.{
+        .anchor_id = try registration.ActivityAnchorId.parse("primary"),
+        .effective = try registration.EffectivePeriod.init(
+            try model.Date.parseIso("2026-01-01"),
+            null,
+        ),
+        .line_of_business = try fields.LineOfBusiness.parse(
+            "Professional services",
+        ),
+        .atc = try fields.Atc.parse("PT010"),
+    }};
+    const intent: registration_ui.SaveIntent = .{
+        // Creation rebinds this typed placeholder to the generated profile id
+        // before entering the one store transaction.
+        .profile_id = try model.ProfileId.parse("new-profile-placeholder"),
+        .viewed_on = try model.Date.parseIso("2026-08-05"),
+        .selected_tax_year = 2026,
+        .expected_sequence = 0,
+        .business_activities = &activity,
+        .registration_obligations = &.{},
+        .retained_review_rows = &.{},
+    };
+    try std.testing.expectEqual(
+        @as(u32, 1),
+        state.saveCompleteProfile(&intent).?,
+    );
+
+    const profile_id = state.selectedProfileDomainId().?;
+    var base = (try profile_persistence.loadCurrentRevision(
+        &store,
+        allocator,
+        profile_id,
+    )).?;
+    defer base.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 1), base.revision.sequence);
+    try std.testing.expectEqual(@as(usize, 0), base.business_activities.len);
+    try std.testing.expectEqual(@as(usize, 0), base.registration_facts.len);
+
+    var history = try store.listRegistrationHistory(
+        allocator,
+        profile_id.asSlice(),
+    );
+    defer history.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 1), history.stream_sequence);
+    try std.testing.expectEqual(@as(usize, 1), history.activities.len);
+    try std.testing.expectEqualStrings(
+        "Professional services",
+        history.activities[0].line_of_business,
+    );
+}
+
+test "complete profile save leaves legacy components on history only" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    const profile_id = state.selectedProfileDomainId().?;
+    var current = (try profile_persistence.loadCurrentRevision(
+        &store,
+        allocator,
+        profile_id,
+    )).?;
+    defer current.deinit(allocator);
+
+    const legacy_activity = [_]model.BusinessActivity{.{
+        .id = try model.BusinessActivityId.parse("legacy-primary"),
+        .line_of_business = try fields.LineOfBusiness.parse(
+            "Legacy consulting",
+        ),
+        .atc = try fields.Atc.parse("PT010"),
+        .effective = current.revision.effective,
+    }};
+    const legacy_fact = [_]model.RegistrationFact{.{
+        .id = try model.RegistrationFactId.parse("legacy-tax-type"),
+        .effective = current.revision.effective,
+        .value = .{
+            .tax_type = try fields.TaxType.parse("Percentage Tax"),
+        },
+    }};
+    const legacy_revision_id_text = try store.generateOpaqueId();
+    const legacy_revision_id = try model.RevisionId.parse(
+        &legacy_revision_id_text,
+    );
+    var legacy_revision = current.revision;
+    legacy_revision.id = legacy_revision_id;
+    legacy_revision.sequence = 2;
+    legacy_revision.business_activities = &legacy_activity;
+    legacy_revision.registration_facts = &legacy_fact;
+    try profile_persistence.appendRevision(
+        &store,
+        allocator,
+        &legacy_revision,
+        1,
+    );
+
+    try state.attach(allocator, &store, "2026-01-01", 2026);
+    try std.testing.expectEqualStrings(
+        "Legacy consulting",
+        state.business_line.text(),
+    );
+    try std.testing.expectEqualStrings("Percentage Tax", state.tax_type.text());
+    state.editSelected();
+    state.registered_address.set("Makati City");
+
+    const normalized_activity = [_]registration_ui.BusinessActivityRow{.{
+        .anchor_id = try registration.ActivityAnchorId.parse("primary"),
+        .effective = try registration.EffectivePeriod.init(
+            try model.Date.parseIso("2020-01-01"),
+            null,
+        ),
+        .line_of_business = try fields.LineOfBusiness.parse("Consulting"),
+        .atc = try fields.Atc.parse("PT010"),
+    }};
+    const intent: registration_ui.SaveIntent = .{
+        .profile_id = profile_id,
+        .viewed_on = try model.Date.parseIso("2026-12-31"),
+        .selected_tax_year = 2026,
+        .expected_sequence = 0,
+        .business_activities = &normalized_activity,
+        .registration_obligations = &.{},
+        .retained_review_rows = &.{},
+    };
+    try std.testing.expectEqual(
+        @as(u32, 1),
+        state.saveCompleteProfile(&intent).?,
+    );
+
+    var saved = (try profile_persistence.loadCurrentRevision(
+        &store,
+        allocator,
+        profile_id,
+    )).?;
+    defer saved.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 3), saved.revision.sequence);
+    try std.testing.expectEqual(@as(usize, 0), saved.business_activities.len);
+    try std.testing.expectEqual(@as(usize, 0), saved.registration_facts.len);
+
+    var historical = (try profile_persistence.loadRevision(
+        &store,
+        allocator,
+        profile_id,
+        legacy_revision_id,
+    )).?;
+    defer historical.deinit(allocator);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        historical.business_activities.len,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        historical.registration_facts.len,
+    );
+
+    var registration_history = try store.listRegistrationHistory(
+        allocator,
+        profile_id.asSlice(),
+    );
+    defer registration_history.deinit(allocator);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        registration_history.activities.len,
+    );
+    try std.testing.expectEqualStrings(
+        "Consulting",
+        registration_history.activities[0].line_of_business,
+    );
 }
 
 test "tax profile view edit dirty and cancel lifecycle is explicit" {
@@ -4705,11 +4990,11 @@ test "tax profile view edit dirty and cancel lifecycle is explicit" {
     );
     try std.testing.expectEqual(SourceKind.manual_entry, state.source_kind);
     try std.testing.expectEqual(
-        model.NaturalPersonClassification.classification_unknown,
+        model.NaturalPersonClassification.pure_compensation,
         state.naturalPersonClassification(),
     );
     try std.testing.expectEqualStrings(
-        "Not yet recorded",
+        "Pure compensation",
         state.classificationLabel(),
     );
     try std.testing.expectEqualStrings("", state.trade_name.text());
@@ -4719,74 +5004,43 @@ test "tax profile view edit dirty and cancel lifecycle is explicit" {
     try std.testing.expect(selected_before.eql(&selected_after));
 }
 
-test "local profile label saves without appending a taxpayer revision" {
+test "legacy local profile label remains migration data only" {
     const allocator = std.testing.allocator;
     var store = try persistence.Store.openMemory(allocator);
     defer store.close();
 
     var state = State{};
     try workspaceFixture(&state, allocator, &store);
-    const before = state.selectedRevisionContext().?;
+    const profile_id = state.selectedProfileId().?;
+    try store.updateProfileLabel(.{
+        .profile_id = profile_id,
+        .label = "Historical household label",
+    });
+    try state.attach(allocator, &store, "2026-01-01", 2026);
     try std.testing.expectEqualStrings(
         "Workspace Taxpayer",
-        state.profile_label.text(),
-    );
-
-    state.editSelected();
-    state.profile_label.set("Household account");
-    try std.testing.expect(!state.factsDirty());
-    try std.testing.expect(state.profileLabelDirty());
-    try std.testing.expect(state.profileDirty());
-    try std.testing.expect(!state.saveDisabled());
-    try std.testing.expect(state.save());
-
-    try std.testing.expectEqual(ProfileMode.viewing, state.profileMode());
-    try std.testing.expectEqual(
-        before.sequence,
-        state.selectedRevisionContext().?.sequence,
-    );
-    try std.testing.expectEqualStrings(
-        "Household account",
         state.selectedDisplay().?.nameLabel(),
     );
-    try std.testing.expectEqualStrings(
-        "Workspace Taxpayer",
-        state.display_name.text(),
-    );
 
     state.editSelected();
-    state.profile_label.set("Discard this label");
-    state.cancelEdit();
-    try std.testing.expectEqualStrings(
-        "Household account",
-        state.profile_label.text(),
-    );
-    try std.testing.expectEqual(
-        before.sequence,
-        state.selectedRevisionContext().?.sequence,
-    );
-}
-
-test "custom local label and legal-name change remain distinct" {
-    const allocator = std.testing.allocator;
-    var store = try persistence.Store.openMemory(allocator);
-    defer store.close();
-
-    var state = State{};
-    try workspaceFixture(&state, allocator, &store);
-    state.editSelected();
-    state.profile_label.set("Client 204");
     state.display_name.set("Workspace Taxpayer Legal Name");
     try std.testing.expect(state.save());
 
     try std.testing.expectEqual(@as(u32, 2), state.selectedRevisionSequence().?);
     try std.testing.expectEqualStrings(
-        "Client 204",
+        "Workspace Taxpayer Legal Name",
         state.selectedDisplay().?.nameLabel(),
     );
     try std.testing.expectEqualStrings(
         "Workspace Taxpayer Legal Name",
         state.display_name.text(),
+    );
+
+    var legacy = (try store.getProfileLabel(allocator, profile_id)).?;
+    defer legacy.deinit(allocator);
+    try std.testing.expectEqualStrings(
+        "Historical household label",
+        legacy.label.?,
     );
 }
 
@@ -4803,7 +5057,7 @@ test "create mode keeps cancel enabled and restores the selected profile" {
     try std.testing.expectEqual(ProfileMode.creating, state.profileMode());
     try std.testing.expect(state.profileCreating());
     try std.testing.expect(!state.cancelDisabled());
-    try std.testing.expect(!state.saveDisabled());
+    try std.testing.expect(state.saveDisabled());
     try std.testing.expect(!state.factsDirty());
 
     state.display_name.set("Unsaved New Taxpayer");
@@ -5013,6 +5267,7 @@ test "every legal-entity kind builds optional trade name without changing policy
     }{
         .{ .subject_kind = .corporation, .entity_kind = .corporation, .trade_visible = true },
         .{ .subject_kind = .partnership, .entity_kind = .partnership, .trade_visible = true },
+        .{ .subject_kind = .cooperative, .entity_kind = .cooperative, .trade_visible = true },
         .{ .subject_kind = .estate, .entity_kind = .estate, .trade_visible = false },
         .{ .subject_kind = .trust, .entity_kind = .trust, .trade_visible = false },
         .{ .subject_kind = .other_legal_entity, .entity_kind = .other, .trade_visible = true },
@@ -5121,7 +5376,7 @@ test "legal-entity trade name loads and cancel restores it exactly" {
 
     var state = State{};
     try state.attach(allocator, &store, "2026-08-04", 2026);
-    state.tin.set("987-654-321-000");
+    state.tin.set("987-654-321-00000");
     state.rdo.set("040");
     state.display_name.set("Example Corporation");
     state.trade_name.set("Example Trading");
@@ -5508,9 +5763,10 @@ test "the header states several registered tax types rather than none" {
     state.tax_type.set("Percentage Tax");
     try std.testing.expect(state.save());
     try std.testing.expectEqualStrings(
-        "Percentage Tax",
+        "Tax type not recorded",
         state.selectedTaxTypeLabel(),
     );
+    try std.testing.expectEqualStrings("No changes to save.", state.noticeText());
 
     // A taxpayer registered for two tax types has facts the single-value
     // editor cannot show; the header must not report that as having none.
@@ -5545,7 +5801,7 @@ test "the header states several registered tax types rather than none" {
         ),
         .source = .manual_entry,
         .identity = .{
-            .tin = try fields.Tin.parse("123-456-789-000"),
+            .tin = try fields.Tin.parse("123-456-789-00000"),
             .rdo_code = try fields.RdoCode.parse("040"),
         },
         .contact = .{
@@ -5553,6 +5809,7 @@ test "the header states several registered tax types rather than none" {
         },
         .subject = .{ .individual = .{
             .name = try fields.TaxpayerName.parse("Workspace Taxpayer"),
+            .classification = .pure_compensation,
         } },
         .registration_facts = &facts,
     };
@@ -5663,7 +5920,7 @@ test "accepting only forms from a COR records no taxpayer change" {
     state.toggleStagedForm(catalogIndexOf("2551Q"));
 
     try std.testing.expect(state.beginCorReview());
-    state.cor_review_tin.set("123-456-789-000");
+    state.cor_review_tin.set("123-456-789-00000");
     try std.testing.expectEqual(CorTinMatch.matches, state.corReviewTinMatch());
 
     // Only the forms are accepted; no detail row is.
@@ -5698,7 +5955,7 @@ test "accepting details from a COR records one change with its provenance" {
     const sequence_before = state.selectedRevisionSequence().?;
 
     try std.testing.expect(state.beginCorReview());
-    state.cor_review_tin.set("123-456-789-000");
+    state.cor_review_tin.set("123-456-789-00000");
     const address_index = @intFromEnum(CorCandidateField.registered_address);
     state.cor_review_values[address_index].set("Makati City");
     state.toggleCorReviewAccepted(address_index);
@@ -5760,7 +6017,7 @@ test "applying details and forms from a COR is one decision" {
     state.toggleStagedForm(catalogIndexOf("2551Q"));
 
     try std.testing.expect(state.beginCorReview());
-    state.cor_review_tin.set("123-456-789-000");
+    state.cor_review_tin.set("123-456-789-00000");
     const address_index = @intFromEnum(CorCandidateField.registered_address);
     state.cor_review_values[address_index].set("Makati City");
     state.toggleCorReviewAccepted(address_index);
@@ -5816,7 +6073,7 @@ test "a year conflict leaves a COR review unapplied and recoverable" {
     state.toggleStagedForm(catalogIndexOf("2551Q"));
 
     try std.testing.expect(state.beginCorReview());
-    state.cor_review_tin.set("123-456-789-000");
+    state.cor_review_tin.set("123-456-789-00000");
     const address_index = @intFromEnum(CorCandidateField.registered_address);
     state.cor_review_values[address_index].set("Makati City");
     state.toggleCorReviewAccepted(address_index);
@@ -5860,7 +6117,7 @@ test "re-applying the same COR decision appends nothing new" {
 
     const address_index = @intFromEnum(CorCandidateField.registered_address);
     try std.testing.expect(state.beginCorReview());
-    state.cor_review_tin.set("123-456-789-000");
+    state.cor_review_tin.set("123-456-789-00000");
     state.cor_review_values[address_index].set("Makati City");
     state.toggleCorReviewAccepted(address_index);
     state.toggleCorReviewApplyForms();
@@ -5871,7 +6128,7 @@ test "re-applying the same COR decision appends nothing new" {
     // The same decision again — same value, same document — records nothing:
     // the history logs events, not repetitions.
     try std.testing.expect(state.beginCorReview());
-    state.cor_review_tin.set("123-456-789-000");
+    state.cor_review_tin.set("123-456-789-00000");
     state.cor_review_values[address_index].set("Makati City");
     state.toggleCorReviewAccepted(address_index);
     state.toggleCorReviewApplyForms();
@@ -6126,7 +6383,7 @@ test "reformatting a value is not a change worth recording" {
 
     // The same TIN written the way it is normally printed parses to the same
     // canonical value, so appending would record a change nobody made.
-    state.tin.set("123456789000");
+    state.tin.set("12345678900000");
     try std.testing.expect(state.factsDirty());
     try std.testing.expect(state.save());
     try std.testing.expectEqualStrings("No changes to save.", state.noticeText());
@@ -6200,7 +6457,7 @@ test "a historical year with no details asks for a record instead of inventing o
 
     var state = State{};
     try state.attach(allocator, &store, "2026-01-01", 2026);
-    state.tin.set("123-456-789-000");
+    state.tin.set("123-456-789-00000");
     state.rdo.set("040");
     state.display_name.set("Recently Registered Taxpayer");
     state.registered_address.set("Quezon City");
@@ -6236,7 +6493,7 @@ test "a taxpayer registered mid-year is not treated as missing details" {
 
     var state = State{};
     try state.attach(allocator, &store, "2026-08-04", 2026);
-    state.tin.set("123-456-789-000");
+    state.tin.set("123-456-789-00000");
     state.rdo.set("040");
     state.display_name.set("Mid Year Registrant");
     state.registered_address.set("Quezon City");
@@ -6293,7 +6550,7 @@ test "a branch reuses safe details and requires its own registration facts" {
     try std.testing.expect(!state.save());
     try std.testing.expect(state.noticeFailure());
 
-    state.tin.set("123-456-789-002");
+    state.tin.set("123-456-789-00002");
     try std.testing.expect(state.save());
     try std.testing.expect(!state.branchMode());
 
@@ -6317,7 +6574,7 @@ test "a branch cannot become a different kind of taxpayer" {
 
     state.rdo.set("043");
     state.registered_address.set("Makati City");
-    state.tin.set("123-456-789-002");
+    state.tin.set("123-456-789-00002");
     state.setSubjectKind(.corporation);
     try std.testing.expect(!state.save());
     try std.testing.expectEqualStrings(
@@ -6338,7 +6595,7 @@ test "a branch cannot change the taxpayer it belongs to" {
 
     state.rdo.set("043");
     state.registered_address.set("Makati City");
-    state.tin.set("999-888-777-002");
+    state.tin.set("999-888-777-00002");
     try std.testing.expect(!state.save());
     try std.testing.expectEqualStrings(
         "A branch keeps the same nine-digit TIN as its head office. Change only the branch code.",
@@ -6355,7 +6612,7 @@ test "one canonical TIN cannot be registered twice" {
     try workspaceFixture(&state, allocator, &store);
 
     state.startNew();
-    state.tin.set("123-456-789-000");
+    state.tin.set("123-456-789-00000");
     state.rdo.set("040");
     state.display_name.set("Same TIN Again");
     state.registered_address.set("Quezon City");
@@ -6387,7 +6644,7 @@ test "an archived taxpayer still owns its TIN" {
     try std.testing.expectEqual(@as(usize, 0), state.rows().len);
 
     state.startNew();
-    state.tin.set("123-456-789-000");
+    state.tin.set("123-456-789-00000");
     state.rdo.set("040");
     state.display_name.set("Different Taxpayer Same TIN");
     state.registered_address.set("Quezon City");
@@ -6402,7 +6659,7 @@ test "an archived taxpayer still owns its TIN" {
     // The store knows the owner independently of the loaded rows.
     var owner = (try store.findProfileWithCanonicalTin(
         allocator,
-        "123456789000",
+        "12345678900000",
         null,
     )).?;
     defer owner.deinit(allocator);
@@ -6418,7 +6675,7 @@ test "searching narrows the view without stealing the selection" {
     var state = State{};
     try workspaceFixture(&state, allocator, &store);
     state.startNew();
-    state.tin.set("987-654-321-000");
+    state.tin.set("987-654-321-00000");
     state.rdo.set("040");
     state.display_name.set("Beta Other Taxpayer");
     state.registered_address.set("Quezon City");
@@ -6440,7 +6697,7 @@ test "searching narrows the view without stealing the selection" {
     // names the selected taxpayer even though their row is not loaded.
     try std.testing.expect(state.has_selection);
     try std.testing.expectEqualStrings("Workspace Taxpayer", state.selectedName());
-    try std.testing.expectEqualStrings("123456789000", state.selectedTin());
+    try std.testing.expectEqualStrings("12345678900000", state.selectedTin());
 
     // A search matching nobody is a narrow view, not a lost selection.
     state.setSidebarQuery("Nobody With This Name");
@@ -6544,7 +6801,7 @@ test "a corrected TIN reaches the sidebar and regroups its registrations" {
     try std.testing.expect(state.beginAddBranch());
     state.rdo.set("043");
     state.registered_address.set("Makati City");
-    state.tin.set("123-456-789-002");
+    state.tin.set("123-456-789-00002");
     try std.testing.expect(state.save());
     try std.testing.expectEqual(@as(usize, 2), state.rows().len);
 
@@ -6555,7 +6812,7 @@ test "a corrected TIN reaches the sidebar and regroups its registrations" {
         .id = "identity-correction-sidebar",
         .profile_id = head_office_id,
         .expected_anchor_sequence = 1,
-        .new_canonical_tin = "555-666-777-000",
+        .new_canonical_tin = "555-666-777-00000",
         .new_legal_person_class = .natural_person,
         .reason = "clerical correction confirmed by source record",
         .actor_reference = "operator:test-reviewer",
@@ -6578,7 +6835,7 @@ test "a corrected TIN reaches the sidebar and regroups its registrations" {
     // The sidebar follows the identity, and the two no longer group together
     // because the recorded identities no longer say they belong to one
     // taxpayer.
-    try std.testing.expectEqualStrings("555666777000", corrected.?.tin.text());
+    try std.testing.expectEqualStrings("55566677700000", corrected.?.tin.text());
     try std.testing.expectEqualStrings("555666777", corrected.?.tinRoot());
     try std.testing.expectEqualStrings("123456789", branch.?.tinRoot());
 }
@@ -6593,7 +6850,7 @@ test "profile rows expose head office and branch identity" {
     try std.testing.expect(state.beginAddBranch());
     state.rdo.set("043");
     state.registered_address.set("Makati City");
-    state.tin.set("123-456-789-002");
+    state.tin.set("123-456-789-00002");
     try std.testing.expect(state.save());
 
     var arena_state = std.heap.ArenaAllocator.init(allocator);
@@ -6609,9 +6866,9 @@ test "profile rows expose head office and branch identity" {
     try std.testing.expect(branch != null);
     try std.testing.expectEqualStrings("123456789", head_office.?.tinRoot());
     try std.testing.expectEqualStrings("123456789", branch.?.tinRoot());
-    try std.testing.expectEqualStrings("002", branch.?.branchCode());
+    try std.testing.expectEqualStrings("00002", branch.?.branchCode());
     try std.testing.expectEqualStrings("Head office", head_office.?.branchLabel(arena));
-    try std.testing.expectEqualStrings("Branch 002", branch.?.branchLabel(arena));
+    try std.testing.expectEqualStrings("Branch 00002", branch.?.branchLabel(arena));
 }
 
 test "calendar form selection refresh fails closed" {

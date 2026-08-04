@@ -5,13 +5,13 @@
 const std = @import("std");
 
 pub const catalog_revision = "tax-catalog-v2";
-pub const catalog_sha256 = "7ce76d0159d23b47a0cc508c8a48740f21d45653f9f34dbf0087828df5a7b1a4";
+pub const catalog_sha256 = "0f94bbb36a6e2204b1430d9e1fd1f193d2a9312e211500ad88d8ad32eb10d8c4";
 
 pub const Provenance = enum { profile, taxpayer_year, form_policy, transaction, derived, filing_context, external };
 pub const Role = enum { filer, spouse, filing, payment, preparer, employer, withholding_agent, attachment, evidence, system };
 pub const ProfileCardinality = enum { exactly_one, zero_or_one };
 pub const ProfilePresence = enum { required, optional };
-pub const ProfileSubjectKind = enum { individual, sole_proprietor, corporation, partnership, estate, trust, other_legal_entity };
+pub const ProfileSubjectKind = enum { individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity };
 pub const ValueType = enum { text, boolean, integer, money, percent, date, year, tax_period, tin, rdo_code, postal_code, email, phone, atc_code, tax_identifier, choice };
 pub const FieldStatus = enum { unbound_input, static_table, derived_display };
 pub const FormStatus = enum { calendar_only, static_layout };
@@ -102,7 +102,7 @@ const profile_roles_0605_1999_07_encs = [_]ProfileRoleDefinition{
     .{
         .role = .filer,
         .cardinality = .exactly_one,
-        .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .estate, .trust, .other_legal_entity },
+        .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .cooperative, .estate, .trust, .other_legal_entity },
         .distinct_from = &.{},
     },
 };
@@ -517,7 +517,7 @@ const profile_roles_1601c_2018_01_encs = [_]ProfileRoleDefinition{
     .{
         .role = .filer,
         .cardinality = .exactly_one,
-        .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .estate, .trust, .other_legal_entity },
+        .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .cooperative, .estate, .trust, .other_legal_entity },
         .distinct_from = &.{},
     },
 };
@@ -1153,7 +1153,7 @@ const profile_roles_0619f_2018_01_encs = [_]ProfileRoleDefinition{
     .{
         .role = .filer,
         .cardinality = .exactly_one,
-        .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .estate, .trust, .other_legal_entity },
+        .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .cooperative, .estate, .trust, .other_legal_entity },
         .distinct_from = &.{},
     },
 };
@@ -3490,7 +3490,7 @@ const profile_roles_1702rt_2018_01_encs = [_]ProfileRoleDefinition{
     .{
         .role = .filer,
         .cardinality = .exactly_one,
-        .allowed_subjects = &.{ .corporation, .partnership, .other_legal_entity },
+        .allowed_subjects = &.{ .corporation, .partnership, .cooperative, .other_legal_entity },
         .distinct_from = &.{},
     },
 };
@@ -4157,7 +4157,7 @@ const profile_roles_1702mx_2018_01_encs = [_]ProfileRoleDefinition{
     .{
         .role = .filer,
         .cardinality = .exactly_one,
-        .allowed_subjects = &.{ .corporation, .partnership, .other_legal_entity },
+        .allowed_subjects = &.{ .corporation, .partnership, .cooperative, .other_legal_entity },
         .distinct_from = &.{},
     },
 };
@@ -4806,7 +4806,7 @@ const profile_roles_2550q_2024_04_encs = [_]ProfileRoleDefinition{
     .{
         .role = .filer,
         .cardinality = .exactly_one,
-        .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .estate, .trust, .other_legal_entity },
+        .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .cooperative, .estate, .trust, .other_legal_entity },
         .distinct_from = &.{},
     },
 };
@@ -5637,7 +5637,7 @@ const profile_roles_2551q_2018_01_encs = [_]ProfileRoleDefinition{
     .{
         .role = .filer,
         .cardinality = .exactly_one,
-        .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .estate, .trust, .other_legal_entity },
+        .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .cooperative, .estate, .trust, .other_legal_entity },
         .distinct_from = &.{},
     },
 };
@@ -5799,8 +5799,8 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .control = .input,
     },
     .{
-        .id = "2551Q.2018-01-ENCS.input.income_tax_rate_election",
-        .label = "13 Income-tax-rate election",
+        .id = "2551Q.2018-01-ENCS.input.what_income_tax_rates_are_you_availing",
+        .label = "13 What income tax rates are you availing?",
         .provenance = .taxpayer_year,
         .role = .filing,
         .value_type = .choice,
@@ -6293,7 +6293,7 @@ const profile_roles_0619e_2018_01_encs = [_]ProfileRoleDefinition{
     .{
         .role = .filer,
         .cardinality = .exactly_one,
-        .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .estate, .trust, .other_legal_entity },
+        .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .cooperative, .estate, .trust, .other_legal_entity },
         .distinct_from = &.{},
     },
 };

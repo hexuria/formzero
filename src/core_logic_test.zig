@@ -15,6 +15,9 @@ test "core logic modules remain in the headless test root" {
     _ = @import("tax_profile/projection.zig");
     _ = @import("tax_profile/editor.zig");
     _ = @import("tax_profile/evolution.zig");
+    _ = @import("tax_profile/annual_income_tax_election.zig");
+    _ = @import("tax_profile/composed_tax_profile.zig");
+    _ = @import("calendar/domain.zig");
     _ = @import("forms/id.zig");
     _ = @import("forms/spec.zig");
     _ = @import("forms/compose.zig");

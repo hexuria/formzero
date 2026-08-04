@@ -13,6 +13,7 @@ const forms_set_history = @import("forms_set_history.zig");
 const registration = @import("registration.zig");
 const registration_ui = @import("registration_ui.zig");
 const taxpayer_year = @import("taxpayer_year_settings.zig");
+const annual_election = @import("annual_income_tax_election.zig");
 const tax_form_profile = @import("tax_form_profile.zig");
 const form_catalog = @import("../forms/generated/catalog.zig");
 
@@ -70,6 +71,19 @@ pub const OwnedTaxpayerYearHistory = struct {
     ) void {
         for (self.revisions) |revision| allocator.free(revision.values);
         allocator.free(self.revisions);
+        self.* = undefined;
+    }
+};
+
+pub const OwnedAnnualIncomeTaxElectionHistory = struct {
+    history: annual_election.History,
+    events: []annual_election.Event,
+
+    pub fn deinit(
+        self: *OwnedAnnualIncomeTaxElectionHistory,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.events);
         self.* = undefined;
     }
 };
@@ -843,11 +857,13 @@ fn registrationAggregateFromRows(
 
 /// Persists one complete `registration_ui.SaveIntent` as one optimistic v16
 /// stream commit. Only changed/new rows and explicit retirements are appended;
-/// review-required proposals and auxiliary facts are never inferred away.
-pub fn saveRegistrationIntent(
+/// the dedicated EOPT value is diffed independently, and review-required
+/// proposals plus other auxiliary facts are never inferred away.
+fn saveRegistrationIntentWithOptionalProfile(
     store: *persistence.Store,
     allocator: std.mem.Allocator,
     intent: *const registration_ui.SaveIntent,
+    profile_rows: ?*const WriteRows,
 ) !u32 {
     var current = if (intent.selected_tax_year) |tax_year|
         try loadRegistrationAggregateForYear(
@@ -907,6 +923,9 @@ pub fn saveRegistrationIntent(
     defer allocator.free(obligation_writes);
     var activity_count: usize = 0;
     var obligation_count: usize = 0;
+    var eopt_id: persistence.OpaqueId = undefined;
+    var eopt_writes: [1]persistence.RegistrationEoptTierRevisionWrite = undefined;
+    var eopt_count: usize = 0;
 
     for (current.business_activities) |*existing| {
         if (!existing.metadata.review.isConfirmed()) continue;
@@ -1029,15 +1048,286 @@ pub fn saveRegistrationIntent(
         obligation_count += 1;
     }
 
-    if (activity_count == 0 and obligation_count == 0) {
+    if (intent.eopt_tier) |*desired| {
+        const existing = findConfirmedEoptTier(
+            current.eopt_tiers,
+            desired.origin,
+        );
+        if (existing == null or
+            !registrationEoptTierRowEquals(existing.?, desired))
+        {
+            eopt_id = try store.generateOpaqueId();
+            eopt_writes[0] = .{
+                .metadata = .{
+                    .id = &eopt_id,
+                    .expected_component_sequence = maxEoptTierSequence(
+                        history.eopt_tiers,
+                    ),
+                    .effective = effectiveToWrite(desired.effective),
+                    .source = .manual_entry,
+                    .review_state = .confirmed,
+                    .supersedes_id = if (existing) |found|
+                        found.metadata.revision_id.asSlice()
+                    else
+                        null,
+                },
+                .value = eoptTierToWrite(desired.value),
+            };
+            eopt_count = 1;
+        }
+    }
+
+    if (activity_count == 0 and obligation_count == 0 and eopt_count == 0) {
+        if (profile_rows) |rows| {
+            try store.appendRevision(rows.revision, rows.components());
+            return intent.expected_sequence;
+        }
         return persistence.Error.RegistrationNoChanges;
     }
-    return try store.appendRegistrationCommit(.{
+    const registration_write: persistence.RegistrationCommitWrite = .{
         .profile_id = intent.profile_id.asSlice(),
         .expected_current_sequence = intent.expected_sequence,
         .activities = activity_writes[0..activity_count],
         .obligations = obligation_writes[0..obligation_count],
-    });
+        .eopt_tiers = eopt_writes[0..eopt_count],
+    };
+    if (profile_rows) |rows| {
+        return store.appendRevisionAndRegistrationCommit(
+            rows.revision,
+            rows.components(),
+            registration_write,
+        );
+    }
+    return store.appendRegistrationCommit(registration_write);
+}
+
+pub fn saveRegistrationIntent(
+    store: *persistence.Store,
+    allocator: std.mem.Allocator,
+    intent: *const registration_ui.SaveIntent,
+) !u32 {
+    return saveRegistrationIntentWithOptionalProfile(
+        store,
+        allocator,
+        intent,
+        null,
+    );
+}
+
+/// One complete-profile Save operation. Base revision and registration-owned
+/// activity/EOPT changes share a transaction while retaining their independent
+/// optimistic sequence checks and persistence ownership.
+pub fn saveProfileAndRegistrationIntent(
+    store: *persistence.Store,
+    allocator: std.mem.Allocator,
+    revision: *const model.ProfileRevision,
+    expected_profile_sequence: u32,
+    intent: *const registration_ui.SaveIntent,
+) !u32 {
+    if (!revision.profile_id.eql(&intent.profile_id)) {
+        return persistence.Error.InvalidValue;
+    }
+    var rows = try toWriteRows(
+        allocator,
+        revision,
+        expected_profile_sequence,
+    );
+    defer rows.deinit(allocator);
+    return saveRegistrationIntentWithOptionalProfile(
+        store,
+        allocator,
+        intent,
+        &rows,
+    );
+}
+
+/// Creates a profile shell, revision 1, and its initial normalized
+/// registration components as one transaction. Creation cannot supersede or
+/// retain prior registration evidence because no stream exists yet.
+pub fn createProfileAndRegistrationIntent(
+    store: *persistence.Store,
+    allocator: std.mem.Allocator,
+    status: persistence.ProfileStatus,
+    revision: *const model.ProfileRevision,
+    intent: *const registration_ui.SaveIntent,
+) !u32 {
+    if (!revision.profile_id.eql(&intent.profile_id) or
+        revision.sequence != 1 or
+        intent.expected_sequence != 0 or
+        intent.retained_review_rows.len != 0)
+    {
+        return persistence.Error.InvalidValue;
+    }
+
+    var rows = try toWriteRows(allocator, revision, 0);
+    defer rows.deinit(allocator);
+
+    const activity_ids = try allocator.alloc(
+        persistence.OpaqueId,
+        intent.business_activities.len,
+    );
+    defer allocator.free(activity_ids);
+    const activity_writes = try allocator.alloc(
+        persistence.RegistrationActivityRevisionWrite,
+        intent.business_activities.len,
+    );
+    defer allocator.free(activity_writes);
+    for (intent.business_activities, 0..) |*desired, index| {
+        if (desired.origin != null) return persistence.Error.InvalidValue;
+        activity_ids[index] = try store.generateOpaqueId();
+        activity_writes[index] = .{
+            .anchor_id = desired.anchor_id.asSlice(),
+            .metadata = .{
+                .id = &activity_ids[index],
+                .expected_component_sequence = 0,
+                .effective = effectiveToWrite(desired.effective),
+                .source = .manual_entry,
+                .review_state = .confirmed,
+            },
+            .line_of_business = desired.line_of_business.asSlice(),
+            .atc = if (desired.atc) |*atc| atc.asSlice() else null,
+        };
+    }
+
+    const obligation_ids = try allocator.alloc(
+        persistence.OpaqueId,
+        intent.registration_obligations.len,
+    );
+    defer allocator.free(obligation_ids);
+    const obligation_writes = try allocator.alloc(
+        persistence.RegistrationObligationRevisionWrite,
+        intent.registration_obligations.len,
+    );
+    defer allocator.free(obligation_writes);
+    for (intent.registration_obligations, 0..) |*desired, index| {
+        if (desired.origin != null) return persistence.Error.InvalidValue;
+        obligation_ids[index] = try store.generateOpaqueId();
+        const encoded = registrationObligationToWrite(&desired.kind);
+        obligation_writes[index] = .{
+            .anchor_id = desired.anchor_id.asSlice(),
+            .metadata = .{
+                .id = &obligation_ids[index],
+                .expected_component_sequence = 0,
+                .effective = effectiveToWrite(desired.effective),
+                .source = .manual_entry,
+                .review_state = .confirmed,
+            },
+            .kind = encoded.kind,
+            .value_text = encoded.value_text,
+        };
+    }
+
+    var eopt_id: persistence.OpaqueId = undefined;
+    var eopt_writes: [1]persistence.RegistrationEoptTierRevisionWrite = undefined;
+    const eopt_count: usize = if (intent.eopt_tier) |*desired| blk: {
+        if (desired.origin != null) return persistence.Error.InvalidValue;
+        eopt_id = try store.generateOpaqueId();
+        eopt_writes[0] = .{
+            .metadata = .{
+                .id = &eopt_id,
+                .expected_component_sequence = 0,
+                .effective = effectiveToWrite(desired.effective),
+                .source = .manual_entry,
+                .review_state = .confirmed,
+            },
+            .value = eoptTierToWrite(desired.value),
+        };
+        break :blk 1;
+    } else 0;
+
+    if (activity_writes.len == 0 and
+        obligation_writes.len == 0 and
+        eopt_count == 0)
+    {
+        try store.createProfileWithRevision(
+            .{ .id = revision.profile_id.asSlice(), .status = status },
+            rows.revision,
+            rows.components(),
+        );
+        return 0;
+    }
+    return store.createProfileWithRevisionAndRegistrationCommit(
+        .{ .id = revision.profile_id.asSlice(), .status = status },
+        rows.revision,
+        rows.components(),
+        .{
+            .profile_id = revision.profile_id.asSlice(),
+            .expected_current_sequence = 0,
+            .activities = activity_writes,
+            .obligations = obligation_writes,
+            .eopt_tiers = eopt_writes[0..eopt_count],
+        },
+    );
+}
+
+pub fn loadAnnualIncomeTaxElectionHistory(
+    store: *persistence.Store,
+    allocator: std.mem.Allocator,
+    stream: annual_election.StreamKey,
+) !OwnedAnnualIncomeTaxElectionHistory {
+    const events = try store.listAnnualIncomeTaxElectionEvents(
+        allocator,
+        stream,
+    );
+    return .{
+        .history = .{ .stream = stream, .events = events },
+        .events = events,
+    };
+}
+
+pub fn stageAnnualIncomeTaxElectionCandidate(
+    store: *persistence.Store,
+    input: annual_election.CandidateInput,
+) !annual_election.TransitionResult {
+    return store.stageAnnualIncomeTaxElectionCandidate(input);
+}
+
+pub fn migrateAnnualIncomeTaxElection(
+    store: *persistence.Store,
+    input: annual_election.MigrationInput,
+) !annual_election.TransitionResult {
+    return store.migrateAnnualIncomeTaxElection(input);
+}
+
+pub fn confirmAnnualIncomeTaxElectionEvidence(
+    store: *persistence.Store,
+    input: annual_election.EvidenceInput,
+) !annual_election.TransitionResult {
+    return store.confirmAnnualIncomeTaxElectionEvidence(input);
+}
+
+pub fn recordAnnualIncomeTaxStatutoryDisqualification(
+    store: *persistence.Store,
+    input: annual_election.StatutoryDisqualificationInput,
+) !annual_election.TransitionResult {
+    return store.recordAnnualIncomeTaxStatutoryDisqualification(input);
+}
+
+/// Call this instead of the generic `transitionDraft` when a 1701Q/2551Q
+/// draft reaches the queue boundary.
+pub fn queueDraftWithAnnualIncomeTaxElection(
+    store: *persistence.Store,
+    input: annual_election.ReservationInput,
+) !annual_election.TransitionResult {
+    return store.queueDraftWithAnnualIncomeTaxElection(input);
+}
+
+/// Call this instead of the generic queued -> submitted transition. It
+/// confirms the owning reservation in the same transaction.
+pub fn submitDraftAndConfirmAnnualIncomeTaxElection(
+    store: *persistence.Store,
+    input: annual_election.ReservationFinalizationInput,
+) !annual_election.TransitionResult {
+    return store.submitDraftAndConfirmAnnualIncomeTaxElection(input);
+}
+
+/// Call this instead of the generic queued -> cancelled transition. A
+/// reservation is released only when this exact draft still owns it.
+pub fn cancelQueuedDraftAndReleaseAnnualIncomeTaxElection(
+    store: *persistence.Store,
+    input: annual_election.ReservationFinalizationInput,
+) !annual_election.TransitionResult {
+    return store.cancelQueuedDraftAndReleaseAnnualIncomeTaxElection(input);
 }
 
 pub fn appendTaxpayerYearRevision(
@@ -1709,6 +1999,21 @@ fn findConfirmedObligation(
     return null;
 }
 
+fn findConfirmedEoptTier(
+    rows: []const registration.EoptTierRevision,
+    origin: ?registration_ui.Origin,
+) ?*const registration.EoptTierRevision {
+    const expected = origin orelse return null;
+    for (rows) |*row| {
+        if (row.metadata.review.isConfirmed() and
+            row.metadata.revision_id.eql(&expected.revision_id))
+        {
+            return row;
+        }
+    }
+    return null;
+}
+
 fn maxActivitySequence(
     rows: []const persistence.OwnedRegistrationActivityRevision,
     anchor_id: *const registration.ActivityAnchorId,
@@ -1735,6 +2040,16 @@ fn maxObligationSequence(
     return result;
 }
 
+fn maxEoptTierSequence(
+    rows: []const persistence.OwnedRegistrationEoptTierRevision,
+) u32 {
+    var result: u32 = 0;
+    for (rows) |*row| {
+        result = @max(result, row.metadata.component_sequence);
+    }
+    return result;
+}
+
 fn registrationActivityEquals(
     existing: *const registration.BusinessActivity,
     desired: *const registration_ui.BusinessActivityRow,
@@ -1757,6 +2072,27 @@ fn registrationObligationRowEquals(
 ) bool {
     return existing.metadata.effective.eql(desired.effective) and
         registrationObligationKindsEqual(&existing.kind, &desired.kind);
+}
+
+fn registrationEoptTierRowEquals(
+    existing: *const registration.EoptTierRevision,
+    desired: *const registration_ui.EoptTierRow,
+) bool {
+    const desired_value = desired.value.toDomain();
+    return existing.metadata.effective.eql(desired.effective) and
+        existing.value == desired_value;
+}
+
+fn eoptTierToWrite(
+    value: registration_ui.EditableEoptTier,
+) persistence.RegistrationEoptTier {
+    return switch (value) {
+        .not_applicable => .not_applicable,
+        .micro => .micro,
+        .small => .small,
+        .medium => .medium,
+        .large => .large,
+    };
 }
 
 fn registrationObligationKindsEqual(
@@ -2120,6 +2456,7 @@ fn subjectToWrite(value: *const model.Subject) persistence.SubjectWrite {
                 .kind = switch (entity.kind) {
                     .corporation => .corporation,
                     .partnership => .partnership,
+                    .cooperative => .cooperative,
                     .estate => .estate,
                     .trust => .trust,
                     .other => .other,
@@ -2237,6 +2574,7 @@ fn subjectToDomain(value: *const persistence.OwnedSubject) !model.Subject {
                 .kind = switch (entity.kind) {
                     .corporation => .corporation,
                     .partnership => .partnership,
+                    .cooperative => .cooperative,
                     .estate => .estate,
                     .trust => .trust,
                     .other => .other,
@@ -2701,6 +3039,180 @@ test "registration selected year edits and reloads a finite interval losslessly"
     try std.testing.expect(reloaded.obligations[0].metadata.effective.eql(
         exact_period,
     ));
+}
+
+test "registration EOPT SaveIntent appends evidence-aware change and retains review" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    const profile = try testIndividualRevision();
+    try createProfileWithRevision(&store, allocator, .active, &profile);
+
+    const eopt = [_]persistence.RegistrationEoptTierRevisionWrite{
+        .{
+            .metadata = .{
+                .id = "eopt-documented-micro",
+                .expected_component_sequence = 0,
+                .effective = .{ .from = "2026-01-01".* },
+                .source = .documented,
+                .evidence_reference = "COR-2026",
+                .review_state = .confirmed,
+                .confirmed_at_unix_seconds = 1,
+            },
+            .value = .micro,
+        },
+        .{
+            .metadata = .{
+                .id = "eopt-legacy-needs-review",
+                .expected_component_sequence = 1,
+                .effective = .{ .from = "2026-01-01".* },
+                .source = .imported,
+                .evidence_reference = "legacy-registration-import",
+                .review_state = .requires_review,
+                .review_reason = .migrated_without_confirmation,
+            },
+            .value = .unknown_requires_review,
+        },
+    };
+    try std.testing.expectEqual(
+        @as(u32, 1),
+        try store.appendRegistrationCommit(.{
+            .profile_id = profile.profile_id.asSlice(),
+            .expected_current_sequence = 0,
+            .eopt_tiers = &eopt,
+        }),
+    );
+
+    const viewed_on = try model.Date.parseIso("2026-08-04");
+    var loaded = try loadRegistrationAggregateOn(
+        &store,
+        allocator,
+        profile.profile_id,
+        viewed_on,
+    );
+    defer loaded.deinit(allocator);
+    var state = try registration_ui.State.open(.{
+        .aggregate = &loaded.aggregate,
+        .viewed_on = viewed_on,
+        .subject_kind = .individual,
+        .natural_person_classification = .self_employed,
+        .expected_sequence = loaded.stream_sequence,
+    });
+    try std.testing.expectEqual(
+        registration_ui.EditableEoptTier.micro,
+        state.eoptTier().?,
+    );
+    try std.testing.expect(state.eoptTierNeedsReview());
+    try state.beginEdit();
+    try state.selectEoptTier(.small);
+    const intent = try state.beginSave();
+    try std.testing.expectEqual(@as(usize, 1), intent.retained_review_rows.len);
+    const new_sequence = try saveRegistrationIntent(&store, allocator, &intent);
+    try std.testing.expectEqual(@as(u32, 2), new_sequence);
+
+    var changed = try loadRegistrationAggregateOn(
+        &store,
+        allocator,
+        profile.profile_id,
+        viewed_on,
+    );
+    defer changed.deinit(allocator);
+    const resolution = try changed.aggregate.resolveEoptTier(viewed_on);
+    try std.testing.expectEqual(
+        registration.EoptTier.small,
+        resolution.confirmed.?.value,
+    );
+    try std.testing.expectEqual(@as(u32, 1), resolution.proposal_count);
+    try std.testing.expectEqual(
+        registration.EoptTier.unknown_requires_review,
+        resolution.latest_proposal.?.value,
+    );
+
+    var history = try store.listRegistrationHistory(
+        allocator,
+        profile.profile_id.asSlice(),
+    );
+    defer history.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 3), history.eopt_tiers.len);
+    const appended = &history.eopt_tiers[2];
+    try std.testing.expectEqual(
+        persistence.RegistrationEoptTier.small,
+        appended.value,
+    );
+    try std.testing.expectEqual(
+        persistence.RegistrationRecordSource.manual_entry,
+        appended.metadata.source,
+    );
+    try std.testing.expectEqualStrings(
+        "eopt-documented-micro",
+        appended.metadata.supersedes_id.?,
+    );
+    try std.testing.expectEqualStrings(
+        "eopt-legacy-needs-review",
+        history.eopt_tiers[1].metadata.id,
+    );
+}
+
+test "registration EOPT adapter rejects an unchanged desired value" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    const profile = try testIndividualRevision();
+    try createProfileWithRevision(&store, allocator, .active, &profile);
+
+    const eopt = [_]persistence.RegistrationEoptTierRevisionWrite{.{
+        .metadata = .{
+            .id = "eopt-noop-small",
+            .expected_component_sequence = 0,
+            .effective = .{ .from = "2026-01-01".* },
+            .source = .documented,
+            .evidence_reference = "COR-2026",
+            .review_state = .confirmed,
+            .confirmed_at_unix_seconds = 1,
+        },
+        .value = .small,
+    }};
+    _ = try store.appendRegistrationCommit(.{
+        .profile_id = profile.profile_id.asSlice(),
+        .expected_current_sequence = 0,
+        .eopt_tiers = &eopt,
+    });
+
+    const viewed_on = try model.Date.parseIso("2026-08-04");
+    var loaded = try loadRegistrationAggregateOn(
+        &store,
+        allocator,
+        profile.profile_id,
+        viewed_on,
+    );
+    defer loaded.deinit(allocator);
+    const resolved = (try loaded.aggregate.resolveEoptTier(viewed_on))
+        .confirmed.?;
+    const intent: registration_ui.SaveIntent = .{
+        .profile_id = profile.profile_id,
+        .viewed_on = viewed_on,
+        .expected_sequence = loaded.stream_sequence,
+        .business_activities = &.{},
+        .registration_obligations = &.{},
+        .eopt_tier = .{
+            .effective = resolved.metadata.effective,
+            .value = .small,
+            .origin = .{
+                .revision_id = resolved.metadata.revision_id,
+                .sequence = resolved.metadata.sequence,
+            },
+            .origin_source = resolved.metadata.source,
+        },
+        .retained_review_rows = &.{},
+    };
+    try std.testing.expectError(
+        persistence.Error.RegistrationNoChanges,
+        saveRegistrationIntent(&store, allocator, &intent),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 1),
+        try store.registrationStreamSequence(profile.profile_id.asSlice()),
+    );
 }
 
 test "taxpayer-year settings persist exact annual streams and explicit copy review" {
@@ -3294,8 +3806,8 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
             .value.profile_id.eql(&other_profile.profile_id),
     );
 
-    // Invalid generated contracts fail before persistence and leave no
-    // accidental empty stream behind.
+    // Invalid generated contracts fail before persistence. An empty optional
+    // setup is instead an explicit append-only clear and must round-trip.
     var invalid = try testTaxFormProfileRevision(
         profile.profile_id,
         2031,
@@ -3334,10 +3846,7 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
         appendTaxFormProfileRevision(&store, allocator, 0, &invalid),
     );
     invalid.values = &.{};
-    try std.testing.expectError(
-        tax_form_profile.Error.EmptySetupRevision,
-        appendTaxFormProfileRevision(&store, allocator, 0, &invalid),
-    );
+    try appendTaxFormProfileRevision(&store, allocator, 0, &invalid);
     const no_setup_form = form_catalog.findForm("2551Q").?;
     invalid.stream.form_code = try tax_form_profile.FormCode.parse(
         no_setup_form.code,
@@ -3350,7 +3859,7 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
         tax_form_profile.Error.NoSetupContract,
         appendTaxFormProfileRevision(&store, allocator, 0, &invalid),
     );
-    var invalid_stream = try loadTaxFormProfileHistory(
+    var cleared_stream = try loadTaxFormProfileHistory(
         &store,
         allocator,
         .{
@@ -3362,8 +3871,12 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
             ),
         },
     );
-    defer invalid_stream.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 0), invalid_stream.revisions.len);
+    defer cleared_stream.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), cleared_stream.revisions.len);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        cleared_stream.revisions[0].values.len,
+    );
 }
 
 fn testTaxFormProfileRevision(
@@ -3643,6 +4156,7 @@ test "every legal entity subject kind round trips exactly" {
     const kinds = [_]model.LegalEntityKind{
         .corporation,
         .partnership,
+        .cooperative,
         .estate,
         .trust,
         .other,

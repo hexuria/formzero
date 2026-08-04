@@ -32,6 +32,7 @@ pub fn isNaturalPerson(context: Context) bool {
         .individual, .sole_proprietor => true,
         .corporation,
         .partnership,
+        .cooperative,
         .estate,
         .trust,
         .other_legal_entity,
@@ -49,7 +50,7 @@ pub fn hasBusinessCapacity(context: Context) bool {
             .pure_compensation => context.has_business_activity,
             .classification_unknown => context.has_business_activity,
         },
-        .corporation, .partnership, .other_legal_entity => true,
+        .corporation, .partnership, .cooperative, .other_legal_entity => true,
         // The prior implementation and current form evidence do not establish
         // a generic business-activity editor for estates or trusts.
         .estate, .trust => context.has_business_activity,
@@ -67,7 +68,11 @@ pub fn fieldGroupVisible(context: Context, group: FieldGroup) bool {
                 .classification_unknown => context.has_business_activity or
                     context.has_trade_name,
             },
-            .corporation, .partnership, .other_legal_entity => true,
+            .corporation,
+            .partnership,
+            .cooperative,
+            .other_legal_entity,
+            => true,
             .estate, .trust => false,
         },
         .business_activities, .line_of_business => hasBusinessCapacity(context),
@@ -96,6 +101,17 @@ test "corporation hides natural-person details but exposes business facts" {
     try std.testing.expect(!fieldGroupVisible(context, .natural_person_details));
     try std.testing.expect(fieldGroupVisible(context, .trade_name));
     try std.testing.expect(fieldGroupVisible(context, .line_of_business));
+}
+
+test "cooperative is juridical and exposes business profile facts" {
+    const context: Context = .{ .subject_kind = .cooperative };
+    try std.testing.expect(!isNaturalPerson(context));
+    try std.testing.expect(fieldGroupVisible(context, .trade_name));
+    try std.testing.expect(fieldGroupVisible(context, .line_of_business));
+    try std.testing.expect(fieldGroupVisible(
+        context,
+        .registration_obligations,
+    ));
 }
 
 test "self-employed and mixed-income individuals expose business facts" {

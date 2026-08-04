@@ -848,7 +848,13 @@ pub const State = struct {
         };
         const editing = self.page_state == .editing;
         const form_supports_setup = self.setup_mode == .setup;
-        const draft_complete = self.annualReadiness().candidateComplete();
+        const annual = self.annualReadiness();
+        // A saved optional-only setup can be cleared.  The resulting empty
+        // revision is meaningful append-only history, not a fabricated first
+        // setup: a brand-new optional form remains clean and cannot save.
+        const draft_complete = annual.applicable and
+            annual.missing_required_count == 0 and
+            (annual.has_nonempty_candidate or !self.annual_setup_required);
         const review_complete = self.draft_review_requirement == .none or
             self.draft_review_acknowledged;
         const copy_exact = if (self.copy_offer) |offer|
@@ -1219,7 +1225,6 @@ fn validateHistoricalRevisionEnvelope(
     {
         return error.EffectivePeriodOutsideTaxYear;
     }
-    if (revision.values.len == 0) return error.EmptySetupRevision;
     for (revision.values, 0..) |value, index| {
         for (revision.values[index + 1 ..]) |other| {
             if (sameValueKey(value, other)) return error.DuplicateValue;
@@ -1303,7 +1308,6 @@ fn validateEditableValues(
         }
     }
     if (!require_complete) return;
-    if (values.len == 0) return error.IncompleteAnnualSetup;
     for (form.tax_form_profile.values) |definition| {
         if (definition.availability != .supported or
             definition.presence != .required)
@@ -1735,6 +1739,46 @@ test "optional-only setup is ready without an empty annual revision" {
     try state.beginEdit();
     try std.testing.expect(!state.affordances().can_save);
     try std.testing.expectError(error.ActionDisabled, state.beginSave());
+}
+
+test "an existing optional setup can be explicitly cleared and saved" {
+    const profile_id = try model.ProfileId.parse("profile-optional-clear");
+    const saved_value = try activityValue("activity-optional-clear");
+    const saved = try fixtureRevision(
+        "1601C",
+        profile_id,
+        2026,
+        "optional-clear-r1",
+        1,
+        .confirmed,
+        &.{saved_value},
+    );
+    var state = try State.open(.{
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .form_code = "1601C",
+        .active = true,
+        .activation_period = try fullYearActivation(2026),
+        .saved_revision = &saved,
+    });
+    try std.testing.expectEqual(PageState.viewing_ready, state.page().?);
+
+    try state.beginEdit();
+    try state.removeDraftValue(.filer, .business_activity_anchor_id);
+    try std.testing.expect(state.dirty());
+    try std.testing.expectEqual(@as(usize, 0), state.draftValues().len);
+    try std.testing.expect(state.affordances().can_save);
+
+    const intent = try state.beginSave();
+    try std.testing.expectEqual(@as(usize, 0), intent.values.len);
+    var cleared = saved;
+    cleared.id = try tax_form_profile.RevisionId.parse("optional-clear-r2");
+    cleared.sequence = 2;
+    cleared.values = &.{};
+    try state.saveSucceeded(&cleared);
+    try std.testing.expectEqual(PageState.viewing_ready, state.page().?);
+    try std.testing.expectEqual(@as(usize, 0), state.baselineValues().len);
+    try std.testing.expect(!state.dirty());
 }
 
 test "confirmed setup becomes repairable when shared bindings stop resolving" {

@@ -113,6 +113,7 @@ pub const SoleProprietor = struct {
 pub const LegalEntityKind = enum {
     corporation,
     partnership,
+    cooperative,
     estate,
     trust,
     other,
@@ -129,6 +130,7 @@ pub const SubjectKind = enum {
     sole_proprietor,
     corporation,
     partnership,
+    cooperative,
     estate,
     trust,
     other_legal_entity,
@@ -148,6 +150,7 @@ pub const Subject = union(enum) {
             .legal_entity => |entity| switch (entity.kind) {
                 .corporation => .corporation,
                 .partnership => .partnership,
+                .cooperative => .cooperative,
                 .estate => .estate,
                 .trust => .trust,
                 .other => .other_legal_entity,
@@ -587,6 +590,20 @@ test "subject variants expose truthful derived capabilities" {
     try std.testing.expectEqualStrings(
         "MARIA'S BAKERY",
         revision.subject.registeredName().?.asSlice(),
+    );
+}
+
+test "cooperative is a first-class legal entity subject" {
+    const subject: Subject = .{ .legal_entity = .{
+        .registered_name = try field.RegisteredName.parse(
+            "EXAMPLE WORKERS COOPERATIVE",
+        ),
+        .kind = .cooperative,
+    } };
+    try std.testing.expectEqual(SubjectKind.cooperative, subject.kind());
+    try std.testing.expectEqualStrings(
+        "EXAMPLE WORKERS COOPERATIVE",
+        subject.taxpayerName().asSlice(),
     );
 }
 

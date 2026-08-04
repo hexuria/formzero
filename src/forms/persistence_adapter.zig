@@ -2410,6 +2410,7 @@ fn persistenceSubject(
             .kind = switch (entity.kind) {
                 .corporation => .corporation,
                 .partnership => .partnership,
+                .cooperative => .cooperative,
                 .estate => .estate,
                 .trust => .trust,
                 .other => .other,
