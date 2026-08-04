@@ -17,6 +17,9 @@
     <if test="{contentPage == 'profile_setup'}">
       <use template="profile-setup-page"/>
     </if>
+    <if test="{contentPage == 'tax_form_profile'}">
+      <use template="tax-form-profile-page"/>
+    </if>
     <if test="{contentPage == 'import_data'}">
       <use template="import-data-page"/>
     </if>
@@ -76,7 +79,7 @@
     </if>
     <if test="{profileFormInfoDialogOpen}">
       <column grow="1" padding="16" main="center" cross="center" label="Dismiss dialog" on-press="profile_forms_close_info">
-        <dialog width="{profileFormInfoDialogWidth}" on-dismiss="profile_forms_close_info">
+        <dialog width="{profileFormInfoDialogWidth}" height="400" on-dismiss="profile_forms_close_info">
           <use
             template="taxpayer-form-info-content"
             code="{profileFormInfoCode}"

@@ -191,6 +191,7 @@ pub const PersistedField = enum {
             .creditable_percentage_tax_withheld,
             .paid_in_previous_return,
             => "external_evidence",
+            .income_tax_rate_election => "taxpayer_year",
             .total_percentage_tax_due,
             .total_tax_credits_or_payments,
             .tax_payable_or_overpayment,
@@ -596,6 +597,16 @@ pub const State = struct {
         value: form_2551q.IncomeTaxRateElection,
     ) void {
         if (!self.editable) return;
+        self.income_tax_rate_election = value;
+        self.refresh();
+    }
+
+    /// Annual election is owned by the confirmed taxpayer-year revision.
+    /// Filing screens may display it, but may not choose a different value.
+    pub fn bindIncomeTaxRateElection(
+        self: *State,
+        value: form_2551q.IncomeTaxRateElection,
+    ) void {
         self.income_tax_rate_election = value;
         self.refresh();
     }

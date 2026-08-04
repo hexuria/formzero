@@ -17,6 +17,7 @@
 const std = @import("std");
 const catalog = @import("generated/catalog.zig");
 const catalog_projection = @import("catalog_projection.zig");
+const draft_provenance_runtime = @import("draft_provenance_runtime.zig");
 const form_persistence = @import("persistence_adapter.zig");
 const form_1701q = @import("form_1701q.zig");
 const form_2551q = @import("form_2551q.zig");
@@ -28,6 +29,7 @@ const model = @import("../tax_profile/model.zig");
 const profile_persistence = @import("../tax_profile/persistence_adapter.zig");
 const projection = @import("../tax_profile/projection.zig");
 const store_module = @import("../tax_profile/store.zig");
+const taxpayer_year = @import("../tax_profile/taxpayer_year_settings.zig");
 
 pub const max_spouse_candidates = 64;
 pub const max_activity_candidates = 32;
@@ -83,6 +85,14 @@ pub const DraftStatus = enum {
 };
 
 pub const DraftDisposition = form_persistence.OpenDisposition;
+
+/// Exact provenance is mandatory for drafts created by the current runtime.
+/// A real pre-v17 draft remains usable but is reported explicitly; it is
+/// never upgraded from today's mutable profile state during resume.
+pub const DraftProvenanceStatus = enum {
+    exact,
+    legacy_absent,
+};
 
 pub const OpenRequest = struct {
     form: ids.FormRevision,
@@ -162,6 +172,7 @@ pub const ActivityCandidate = struct {
 pub const Error = error{
     CacheConflict,
     CalendarOnlyForm,
+    DraftProvenanceCorrupt,
     DraftPersistenceDisabled,
     DraftProfileSnapshotLocked,
     ExistingDraftMismatch,
@@ -244,6 +255,88 @@ const ActivityCandidateCache = struct {
     }
 };
 
+/// Filing composition treats confirmed v16 Registration activities as the
+/// authoritative activity collection for the exact viewed date. The legacy
+/// ProfileRevision array remains a compatibility fallback only when no
+/// Registration stream exists. Once the stream exists, an empty effective
+/// set is authoritative too (for example, after the last activity retires).
+fn replaceWithAuthoritativeRegistrationActivities(
+    store: *store_module.Store,
+    allocator: std.mem.Allocator,
+    owned_revision: *profile_persistence.OwnedDomainRevision,
+    effective_on: model.Date,
+) !void {
+    var registration = try profile_persistence.loadRegistrationAggregateOn(
+        store,
+        allocator,
+        owned_revision.revision.profile_id,
+        effective_on,
+    );
+    defer registration.deinit(allocator);
+
+    var confirmed_count: usize = 0;
+    for (registration.business_activities) |*activity| {
+        if (activity.metadata.review.isConfirmed() and
+            activity.metadata.isEffective(effective_on))
+        {
+            confirmed_count += 1;
+        }
+    }
+    if (registration.stream_sequence == 0) return;
+
+    const activities = try allocator.alloc(
+        model.BusinessActivity,
+        confirmed_count,
+    );
+    errdefer allocator.free(activities);
+    var output_index: usize = 0;
+    for (registration.business_activities) |*activity| {
+        if (!activity.metadata.review.isConfirmed() or
+            !activity.metadata.isEffective(effective_on))
+        {
+            continue;
+        }
+        activities[output_index] = .{
+            .id = try model.BusinessActivityId.parse(
+                activity.anchor_id.asSlice(),
+            ),
+            .line_of_business = activity.line_of_business,
+            .atc = activity.atc,
+            .effective = activity.metadata.effective,
+        };
+        output_index += 1;
+    }
+
+    var replacement_revision = owned_revision.revision;
+    replacement_revision.business_activities = activities;
+    try replacement_revision.validate();
+    allocator.free(owned_revision.business_activities);
+    owned_revision.business_activities = activities;
+    owned_revision.revision = replacement_revision;
+}
+
+fn loadEffectiveRevisionForFiling(
+    store: *store_module.Store,
+    allocator: std.mem.Allocator,
+    profile_id: model.ProfileId,
+    effective_on: model.Date,
+) !?profile_persistence.OwnedDomainRevision {
+    var owned = (try profile_persistence.loadEffectiveRevision(
+        store,
+        allocator,
+        profile_id,
+        effective_on,
+    )) orelse return null;
+    errdefer owned.deinit(allocator);
+    try replaceWithAuthoritativeRegistrationActivities(
+        store,
+        allocator,
+        &owned,
+        effective_on,
+    );
+    return owned;
+}
+
 pub const State = struct {
     allocator: ?std.mem.Allocator = null,
     store: ?*store_module.Store = null,
@@ -284,6 +377,7 @@ pub const State = struct {
     persisted_draft_id: ?ids.DraftId = null,
     persisted_draft_disposition: ?DraftDisposition = null,
     persisted_draft_status: ?DraftStatus = null,
+    persisted_draft_provenance: ?DraftProvenanceStatus = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -391,12 +485,15 @@ pub const State = struct {
             draft_id.asSlice(),
         )) orelse return error.NotFound;
         defer draft.deinit(allocator);
-        try self.adoptPersistedDraft(&draft, .resumed);
-        try self.refreshCandidateCaches();
-        self.setNotice(
-            .info,
-            "Selected draft resumed. Its persisted tax-profile snapshot is authoritative.",
+        const provenance_status = try loadPersistedDraftProvenanceStatus(
+            store,
+            allocator,
+            draft_id,
         );
+        try self.adoptPersistedDraft(&draft, .resumed);
+        self.persisted_draft_provenance = provenance_status;
+        try self.refreshCandidateCaches();
+        self.setDraftSavedNotice(.resumed, provenance_status);
     }
 
     fn openWithPolicy(
@@ -424,8 +521,7 @@ pub const State = struct {
             .tax_year = request.tax_year,
             .quarter = request_quarter,
         } };
-        self.opened_profile_as_of = request.profile_as_of orelse if
-            (request.filing_period) |period|
+        self.opened_profile_as_of = request.profile_as_of orelse if (request.filing_period) |period|
             try filingPeriodEnd(period)
         else
             try quarterEnd(request.tax_year, request_quarter);
@@ -437,16 +533,17 @@ pub const State = struct {
             try self.openExistingOriginal())
         {
             try self.refreshCandidateCaches();
-            self.setNotice(
-                .info,
-                "Existing draft resumed. Its persisted tax-profile snapshot is authoritative.",
+            self.setDraftSavedNotice(
+                .resumed,
+                self.persisted_draft_provenance orelse
+                    return error.ExistingDraftMismatch,
             );
             return;
         }
 
         const allocator = self.allocator.?;
         const store = self.store.?;
-        self.filer_revision = (try profile_persistence.loadEffectiveRevision(
+        self.filer_revision = (try loadEffectiveRevisionForFiling(
             store,
             allocator,
             request.filer_profile_id,
@@ -467,7 +564,7 @@ pub const State = struct {
                 return;
             }
             self.spouse_revision =
-                (try profile_persistence.loadEffectiveRevision(
+                (try loadEffectiveRevisionForFiling(
                     store,
                     allocator,
                     spouse_id,
@@ -516,7 +613,7 @@ pub const State = struct {
 
         if (profile_id) |selected| {
             self.spouse_revision =
-                (try profile_persistence.loadEffectiveRevision(
+                (try loadEffectiveRevisionForFiling(
                     store,
                     allocator,
                     selected,
@@ -602,9 +699,23 @@ pub const State = struct {
         const allocator = self.allocator orelse return error.NotAttached;
         const store = self.store orelse return error.NotAttached;
         const form = self.opened_form orelse return error.NotOpen;
+        // Exact 1701Q owns a separate occurrence/revision persistence model.
+        // Never mint or resume its retired coarse deterministic draft even if
+        // a caller accidentally used the general `open` boundary.
+        if (form.eql(&form_1701q.revision)) {
+            self.setErrorNotice(error.DraftPersistenceDisabled);
+            return error.DraftPersistenceDisabled;
+        }
         if (!self.projection_is_accepted or self.projected_snapshot == null) {
             self.setErrorNotice(error.NoAcceptedProjection);
             return error.NoAcceptedProjection;
+        }
+
+        if (self.persisted_draft_id != null) {
+            return self.saveResumedDraftValues(
+                transaction_values,
+                replace_resumed_values,
+            );
         }
 
         const period = runtime.RecurringQuarter{
@@ -612,20 +723,59 @@ pub const State = struct {
             .tax_year = self.opened_tax_year,
             .quarter = self.opened_quarter,
         };
-        var opened = try form_persistence.createOrLoad(
+        const current_filing_period = self.opened_filing_period orelse
+            return error.NotOpen;
+        const definition = catalog.findForm(form.code.asSlice()) orelse
+            return error.UnknownForm;
+        const revision = definition.revision orelse
+            return error.CalendarOnlyForm;
+        if (!std.mem.eql(u8, revision, form.revision.asSlice())) {
+            return error.WrongFormRevision;
+        }
+        const occurrence_date: ?model.Date = switch (current_filing_period) {
+            // Recurring 2551Q intentionally resolves membership on the
+            // quarter end derived from the period, never an ad-hoc date.
+            .monthly, .quarterly, .annual => null,
+            .on_demand => self.opened_profile_as_of,
+        };
+        var prepared = try draft_provenance_runtime.prepare(
+            allocator,
+            store,
+            self,
+            definition,
+            current_filing_period,
+            occurrence_date,
+        );
+        defer prepared.deinit();
+
+        var opened = try form_persistence.createOrLoadWithProvenance(
             allocator,
             store,
             .{
                 .period = period,
-                .filing_period = self.opened_filing_period,
+                .filing_period = current_filing_period,
                 .role_bindings = &self.projected_bindings,
                 .snapshot = &self.projected_snapshot.?,
                 .transaction_values = transaction_values,
+            },
+            .{
+                .applicability_date = prepared.composition.applicability_date,
+                .forms_set_decision = prepared.formSetDecision(),
+                .snapshot = &prepared.composition.provenance_snapshot,
             },
         );
         defer opened.deinit(allocator);
 
         const disposition = opened.disposition;
+        const provenance_status: DraftProvenanceStatus =
+            switch (opened.provenance) {
+                .exact => .exact,
+                .provenance_legacy_absent => .legacy_absent,
+                .corrupt => {
+                    self.invalidateProjection();
+                    return error.DraftProvenanceCorrupt;
+                },
+            };
         if (disposition == .resumed and replace_resumed_values) {
             try store.replaceDraftValues(
                 opened.draft.id,
@@ -633,19 +783,79 @@ pub const State = struct {
             );
         }
         try self.adoptPersistedDraft(&opened.draft, disposition);
+        self.persisted_draft_provenance = provenance_status;
         const result: DraftSaveResult = .{
             .id = self.persisted_draft_id.?,
             .disposition = disposition,
             .status = self.persisted_draft_status.?,
         };
+        self.setDraftSavedNotice(disposition, provenance_status);
+        return result;
+    }
+
+    /// A previously adopted draft already owns its immutable source snapshot.
+    /// Reload provenance instead of recomposing from current profile state,
+    /// then replace only the separate editable transaction-value slice.
+    fn saveResumedDraftValues(
+        self: *State,
+        transaction_values: []const store_module.DraftValueWrite,
+        replace_values: bool,
+    ) !DraftSaveResult {
+        const allocator = self.allocator orelse return error.NotAttached;
+        const store = self.store orelse return error.NotAttached;
+        const draft_id = self.persisted_draft_id orelse return error.NotOpen;
+        var draft = (try store.getDraft(
+            allocator,
+            draft_id.asSlice(),
+        )) orelse return error.NotFound;
+        defer draft.deinit(allocator);
+
+        const provenance_status = loadPersistedDraftProvenanceStatus(
+            store,
+            allocator,
+            draft_id,
+        ) catch |err| {
+            if (err == error.DraftProvenanceCorrupt) {
+                self.invalidateProjection();
+            }
+            return err;
+        };
+        const status = DraftStatus.parse(draft.lifecycle) orelse
+            return error.ExistingDraftMismatch;
+        if (replace_values) {
+            if (status != .editing) return error.InvalidTransition;
+            try store.replaceDraftValues(draft.id, transaction_values);
+        }
+
+        try self.adoptPersistedDraft(&draft, .resumed);
+        self.persisted_draft_provenance = provenance_status;
+        self.setDraftSavedNotice(.resumed, provenance_status);
+        return .{
+            .id = self.persisted_draft_id.?,
+            .disposition = .resumed,
+            .status = self.persisted_draft_status.?,
+        };
+    }
+
+    fn setDraftSavedNotice(
+        self: *State,
+        disposition: DraftDisposition,
+        provenance_status: DraftProvenanceStatus,
+    ) void {
+        if (provenance_status == .legacy_absent) {
+            self.setNotice(
+                .warning,
+                "Legacy draft resumed without exact provenance. Its original persisted tax-profile snapshot remains authoritative.",
+            );
+            return;
+        }
         self.setNotice(
             if (disposition == .created) .success else .info,
             if (disposition == .created)
-                "Draft saved with an immutable tax-profile snapshot."
+                "Draft saved atomically with its immutable tax-profile provenance."
             else
-                "Existing draft resumed. Its persisted tax-profile snapshot remains authoritative.",
+                "Existing draft resumed with its exact persisted provenance.",
         );
-        return result;
     }
 
     pub fn formRevision(self: *const State) ?ids.FormRevision {
@@ -681,6 +891,20 @@ pub const State = struct {
         role: ids.Role,
     ) ?*const runtime.RoleRevisionBinding {
         return self.projected_bindings.get(role);
+    }
+
+    /// Exact immutable taxpayer revision currently bound to a named filing
+    /// role. Draft-provenance composition consumes this pointer synchronously;
+    /// callers must not retain it after the form state is reset or re-opened.
+    pub fn profileRevision(
+        self: *const State,
+        role: ids.Role,
+    ) ?*const model.ProfileRevision {
+        return switch (role) {
+            .filer => if (self.filer_revision) |*owned| &owned.revision else null,
+            .spouse => if (self.spouse_revision) |*owned| &owned.revision else null,
+            else => null,
+        };
     }
 
     pub fn projectionAccepted(self: *const State) bool {
@@ -757,6 +981,12 @@ pub const State = struct {
         return self.persisted_draft_status;
     }
 
+    pub fn draftProvenanceStatus(
+        self: *const State,
+    ) ?DraftProvenanceStatus {
+        return self.persisted_draft_provenance;
+    }
+
     /// Mints only an opaque exact-workspace identity through the attached
     /// Store's CSPRNG. The caller receives no Store or persistence capability.
     pub fn generateExactWorkspaceId(
@@ -828,7 +1058,7 @@ pub const State = struct {
                 filingPeriodEnd(period) catch return .{}
             else
                 quarterEnd(request.tax_year, request.quarter) catch return .{});
-        var filer = (profile_persistence.loadEffectiveRevision(
+        var filer = (loadEffectiveRevisionForFiling(
             store,
             allocator,
             request.filer_profile_id,
@@ -1040,7 +1270,13 @@ pub const State = struct {
         {
             return error.ExistingDraftMismatch;
         }
+        const provenance_status = try loadPersistedDraftProvenanceStatus(
+            store,
+            allocator,
+            id,
+        );
         try self.adoptPersistedDraft(&draft, .resumed);
+        self.persisted_draft_provenance = provenance_status;
         return true;
     }
 
@@ -1328,6 +1564,7 @@ pub const State = struct {
         self.persisted_draft_id = null;
         self.persisted_draft_disposition = null;
         self.persisted_draft_status = null;
+        self.persisted_draft_provenance = null;
     }
 
     fn setProjectionNotice(
@@ -1347,6 +1584,13 @@ pub const State = struct {
     }
 
     fn setErrorNotice(self: *State, err: anyerror) void {
+        if (err == error.DraftProvenanceCorrupt) {
+            self.setNotice(
+                .failure,
+                "Draft provenance is corrupt. The draft was blocked and no filing values were changed.",
+            );
+            return;
+        }
         self.setNoticeFmt(
             .failure,
             "Tax-profile form state error: {s}.",
@@ -1379,6 +1623,31 @@ pub const State = struct {
         self.notice_kind_value = kind;
     }
 };
+
+fn loadPersistedDraftProvenanceStatus(
+    store: *store_module.Store,
+    allocator: std.mem.Allocator,
+    draft_id: ids.DraftId,
+) !DraftProvenanceStatus {
+    var loaded = form_persistence.loadDraftProvenance(
+        store,
+        allocator,
+        draft_id,
+    ) catch |err| switch (err) {
+        error.OutOfMemory,
+        error.Closed,
+        error.SqliteBusy,
+        error.NotFound,
+        => return err,
+        else => return error.DraftProvenanceCorrupt,
+    };
+    defer loaded.deinit(allocator);
+    return switch (loaded) {
+        .provenance_legacy_absent => .legacy_absent,
+        .exact => .exact,
+        .corrupt => error.DraftProvenanceCorrupt,
+    };
+}
 
 fn fillActivityCandidates(
     cache: *ActivityCandidateCache,
@@ -1639,6 +1908,45 @@ fn persistFullTestRevision(
     }
 }
 
+fn configure2551QDraftProvenanceSources(
+    allocator: std.mem.Allocator,
+    store: *store_module.Store,
+    profile_id: model.ProfileId,
+) !void {
+    const definition = catalog.findForm("2551Q").?;
+    const registrations = [_]store_module.FormRegistrationWrite{.{
+        .form_code = definition.code,
+        .form_revision = definition.revision.?,
+    }};
+    try store.createFormSet(
+        profile_id.asSlice(),
+        2026,
+        &registrations,
+    );
+
+    const values = [_]taxpayer_year.SettingValue{.{
+        .income_tax_rate_election = .eight_percent,
+    }};
+    const revision: taxpayer_year.Revision = .{
+        .id = try taxpayer_year.RevisionId.parse(
+            "ui-2551q-taxpayer-year-r1",
+        ),
+        .stream = .{ .profile_id = profile_id, .tax_year = 2026 },
+        .sequence = 1,
+        .effective = try taxpayer_year.fullTaxYearPeriod(2026),
+        .review_state = .confirmed,
+        .confirmed_at_unix_seconds = 1,
+        .source = .manual_entry,
+        .values = &values,
+    };
+    try profile_persistence.appendTaxpayerYearRevision(
+        store,
+        allocator,
+        0,
+        &revision,
+    );
+}
+
 test "all ten static editors project catalog profile targets and cache values" {
     const allocator = std.testing.allocator;
     var store = try store_module.Store.openMemory(allocator);
@@ -1713,11 +2021,43 @@ test "all ten static editors project catalog profile targets and cache values" {
         state.filerText(.taxpayer_name),
     );
     try std.testing.expectEqualStrings(
+        "",
+        state.filerText(.line_of_business),
+    );
+    try std.testing.expectEqualStrings("", state.filerText(.atc));
+    try std.testing.expectEqual(@as(usize, 1), state.activityCandidates(.filer).len);
+
+    const form_0605 = catalog.findForm("0605").?;
+    var found_optional_activity_seed = false;
+    for (form_0605.fields) |catalog_field| {
+        if (!std.mem.eql(
+            u8,
+            catalog_field.id,
+            "0605.1999-07-ENCS.input.line_of_business_occupation",
+        )) continue;
+        found_optional_activity_seed = true;
+        try std.testing.expectEqual(
+            catalog.Provenance.transaction,
+            catalog_field.provenance,
+        );
+        try std.testing.expectEqualStrings(
+            "business_activity.line_of_business",
+            catalog_field.optional_seed_source.?,
+        );
+    }
+    try std.testing.expect(found_optional_activity_seed);
+
+    try state.open(.{
+        .form = editor_revisions[3],
+        .filer_profile_id = person,
+        .tax_year = 2026,
+        .quarter = 1,
+    });
+    try std.testing.expectEqualStrings(
         "Software consulting",
         state.filerText(.line_of_business),
     );
-    try std.testing.expectEqualStrings("PT010", state.filerText(.atc));
-    try std.testing.expectEqual(@as(usize, 1), state.activityCandidates(.filer).len);
+    try std.testing.expectEqualStrings("", state.filerText(.atc));
 
     try state.open(.{
         .form = editor_revisions[4],
@@ -1732,7 +2072,168 @@ test "all ten static editors project catalog profile targets and cache values" {
     );
 }
 
-test "typed catalog periods save and resume generic editor workspaces" {
+test "confirmed v16 Registration activity replaces unmatched legacy activity for launch projection" {
+    const allocator = std.testing.allocator;
+    var store = try store_module.Store.openMemory(allocator);
+    defer store.close();
+    try persistFullTestRevision(
+        &store,
+        "profile-registration-authority",
+        "revision-registration-authority-1",
+        1,
+        .sole_proprietor,
+        "REGISTRATION AUTHORITY TAXPAYER",
+        "456-789-012-000",
+    );
+    const registration_activities =
+        [_]store_module.RegistrationActivityRevisionWrite{.{
+            .anchor_id = "v16-consulting-only",
+            .metadata = .{
+                .id = "v16-consulting-only-r1",
+                .expected_component_sequence = 0,
+                .effective = .{ .from = "2026-01-01".* },
+                .source = .manual_entry,
+                .review_state = .confirmed,
+                .confirmed_at_unix_seconds = 1,
+            },
+            .line_of_business = "V16 consulting authority",
+            .atc = "PT020",
+        }};
+    try std.testing.expectEqual(
+        @as(u32, 1),
+        try store.appendRegistrationCommit(.{
+            .profile_id = "profile-registration-authority",
+            .expected_current_sequence = 0,
+            .activities = &registration_activities,
+        }),
+    );
+
+    const profile_id = try model.ProfileId.parse(
+        "profile-registration-authority",
+    );
+    var state = State.init(allocator, &store);
+    defer state.deinit();
+    const request: OpenRequest = .{
+        .form = editor_revisions[3],
+        .filer_profile_id = profile_id,
+        .tax_year = 2026,
+        .quarter = 3,
+        .filing_period = .{ .monthly = .{
+            .tax_year = 2026,
+            .month = 8,
+        } },
+        .profile_as_of = try model.Date.parseIso("2026-08-31"),
+    };
+    const assessment = state.assessLaunch(request);
+    try std.testing.expectEqual(LaunchStatus.ready_new, assessment.status);
+    try std.testing.expectEqual(LaunchBlocker.none, assessment.blocker);
+
+    try state.open(request);
+    try std.testing.expect(state.projectionAccepted());
+    try std.testing.expectEqual(@as(usize, 1), state.activityCandidates(.filer).len);
+    const activity = &state.activityCandidates(.filer)[0];
+    try std.testing.expectEqualStrings(
+        "v16-consulting-only",
+        activity.id.asSlice(),
+    );
+    try std.testing.expectEqualStrings(
+        "V16 consulting authority",
+        state.filerText(.line_of_business),
+    );
+}
+
+test "retired last Registration activity never revives legacy profile activity" {
+    const allocator = std.testing.allocator;
+    var store = try store_module.Store.openMemory(allocator);
+    defer store.close();
+    try persistFullTestRevision(
+        &store,
+        "profile-registration-empty-authority",
+        "revision-registration-empty-authority-1",
+        1,
+        .sole_proprietor,
+        "REGISTRATION EMPTY AUTHORITY",
+        "456-789-013-000",
+    );
+
+    const registration_activity =
+        [_]store_module.RegistrationActivityRevisionWrite{.{
+            .anchor_id = "activity-primary",
+            .metadata = .{
+                .id = "registration-empty-authority-r1",
+                .expected_component_sequence = 0,
+                .effective = .{ .from = "2026-01-01".* },
+                .source = .manual_entry,
+                .review_state = .confirmed,
+                .confirmed_at_unix_seconds = 1,
+            },
+            .line_of_business = "Registration-owned consulting",
+            .atc = "PT020",
+        }};
+    _ = try store.appendRegistrationCommit(.{
+        .profile_id = "profile-registration-empty-authority",
+        .expected_current_sequence = 0,
+        .activities = &registration_activity,
+    });
+    const retirement = [_]store_module.RegistrationActivityRevisionWrite{.{
+        .anchor_id = "activity-primary",
+        .metadata = .{
+            .id = "registration-empty-authority-r2",
+            .expected_component_sequence = 1,
+            .effective = .{ .from = "2026-08-01".* },
+            .record_state = .retired,
+            .source = .manual_entry,
+            .review_state = .confirmed,
+            .confirmed_at_unix_seconds = 2,
+            .supersedes_id = "registration-empty-authority-r1",
+        },
+        .line_of_business = "Registration-owned consulting",
+        .atc = "PT020",
+    }};
+    _ = try store.appendRegistrationCommit(.{
+        .profile_id = "profile-registration-empty-authority",
+        .expected_current_sequence = 1,
+        .activities = &retirement,
+    });
+
+    const profile_id = try model.ProfileId.parse(
+        "profile-registration-empty-authority",
+    );
+    const effective_on = try model.Date.parseIso("2026-08-31");
+    var effective = (try loadEffectiveRevisionForFiling(
+        &store,
+        allocator,
+        profile_id,
+        effective_on,
+    )).?;
+    defer effective.deinit(allocator);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        effective.revision.business_activities.len,
+    );
+
+    var state = State.init(allocator, &store);
+    defer state.deinit();
+    const request: OpenRequest = .{
+        .form = editor_revisions[3],
+        .filer_profile_id = profile_id,
+        .tax_year = 2026,
+        .quarter = 3,
+        .filing_period = .{ .monthly = .{
+            .tax_year = 2026,
+            .month = 8,
+        } },
+        .profile_as_of = effective_on,
+    };
+    try state.open(request);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        state.activityCandidates(.filer).len,
+    );
+    try std.testing.expect(!state.projectionAccepted());
+}
+
+test "typed catalog periods retain identity and block unconfigured provenance" {
     const allocator = std.testing.allocator;
     var store = try store_module.Store.openMemory(allocator);
     defer store.close();
@@ -1760,8 +2261,11 @@ test "typed catalog periods save and resume generic editor workspaces" {
         filing_period.FilingPeriod{ .annual = .{ .tax_year = 2026 } },
         annual.filingPeriod().?,
     );
-    const annual_saved = try annual.saveRecurringDraft();
-    try std.testing.expectEqual(DraftDisposition.created, annual_saved.disposition);
+    try std.testing.expectError(
+        error.MissingFormsSetDecision,
+        annual.saveRecurringDraft(),
+    );
+    try std.testing.expect(annual.draftId() == null);
     annual.deinit();
 
     var monthly = State.init(allocator, &store);
@@ -1778,30 +2282,19 @@ test "typed catalog periods save and resume generic editor workspaces" {
         filing_period.FilingPeriod{ .monthly = .{ .tax_year = 2026, .month = 2 } },
         monthly.filingPeriod().?,
     );
-    const monthly_saved = try monthly.saveRecurringDraft();
-    try std.testing.expectEqual(DraftDisposition.created, monthly_saved.disposition);
-
-    var resumed = State.init(allocator, &store);
-    defer resumed.deinit();
-    try resumed.open(.{
-        .form = ids.FormRevision.initComptime("1701", "2018-01-ENCS"),
-        .filer_profile_id = profile_id,
-        .tax_year = 2026,
-        .quarter = 4,
-        .filing_period = .{ .annual = .{ .tax_year = 2026 } },
-    });
-    try std.testing.expectEqual(
-        DraftDisposition.resumed,
-        resumed.draftDisposition().?,
+    try std.testing.expectError(
+        error.MissingFormsSetDecision,
+        monthly.saveRecurringDraft(),
     );
+    try std.testing.expect(monthly.draftId() == null);
     var label_buffer: [32]u8 = undefined;
     try std.testing.expectEqualStrings(
-        "2026 Annual",
-        try resumed.filingPeriod().?.label(&label_buffer),
+        "2026 February",
+        try monthly.filingPeriod().?.label(&label_buffer),
     );
 }
 
-test "2551Q saves exactly seven fields and open immediately resumes immutable snapshot" {
+test "2551Q UI atomically creates exact provenance and safely replaces resumed transaction values" {
     const allocator = std.testing.allocator;
     var store = try store_module.Store.openMemory(allocator);
     defer store.close();
@@ -1815,6 +2308,11 @@ test "2551Q saves exactly seven fields and open immediately resumes immutable sn
         "456-789-012-000",
     );
     const profile_id = try model.ProfileId.parse("profile-2551q");
+    try configure2551QDraftProvenanceSources(
+        allocator,
+        &store,
+        profile_id,
+    );
 
     var state = State.init(allocator, &store);
     try state.open(.{
@@ -1832,6 +2330,10 @@ test "2551Q saves exactly seven fields and open immediately resumes immutable sn
     const created = try state.saveRecurringDraftWithValues(&initial_values);
     try std.testing.expectEqual(DraftDisposition.created, created.disposition);
     try std.testing.expect(state.profileSnapshotLocked());
+    try std.testing.expectEqual(
+        DraftProvenanceStatus.exact,
+        state.draftProvenanceStatus().?,
+    );
     const created_id = created.id;
     state.deinit();
 
@@ -1848,6 +2350,10 @@ test "2551Q saves exactly seven fields and open immediately resumes immutable sn
         stored.values[0].value_text,
     );
     try std.testing.expectEqualStrings("2026-03-31", stored.profile_as_of);
+    try std.testing.expectEqual(
+        @as(u32, 1),
+        try store.draftProvenanceSequence(created_id.asSlice()),
+    );
 
     try persistFullTestRevision(
         &store,
@@ -1869,6 +2375,10 @@ test "2551Q saves exactly seven fields and open immediately resumes immutable sn
     try std.testing.expectEqual(
         DraftDisposition.resumed,
         resumed_state.draftDisposition().?,
+    );
+    try std.testing.expectEqual(
+        DraftProvenanceStatus.exact,
+        resumed_state.draftProvenanceStatus().?,
     );
     try std.testing.expectEqualStrings(
         "OLD TAXPAYER NAME",
@@ -1898,6 +2408,214 @@ test "2551Q saves exactly seven fields and open immediately resumes immutable sn
     defer updated.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 1), updated.values.len);
     try std.testing.expectEqualStrings("5.00", updated.values[0].value_text);
+}
+
+test "2551Q UI resumes pre-v17 draft with explicit legacy provenance status" {
+    const allocator = std.testing.allocator;
+    var store = try store_module.Store.openMemory(allocator);
+    defer store.close();
+    try persistFullTestRevision(
+        &store,
+        "profile-2551q-legacy",
+        "revision-2551q-legacy-1",
+        1,
+        .sole_proprietor,
+        "LEGACY PROVENANCE TAXPAYER",
+        "567-890-123-000",
+    );
+    const profile_id = try model.ProfileId.parse("profile-2551q-legacy");
+
+    var projected = State.init(allocator, &store);
+    try projected.open(.{
+        .form = form_2551q.revision,
+        .filer_profile_id = profile_id,
+        .tax_year = 2026,
+        .quarter = 2,
+    });
+    const initial_values = [_]store_module.DraftValueWrite{.{
+        .field_id = "2551Q.schedule.row-a.rate",
+        .value_text = "3.00",
+        .provenance = "legacy_test",
+    }};
+    var legacy = try form_persistence.createOrLoad(
+        allocator,
+        &store,
+        .{
+            .period = .{
+                .form = form_2551q.revision,
+                .tax_year = 2026,
+                .quarter = 2,
+            },
+            .filing_period = projected.filingPeriod(),
+            .role_bindings = projected.roleBindings(),
+            .snapshot = projected.snapshot().?,
+            .transaction_values = &initial_values,
+        },
+    );
+    const legacy_id = try ids.DraftId.parse(legacy.draft.id);
+    legacy.deinit(allocator);
+    projected.deinit();
+
+    var resumed = State.init(allocator, &store);
+    defer resumed.deinit();
+    try resumed.open(.{
+        .form = form_2551q.revision,
+        .filer_profile_id = profile_id,
+        .tax_year = 2026,
+        .quarter = 2,
+    });
+    try std.testing.expectEqual(
+        DraftProvenanceStatus.legacy_absent,
+        resumed.draftProvenanceStatus().?,
+    );
+    try std.testing.expectEqual(NoticeKind.warning, resumed.noticeKind());
+    try std.testing.expect(
+        std.mem.indexOf(u8, resumed.noticeText(), "without exact provenance") !=
+            null,
+    );
+
+    const replacement = [_]store_module.DraftValueWrite{.{
+        .field_id = "2551Q.schedule.row-a.rate",
+        .value_text = "5.00",
+        .provenance = "legacy_test",
+    }};
+    _ = try resumed.saveRecurringDraftWithValues(&replacement);
+    try std.testing.expectEqual(
+        DraftProvenanceStatus.legacy_absent,
+        resumed.draftProvenanceStatus().?,
+    );
+    try std.testing.expectEqual(
+        @as(u32, 0),
+        try store.draftProvenanceSequence(legacy_id.asSlice()),
+    );
+    var stored = (try store.getDraft(allocator, legacy_id.asSlice())).?;
+    defer stored.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), stored.values.len);
+    try std.testing.expectEqualStrings("5.00", stored.values[0].value_text);
+}
+
+test "2551Q UI blocks corrupt persisted provenance before adopting draft state" {
+    const allocator = std.testing.allocator;
+    var store = try store_module.Store.openMemory(allocator);
+    defer store.close();
+    try persistFullTestRevision(
+        &store,
+        "profile-2551q-corrupt",
+        "revision-2551q-corrupt-1",
+        1,
+        .sole_proprietor,
+        "CORRUPT PROVENANCE TAXPAYER",
+        "678-901-234-000",
+    );
+    const profile_id = try model.ProfileId.parse("profile-2551q-corrupt");
+    try configure2551QDraftProvenanceSources(
+        allocator,
+        &store,
+        profile_id,
+    );
+    const definition = catalog.findForm("2551Q").?;
+
+    var projected = State.init(allocator, &store);
+    try projected.open(.{
+        .form = form_2551q.revision,
+        .filer_profile_id = profile_id,
+        .tax_year = 2026,
+        .quarter = 3,
+    });
+    var prepared = try draft_provenance_runtime.prepare(
+        allocator,
+        &store,
+        &projected,
+        definition,
+        projected.filingPeriod().?,
+        null,
+    );
+    defer prepared.deinit();
+    const initial_values = [_]store_module.DraftValueWrite{.{
+        .field_id = "2551Q.schedule.row-a.rate",
+        .value_text = "3.00",
+        .provenance = "corrupt_test",
+    }};
+    var coarse = try form_persistence.createOrLoad(
+        allocator,
+        &store,
+        .{
+            .period = .{
+                .form = form_2551q.revision,
+                .tax_year = 2026,
+                .quarter = 3,
+            },
+            .filing_period = projected.filingPeriod(),
+            .role_bindings = projected.roleBindings(),
+            .snapshot = projected.snapshot().?,
+            .transaction_values = &initial_values,
+        },
+    );
+    const coarse_id = try ids.DraftId.parse(coarse.draft.id);
+    coarse.deinit(allocator);
+    projected.deinit();
+
+    const exact_decision = prepared.formSetDecision();
+    var applicability_date: store_module.DateText = undefined;
+    _ = prepared.composition.applicability_date.writeIso(
+        &applicability_date,
+    );
+    const taxpayer_revisions =
+        [_]store_module.DraftProvenanceTaxpayerRevisionWrite{.{
+            .role = .filer,
+            .profile_id = profile_id.asSlice(),
+            .revision_id = "revision-2551q-corrupt-1",
+            .revision_sequence = 1,
+        }};
+    try std.testing.expectEqual(
+        @as(u32, 1),
+        try store.appendDraftProvenance(.{
+            .draft_id = coarse_id.asSlice(),
+            .expected_current_sequence = 0,
+            .owner_profile_id = profile_id.asSlice(),
+            .tax_year = 2026,
+            .form_code = definition.code,
+            .form_revision = definition.revision.?,
+            .catalog_revision = catalog.catalog_revision,
+            .catalog_sha256 = catalog.catalog_sha256,
+            .setup_spec_revision = definition.tax_form_profile.spec_revision.?,
+            // Storage accepts a well-formed hash. Domain rehydration rejects
+            // it because it is not the generated 2551Q setup-spec hash.
+            .setup_spec_hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            .forms_set_decision = .{
+                .id = exact_decision.id.asSlice(),
+                .sequence = exact_decision.sequence,
+                .source = switch (exact_decision.source) {
+                    .manual => .manual,
+                    .imported => .imported,
+                    .cor => .cor,
+                },
+                .evidence_reference = exact_decision.evidence_reference,
+                .applicability_date = applicability_date,
+            },
+            .taxpayer_revisions = &taxpayer_revisions,
+        }),
+    );
+
+    var blocked = State.init(allocator, &store);
+    defer blocked.deinit();
+    try std.testing.expectError(
+        error.DraftProvenanceCorrupt,
+        blocked.open(.{
+            .form = form_2551q.revision,
+            .filer_profile_id = profile_id,
+            .tax_year = 2026,
+            .quarter = 3,
+        }),
+    );
+    try std.testing.expect(blocked.draftId() == null);
+    try std.testing.expect(blocked.draftProvenanceStatus() == null);
+    try std.testing.expect(!blocked.projectionAccepted());
+    try std.testing.expectEqual(NoticeKind.failure, blocked.noticeKind());
+    var unchanged = (try store.getDraft(allocator, coarse_id.asSlice())).?;
+    defer unchanged.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), unchanged.values.len);
+    try std.testing.expectEqualStrings("3.00", unchanged.values[0].value_text);
 }
 
 test "failed period validation clears prior form context instead of leaking it" {
@@ -1940,7 +2658,7 @@ test "failed period validation clears prior form context instead of leaking it" 
     try std.testing.expectEqual(NoticeKind.failure, state.noticeKind());
 }
 
-test "1701Q optional spouse persists named role and same profile is rejected for both income forms" {
+test "1701Q optional spouse projects named role while coarse draft persistence stays disabled" {
     const allocator = std.testing.allocator;
     var store = try store_module.Store.openMemory(allocator);
     defer store.close();
@@ -1982,11 +2700,11 @@ test "1701Q optional spouse persists named role and same profile is rejected for
         "JUAN DELA CRUZ",
         state.spouseText(.taxpayer_name),
     );
-    const saved = try state.saveRecurringDraft();
-    var draft = (try store.getDraft(allocator, saved.id.asSlice())).?;
-    defer draft.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 2), draft.bindings.len);
-    try std.testing.expectEqual(@as(usize, 0), draft.values.len);
+    try std.testing.expectError(
+        error.DraftPersistenceDisabled,
+        state.saveRecurringDraft(),
+    );
+    try std.testing.expect(state.draftId() == null);
 
     var rejected = State.init(allocator, &store);
     defer rejected.deinit();

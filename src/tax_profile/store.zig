@@ -12,7 +12,38 @@
 //! remains an immutable historical snapshot. Schema v7 adds owner-scoped,
 //! transactional counters for unique on-demand filing occurrences. Schema
 //! v10 gives imported revisions a durable key to the COR document they were
-//! accepted from.
+//! accepted from. Schema v11 adds a mutable local profile label to the profile
+//! shell without changing any immutable legal/taxpayer revision fact. Schema
+//! v12 gives repeated business and registration components stable,
+//! profile-scoped anchors while retaining their immutable revision rows.
+//! Schema v13 replaces the persisted sole-proprietor subject variant with an
+//! explicit natural-person classification and gives both natural persons and
+//! legal entities an optional trade name without rewriting revision identity.
+//! Schema v14 adds two independent append-only annual streams: taxpayer-year
+//! settings and generated-catalog Tax Form Profiles. The migration is
+//! additive, so all v13 profile, anchor, COR, draft, and snapshot bytes retain
+//! their original tables and row identities. Schema v15 adds exact,
+//! append-only Forms Set decision history alongside the retained v14
+//! projection tables. The decision migration reconstructs confirmed manual
+//! baselines and midyear overrides without rewriting those projections.
+//! Schema v16 adds an independent optimistic registration stream with stable
+//! activity/obligation anchors and immutable typed component revisions. The
+//! legacy profile-revision components remain intact as migration evidence.
+//! Schema v17 adds an immutable, independently readable provenance snapshot
+//! for newly composed form drafts. Existing coarse drafts deliberately keep
+//! no fabricated provenance row and continue to load as legacy/absent.
+//! Schema v18 widens the immutable Tax Form Profile copy-source contract so a
+//! prior-year copy may remain review-required before acknowledgement or be
+//! appended as confirmed after explicit review. The migration rebuilds only
+//! that parent table while preserving rowids, child rows, foreign keys, and
+//! every append-only guard.
+//! Schema v19 adds a structured provenance sidecar to each new exact-form
+//! revision. Existing exact rows remain explicitly legacy/absent; no annual
+//! setting or Tax Form Profile identity is fabricated during migration.
+//! Schema v20 widens Tax Form Profile prior-year provenance to retain the
+//! source form revision and setup-spec identity. This permits an explicitly
+//! reviewed semantic-key mapping across form revisions without relabelling the
+//! result as manual entry or weakening append-only source checks.
 
 const std = @import("std");
 const profile_field = @import("field.zig");
@@ -30,12 +61,13 @@ const exact_document = form_1701q_2018.document;
 const exact_validation = form_1701q_2018.validation;
 const exact_form_occurrences = form_1701q_2018.occurrences;
 const exact_transaction = form_1701q_2018.transaction;
+const form_catalog = @import("../forms/generated/catalog.zig");
 
 const sqlite = @cImport({
     @cInclude("sqlite3.h");
 });
 
-pub const latest_schema_version: u32 = 10;
+pub const latest_schema_version: u32 = 20;
 const migration_component = "tax_profile";
 pub const storage_classification =
     repository_opening.legacy_plaintext_repository_classification;
@@ -69,8 +101,12 @@ comptime {
 pub const Error = error{
     CanonicalTaxpayerIdentifierChanged,
     Closed,
+    ComponentAnchorKindConflict,
     DraftAlreadyExists,
     DraftAlternateLimitExceeded,
+    DraftProvenanceConflict,
+    DraftProvenanceInvalidBinding,
+    ExactDraftProvenanceLegacyAbsent,
     DraftRetainedValueLimitExceeded,
     DraftRevisionLimitExceeded,
     DraftSchemaMismatch,
@@ -78,6 +114,10 @@ pub const Error = error{
     DraftWorkspaceLimitExceeded,
     DuplicateCanonicalTin,
     FormSetAlreadyExists,
+    FormSetDecisionAlreadySuperseded,
+    FormSetDecisionConflict,
+    FormSetDecisionInvalidTransition,
+    FormSetDecisionOverlap,
     FormSetIntervalOutsideYear,
     FormSetIntervalOverlap,
     IdentityCorrectionConflict,
@@ -92,11 +132,22 @@ pub const Error = error{
     NoIdentityCorrection,
     NotFound,
     OnDemandOccurrenceLimitExceeded,
+    RegistrationComponentConflict,
+    RegistrationNoChanges,
+    RegistrationObligationConflict,
+    RegistrationStreamConflict,
     RevisionConflict,
     SchemaTooNew,
     SqliteBusy,
     SqliteConstraint,
     SqliteFailure,
+    TaxFormProfileInactive,
+    TaxFormProfileIntervalOverlap,
+    TaxFormProfileNoSetup,
+    TaxFormProfileReferenceInvalid,
+    TaxFormProfileSpecMismatch,
+    TaxFormProfileValueInvalid,
+    TaxpayerYearIntervalOverlap,
 };
 
 /// Opaque 128-bit identifiers are serialized as 32 lowercase hexadecimal
@@ -147,6 +198,17 @@ pub const SubjectKind = enum {
     }
 };
 
+pub const NaturalPersonClassification = enum {
+    classification_unknown,
+    pure_compensation,
+    self_employed,
+    mixed_income,
+
+    fn text(self: NaturalPersonClassification) []const u8 {
+        return @tagName(self);
+    }
+};
+
 pub const LegalEntityKind = enum {
     corporation,
     partnership,
@@ -189,6 +251,8 @@ pub const ContactWrite = struct {
 
 pub const IndividualWrite = struct {
     name: []const u8,
+    classification: NaturalPersonClassification = .classification_unknown,
+    trade_name: ?[]const u8 = null,
     date_of_birth: ?DateText = null,
     citizenship: ?[]const u8 = null,
     foreign_tax_number: ?[]const u8 = null,
@@ -201,6 +265,7 @@ pub const SoleProprietorWrite = struct {
 
 pub const LegalEntityWrite = struct {
     registered_name: []const u8,
+    trade_name: ?[]const u8 = null,
     kind: LegalEntityKind,
 };
 
@@ -227,6 +292,14 @@ pub const SubjectWrite = union(enum) {
 pub const ProfileCreate = struct {
     id: []const u8,
     status: ProfileStatus = .active,
+    /// Local app metadata. Null defaults once from the first accepted
+    /// legal/taxpayer name; it never follows later revision name changes.
+    label: ?[]const u8 = null,
+};
+
+pub const ProfileLabelWrite = struct {
+    profile_id: []const u8,
+    label: []const u8,
 };
 
 /// A cohesive immutable revision row. Repeated components are passed
@@ -248,8 +321,350 @@ pub const RevisionWrite = struct {
     cor_document_id: ?[]const u8 = null,
 };
 
+pub const TaxpayerYearReviewState = enum {
+    requires_review,
+    confirmed,
+
+    fn text(self: TaxpayerYearReviewState) []const u8 {
+        return @tagName(self);
+    }
+};
+
+pub const TaxpayerYearIncomeTaxRateElection = enum {
+    graduated,
+    eight_percent,
+};
+
+pub const TaxpayerYearDeductionMethod = enum {
+    itemized_deduction,
+    optional_standard_deduction,
+};
+
+pub const TaxpayerYearSettingValueWrite = union(enum) {
+    income_tax_rate_election: TaxpayerYearIncomeTaxRateElection,
+    deduction_method: TaxpayerYearDeductionMethod,
+};
+
+pub const TaxpayerYearPriorCopyWrite = struct {
+    source_profile_id: []const u8,
+    source_tax_year: u16,
+    source_revision_id: []const u8,
+    source_revision_sequence: u32,
+};
+
+pub const TaxpayerYearRevisionSourceWrite = union(enum) {
+    manual_entry,
+    imported: []const u8,
+    migrated: []const u8,
+    copied_from_prior_year: TaxpayerYearPriorCopyWrite,
+};
+
+/// One immutable candidate in the `(profile_id, tax_year)` stream. The
+/// expected sequence is an optimistic-write guard only and is never stored.
+pub const TaxpayerYearRevisionWrite = struct {
+    id: []const u8,
+    profile_id: []const u8,
+    tax_year: u16,
+    sequence: u32,
+    expected_current_sequence: u32,
+    effective: EffectivePeriodWrite,
+    review_state: TaxpayerYearReviewState,
+    confirmed_at_unix_seconds: ?i64 = null,
+    source: TaxpayerYearRevisionSourceWrite,
+    values: []const TaxpayerYearSettingValueWrite,
+};
+
+pub const OwnedTaxpayerYearRevisionSource = union(enum) {
+    manual_entry,
+    imported: []u8,
+    migrated: []u8,
+    copied_from_prior_year: struct {
+        source_profile_id: []u8,
+        source_tax_year: u16,
+        source_revision_id: []u8,
+        source_revision_sequence: u32,
+    },
+
+    pub fn deinit(
+        self: *OwnedTaxpayerYearRevisionSource,
+        allocator: std.mem.Allocator,
+    ) void {
+        switch (self.*) {
+            .manual_entry => {},
+            .imported => |value| allocator.free(value),
+            .migrated => |value| allocator.free(value),
+            .copied_from_prior_year => |copy| {
+                allocator.free(copy.source_profile_id);
+                allocator.free(copy.source_revision_id);
+            },
+        }
+        self.* = undefined;
+    }
+};
+
+pub const OwnedTaxpayerYearRevision = struct {
+    id: []u8,
+    profile_id: []u8,
+    tax_year: u16,
+    sequence: u32,
+    effective_from: []u8,
+    effective_until: []u8,
+    review_state: TaxpayerYearReviewState,
+    confirmed_at_unix_seconds: ?i64,
+    source: OwnedTaxpayerYearRevisionSource,
+    values: []TaxpayerYearSettingValueWrite,
+
+    pub fn deinit(
+        self: *OwnedTaxpayerYearRevision,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.id);
+        allocator.free(self.profile_id);
+        allocator.free(self.effective_from);
+        allocator.free(self.effective_until);
+        self.source.deinit(allocator);
+        allocator.free(self.values);
+        self.* = undefined;
+    }
+};
+
+pub const TaxpayerYearRevisionList = struct {
+    items: []OwnedTaxpayerYearRevision,
+
+    pub fn deinit(
+        self: *TaxpayerYearRevisionList,
+        allocator: std.mem.Allocator,
+    ) void {
+        for (self.items) |*item| item.deinit(allocator);
+        allocator.free(self.items);
+        self.* = undefined;
+    }
+};
+
+pub const TaxFormProfileReviewState = enum {
+    requires_review,
+    confirmed,
+
+    fn text(self: TaxFormProfileReviewState) []const u8 {
+        return @tagName(self);
+    }
+};
+
+pub const TaxFormProfileScalarValueWrite = union(enum) {
+    profile_id: []const u8,
+    business_activity_anchor_id: []const u8,
+    registration_obligation_anchor_id: []const u8,
+    text: []const u8,
+    boolean: bool,
+    integer: i64,
+    date: DateText,
+    year: u16,
+    choice: []const u8,
+
+    pub fn valueType(
+        self: TaxFormProfileScalarValueWrite,
+    ) form_catalog.TaxFormProfileValueType {
+        return switch (self) {
+            .profile_id => .profile_id,
+            .business_activity_anchor_id => .business_activity_anchor_id,
+            .registration_obligation_anchor_id => .registration_obligation_anchor_id,
+            .text => .text,
+            .boolean => .boolean,
+            .integer => .integer,
+            .date => .date,
+            .year => .year,
+            .choice => .choice,
+        };
+    }
+};
+
+pub const TaxFormProfileValueSourceWrite = union(enum) {
+    manual_confirmation,
+    copied_from_revision: []const u8,
+    migrated: []const u8,
+};
+
+pub const TaxFormProfileSetupValueWrite = struct {
+    semantic_key: form_catalog.TaxFormProfileSemanticKey,
+    role: form_catalog.Role,
+    value: TaxFormProfileScalarValueWrite,
+    source: TaxFormProfileValueSourceWrite = .manual_confirmation,
+};
+
+pub const TaxFormProfileRevisionSourceWrite = union(enum) {
+    manual_entry,
+    copied_from_prior_year: struct {
+        source_tax_year: u16,
+        source_form_revision: []const u8,
+        source_spec_revision: u32,
+        source_spec_hash: []const u8,
+        source_revision_id: []const u8,
+    },
+    migrated: []const u8,
+};
+
+/// One immutable annual setup candidate. Form code, editor revision, and
+/// generated setup-spec identity are all part of the persisted contract.
+pub const TaxFormProfileRevisionWrite = struct {
+    id: []const u8,
+    profile_id: []const u8,
+    tax_year: u16,
+    form_code: []const u8,
+    form_revision: []const u8,
+    sequence: u32,
+    expected_current_sequence: u32,
+    effective: EffectivePeriodWrite,
+    spec_revision: u32,
+    spec_hash: []const u8,
+    review_state: TaxFormProfileReviewState,
+    confirmed_at_unix_seconds: ?i64 = null,
+    source: TaxFormProfileRevisionSourceWrite,
+    values: []const TaxFormProfileSetupValueWrite,
+};
+
+pub const OwnedTaxFormProfileScalarValue = union(enum) {
+    profile_id: []u8,
+    business_activity_anchor_id: []u8,
+    registration_obligation_anchor_id: []u8,
+    text: []u8,
+    boolean: bool,
+    integer: i64,
+    date: []u8,
+    year: u16,
+    choice: []u8,
+
+    pub fn deinit(
+        self: *OwnedTaxFormProfileScalarValue,
+        allocator: std.mem.Allocator,
+    ) void {
+        switch (self.*) {
+            .profile_id,
+            .business_activity_anchor_id,
+            .registration_obligation_anchor_id,
+            .text,
+            .date,
+            .choice,
+            => |value| allocator.free(value),
+            .boolean, .integer, .year => {},
+        }
+        self.* = undefined;
+    }
+};
+
+pub const OwnedTaxFormProfileValueSource = union(enum) {
+    manual_confirmation,
+    copied_from_revision: []u8,
+    migrated: []u8,
+
+    pub fn deinit(
+        self: *OwnedTaxFormProfileValueSource,
+        allocator: std.mem.Allocator,
+    ) void {
+        switch (self.*) {
+            .manual_confirmation => {},
+            .copied_from_revision => |value| allocator.free(value),
+            .migrated => |value| allocator.free(value),
+        }
+        self.* = undefined;
+    }
+};
+
+pub const OwnedTaxFormProfileSetupValue = struct {
+    semantic_key: form_catalog.TaxFormProfileSemanticKey,
+    role: form_catalog.Role,
+    value: OwnedTaxFormProfileScalarValue,
+    source: OwnedTaxFormProfileValueSource,
+
+    pub fn deinit(
+        self: *OwnedTaxFormProfileSetupValue,
+        allocator: std.mem.Allocator,
+    ) void {
+        self.value.deinit(allocator);
+        self.source.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
+pub const OwnedTaxFormProfileRevisionSource = union(enum) {
+    manual_entry,
+    copied_from_prior_year: struct {
+        source_tax_year: u16,
+        source_form_revision: []u8,
+        source_spec_revision: u32,
+        source_spec_hash: []u8,
+        source_revision_id: []u8,
+    },
+    migrated: []u8,
+
+    pub fn deinit(
+        self: *OwnedTaxFormProfileRevisionSource,
+        allocator: std.mem.Allocator,
+    ) void {
+        switch (self.*) {
+            .manual_entry => {},
+            .copied_from_prior_year => |copy| {
+                allocator.free(copy.source_form_revision);
+                allocator.free(copy.source_spec_hash);
+                allocator.free(copy.source_revision_id);
+            },
+            .migrated => |value| allocator.free(value),
+        }
+        self.* = undefined;
+    }
+};
+
+pub const OwnedTaxFormProfileRevision = struct {
+    id: []u8,
+    profile_id: []u8,
+    tax_year: u16,
+    form_code: []u8,
+    form_revision: []u8,
+    sequence: u32,
+    effective_from: []u8,
+    effective_until: ?[]u8,
+    spec_revision: u32,
+    spec_hash: []u8,
+    review_state: TaxFormProfileReviewState,
+    confirmed_at_unix_seconds: ?i64,
+    source: OwnedTaxFormProfileRevisionSource,
+    values: []OwnedTaxFormProfileSetupValue,
+
+    pub fn deinit(
+        self: *OwnedTaxFormProfileRevision,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.id);
+        allocator.free(self.profile_id);
+        allocator.free(self.form_code);
+        allocator.free(self.form_revision);
+        allocator.free(self.effective_from);
+        freeOptional(allocator, self.effective_until);
+        allocator.free(self.spec_hash);
+        self.source.deinit(allocator);
+        for (self.values) |*value| value.deinit(allocator);
+        allocator.free(self.values);
+        self.* = undefined;
+    }
+};
+
+pub const TaxFormProfileRevisionList = struct {
+    items: []OwnedTaxFormProfileRevision,
+
+    pub fn deinit(
+        self: *TaxFormProfileRevisionList,
+        allocator: std.mem.Allocator,
+    ) void {
+        for (self.items) |*item| item.deinit(allocator);
+        allocator.free(self.items);
+        self.* = undefined;
+    }
+};
+
 pub const BusinessActivityWrite = struct {
     id: []const u8,
+    /// Stable profile-scoped identity. Null preserves legacy callers by using
+    /// `id`; later revisions may use a new row ID while retaining this anchor.
+    anchor_id: ?[]const u8 = null,
     line_of_business: []const u8,
     atc: ?[]const u8 = null,
     effective: EffectivePeriodWrite,
@@ -283,6 +698,9 @@ pub const RegistrationFactValueWrite = union(RegistrationFactKind) {
 
 pub const RegistrationFactWrite = struct {
     id: []const u8,
+    /// Stable profile-scoped identity. The anchor permanently records the
+    /// first fact kind and rejects reuse for another kind.
+    anchor_id: ?[]const u8 = null,
     effective: EffectivePeriodWrite,
     value: RegistrationFactValueWrite,
     ordinal: u32 = 0,
@@ -291,6 +709,17 @@ pub const RegistrationFactWrite = struct {
 pub const RevisionComponentsWrite = struct {
     business_activities: []const BusinessActivityWrite = &.{},
     registration_facts: []const RegistrationFactWrite = &.{},
+};
+
+pub const BusinessActivityAnchorRef = struct {
+    profile_id: []const u8,
+    anchor_id: []const u8,
+};
+
+pub const RegistrationFactAnchorRef = struct {
+    profile_id: []const u8,
+    anchor_id: []const u8,
+    kind: RegistrationFactKind,
 };
 
 pub const CivilStatusRevisionWrite = struct {
@@ -384,6 +813,981 @@ pub const FormSetIntervalSummaryList = struct {
         allocator: std.mem.Allocator,
     ) void {
         allocator.free(self.items);
+        self.* = undefined;
+    }
+};
+
+pub const FormSetDecisionState = enum {
+    active,
+    inactive,
+
+    fn text(self: FormSetDecisionState) []const u8 {
+        return @tagName(self);
+    }
+};
+
+pub const FormSetDecisionScope = enum {
+    whole_year,
+    interval,
+
+    fn text(self: FormSetDecisionScope) []const u8 {
+        return @tagName(self);
+    }
+};
+
+pub const FormSetDecisionSource = enum {
+    manual,
+    imported,
+    cor,
+
+    fn text(self: FormSetDecisionSource) []const u8 {
+        return @tagName(self);
+    }
+};
+
+pub const FormSetDecisionReviewState = enum {
+    confirmed,
+    review_required,
+    rejected,
+
+    fn text(self: FormSetDecisionReviewState) []const u8 {
+        return @tagName(self);
+    }
+};
+
+/// One exact append command. `expected_current_sequence` is an optimistic
+/// guard and is never stored. A null `effective_until` means tax-year end.
+pub const FormSetDecisionWrite = struct {
+    id: []const u8,
+    profile_id: []const u8,
+    tax_year: u16,
+    form_code: []const u8,
+    form_revision: []const u8,
+    expected_current_sequence: u32,
+    state: FormSetDecisionState,
+    scope: FormSetDecisionScope,
+    effective: EffectivePeriodWrite,
+    source: FormSetDecisionSource,
+    evidence_reference: ?[]const u8 = null,
+    review_state: FormSetDecisionReviewState,
+    supersedes_id: ?[]const u8 = null,
+};
+
+pub const OwnedFormSetDecision = struct {
+    id: []u8,
+    profile_id: []u8,
+    tax_year: u16,
+    form_code: []u8,
+    form_revision: []u8,
+    sequence: u32,
+    state: FormSetDecisionState,
+    scope: FormSetDecisionScope,
+    effective_from: []u8,
+    effective_until: ?[]u8,
+    source: FormSetDecisionSource,
+    evidence_reference: ?[]u8,
+    review_state: FormSetDecisionReviewState,
+    supersedes_id: ?[]u8,
+    created_at_unix_seconds: i64,
+
+    pub fn deinit(
+        self: *OwnedFormSetDecision,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.id);
+        allocator.free(self.profile_id);
+        allocator.free(self.form_code);
+        allocator.free(self.form_revision);
+        allocator.free(self.effective_from);
+        freeOptional(allocator, self.effective_until);
+        freeOptional(allocator, self.evidence_reference);
+        freeOptional(allocator, self.supersedes_id);
+        self.* = undefined;
+    }
+};
+
+pub const FormSetDecisionList = struct {
+    items: []OwnedFormSetDecision,
+
+    pub fn deinit(
+        self: *FormSetDecisionList,
+        allocator: std.mem.Allocator,
+    ) void {
+        for (self.items) |*item| item.deinit(allocator);
+        allocator.free(self.items);
+        self.* = undefined;
+    }
+};
+
+pub const ResolvedFormSetDecision = struct {
+    decision: ?OwnedFormSetDecision,
+    review_required: bool,
+
+    pub fn deinit(
+        self: *ResolvedFormSetDecision,
+        allocator: std.mem.Allocator,
+    ) void {
+        if (self.decision) |*decision| decision.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
+/// Closed storage vocabulary for the independent v16 registration stream.
+/// These tags mirror `registration.zig`; adapters, rather than SQL callers,
+/// own conversion to and from the allocation-free domain unions.
+pub const RegistrationComponentKind = enum {
+    business_activity,
+    registration_obligation,
+    agent_designation,
+    eopt_tier,
+    registration_activity_status,
+    special_law_or_treaty_basis,
+
+    fn text(self: RegistrationComponentKind) []const u8 {
+        return @tagName(self);
+    }
+};
+
+pub const RegistrationRecordState = enum {
+    present,
+    retired,
+
+    fn text(self: RegistrationRecordState) []const u8 {
+        return @tagName(self);
+    }
+};
+
+pub const RegistrationRecordSource = enum {
+    manual_entry,
+    documented,
+    imported,
+    migrated,
+
+    fn text(self: RegistrationRecordSource) []const u8 {
+        return @tagName(self);
+    }
+};
+
+pub const RegistrationRecordReviewState = enum {
+    requires_review,
+    confirmed,
+
+    fn text(self: RegistrationRecordReviewState) []const u8 {
+        return @tagName(self);
+    }
+};
+
+pub const RegistrationReviewReason = enum {
+    evidence_missing,
+    specificity_unknown,
+    migrated_without_confirmation,
+    manual_proposal,
+
+    fn text(self: RegistrationReviewReason) []const u8 {
+        return @tagName(self);
+    }
+};
+
+/// Metadata shared by every immutable registration component event.
+/// `expected_component_sequence` is an optimistic local-history guard and is
+/// not stored. The store appends exactly the next component sequence.
+pub const RegistrationRevisionMetadataWrite = struct {
+    id: []const u8,
+    expected_component_sequence: u32,
+    effective: EffectivePeriodWrite,
+    record_state: RegistrationRecordState = .present,
+    source: RegistrationRecordSource,
+    evidence_reference: ?[]const u8 = null,
+    review_state: RegistrationRecordReviewState,
+    review_reason: ?RegistrationReviewReason = null,
+    /// Null asks SQLite to record the transaction time for a confirmed row.
+    confirmed_at_unix_seconds: ?i64 = null,
+    supersedes_id: ?[]const u8 = null,
+};
+
+pub const RegistrationActivityRevisionWrite = struct {
+    anchor_id: []const u8,
+    metadata: RegistrationRevisionMetadataWrite,
+    line_of_business: []const u8,
+    atc: ?[]const u8 = null,
+};
+
+pub const RegistrationObligationKind = enum {
+    registered_income_tax,
+    vat,
+    percentage_tax,
+    withholding_compensation,
+    withholding_expanded,
+    withholding_final,
+    withholding_other,
+    withholding_unspecified_requires_review,
+    unknown_requires_review,
+
+    fn text(self: RegistrationObligationKind) []const u8 {
+        return @tagName(self);
+    }
+
+    fn requiresText(self: RegistrationObligationKind) bool {
+        return switch (self) {
+            .withholding_other,
+            .withholding_unspecified_requires_review,
+            .unknown_requires_review,
+            => true,
+            else => false,
+        };
+    }
+
+    fn requiresReview(self: RegistrationObligationKind) bool {
+        return self == .withholding_unspecified_requires_review or
+            self == .unknown_requires_review;
+    }
+};
+
+pub const RegistrationObligationRevisionWrite = struct {
+    anchor_id: []const u8,
+    metadata: RegistrationRevisionMetadataWrite,
+    kind: RegistrationObligationKind,
+    value_text: ?[]const u8 = null,
+};
+
+pub const RegistrationAgentDesignation = enum {
+    not_designated,
+    government_withholding_agent,
+    top_withholding_agent,
+    government_and_top_withholding_agent,
+    unknown_requires_review,
+
+    fn text(self: RegistrationAgentDesignation) []const u8 {
+        return @tagName(self);
+    }
+};
+
+pub const RegistrationEoptTier = enum {
+    not_applicable,
+    micro,
+    small,
+    medium,
+    large,
+    unknown_requires_review,
+
+    fn text(self: RegistrationEoptTier) []const u8 {
+        return @tagName(self);
+    }
+};
+
+pub const RegistrationActivityStatus = enum {
+    active,
+    inactive,
+    unknown_requires_review,
+
+    fn text(self: RegistrationActivityStatus) []const u8 {
+        return @tagName(self);
+    }
+};
+
+pub const RegistrationSpecialBasisKind = enum {
+    special_law,
+    treaty,
+    unknown_requires_review,
+
+    fn text(self: RegistrationSpecialBasisKind) []const u8 {
+        return @tagName(self);
+    }
+};
+
+pub const RegistrationAgentDesignationRevisionWrite = struct {
+    metadata: RegistrationRevisionMetadataWrite,
+    value: RegistrationAgentDesignation,
+};
+
+pub const RegistrationEoptTierRevisionWrite = struct {
+    metadata: RegistrationRevisionMetadataWrite,
+    value: RegistrationEoptTier,
+};
+
+pub const RegistrationActivityStatusRevisionWrite = struct {
+    metadata: RegistrationRevisionMetadataWrite,
+    value: RegistrationActivityStatus,
+};
+
+pub const RegistrationSpecialBasisRevisionWrite = struct {
+    metadata: RegistrationRevisionMetadataWrite,
+    kind: RegistrationSpecialBasisKind,
+    value_text: []const u8,
+};
+
+/// One atomic registration-stream commit. The stream advances once whether
+/// the desired-set diff appends one component event or many.
+pub const RegistrationCommitWrite = struct {
+    profile_id: []const u8,
+    expected_current_sequence: u32,
+    activities: []const RegistrationActivityRevisionWrite = &.{},
+    obligations: []const RegistrationObligationRevisionWrite = &.{},
+    agent_designations: []const RegistrationAgentDesignationRevisionWrite = &.{},
+    eopt_tiers: []const RegistrationEoptTierRevisionWrite = &.{},
+    activity_statuses: []const RegistrationActivityStatusRevisionWrite = &.{},
+    special_bases: []const RegistrationSpecialBasisRevisionWrite = &.{},
+};
+
+pub const OwnedRegistrationRevisionMetadata = struct {
+    id: []u8,
+    profile_id: []u8,
+    component_sequence: u32,
+    stream_sequence: u32,
+    effective_from: []u8,
+    effective_until: ?[]u8,
+    record_state: RegistrationRecordState,
+    source: RegistrationRecordSource,
+    evidence_reference: ?[]u8,
+    review_state: RegistrationRecordReviewState,
+    review_reason: ?RegistrationReviewReason,
+    confirmed_at_unix_seconds: ?i64,
+    supersedes_id: ?[]u8,
+    legacy_revision_id: ?[]u8,
+    legacy_component_id: ?[]u8,
+
+    pub fn deinit(
+        self: *OwnedRegistrationRevisionMetadata,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.id);
+        allocator.free(self.profile_id);
+        allocator.free(self.effective_from);
+        freeOptional(allocator, self.effective_until);
+        freeOptional(allocator, self.evidence_reference);
+        freeOptional(allocator, self.supersedes_id);
+        freeOptional(allocator, self.legacy_revision_id);
+        freeOptional(allocator, self.legacy_component_id);
+        self.* = undefined;
+    }
+};
+
+pub const OwnedRegistrationActivityRevision = struct {
+    anchor_id: []u8,
+    metadata: OwnedRegistrationRevisionMetadata,
+    line_of_business: []u8,
+    atc: ?[]u8,
+
+    pub fn deinit(
+        self: *OwnedRegistrationActivityRevision,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.anchor_id);
+        self.metadata.deinit(allocator);
+        allocator.free(self.line_of_business);
+        freeOptional(allocator, self.atc);
+        self.* = undefined;
+    }
+};
+
+pub const OwnedRegistrationObligationRevision = struct {
+    anchor_id: []u8,
+    metadata: OwnedRegistrationRevisionMetadata,
+    kind: RegistrationObligationKind,
+    value_text: ?[]u8,
+
+    pub fn deinit(
+        self: *OwnedRegistrationObligationRevision,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.anchor_id);
+        self.metadata.deinit(allocator);
+        freeOptional(allocator, self.value_text);
+        self.* = undefined;
+    }
+};
+
+fn OwnedRegistrationFactRevision(comptime Value: type) type {
+    return struct {
+        metadata: OwnedRegistrationRevisionMetadata,
+        value: Value,
+
+        pub fn deinit(
+            self: *@This(),
+            allocator: std.mem.Allocator,
+        ) void {
+            self.metadata.deinit(allocator);
+            self.* = undefined;
+        }
+    };
+}
+
+pub const OwnedRegistrationAgentDesignationRevision =
+    OwnedRegistrationFactRevision(RegistrationAgentDesignation);
+pub const OwnedRegistrationEoptTierRevision =
+    OwnedRegistrationFactRevision(RegistrationEoptTier);
+pub const OwnedRegistrationActivityStatusRevision =
+    OwnedRegistrationFactRevision(RegistrationActivityStatus);
+
+pub const OwnedRegistrationSpecialBasisRevision = struct {
+    metadata: OwnedRegistrationRevisionMetadata,
+    kind: RegistrationSpecialBasisKind,
+    value_text: []u8,
+
+    pub fn deinit(
+        self: *OwnedRegistrationSpecialBasisRevision,
+        allocator: std.mem.Allocator,
+    ) void {
+        self.metadata.deinit(allocator);
+        allocator.free(self.value_text);
+        self.* = undefined;
+    }
+};
+
+pub const OwnedRegistrationObligationAnchor = struct {
+    profile_id: []u8,
+    anchor_id: []u8,
+
+    pub fn deinit(
+        self: *OwnedRegistrationObligationAnchor,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.profile_id);
+        allocator.free(self.anchor_id);
+        self.* = undefined;
+    }
+};
+
+pub const RegistrationHistoryList = struct {
+    stream_sequence: u32,
+    activity_anchors: []OwnedBusinessActivityAnchor,
+    obligation_anchors: []OwnedRegistrationObligationAnchor,
+    activities: []OwnedRegistrationActivityRevision,
+    obligations: []OwnedRegistrationObligationRevision,
+    agent_designations: []OwnedRegistrationAgentDesignationRevision,
+    eopt_tiers: []OwnedRegistrationEoptTierRevision,
+    activity_statuses: []OwnedRegistrationActivityStatusRevision,
+    special_bases: []OwnedRegistrationSpecialBasisRevision,
+
+    pub fn deinit(
+        self: *RegistrationHistoryList,
+        allocator: std.mem.Allocator,
+    ) void {
+        for (self.activity_anchors) |*item| item.deinit(allocator);
+        allocator.free(self.activity_anchors);
+        for (self.obligation_anchors) |*item| item.deinit(allocator);
+        allocator.free(self.obligation_anchors);
+        for (self.activities) |*item| item.deinit(allocator);
+        allocator.free(self.activities);
+        for (self.obligations) |*item| item.deinit(allocator);
+        allocator.free(self.obligations);
+        for (self.agent_designations) |*item| item.deinit(allocator);
+        allocator.free(self.agent_designations);
+        for (self.eopt_tiers) |*item| item.deinit(allocator);
+        allocator.free(self.eopt_tiers);
+        for (self.activity_statuses) |*item| item.deinit(allocator);
+        allocator.free(self.activity_statuses);
+        for (self.special_bases) |*item| item.deinit(allocator);
+        allocator.free(self.special_bases);
+        self.* = undefined;
+    }
+};
+
+/// Closed v17 vocabulary for the immutable provenance attached to a composed
+/// form draft. SQL stores the discriminants separately from their values so a
+/// resume cannot reinterpret an old byte string as a different source kind.
+pub const DraftProvenanceTaxpayerFactKey = enum {
+    tin,
+    rdo_code,
+    taxpayer_name,
+    registered_name,
+    trade_name,
+    registered_address,
+    zip_code,
+    contact_number,
+    email_address,
+    subject_kind,
+    natural_person_classification,
+};
+
+pub const DraftProvenanceTaxpayerYearSettingKey = enum {
+    income_tax_rate_election,
+    deduction_method,
+};
+
+pub const DraftProvenanceActivityFactKey = enum {
+    line_of_business,
+    atc,
+};
+
+pub const DraftProvenanceObligationFactKey = enum {
+    registration_kind,
+};
+
+pub const DraftProvenanceSourceKeyWrite = union(enum) {
+    taxpayer_fact: struct {
+        role: form_catalog.Role,
+        key: DraftProvenanceTaxpayerFactKey,
+    },
+    taxpayer_year_setting: struct {
+        role: form_catalog.Role,
+        key: DraftProvenanceTaxpayerYearSettingKey,
+    },
+    tax_form_profile_value: struct {
+        role: form_catalog.Role,
+        key: form_catalog.TaxFormProfileSemanticKey,
+    },
+    business_activity_fact: struct {
+        role: form_catalog.Role,
+        anchor_id: []const u8,
+        key: DraftProvenanceActivityFactKey,
+    },
+    registration_obligation_fact: struct {
+        role: form_catalog.Role,
+        anchor_id: []const u8,
+        key: DraftProvenanceObligationFactKey,
+    },
+};
+
+pub const DraftProvenanceValueWrite = union(enum) {
+    text: []const u8,
+    choice: []const u8,
+    boolean: bool,
+    integer: i64,
+    date: DateText,
+    year: u16,
+    profile_id: []const u8,
+    business_activity_anchor_id: []const u8,
+    registration_obligation_anchor_id: []const u8,
+    income_tax_rate_election: TaxpayerYearIncomeTaxRateElection,
+    deduction_method: TaxpayerYearDeductionMethod,
+};
+
+pub const DraftProvenanceFormsSetDecisionWrite = struct {
+    id: []const u8,
+    sequence: u32,
+    source: FormSetDecisionSource,
+    evidence_reference: ?[]const u8 = null,
+    applicability_date: DateText,
+};
+
+pub const DraftProvenanceTaxpayerRevisionWrite = struct {
+    role: form_catalog.Role,
+    profile_id: []const u8,
+    revision_id: []const u8,
+    revision_sequence: u32,
+};
+
+pub const DraftProvenanceTaxpayerYearRevisionWrite = struct {
+    profile_id: []const u8,
+    tax_year: u16,
+    revision_id: []const u8,
+    revision_sequence: u32,
+};
+
+pub const DraftProvenanceTaxFormProfileRevisionWrite = struct {
+    profile_id: []const u8,
+    tax_year: u16,
+    form_code: []const u8,
+    form_revision: []const u8,
+    revision_id: []const u8,
+    revision_sequence: u32,
+    spec_revision: u32,
+    spec_hash: []const u8,
+};
+
+pub const DraftProvenanceComponentWrite = union(enum) {
+    business_activity: struct {
+        role: form_catalog.Role,
+        profile_id: []const u8,
+        anchor_id: []const u8,
+        revision_id: []const u8,
+        revision_sequence: u32,
+    },
+    registration_obligation: struct {
+        role: form_catalog.Role,
+        profile_id: []const u8,
+        anchor_id: []const u8,
+        revision_id: []const u8,
+        revision_sequence: u32,
+    },
+};
+
+pub const DraftProvenanceSourceSnapshotWrite = struct {
+    key: DraftProvenanceSourceKeyWrite,
+    copied_value: DraftProvenanceValueWrite,
+};
+
+pub const DraftProvenanceSeedSourceWrite = union(enum) {
+    tax_form_profile_revision: []const u8,
+    catalog_default: struct {
+        revision: []const u8,
+        sha256: []const u8,
+    },
+};
+
+pub const DraftProvenanceTransactionSeedWrite = struct {
+    filing_field: []const u8,
+    source_key: DraftProvenanceSourceKeyWrite,
+    source: DraftProvenanceSeedSourceWrite,
+    copied_seed_value: DraftProvenanceValueWrite,
+};
+
+/// One immutable provenance snapshot. `expected_current_sequence` is zero for
+/// the only legal append. A missing row is intentionally meaningful: it says
+/// the draft predates this exact provenance model.
+pub const DraftProvenanceWrite = struct {
+    draft_id: []const u8,
+    expected_current_sequence: u32,
+    owner_profile_id: []const u8,
+    tax_year: u16,
+    form_code: []const u8,
+    form_revision: []const u8,
+    catalog_revision: []const u8,
+    catalog_sha256: []const u8,
+    setup_spec_revision: u32,
+    setup_spec_hash: []const u8,
+    forms_set_decision: DraftProvenanceFormsSetDecisionWrite,
+    taxpayer_revisions: []const DraftProvenanceTaxpayerRevisionWrite,
+    taxpayer_year_revision: ?DraftProvenanceTaxpayerYearRevisionWrite = null,
+    tax_form_profile_revision: ?DraftProvenanceTaxFormProfileRevisionWrite = null,
+    components: []const DraftProvenanceComponentWrite = &.{},
+    source_snapshots: []const DraftProvenanceSourceSnapshotWrite = &.{},
+    transaction_seeds: []const DraftProvenanceTransactionSeedWrite = &.{},
+};
+
+/// Structured provenance attached to one exact draft revision. Taxpayer
+/// revision bindings are supplied for validation against the exact stream's
+/// existing role-binding rows, but are not persisted a second time.
+pub const ExactDraftProvenanceWrite = struct {
+    owner_profile_id: []const u8,
+    tax_year: u16,
+    form_code: []const u8,
+    form_revision: []const u8,
+    catalog_revision: []const u8,
+    catalog_sha256: []const u8,
+    setup_spec_revision: u32,
+    setup_spec_hash: []const u8,
+    forms_set_decision: DraftProvenanceFormsSetDecisionWrite,
+    taxpayer_revisions: []const DraftProvenanceTaxpayerRevisionWrite,
+    taxpayer_year_revision: ?DraftProvenanceTaxpayerYearRevisionWrite = null,
+    tax_form_profile_revision: ?DraftProvenanceTaxFormProfileRevisionWrite = null,
+    components: []const DraftProvenanceComponentWrite = &.{},
+    source_snapshots: []const DraftProvenanceSourceSnapshotWrite = &.{},
+    transaction_seeds: []const DraftProvenanceTransactionSeedWrite = &.{},
+};
+
+pub const OwnedDraftProvenanceSourceKey = union(enum) {
+    taxpayer_fact: struct {
+        role: form_catalog.Role,
+        key: DraftProvenanceTaxpayerFactKey,
+    },
+    taxpayer_year_setting: struct {
+        role: form_catalog.Role,
+        key: DraftProvenanceTaxpayerYearSettingKey,
+    },
+    tax_form_profile_value: struct {
+        role: form_catalog.Role,
+        key: form_catalog.TaxFormProfileSemanticKey,
+    },
+    business_activity_fact: struct {
+        role: form_catalog.Role,
+        anchor_id: []u8,
+        key: DraftProvenanceActivityFactKey,
+    },
+    registration_obligation_fact: struct {
+        role: form_catalog.Role,
+        anchor_id: []u8,
+        key: DraftProvenanceObligationFactKey,
+    },
+
+    pub fn deinit(
+        self: *OwnedDraftProvenanceSourceKey,
+        allocator: std.mem.Allocator,
+    ) void {
+        switch (self.*) {
+            .business_activity_fact => |value| allocator.free(value.anchor_id),
+            .registration_obligation_fact => |value| allocator.free(value.anchor_id),
+            else => {},
+        }
+        self.* = undefined;
+    }
+};
+
+pub const OwnedDraftProvenanceValue = union(enum) {
+    text: []u8,
+    choice: []u8,
+    boolean: bool,
+    integer: i64,
+    date: []u8,
+    year: u16,
+    profile_id: []u8,
+    business_activity_anchor_id: []u8,
+    registration_obligation_anchor_id: []u8,
+    income_tax_rate_election: TaxpayerYearIncomeTaxRateElection,
+    deduction_method: TaxpayerYearDeductionMethod,
+
+    pub fn deinit(
+        self: *OwnedDraftProvenanceValue,
+        allocator: std.mem.Allocator,
+    ) void {
+        switch (self.*) {
+            .text,
+            .choice,
+            .date,
+            .profile_id,
+            .business_activity_anchor_id,
+            .registration_obligation_anchor_id,
+            => |value| allocator.free(value),
+            else => {},
+        }
+        self.* = undefined;
+    }
+};
+
+pub const OwnedDraftProvenanceTaxpayerRevision = struct {
+    role: form_catalog.Role,
+    profile_id: []u8,
+    revision_id: []u8,
+    revision_sequence: u32,
+
+    pub fn deinit(
+        self: *OwnedDraftProvenanceTaxpayerRevision,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.profile_id);
+        allocator.free(self.revision_id);
+        self.* = undefined;
+    }
+};
+
+pub const OwnedDraftProvenanceTaxpayerYearRevision = struct {
+    profile_id: []u8,
+    tax_year: u16,
+    revision_id: []u8,
+    revision_sequence: u32,
+
+    pub fn deinit(
+        self: *OwnedDraftProvenanceTaxpayerYearRevision,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.profile_id);
+        allocator.free(self.revision_id);
+        self.* = undefined;
+    }
+};
+
+pub const OwnedDraftProvenanceTaxFormProfileRevision = struct {
+    profile_id: []u8,
+    tax_year: u16,
+    form_code: []u8,
+    form_revision: []u8,
+    revision_id: []u8,
+    revision_sequence: u32,
+    spec_revision: u32,
+    spec_hash: []u8,
+
+    pub fn deinit(
+        self: *OwnedDraftProvenanceTaxFormProfileRevision,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.profile_id);
+        allocator.free(self.form_code);
+        allocator.free(self.form_revision);
+        allocator.free(self.revision_id);
+        allocator.free(self.spec_hash);
+        self.* = undefined;
+    }
+};
+
+pub const OwnedDraftProvenanceComponent = struct {
+    kind: RegistrationComponentKind,
+    role: form_catalog.Role,
+    profile_id: []u8,
+    anchor_id: []u8,
+    revision_id: []u8,
+    revision_sequence: u32,
+
+    pub fn deinit(
+        self: *OwnedDraftProvenanceComponent,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.profile_id);
+        allocator.free(self.anchor_id);
+        allocator.free(self.revision_id);
+        self.* = undefined;
+    }
+};
+
+pub const OwnedDraftProvenanceSourceSnapshot = struct {
+    key: OwnedDraftProvenanceSourceKey,
+    copied_value: OwnedDraftProvenanceValue,
+
+    pub fn deinit(
+        self: *OwnedDraftProvenanceSourceSnapshot,
+        allocator: std.mem.Allocator,
+    ) void {
+        self.key.deinit(allocator);
+        self.copied_value.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
+pub const OwnedDraftProvenanceSeedSource = union(enum) {
+    tax_form_profile_revision: []u8,
+    catalog_default: struct {
+        revision: []u8,
+        sha256: []u8,
+    },
+
+    pub fn deinit(
+        self: *OwnedDraftProvenanceSeedSource,
+        allocator: std.mem.Allocator,
+    ) void {
+        switch (self.*) {
+            .tax_form_profile_revision => |id| allocator.free(id),
+            .catalog_default => |catalog| {
+                allocator.free(catalog.revision);
+                allocator.free(catalog.sha256);
+            },
+        }
+        self.* = undefined;
+    }
+};
+
+pub const OwnedDraftProvenanceTransactionSeed = struct {
+    filing_field: []u8,
+    source_key: OwnedDraftProvenanceSourceKey,
+    source: OwnedDraftProvenanceSeedSource,
+    copied_seed_value: OwnedDraftProvenanceValue,
+
+    pub fn deinit(
+        self: *OwnedDraftProvenanceTransactionSeed,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.filing_field);
+        self.source_key.deinit(allocator);
+        self.source.deinit(allocator);
+        self.copied_seed_value.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
+pub const OwnedDraftProvenance = struct {
+    draft_id: []u8,
+    sequence: u32,
+    owner_profile_id: []u8,
+    tax_year: u16,
+    form_code: []u8,
+    form_revision: []u8,
+    catalog_revision: []u8,
+    catalog_sha256: []u8,
+    setup_spec_revision: u32,
+    setup_spec_hash: []u8,
+    forms_set_decision: OwnedFormSetDecision,
+    forms_set_applicability_date: []u8,
+    taxpayer_revisions: []OwnedDraftProvenanceTaxpayerRevision,
+    taxpayer_year_revision: ?OwnedDraftProvenanceTaxpayerYearRevision,
+    tax_form_profile_revision: ?OwnedDraftProvenanceTaxFormProfileRevision,
+    components: []OwnedDraftProvenanceComponent,
+    source_snapshots: []OwnedDraftProvenanceSourceSnapshot,
+    transaction_seeds: []OwnedDraftProvenanceTransactionSeed,
+
+    pub fn deinit(
+        self: *OwnedDraftProvenance,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.draft_id);
+        allocator.free(self.owner_profile_id);
+        allocator.free(self.form_code);
+        allocator.free(self.form_revision);
+        allocator.free(self.catalog_revision);
+        allocator.free(self.catalog_sha256);
+        allocator.free(self.setup_spec_hash);
+        self.forms_set_decision.deinit(allocator);
+        allocator.free(self.forms_set_applicability_date);
+        for (self.taxpayer_revisions) |*item| item.deinit(allocator);
+        allocator.free(self.taxpayer_revisions);
+        if (self.taxpayer_year_revision) |*item| item.deinit(allocator);
+        if (self.tax_form_profile_revision) |*item| item.deinit(allocator);
+        for (self.components) |*item| item.deinit(allocator);
+        allocator.free(self.components);
+        for (self.source_snapshots) |*item| item.deinit(allocator);
+        allocator.free(self.source_snapshots);
+        for (self.transaction_seeds) |*item| item.deinit(allocator);
+        allocator.free(self.transaction_seeds);
+        self.* = undefined;
+    }
+};
+
+pub const DraftProvenanceLoad = union(enum) {
+    provenance_legacy_absent,
+    exact: OwnedDraftProvenance,
+
+    pub fn deinit(
+        self: *DraftProvenanceLoad,
+        allocator: std.mem.Allocator,
+    ) void {
+        switch (self.*) {
+            .provenance_legacy_absent => {},
+            .exact => |*exact| exact.deinit(allocator),
+        }
+        self.* = undefined;
+    }
+};
+
+pub const OwnedExactDraftProvenance = struct {
+    draft_identity: ExactDraftIdentity,
+    revision: DraftRevision,
+    provenance_digest: exact_identity.Sha256Digest,
+    owner_profile_id: []u8,
+    tax_year: u16,
+    form_code: []u8,
+    form_revision: []u8,
+    catalog_revision: []u8,
+    catalog_sha256: []u8,
+    setup_spec_revision: u32,
+    setup_spec_hash: []u8,
+    forms_set_decision: OwnedFormSetDecision,
+    forms_set_applicability_date: []u8,
+    taxpayer_revisions: []OwnedDraftProvenanceTaxpayerRevision,
+    taxpayer_year_revision: ?OwnedDraftProvenanceTaxpayerYearRevision,
+    tax_form_profile_revision: ?OwnedDraftProvenanceTaxFormProfileRevision,
+    components: []OwnedDraftProvenanceComponent,
+    source_snapshots: []OwnedDraftProvenanceSourceSnapshot,
+    transaction_seeds: []OwnedDraftProvenanceTransactionSeed,
+
+    pub fn deinit(
+        self: *OwnedExactDraftProvenance,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.owner_profile_id);
+        allocator.free(self.form_code);
+        allocator.free(self.form_revision);
+        allocator.free(self.catalog_revision);
+        allocator.free(self.catalog_sha256);
+        allocator.free(self.setup_spec_hash);
+        self.forms_set_decision.deinit(allocator);
+        allocator.free(self.forms_set_applicability_date);
+        for (self.taxpayer_revisions) |*item| item.deinit(allocator);
+        allocator.free(self.taxpayer_revisions);
+        if (self.taxpayer_year_revision) |*item| item.deinit(allocator);
+        if (self.tax_form_profile_revision) |*item| item.deinit(allocator);
+        for (self.components) |*item| item.deinit(allocator);
+        allocator.free(self.components);
+        for (self.source_snapshots) |*item| item.deinit(allocator);
+        allocator.free(self.source_snapshots);
+        for (self.transaction_seeds) |*item| item.deinit(allocator);
+        allocator.free(self.transaction_seeds);
+        self.* = undefined;
+    }
+};
+
+/// Exact rows created before schema v19 remain readable but carry no invented
+/// annual provenance. Decode failures are reported by the adapter as
+/// `corrupt`; the store itself returns the precise underlying error.
+pub const ExactDraftProvenanceLoad = union(enum) {
+    provenance_legacy_absent,
+    exact: OwnedExactDraftProvenance,
+
+    pub fn deinit(
+        self: *ExactDraftProvenanceLoad,
+        allocator: std.mem.Allocator,
+    ) void {
+        switch (self.*) {
+            .provenance_legacy_absent => {},
+            .exact => |*exact| exact.deinit(allocator),
+        }
         self.* = undefined;
     }
 };
@@ -525,6 +1929,9 @@ pub const OwnedProfileSummary = struct {
     status: ProfileStatus,
     current_revision_id: []u8,
     current_revision_sequence: u32,
+    /// Mutable local metadata used to identify the profile in this app.
+    profile_label: []u8,
+    /// Current immutable revision's legal/taxpayer name.
     display_name: []u8,
     tin: []u8,
     subject_kind: SubjectKind,
@@ -532,8 +1939,20 @@ pub const OwnedProfileSummary = struct {
     pub fn deinit(self: *OwnedProfileSummary, allocator: std.mem.Allocator) void {
         allocator.free(self.id);
         allocator.free(self.current_revision_id);
+        allocator.free(self.profile_label);
         allocator.free(self.display_name);
         allocator.free(self.tin);
+        self.* = undefined;
+    }
+};
+
+pub const OwnedProfileLabel = struct {
+    profile_id: []u8,
+    label: ?[]u8,
+
+    pub fn deinit(self: *OwnedProfileLabel, allocator: std.mem.Allocator) void {
+        allocator.free(self.profile_id);
+        freeOptional(allocator, self.label);
         self.* = undefined;
     }
 };
@@ -580,12 +1999,15 @@ pub const OwnedContact = struct {
 
 pub const OwnedIndividual = struct {
     name: []u8,
+    classification: NaturalPersonClassification,
+    trade_name: ?[]u8,
     date_of_birth: ?[]u8,
     citizenship: ?[]u8,
     foreign_tax_number: ?[]u8,
 
     pub fn deinit(self: *OwnedIndividual, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
+        freeOptional(allocator, self.trade_name);
         freeOptional(allocator, self.date_of_birth);
         freeOptional(allocator, self.citizenship);
         freeOptional(allocator, self.foreign_tax_number);
@@ -609,10 +2031,12 @@ pub const OwnedSoleProprietor = struct {
 
 pub const OwnedLegalEntity = struct {
     registered_name: []u8,
+    trade_name: ?[]u8,
     kind: LegalEntityKind,
 
     pub fn deinit(self: *OwnedLegalEntity, allocator: std.mem.Allocator) void {
         allocator.free(self.registered_name);
+        freeOptional(allocator, self.trade_name);
         self.* = undefined;
     }
 };
@@ -648,6 +2072,7 @@ pub const OwnedSubject = union(enum) {
 
 pub const OwnedBusinessActivity = struct {
     id: []u8,
+    anchor_id: []u8,
     line_of_business: []u8,
     atc: ?[]u8,
     effective_from: []u8,
@@ -659,6 +2084,7 @@ pub const OwnedBusinessActivity = struct {
         allocator: std.mem.Allocator,
     ) void {
         allocator.free(self.id);
+        allocator.free(self.anchor_id);
         allocator.free(self.line_of_business);
         freeOptional(allocator, self.atc);
         allocator.free(self.effective_from);
@@ -687,6 +2113,7 @@ pub const OwnedRegistrationFactValue = union(RegistrationFactKind) {
 
 pub const OwnedRegistrationFact = struct {
     id: []u8,
+    anchor_id: []u8,
     effective_from: []u8,
     effective_until: ?[]u8,
     value: OwnedRegistrationFactValue,
@@ -697,9 +2124,39 @@ pub const OwnedRegistrationFact = struct {
         allocator: std.mem.Allocator,
     ) void {
         allocator.free(self.id);
+        allocator.free(self.anchor_id);
         allocator.free(self.effective_from);
         freeOptional(allocator, self.effective_until);
         self.value.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
+pub const OwnedBusinessActivityAnchor = struct {
+    profile_id: []u8,
+    anchor_id: []u8,
+
+    pub fn deinit(
+        self: *OwnedBusinessActivityAnchor,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.profile_id);
+        allocator.free(self.anchor_id);
+        self.* = undefined;
+    }
+};
+
+pub const OwnedRegistrationFactAnchor = struct {
+    profile_id: []u8,
+    anchor_id: []u8,
+    kind: RegistrationFactKind,
+
+    pub fn deinit(
+        self: *OwnedRegistrationFactAnchor,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.profile_id);
+        allocator.free(self.anchor_id);
         self.* = undefined;
     }
 };
@@ -805,6 +2262,8 @@ pub const OwnedCorDocument = struct {
 pub const OwnedCanonicalTinOwner = struct {
     profile_id: []u8,
     status: ProfileStatus,
+    profile_label: ?[]u8,
+    /// Current immutable revision's legal/taxpayer name.
     display_name: ?[]u8,
 
     pub fn deinit(
@@ -812,6 +2271,7 @@ pub const OwnedCanonicalTinOwner = struct {
         allocator: std.mem.Allocator,
     ) void {
         allocator.free(self.profile_id);
+        freeOptional(allocator, self.profile_label);
         freeOptional(allocator, self.display_name);
         self.* = undefined;
     }
@@ -1459,8 +2919,260 @@ pub const Store = struct {
             try version.bindText(1, migration_component);
             try version.expectDone();
         }
+        if (current < 11) {
+            try self.exec(schema_v11);
+            var version = try self.prepare(
+                \\UPDATE app_component_migrations
+                \\SET version = 11, updated_at = unixepoch()
+                \\WHERE component = ?;
+            );
+            defer version.deinit();
+            try version.bindText(1, migration_component);
+            try version.expectDone();
+        }
+        if (current < 12) {
+            // Existing component IDs are editor-owned semantic keys. They can
+            // seed a profile-scoped anchor only when a registration key has
+            // never changed kind across revisions.
+            try self.validateLegacyComponentAnchorHistories();
+            try self.exec(schema_v12);
+            var version = try self.prepare(
+                \\UPDATE app_component_migrations
+                \\SET version = 12, updated_at = unixepoch()
+                \\WHERE component = ?;
+            );
+            defer version.deinit();
+            try version.bindText(1, migration_component);
+            try version.expectDone();
+        }
+        if (current < 13) {
+            // `sole_proprietor` was a storage variant for a natural person,
+            // not a distinct legal person. Its row already proves
+            // self-employment and retains the trade name in registered_name,
+            // so it can be normalized losslessly. A legacy `individual` row
+            // carries no such evidence and is marked unknown rather than
+            // guessed. Only subject payload columns change; revision keys,
+            // sequences, anchors, current pointers, and draft bindings remain
+            // untouched.
+            try self.exec(schema_v13);
+            var version = try self.prepare(
+                \\UPDATE app_component_migrations
+                \\SET version = 13, updated_at = unixepoch()
+                \\WHERE component = ?;
+            );
+            defer version.deinit();
+            try version.bindText(1, migration_component);
+            try version.expectDone();
+        }
+        if (current < 14) {
+            // Annual streams are additive schema only. Existing taxpayer
+            // revisions, component anchors, COR evidence, and every draft
+            // snapshot remain byte-for-byte untouched.
+            try self.exec(schema_v14);
+            var version = try self.prepare(
+                \\UPDATE app_component_migrations
+                \\SET version = 14, updated_at = unixepoch()
+                \\WHERE component = ?;
+            );
+            defer version.deinit();
+            try version.bindText(1, migration_component);
+            try version.expectDone();
+        }
+        if (current < 15) {
+            // Exact decision rows are additive. The v14 Forms Set parents,
+            // entries, and interval revisions stay untouched and continue to
+            // serve legacy callers while their truthful active/inactive
+            // projection is reconstructed as confirmed manual history.
+            try self.exec(schema_v15);
+            var version = try self.prepare(
+                \\UPDATE app_component_migrations
+                \\SET version = 15, updated_at = unixepoch()
+                \\WHERE component = ?;
+            );
+            defer version.deinit();
+            try version.bindText(1, migration_component);
+            try version.expectDone();
+        }
+        if (current < 16) {
+            // Registration is now an independent append-only stream. The
+            // legacy profile revision rows remain untouched and are linked by
+            // migration trace columns on the new component events.
+            try self.exec(schema_v16);
+            var version = try self.prepare(
+                \\UPDATE app_component_migrations
+                \\SET version = 16, updated_at = unixepoch()
+                \\WHERE component = ?;
+            );
+            defer version.deinit();
+            try version.bindText(1, migration_component);
+            try version.expectDone();
+        }
+        if (current < 17) {
+            // Exact draft provenance is additive. A missing provenance parent
+            // row remains the explicit representation for every pre-v17
+            // coarse draft; no legacy snapshot or transaction value is
+            // rewritten or guessed during migration.
+            try self.exec(schema_v17);
+            var version = try self.prepare(
+                \\UPDATE app_component_migrations
+                \\SET version = 17, updated_at = unixepoch()
+                \\WHERE component = ?;
+            );
+            defer version.deinit();
+            try version.bindText(1, migration_component);
+            try version.expectDone();
+        }
         try self.commit();
         committed = true;
+
+        // Changing a table-level CHECK requires SQLite's documented table
+        // rebuild procedure. Foreign-key enforcement cannot be toggled from
+        // inside the transaction above, so v18 is an independently atomic
+        // migration. A database upgrading from an older schema may therefore
+        // safely stop at v17 and retry this final step on its next open.
+        if (current < 18) try self.migrateToV18();
+        if (try self.schemaVersion() < 19) try self.migrateToV19();
+        if (try self.schemaVersion() < 20) try self.migrateToV20();
+    }
+
+    fn migrateToV18(self: *Store) !void {
+        if (try self.schemaVersion() != 17) return Error.SqliteFailure;
+
+        // `legacy_alter_table` keeps every child FK and trigger body pointed
+        // at the canonical table name while the old parent is temporarily
+        // renamed. Enforcement is disabled only for this transaction and a
+        // complete foreign-key check must pass before commit.
+        try self.exec("PRAGMA foreign_keys = OFF;");
+        var restore_pragmas = true;
+        defer if (restore_pragmas) {
+            self.exec("PRAGMA legacy_alter_table = OFF;") catch {};
+            self.exec("PRAGMA foreign_keys = ON;") catch {};
+        };
+        try self.exec("PRAGMA legacy_alter_table = ON;");
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        try self.exec(schema_v18);
+        {
+            var version = try self.prepare(
+                \\UPDATE app_component_migrations
+                \\SET version = 18, updated_at = unixepoch()
+                \\WHERE component = ? AND version = 17;
+            );
+            defer version.deinit();
+            try version.bindText(1, migration_component);
+            try version.expectDone();
+            if (sqlite.sqlite3_changes(try self.handle()) != 1) {
+                return Error.SqliteFailure;
+            }
+        }
+        {
+            var foreign_key_check = try self.prepare(
+                "PRAGMA foreign_key_check;",
+            );
+            defer foreign_key_check.deinit();
+            if (try foreign_key_check.step() != .done) {
+                return Error.SqliteFailure;
+            }
+        }
+        try self.commit();
+        committed = true;
+
+        try self.exec("PRAGMA legacy_alter_table = OFF;");
+        try self.exec("PRAGMA foreign_keys = ON;");
+        restore_pragmas = false;
+        if (!(try self.foreignKeysEnabled())) return Error.SqliteFailure;
+    }
+
+    fn migrateToV19(self: *Store) !void {
+        if (try self.schemaVersion() != 18) return Error.SqliteFailure;
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        try self.exec(schema_v19);
+        var version = try self.prepare(
+            \\UPDATE app_component_migrations
+            \\SET version = 19, updated_at = unixepoch()
+            \\WHERE component = ? AND version = 18;
+        );
+        defer version.deinit();
+        try version.bindText(1, migration_component);
+        try version.expectDone();
+        if (sqlite.sqlite3_changes(try self.handle()) != 1) {
+            return Error.SqliteFailure;
+        }
+
+        try self.commit();
+        committed = true;
+    }
+
+    fn migrateToV20(self: *Store) !void {
+        if (try self.schemaVersion() != 19) return Error.SqliteFailure;
+
+        // The v14/v18 parent FK encoded the target form revision in the copy
+        // source. Rebuilding is required to point the source FK at the retained
+        // source revision instead. Legacy rename behavior preserves every child
+        // and exact-provenance FK at the canonical parent table name.
+        try self.exec("PRAGMA foreign_keys = OFF;");
+        var restore_pragmas = true;
+        defer if (restore_pragmas) {
+            self.exec("PRAGMA legacy_alter_table = OFF;") catch {};
+            self.exec("PRAGMA foreign_keys = ON;") catch {};
+        };
+        try self.exec("PRAGMA legacy_alter_table = ON;");
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        try self.exec(schema_v20);
+        {
+            var version = try self.prepare(
+                \\UPDATE app_component_migrations
+                \\SET version = 20, updated_at = unixepoch()
+                \\WHERE component = ? AND version = 19;
+            );
+            defer version.deinit();
+            try version.bindText(1, migration_component);
+            try version.expectDone();
+            if (sqlite.sqlite3_changes(try self.handle()) != 1) {
+                return Error.SqliteFailure;
+            }
+        }
+        {
+            var foreign_key_check = try self.prepare(
+                "PRAGMA foreign_key_check;",
+            );
+            defer foreign_key_check.deinit();
+            if (try foreign_key_check.step() != .done) {
+                return Error.SqliteFailure;
+            }
+        }
+        try self.commit();
+        committed = true;
+
+        try self.exec("PRAGMA legacy_alter_table = OFF;");
+        try self.exec("PRAGMA foreign_keys = ON;");
+        restore_pragmas = false;
+        if (!(try self.foreignKeysEnabled())) return Error.SqliteFailure;
+    }
+
+    fn validateLegacyComponentAnchorHistories(self: *Store) !void {
+        var conflict = try self.prepare(
+            \\SELECT 1
+            \\FROM tax_profile_registration_facts
+            \\GROUP BY profile_id, id
+            \\HAVING COUNT(DISTINCT kind) <> 1
+            \\LIMIT 1;
+        );
+        defer conflict.deinit();
+        if (try conflict.step() == .row) {
+            return Error.ComponentAnchorKindConflict;
+        }
     }
 
     fn validateLegacyIdentityHistories(self: *Store) !void {
@@ -1610,7 +3322,10 @@ pub const Store = struct {
 
     pub fn createProfile(self: *Store, value: ProfileCreate) !void {
         try validateProfileCreate(value);
-        const sql: []const u8 = if (try self.schemaVersion() >= 6)
+        const schema_version = try self.schemaVersion();
+        const sql: []const u8 = if (schema_version >= 11)
+            "INSERT INTO tax_profiles(id, status, owner_id, local_label) VALUES (?, ?, (SELECT id FROM tax_profile_local_owner WHERE singleton = 1), ?);"
+        else if (schema_version >= 6)
             "INSERT INTO tax_profiles(id, status, owner_id) VALUES (?, ?, (SELECT id FROM tax_profile_local_owner WHERE singleton = 1));"
         else
             "INSERT INTO tax_profiles(id, status) VALUES (?, ?);";
@@ -1618,6 +3333,9 @@ pub const Store = struct {
         defer statement.deinit();
         try statement.bindText(1, value.id);
         try statement.bindText(2, value.status.text());
+        if (schema_version >= 11) {
+            try statement.bindOptionalText(3, value.label);
+        }
         try statement.expectDone();
     }
 
@@ -1655,7 +3373,10 @@ pub const Store = struct {
             return Error.DuplicateCanonicalTin;
         }
 
-        const profile_sql: []const u8 = if (try self.schemaVersion() >= 6)
+        const schema_version = try self.schemaVersion();
+        const profile_sql: []const u8 = if (schema_version >= 11)
+            "INSERT INTO tax_profiles(id, status, owner_id, local_label) VALUES (?, ?, (SELECT id FROM tax_profile_local_owner WHERE singleton = 1), ?);"
+        else if (schema_version >= 6)
             "INSERT INTO tax_profiles(id, status, owner_id) VALUES (?, ?, (SELECT id FROM tax_profile_local_owner WHERE singleton = 1));"
         else
             "INSERT INTO tax_profiles(id, status) VALUES (?, ?);";
@@ -1663,6 +3384,12 @@ pub const Store = struct {
         defer add_profile.deinit();
         try add_profile.bindText(1, profile.id);
         try add_profile.bindText(2, profile.status.text());
+        if (schema_version >= 11) {
+            try add_profile.bindText(
+                3,
+                profile.label orelse profileDefaultLabel(revision.subject),
+            );
+        }
         try add_profile.expectDone();
 
         try self.insertRevisionRows(revision, components);
@@ -1699,6 +3426,109 @@ pub const Store = struct {
         try statement.bindText(2, profile_id);
         try statement.expectDone();
         if (sqlite.sqlite3_changes(try self.handle()) == 0) return Error.NotFound;
+    }
+
+    /// Reads mutable local metadata independently from the current immutable
+    /// legal/taxpayer revision. A revision-less shell may not have a label yet.
+    pub fn getProfileLabel(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+    ) !?OwnedProfileLabel {
+        try validateOpaqueText(profile_id);
+        var statement = try self.prepare(
+            \\SELECT id, local_label
+            \\FROM tax_profiles
+            \\WHERE id = ?;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        if (try statement.step() == .done) return null;
+        const id = try dupColumn(allocator, statement.raw, 0);
+        errdefer allocator.free(id);
+        return .{
+            .profile_id = id,
+            .label = try dupOptionalColumn(allocator, statement.raw, 1),
+        };
+    }
+
+    /// Changes only the profile shell's local label. It neither appends nor
+    /// rewrites an effective taxpayer revision.
+    pub fn updateProfileLabel(
+        self: *Store,
+        value: ProfileLabelWrite,
+    ) !void {
+        try validateOpaqueText(value.profile_id);
+        try validateProfileLabel(value.label);
+        var statement = try self.prepare(
+            \\UPDATE tax_profiles
+            \\SET local_label = ?, updated_at = unixepoch()
+            \\WHERE id = ?;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, value.label);
+        try statement.bindText(2, value.profile_id);
+        try statement.expectDone();
+        if (sqlite.sqlite3_changes(try self.handle()) == 0) return Error.NotFound;
+    }
+
+    /// Resolves a stable business-activity identity without selecting any one
+    /// effective revision row. Future annual form setup can persist this key
+    /// and resolve the component value for its own effective date.
+    pub fn getBusinessActivityAnchor(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        reference: BusinessActivityAnchorRef,
+    ) !?OwnedBusinessActivityAnchor {
+        try validateBusinessActivityAnchorRef(reference);
+        var statement = try self.prepare(
+            \\SELECT profile_id, id
+            \\FROM tax_profile_business_activity_anchors
+            \\WHERE profile_id = ? AND id = ?;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, reference.profile_id);
+        try statement.bindText(2, reference.anchor_id);
+        if (try statement.step() == .done) return null;
+        const profile_id = try dupColumn(allocator, statement.raw, 0);
+        errdefer allocator.free(profile_id);
+        return .{
+            .profile_id = profile_id,
+            .anchor_id = try dupColumn(allocator, statement.raw, 1),
+        };
+    }
+
+    /// Resolves a stable registration identity only when both its taxpayer
+    /// owner and semantic fact kind agree with the requested reference.
+    pub fn getRegistrationFactAnchor(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        reference: RegistrationFactAnchorRef,
+    ) !?OwnedRegistrationFactAnchor {
+        try validateRegistrationFactAnchorRef(reference);
+        var statement = try self.prepare(
+            \\SELECT profile_id, id, kind
+            \\FROM tax_profile_registration_fact_anchors
+            \\WHERE profile_id = ? AND id = ? AND kind = ?;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, reference.profile_id);
+        try statement.bindText(2, reference.anchor_id);
+        try statement.bindText(3, reference.kind.text());
+        if (try statement.step() == .done) return null;
+        const profile_id = try dupColumn(allocator, statement.raw, 0);
+        errdefer allocator.free(profile_id);
+        const anchor_id = try dupColumn(allocator, statement.raw, 1);
+        errdefer allocator.free(anchor_id);
+        const kind_text = columnText(statement.raw, 2) orelse
+            return Error.SqliteFailure;
+        const kind = parseRegistrationFactKind(kind_text) orelse
+            return Error.SqliteFailure;
+        return .{
+            .profile_id = profile_id,
+            .anchor_id = anchor_id,
+            .kind = kind,
+        };
     }
 
     /// Appends an immutable revision and atomically advances the profile's
@@ -1765,6 +3595,17 @@ pub const Store = struct {
         try advance.expectDone();
         if (sqlite.sqlite3_changes(try self.handle()) != 1) {
             return Error.RevisionConflict;
+        }
+        if (try self.schemaVersion() >= 11) {
+            var default_label = try self.prepare(
+                \\UPDATE tax_profiles
+                \\SET local_label = COALESCE(local_label, ?)
+                \\WHERE id = ?;
+            );
+            defer default_label.deinit();
+            try default_label.bindText(1, profileDefaultLabel(value.subject));
+            try default_label.bindText(2, value.profile_id);
+            try default_label.expectDone();
         }
     }
 
@@ -1871,6 +3712,7 @@ pub const Store = struct {
 
         var statement = try self.prepare(
             \\SELECT anchor.profile_id, profile.status,
+            \\       profile.local_label,
             \\       COALESCE(revision.taxpayer_name, revision.registered_name)
             \\FROM tax_profile_identity_anchors AS anchor
             \\JOIN tax_profiles AS profile ON profile.id = anchor.profile_id
@@ -1899,10 +3741,13 @@ pub const Store = struct {
             return Error.SqliteFailure;
         const status = std.meta.stringToEnum(ProfileStatus, status_text) orelse
             return Error.InvalidValue;
-        const display_name = try dupOptionalColumn(allocator, statement.raw, 2);
+        const profile_label = try dupOptionalColumn(allocator, statement.raw, 2);
+        errdefer freeOptional(allocator, profile_label);
+        const display_name = try dupOptionalColumn(allocator, statement.raw, 3);
         return .{
             .profile_id = profile_id,
             .status = status,
+            .profile_label = profile_label,
             .display_name = display_name,
         };
     }
@@ -2328,7 +4173,38 @@ pub const Store = struct {
             .imported => |reference| reference,
             .migrated => |reference| reference,
         };
-        const subject_kind = value.subject.kind();
+        // Migration tests replay writes against older schemas, so both the
+        // revision and component column lists must match the open store.
+        const schema_version = try self.schemaVersion();
+        const link_supported = schema_version >= 10;
+        const component_anchors_supported = schema_version >= 12;
+        const natural_person_classification_supported = schema_version >= 13;
+        if (value.cor_document_id != null and !link_supported) {
+            return Error.InvalidValue;
+        }
+        const sole_trade_name: ?[]const u8 = switch (value.subject) {
+            .sole_proprietor => |proprietor| try soleProprietorTradeName(
+                proprietor,
+            ),
+            else => null,
+        };
+        if (!natural_person_classification_supported) switch (value.subject) {
+            .individual => |person| {
+                if (person.classification != .classification_unknown or
+                    person.trade_name != null)
+                {
+                    return Error.InvalidValue;
+                }
+            },
+            .sole_proprietor => {},
+            .legal_entity => |entity| {
+                if (entity.trade_name != null) return Error.InvalidValue;
+            },
+        };
+        const subject_kind: SubjectKind = if (natural_person_classification_supported) switch (value.subject) {
+            .individual, .sole_proprietor => .individual,
+            .legal_entity => value.subject.kind(),
+        } else value.subject.kind();
         const taxpayer_name: ?[]const u8 = switch (value.subject) {
             .individual => |person| person.name,
             .sole_proprietor => |proprietor| proprietor.person.name,
@@ -2336,7 +4212,10 @@ pub const Store = struct {
         };
         const registered_name: ?[]const u8 = switch (value.subject) {
             .individual => null,
-            .sole_proprietor => |proprietor| proprietor.trade_name,
+            .sole_proprietor => if (natural_person_classification_supported)
+                null
+            else
+                sole_trade_name,
             .legal_entity => |entity| entity.registered_name,
         };
         const individual: ?IndividualWrite = switch (value.subject) {
@@ -2344,13 +4223,32 @@ pub const Store = struct {
             .sole_proprietor => |proprietor| proprietor.person,
             .legal_entity => null,
         };
-        // Migration tests replay writes against pre-v10 schemas, so the
-        // column list must match what the open store actually has.
-        const link_supported = try self.schemaVersion() >= 10;
-        if (value.cor_document_id != null and !link_supported) {
-            return Error.InvalidValue;
-        }
-        const insert_sql: []const u8 = if (link_supported)
+        const natural_person_classification: ?NaturalPersonClassification =
+            if (!natural_person_classification_supported)
+                null
+            else switch (value.subject) {
+                .individual => |person| person.classification,
+                .sole_proprietor => .self_employed,
+                .legal_entity => null,
+            };
+        const trade_name: ?[]const u8 = if (!natural_person_classification_supported) null else switch (value.subject) {
+            .individual => |person| person.trade_name,
+            .sole_proprietor => sole_trade_name,
+            .legal_entity => |entity| entity.trade_name,
+        };
+        const insert_sql: []const u8 = if (natural_person_classification_supported)
+            \\INSERT INTO tax_profile_revisions (
+            \\    id, profile_id, sequence, effective_from, effective_until,
+            \\    source_tag, source_reference, tin, rdo_code,
+            \\    registered_address, zip_code, contact_number, email_address,
+            \\    subject_kind, taxpayer_name, registered_name,
+            \\    date_of_birth, citizenship, foreign_tax_number,
+            \\    natural_person_classification, trade_name, cor_document_id
+            \\) VALUES (
+            \\    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            \\    ?, ?, ?
+            \\);
+        else if (link_supported)
             \\INSERT INTO tax_profile_revisions (
             \\    id, profile_id, sequence, effective_from, effective_until,
             \\    source_tag, source_reference, tin, rdo_code,
@@ -2408,62 +4306,160 @@ pub const Store = struct {
             19,
             if (individual) |person| person.foreign_tax_number else null,
         );
-        if (link_supported) {
+        if (natural_person_classification_supported) {
+            try insert.bindOptionalText(
+                20,
+                if (natural_person_classification) |classification|
+                    classification.text()
+                else
+                    null,
+            );
+            try insert.bindOptionalText(21, trade_name);
+            try insert.bindOptionalText(22, value.cor_document_id);
+        } else if (link_supported) {
             try insert.bindOptionalText(20, value.cor_document_id);
         }
         try insert.expectDone();
 
-        var add_activity = try self.prepare(
+        const add_activity_sql: []const u8 = if (component_anchors_supported)
+            \\INSERT INTO tax_profile_business_activities (
+            \\    profile_id, revision_id, id, anchor_id,
+            \\    line_of_business, atc, effective_from,
+            \\    effective_until, ordinal
+            \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+        else
             \\INSERT INTO tax_profile_business_activities (
             \\    profile_id, revision_id, id, line_of_business, atc,
             \\    effective_from, effective_until, ordinal
             \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
-        );
+        ;
+        var add_activity = try self.prepare(add_activity_sql);
         defer add_activity.deinit();
         for (components.business_activities) |activity| {
+            const anchor_id = activity.anchor_id orelse activity.id;
+            if (component_anchors_supported) {
+                try self.ensureBusinessActivityAnchor(
+                    value.profile_id,
+                    anchor_id,
+                );
+            }
             try add_activity.bindText(1, value.profile_id);
             try add_activity.bindText(2, value.id);
             try add_activity.bindText(3, activity.id);
-            try add_activity.bindText(4, activity.line_of_business);
-            try add_activity.bindOptionalText(5, activity.atc);
-            try add_activity.bindDate(6, activity.effective.from[0..]);
-            try add_activity.bindOptionalDate(
-                7,
-                optionalDateSlice(&activity.effective.until),
-            );
-            try add_activity.bindInt64(8, activity.ordinal);
+            if (component_anchors_supported) {
+                try add_activity.bindText(4, anchor_id);
+                try add_activity.bindText(5, activity.line_of_business);
+                try add_activity.bindOptionalText(6, activity.atc);
+                try add_activity.bindDate(7, activity.effective.from[0..]);
+                try add_activity.bindOptionalDate(
+                    8,
+                    optionalDateSlice(&activity.effective.until),
+                );
+                try add_activity.bindInt64(9, activity.ordinal);
+            } else {
+                try add_activity.bindText(4, activity.line_of_business);
+                try add_activity.bindOptionalText(5, activity.atc);
+                try add_activity.bindDate(6, activity.effective.from[0..]);
+                try add_activity.bindOptionalDate(
+                    7,
+                    optionalDateSlice(&activity.effective.until),
+                );
+                try add_activity.bindInt64(8, activity.ordinal);
+            }
             try add_activity.expectDone();
             try add_activity.reset();
         }
 
-        var add_fact = try self.prepare(
+        const add_fact_sql: []const u8 = if (component_anchors_supported)
+            \\INSERT INTO tax_profile_registration_facts (
+            \\    profile_id, revision_id, id, anchor_id, kind,
+            \\    value_text, effective_from, effective_until, ordinal
+            \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+        else
             \\INSERT INTO tax_profile_registration_facts (
             \\    profile_id, revision_id, id, kind, value_text,
             \\    effective_from, effective_until, ordinal
             \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
-        );
+        ;
+        var add_fact = try self.prepare(add_fact_sql);
         defer add_fact.deinit();
         for (components.registration_facts) |fact| {
             const kind: RegistrationFactKind = fact.value;
+            const anchor_id = fact.anchor_id orelse fact.id;
             const fact_value: []const u8 = switch (fact.value) {
                 .tax_type => |text| text,
                 .government_withholding_agent => |answer| answer.text(),
                 .special_rate_basis => |text| text,
             };
+            if (component_anchors_supported) {
+                try self.ensureRegistrationFactAnchor(
+                    value.profile_id,
+                    anchor_id,
+                    kind,
+                );
+            }
             try add_fact.bindText(1, value.profile_id);
             try add_fact.bindText(2, value.id);
             try add_fact.bindText(3, fact.id);
-            try add_fact.bindText(4, kind.text());
-            try add_fact.bindText(5, fact_value);
-            try add_fact.bindDate(6, fact.effective.from[0..]);
-            try add_fact.bindOptionalDate(
-                7,
-                optionalDateSlice(&fact.effective.until),
-            );
-            try add_fact.bindInt64(8, fact.ordinal);
+            if (component_anchors_supported) {
+                try add_fact.bindText(4, anchor_id);
+                try add_fact.bindText(5, kind.text());
+                try add_fact.bindText(6, fact_value);
+                try add_fact.bindDate(7, fact.effective.from[0..]);
+                try add_fact.bindOptionalDate(
+                    8,
+                    optionalDateSlice(&fact.effective.until),
+                );
+                try add_fact.bindInt64(9, fact.ordinal);
+            } else {
+                try add_fact.bindText(4, kind.text());
+                try add_fact.bindText(5, fact_value);
+                try add_fact.bindDate(6, fact.effective.from[0..]);
+                try add_fact.bindOptionalDate(
+                    7,
+                    optionalDateSlice(&fact.effective.until),
+                );
+                try add_fact.bindInt64(8, fact.ordinal);
+            }
             try add_fact.expectDone();
             try add_fact.reset();
         }
+    }
+
+    fn ensureBusinessActivityAnchor(
+        self: *Store,
+        profile_id: []const u8,
+        anchor_id: []const u8,
+    ) !void {
+        var statement = try self.prepare(
+            \\INSERT INTO tax_profile_business_activity_anchors (
+            \\    profile_id, id
+            \\) VALUES (?, ?)
+            \\ON CONFLICT(profile_id, id) DO NOTHING;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindText(2, anchor_id);
+        try statement.expectDone();
+    }
+
+    fn ensureRegistrationFactAnchor(
+        self: *Store,
+        profile_id: []const u8,
+        anchor_id: []const u8,
+        kind: RegistrationFactKind,
+    ) !void {
+        var statement = try self.prepare(
+            \\INSERT INTO tax_profile_registration_fact_anchors (
+            \\    profile_id, id, kind
+            \\) VALUES (?, ?, ?)
+            \\ON CONFLICT(profile_id, id) DO NOTHING;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindText(2, anchor_id);
+        try statement.bindText(3, kind.text());
+        try statement.expectDone();
     }
 
     pub fn getCurrentRevision(
@@ -2472,23 +4468,41 @@ pub const Store = struct {
         profile_id: []const u8,
     ) !?OwnedProfileRevision {
         try validateOpaqueText(profile_id);
-        var statement = try self.prepare(
+        const canonical_subject = try self.schemaVersion() >= 13;
+        const sql: []const u8 = if (canonical_subject)
             \\SELECT r.id, r.sequence, r.profile_id, r.effective_from,
             \\       r.effective_until, r.source_tag, r.source_reference,
             \\       r.tin, r.rdo_code, r.registered_address, r.zip_code,
             \\       r.contact_number, r.email_address, r.subject_kind,
             \\       r.taxpayer_name, r.registered_name, r.date_of_birth,
-            \\       r.citizenship, r.foreign_tax_number
+            \\       r.citizenship, r.foreign_tax_number,
+            \\       r.natural_person_classification, r.trade_name
             \\FROM tax_profiles AS p
             \\JOIN tax_profile_revisions AS r
             \\  ON r.profile_id = p.id AND r.id = p.current_revision_id
             \\WHERE p.id = ?;
-        );
+        else
+            \\SELECT r.id, r.sequence, r.profile_id, r.effective_from,
+            \\       r.effective_until, r.source_tag, r.source_reference,
+            \\       r.tin, r.rdo_code, r.registered_address, r.zip_code,
+            \\       r.contact_number, r.email_address, r.subject_kind,
+            \\       r.taxpayer_name, r.registered_name, r.date_of_birth,
+            \\       r.citizenship, r.foreign_tax_number, NULL, NULL
+            \\FROM tax_profiles AS p
+            \\JOIN tax_profile_revisions AS r
+            \\  ON r.profile_id = p.id AND r.id = p.current_revision_id
+            \\WHERE p.id = ?;
+        ;
+        var statement = try self.prepare(sql);
         defer statement.deinit();
         try statement.bindText(1, profile_id);
         return switch (try statement.step()) {
             .done => null,
-            .row => try self.readRevision(allocator, statement.raw),
+            .row => try self.readRevision(
+                allocator,
+                statement.raw,
+                canonical_subject,
+            ),
         };
     }
 
@@ -2500,22 +4514,38 @@ pub const Store = struct {
     ) !?OwnedProfileRevision {
         try validateIdText(profile_id);
         try validateIdText(revision_id);
-        var statement = try self.prepare(
+        const canonical_subject = try self.schemaVersion() >= 13;
+        const sql: []const u8 = if (canonical_subject)
             \\SELECT id, sequence, profile_id, effective_from,
             \\       effective_until, source_tag, source_reference, tin,
             \\       rdo_code, registered_address, zip_code, contact_number,
             \\       email_address, subject_kind, taxpayer_name,
             \\       registered_name, date_of_birth, citizenship,
-            \\       foreign_tax_number
+            \\       foreign_tax_number, natural_person_classification,
+            \\       trade_name
             \\FROM tax_profile_revisions
             \\WHERE profile_id = ? AND id = ?;
-        );
+        else
+            \\SELECT id, sequence, profile_id, effective_from,
+            \\       effective_until, source_tag, source_reference, tin,
+            \\       rdo_code, registered_address, zip_code, contact_number,
+            \\       email_address, subject_kind, taxpayer_name,
+            \\       registered_name, date_of_birth, citizenship,
+            \\       foreign_tax_number, NULL, NULL
+            \\FROM tax_profile_revisions
+            \\WHERE profile_id = ? AND id = ?;
+        ;
+        var statement = try self.prepare(sql);
         defer statement.deinit();
         try statement.bindText(1, profile_id);
         try statement.bindText(2, revision_id);
         return switch (try statement.step()) {
             .done => null,
-            .row => try self.readRevision(allocator, statement.raw),
+            .row => try self.readRevision(
+                allocator,
+                statement.raw,
+                canonical_subject,
+            ),
         };
     }
 
@@ -2527,22 +4557,38 @@ pub const Store = struct {
     ) !?OwnedProfileRevision {
         try validateIdText(profile_id);
         if (sequence == 0) return Error.InvalidValue;
-        var statement = try self.prepare(
+        const canonical_subject = try self.schemaVersion() >= 13;
+        const sql: []const u8 = if (canonical_subject)
             \\SELECT id, sequence, profile_id, effective_from,
             \\       effective_until, source_tag, source_reference, tin,
             \\       rdo_code, registered_address, zip_code, contact_number,
             \\       email_address, subject_kind, taxpayer_name,
             \\       registered_name, date_of_birth, citizenship,
-            \\       foreign_tax_number
+            \\       foreign_tax_number, natural_person_classification,
+            \\       trade_name
             \\FROM tax_profile_revisions
             \\WHERE profile_id = ? AND sequence = ?;
-        );
+        else
+            \\SELECT id, sequence, profile_id, effective_from,
+            \\       effective_until, source_tag, source_reference, tin,
+            \\       rdo_code, registered_address, zip_code, contact_number,
+            \\       email_address, subject_kind, taxpayer_name,
+            \\       registered_name, date_of_birth, citizenship,
+            \\       foreign_tax_number, NULL, NULL
+            \\FROM tax_profile_revisions
+            \\WHERE profile_id = ? AND sequence = ?;
+        ;
+        var statement = try self.prepare(sql);
         defer statement.deinit();
         try statement.bindText(1, profile_id);
         try statement.bindInt64(2, sequence);
         return switch (try statement.step()) {
             .done => null,
-            .row => try self.readRevision(allocator, statement.raw),
+            .row => try self.readRevision(
+                allocator,
+                statement.raw,
+                canonical_subject,
+            ),
         };
     }
 
@@ -2554,27 +4600,47 @@ pub const Store = struct {
     ) !?OwnedProfileRevision {
         try validateOpaqueText(profile_id);
         try validateDate(effective_on);
-        var statement = try self.prepare(
+        const canonical_subject = try self.schemaVersion() >= 13;
+        const sql: []const u8 = if (canonical_subject)
             \\SELECT id, sequence, profile_id, effective_from,
             \\       effective_until, source_tag, source_reference, tin,
             \\       rdo_code, registered_address, zip_code, contact_number,
             \\       email_address, subject_kind, taxpayer_name,
             \\       registered_name, date_of_birth, citizenship,
-            \\       foreign_tax_number
+            \\       foreign_tax_number, natural_person_classification,
+            \\       trade_name
             \\FROM tax_profile_revisions
             \\WHERE profile_id = ?
             \\  AND effective_from <= ?
             \\  AND (effective_until IS NULL OR effective_until >= ?)
             \\ORDER BY sequence DESC
             \\LIMIT 1;
-        );
+        else
+            \\SELECT id, sequence, profile_id, effective_from,
+            \\       effective_until, source_tag, source_reference, tin,
+            \\       rdo_code, registered_address, zip_code, contact_number,
+            \\       email_address, subject_kind, taxpayer_name,
+            \\       registered_name, date_of_birth, citizenship,
+            \\       foreign_tax_number, NULL, NULL
+            \\FROM tax_profile_revisions
+            \\WHERE profile_id = ?
+            \\  AND effective_from <= ?
+            \\  AND (effective_until IS NULL OR effective_until >= ?)
+            \\ORDER BY sequence DESC
+            \\LIMIT 1;
+        ;
+        var statement = try self.prepare(sql);
         defer statement.deinit();
         try statement.bindText(1, profile_id);
         try statement.bindText(2, effective_on);
         try statement.bindText(3, effective_on);
         return switch (try statement.step()) {
             .done => null,
-            .row => try self.readRevision(allocator, statement.raw),
+            .row => try self.readRevision(
+                allocator,
+                statement.raw,
+                canonical_subject,
+            ),
         };
     }
 
@@ -2593,6 +4659,8 @@ pub const Store = struct {
         // with the TIN it has, rather than vanishing from the sidebar.
         var statement = try self.prepare(
             \\SELECT p.id, p.status, p.current_revision_id, r.sequence,
+            \\       COALESCE(p.local_label,
+            \\           COALESCE(r.taxpayer_name, r.registered_name)),
             \\       COALESCE(r.taxpayer_name, r.registered_name),
             \\       COALESCE(anchor.canonical_tin, r.tin), r.subject_kind
             \\FROM tax_profiles AS p
@@ -2607,7 +4675,8 @@ pub const Store = struct {
             \\ )
             \\WHERE (? = 1 OR p.status = 'active')
             \\ORDER BY COALESCE(
-            \\    r.taxpayer_name, r.registered_name
+            \\    p.local_label,
+            \\    COALESCE(r.taxpayer_name, r.registered_name)
             \\) COLLATE NOCASE, p.id;
         );
         defer statement.deinit();
@@ -2741,6 +4810,8 @@ pub const Store = struct {
             try add.reset();
         }
 
+        try self.recordManualIntervalProjectionInTx(value);
+
         try self.commit();
         committed = true;
     }
@@ -2816,8 +4887,1165 @@ pub const Store = struct {
         };
     }
 
-    /// Finds taxpayers whose name contains the query, or whose canonical TIN
-    /// contains the query's digits, across the whole store.
+    /// Optimistically appends one immutable taxpayer-year settings revision.
+    /// A conflict returns before binding or mutating any caller-owned value.
+    pub fn appendTaxpayerYearRevision(
+        self: *Store,
+        value: TaxpayerYearRevisionWrite,
+    ) !void {
+        try validateTaxpayerYearRevisionWrite(value);
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        if (!(try self.profileExists(value.profile_id))) return Error.NotFound;
+        const current_sequence = try self.taxpayerYearCurrentSequence(
+            value.profile_id,
+            value.tax_year,
+        );
+        if (current_sequence != value.expected_current_sequence) {
+            return Error.RevisionConflict;
+        }
+        if (current_sequence == std.math.maxInt(u32) or
+            value.sequence != current_sequence + 1)
+        {
+            return Error.InvalidValue;
+        }
+        if (try self.taxpayerYearPeriodOverlaps(value)) {
+            return Error.TaxpayerYearIntervalOverlap;
+        }
+        if (value.source == .copied_from_prior_year) {
+            const copy = value.source.copied_from_prior_year;
+            var source = try self.prepare(
+                \\SELECT review_state
+                \\FROM tax_profile_taxpayer_year_revisions
+                \\WHERE profile_id = ? AND tax_year = ? AND id = ?
+                \\  AND sequence = ?;
+            );
+            defer source.deinit();
+            try source.bindText(1, copy.source_profile_id);
+            try source.bindInt64(2, copy.source_tax_year);
+            try source.bindText(3, copy.source_revision_id);
+            try source.bindInt64(4, copy.source_revision_sequence);
+            if (try source.step() != .row or
+                !columnTextEql(source.raw, 0, "confirmed"))
+            {
+                return Error.InvalidValue;
+            }
+        }
+
+        const source_tag = @tagName(std.meta.activeTag(value.source));
+        const source_reference: ?[]const u8 = switch (value.source) {
+            .imported => |reference| reference,
+            .migrated => |reference| reference,
+            .manual_entry, .copied_from_prior_year => null,
+        };
+        const copy_source: ?TaxpayerYearPriorCopyWrite = switch (value.source) {
+            .copied_from_prior_year => |copy| copy,
+            else => null,
+        };
+        var insert = try self.prepare(
+            \\INSERT INTO tax_profile_taxpayer_year_revisions (
+            \\    profile_id, tax_year, id, sequence,
+            \\    effective_from, effective_until, review_state,
+            \\    confirmed_at_unix_seconds, source_tag, source_reference,
+            \\    copy_source_profile_id, copy_source_tax_year,
+            \\    copy_source_revision_id, copy_source_revision_sequence
+            \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        );
+        defer insert.deinit();
+        try insert.bindText(1, value.profile_id);
+        try insert.bindInt64(2, value.tax_year);
+        try insert.bindText(3, value.id);
+        try insert.bindInt64(4, value.sequence);
+        try insert.bindDate(5, value.effective.from[0..]);
+        try insert.bindDate(6, value.effective.until.?[0..]);
+        try insert.bindText(7, value.review_state.text());
+        try insert.bindOptionalInt64(8, value.confirmed_at_unix_seconds);
+        try insert.bindText(9, source_tag);
+        try insert.bindOptionalText(10, source_reference);
+        try insert.bindOptionalText(
+            11,
+            if (copy_source) |copy| copy.source_profile_id else null,
+        );
+        try insert.bindOptionalInt64(
+            12,
+            if (copy_source) |copy|
+                @as(i64, copy.source_tax_year)
+            else
+                null,
+        );
+        try insert.bindOptionalText(
+            13,
+            if (copy_source) |copy| copy.source_revision_id else null,
+        );
+        try insert.bindOptionalInt64(
+            14,
+            if (copy_source) |copy|
+                @as(i64, copy.source_revision_sequence)
+            else
+                null,
+        );
+        try insert.expectDone();
+
+        var add_value = try self.prepare(
+            \\INSERT INTO tax_profile_taxpayer_year_values (
+            \\    profile_id, tax_year, revision_id, revision_sequence,
+            \\    setting_key, value_type, value_text
+            \\) VALUES (?, ?, ?, ?, ?, ?, ?);
+        );
+        defer add_value.deinit();
+        for (value.values) |setting| {
+            const key = @tagName(std.meta.activeTag(setting));
+            const text_value = switch (setting) {
+                .income_tax_rate_election => |election| @tagName(election),
+                .deduction_method => |method| @tagName(method),
+            };
+            try add_value.bindText(1, value.profile_id);
+            try add_value.bindInt64(2, value.tax_year);
+            try add_value.bindText(3, value.id);
+            try add_value.bindInt64(4, value.sequence);
+            try add_value.bindText(5, key);
+            try add_value.bindText(6, key);
+            try add_value.bindText(7, text_value);
+            try add_value.expectDone();
+            try add_value.reset();
+        }
+
+        try self.commit();
+        committed = true;
+    }
+
+    pub fn listTaxpayerYearRevisions(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        tax_year: u16,
+    ) !TaxpayerYearRevisionList {
+        try validateOpaqueText(profile_id);
+        try validateTaxYear(tax_year);
+        var statement = try self.prepare(
+            \\SELECT id, profile_id, tax_year, sequence,
+            \\       effective_from, effective_until, review_state,
+            \\       confirmed_at_unix_seconds, source_tag, source_reference,
+            \\       copy_source_profile_id, copy_source_tax_year,
+            \\       copy_source_revision_id, copy_source_revision_sequence
+            \\FROM tax_profile_taxpayer_year_revisions
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\ORDER BY sequence;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindInt64(2, tax_year);
+
+        var items: std.ArrayList(OwnedTaxpayerYearRevision) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+        while (try statement.step() == .row) {
+            try items.append(
+                allocator,
+                try self.readTaxpayerYearRevision(allocator, statement.raw),
+            );
+        }
+        return .{ .items = try items.toOwnedSlice(allocator) };
+    }
+
+    /// Exact-date resolver. Review state is returned explicitly; consumers
+    /// that require confirmed data must reject `.requires_review`.
+    pub fn resolveTaxpayerYearRevisionOn(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        tax_year: u16,
+        effective_on: []const u8,
+    ) !?OwnedTaxpayerYearRevision {
+        try validateOpaqueText(profile_id);
+        try validateTaxYear(tax_year);
+        try validateDate(effective_on);
+        if (!dateBelongsToTaxYear(effective_on, tax_year)) {
+            return Error.InvalidDate;
+        }
+        var statement = try self.prepare(
+            \\SELECT id, profile_id, tax_year, sequence,
+            \\       effective_from, effective_until, review_state,
+            \\       confirmed_at_unix_seconds, source_tag, source_reference,
+            \\       copy_source_profile_id, copy_source_tax_year,
+            \\       copy_source_revision_id, copy_source_revision_sequence
+            \\FROM tax_profile_taxpayer_year_revisions
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\  AND effective_from <= ? AND ? <= effective_until
+            \\ORDER BY sequence DESC
+            \\LIMIT 1;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindInt64(2, tax_year);
+        try statement.bindText(3, effective_on);
+        try statement.bindText(4, effective_on);
+        return switch (try statement.step()) {
+            .done => null,
+            .row => try self.readTaxpayerYearRevision(
+                allocator,
+                statement.raw,
+            ),
+        };
+    }
+
+    fn taxpayerYearCurrentSequence(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: u16,
+    ) !u32 {
+        var statement = try self.prepare(
+            \\SELECT COALESCE(MAX(sequence), 0)
+            \\FROM tax_profile_taxpayer_year_revisions
+            \\WHERE profile_id = ? AND tax_year = ?;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindInt64(2, tax_year);
+        if (try statement.step() != .row) return Error.SqliteFailure;
+        const sequence = sqlite.sqlite3_column_int64(statement.raw, 0);
+        if (sequence < 0 or sequence > std.math.maxInt(u32)) {
+            return Error.SqliteFailure;
+        }
+        return @intCast(sequence);
+    }
+
+    fn taxpayerYearPeriodOverlaps(
+        self: *Store,
+        value: TaxpayerYearRevisionWrite,
+    ) !bool {
+        var statement = try self.prepare(
+            \\SELECT 1 FROM tax_profile_taxpayer_year_revisions
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\  AND effective_from <= ? AND ? <= effective_until
+            \\  AND NOT (effective_from = ? AND effective_until = ?)
+            \\LIMIT 1;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, value.profile_id);
+        try statement.bindInt64(2, value.tax_year);
+        try statement.bindDate(3, value.effective.until.?[0..]);
+        try statement.bindDate(4, value.effective.from[0..]);
+        try statement.bindDate(5, value.effective.from[0..]);
+        try statement.bindDate(6, value.effective.until.?[0..]);
+        return try statement.step() == .row;
+    }
+
+    fn readTaxpayerYearRevision(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        row: *sqlite.sqlite3_stmt,
+    ) !OwnedTaxpayerYearRevision {
+        const id = try dupColumn(allocator, row, 0);
+        errdefer allocator.free(id);
+        const profile_id = try dupColumn(allocator, row, 1);
+        errdefer allocator.free(profile_id);
+        const tax_year_raw = sqlite.sqlite3_column_int64(row, 2);
+        const sequence_raw = sqlite.sqlite3_column_int64(row, 3);
+        if (tax_year_raw < 1 or tax_year_raw > std.math.maxInt(u16) or
+            sequence_raw < 1 or sequence_raw > std.math.maxInt(u32))
+        {
+            return Error.SqliteFailure;
+        }
+        const effective_from = try dupColumn(allocator, row, 4);
+        errdefer allocator.free(effective_from);
+        const effective_until = try dupColumn(allocator, row, 5);
+        errdefer allocator.free(effective_until);
+        const review_text = columnText(row, 6) orelse
+            return Error.SqliteFailure;
+        const review_state = parseEnumText(
+            TaxpayerYearReviewState,
+            review_text,
+        ) orelse return Error.SqliteFailure;
+        const confirmed_at = try optionalInt64Column(row, 7);
+        var source = try readTaxpayerYearRevisionSource(allocator, row, 8);
+        errdefer source.deinit(allocator);
+        const values = try self.loadTaxpayerYearValues(
+            allocator,
+            profile_id,
+            @intCast(tax_year_raw),
+            id,
+        );
+        errdefer allocator.free(values);
+        return .{
+            .id = id,
+            .profile_id = profile_id,
+            .tax_year = @intCast(tax_year_raw),
+            .sequence = @intCast(sequence_raw),
+            .effective_from = effective_from,
+            .effective_until = effective_until,
+            .review_state = review_state,
+            .confirmed_at_unix_seconds = confirmed_at,
+            .source = source,
+            .values = values,
+        };
+    }
+
+    fn loadTaxpayerYearValues(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        tax_year: u16,
+        revision_id: []const u8,
+    ) ![]TaxpayerYearSettingValueWrite {
+        var statement = try self.prepare(
+            \\SELECT setting_key, value_type, value_text
+            \\FROM tax_profile_taxpayer_year_values
+            \\WHERE profile_id = ? AND tax_year = ? AND revision_id = ?
+            \\ORDER BY setting_key;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindInt64(2, tax_year);
+        try statement.bindText(3, revision_id);
+        var values: std.ArrayList(TaxpayerYearSettingValueWrite) = .empty;
+        errdefer values.deinit(allocator);
+        while (try statement.step() == .row) {
+            const key = columnText(statement.raw, 0) orelse
+                return Error.SqliteFailure;
+            const value_type = columnText(statement.raw, 1) orelse
+                return Error.SqliteFailure;
+            const text_value = columnText(statement.raw, 2) orelse
+                return Error.SqliteFailure;
+            if (!std.mem.eql(u8, key, value_type)) {
+                return Error.SqliteFailure;
+            }
+            if (std.mem.eql(u8, key, "income_tax_rate_election")) {
+                const election = parseEnumText(
+                    TaxpayerYearIncomeTaxRateElection,
+                    text_value,
+                ) orelse return Error.SqliteFailure;
+                try values.append(allocator, .{
+                    .income_tax_rate_election = election,
+                });
+            } else if (std.mem.eql(u8, key, "deduction_method")) {
+                const method = parseEnumText(
+                    TaxpayerYearDeductionMethod,
+                    text_value,
+                ) orelse return Error.SqliteFailure;
+                try values.append(allocator, .{ .deduction_method = method });
+            } else return Error.SqliteFailure;
+        }
+        return values.toOwnedSlice(allocator);
+    }
+
+    /// Appends one generated-contract Tax Form Profile revision. Validation,
+    /// activation coverage, optimistic sequence, references, parent, and
+    /// values are one immediate transaction.
+    pub fn appendTaxFormProfileRevision(
+        self: *Store,
+        value: TaxFormProfileRevisionWrite,
+    ) !void {
+        _ = try validateTaxFormProfileRevisionWrite(value);
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        if (!(try self.profileExists(value.profile_id))) return Error.NotFound;
+        const current_sequence = try self.taxFormProfileCurrentSequence(value);
+        if (current_sequence != value.expected_current_sequence) {
+            return Error.RevisionConflict;
+        }
+        if (current_sequence == std.math.maxInt(u32) or
+            value.sequence != current_sequence + 1)
+        {
+            return Error.InvalidValue;
+        }
+        if (try self.taxFormProfilePeriodOverlaps(value)) {
+            return Error.TaxFormProfileIntervalOverlap;
+        }
+        if (!(try self.taxFormProfileActivationCovered(value))) {
+            return Error.TaxFormProfileInactive;
+        }
+        try self.validateTaxFormProfileReferences(value);
+        try self.validateTaxFormProfileCopySources(value);
+
+        const source_tag = @tagName(std.meta.activeTag(value.source));
+        const source_reference: ?[]const u8 = switch (value.source) {
+            .migrated => |reference| reference,
+            .manual_entry, .copied_from_prior_year => null,
+        };
+        const copy_source_tax_year: ?i64 = switch (value.source) {
+            .copied_from_prior_year => |copy| copy.source_tax_year,
+            else => null,
+        };
+        const copy_source_revision_id: ?[]const u8 = switch (value.source) {
+            .copied_from_prior_year => |copy| copy.source_revision_id,
+            else => null,
+        };
+        const copy_source_form_revision: ?[]const u8 = switch (value.source) {
+            .copied_from_prior_year => |copy| copy.source_form_revision,
+            else => null,
+        };
+        const copy_source_spec_revision: ?i64 = switch (value.source) {
+            .copied_from_prior_year => |copy| copy.source_spec_revision,
+            else => null,
+        };
+        const copy_source_spec_hash: ?[]const u8 = switch (value.source) {
+            .copied_from_prior_year => |copy| copy.source_spec_hash,
+            else => null,
+        };
+        const expanded_copy_provenance = try self.schemaVersion() >= 20;
+        var parent = try self.prepare(if (expanded_copy_provenance)
+            \\INSERT INTO tax_profile_form_profile_revisions (
+            \\    profile_id, tax_year, form_code, form_revision, id,
+            \\    sequence, effective_from, effective_until, spec_revision,
+            \\    spec_hash, review_state, confirmed_at_unix_seconds,
+            \\    source_tag, source_reference, copy_source_tax_year,
+            \\    copy_source_revision_id, copy_source_form_revision,
+            \\    copy_source_spec_revision, copy_source_spec_hash
+            \\) VALUES (
+            \\    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            \\);
+        else
+            \\INSERT INTO tax_profile_form_profile_revisions (
+            \\    profile_id, tax_year, form_code, form_revision, id,
+            \\    sequence, effective_from, effective_until, spec_revision,
+            \\    spec_hash, review_state, confirmed_at_unix_seconds,
+            \\    source_tag, source_reference, copy_source_tax_year,
+            \\    copy_source_revision_id
+            \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        );
+        defer parent.deinit();
+        try parent.bindText(1, value.profile_id);
+        try parent.bindInt64(2, value.tax_year);
+        try parent.bindText(3, value.form_code);
+        try parent.bindText(4, value.form_revision);
+        try parent.bindText(5, value.id);
+        try parent.bindInt64(6, value.sequence);
+        try parent.bindDate(7, value.effective.from[0..]);
+        try parent.bindOptionalDate(
+            8,
+            optionalDateSlice(&value.effective.until),
+        );
+        try parent.bindInt64(9, value.spec_revision);
+        try parent.bindText(10, value.spec_hash);
+        try parent.bindText(11, value.review_state.text());
+        try parent.bindOptionalInt64(12, value.confirmed_at_unix_seconds);
+        try parent.bindText(13, source_tag);
+        try parent.bindOptionalText(14, source_reference);
+        try parent.bindOptionalInt64(15, copy_source_tax_year);
+        try parent.bindOptionalText(16, copy_source_revision_id);
+        if (expanded_copy_provenance) {
+            try parent.bindOptionalText(17, copy_source_form_revision);
+            try parent.bindOptionalInt64(18, copy_source_spec_revision);
+            try parent.bindOptionalText(19, copy_source_spec_hash);
+        }
+        try parent.expectDone();
+
+        var add_value = try self.prepare(
+            \\INSERT INTO tax_profile_form_profile_values (
+            \\    profile_id, tax_year, form_code, form_revision,
+            \\    revision_id, revision_sequence, semantic_key, role,
+            \\    value_type, profile_value, anchor_value, text_value,
+            \\    boolean_value, integer_value, date_value, year_value,
+            \\    choice_value, source_tag, source_revision_id,
+            \\    source_reference
+            \\) VALUES (
+            \\    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            \\);
+        );
+        defer add_value.deinit();
+        // Profile references precede dependent spouse anchors so the schema
+        // guard can resolve the profile-owned anchor without a revision-row ID.
+        for (value.values) |setup_value| {
+            if (std.meta.activeTag(setup_value.value) == .profile_id) {
+                try self.insertTaxFormProfileValue(
+                    &add_value,
+                    value,
+                    setup_value,
+                );
+            }
+        }
+        for (value.values) |setup_value| {
+            if (std.meta.activeTag(setup_value.value) != .profile_id) {
+                try self.insertTaxFormProfileValue(
+                    &add_value,
+                    value,
+                    setup_value,
+                );
+            }
+        }
+
+        try self.commit();
+        committed = true;
+    }
+
+    pub fn listTaxFormProfileRevisions(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        tax_year: u16,
+        form_code: []const u8,
+        form_revision: []const u8,
+    ) !TaxFormProfileRevisionList {
+        try validateTaxFormProfileStreamKey(
+            profile_id,
+            tax_year,
+            form_code,
+            form_revision,
+        );
+        var statement = try self.prepare(
+            \\SELECT id, profile_id, tax_year, form_code, form_revision,
+            \\       sequence, effective_from, effective_until,
+            \\       spec_revision, spec_hash, review_state,
+            \\       confirmed_at_unix_seconds, source_tag, source_reference,
+            \\       copy_source_tax_year, copy_source_revision_id,
+            \\       copy_source_form_revision, copy_source_spec_revision,
+            \\       copy_source_spec_hash
+            \\FROM tax_profile_form_profile_revisions
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\  AND form_code = ? AND form_revision = ?
+            \\ORDER BY sequence;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindInt64(2, tax_year);
+        try statement.bindText(3, form_code);
+        try statement.bindText(4, form_revision);
+        var items: std.ArrayList(OwnedTaxFormProfileRevision) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+        while (try statement.step() == .row) {
+            try items.append(
+                allocator,
+                try self.readTaxFormProfileRevision(allocator, statement.raw),
+            );
+        }
+        return .{ .items = try items.toOwnedSlice(allocator) };
+    }
+
+    /// Lists every persisted form-revision stream for one taxpayer, tax year,
+    /// and form code. This is a discovery API for explicit compatibility
+    /// review; callers must not validate an historical row against the current
+    /// generated spec or treat it as filing-ready.
+    pub fn listTaxFormProfileRevisionsForForm(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        tax_year: u16,
+        form_code: []const u8,
+    ) !TaxFormProfileRevisionList {
+        try validateOpaqueText(profile_id);
+        if (tax_year == 0) return Error.InvalidValue;
+        try requireValue(form_code);
+        var statement = try self.prepare(
+            \\SELECT id, profile_id, tax_year, form_code, form_revision,
+            \\       sequence, effective_from, effective_until,
+            \\       spec_revision, spec_hash, review_state,
+            \\       confirmed_at_unix_seconds, source_tag, source_reference,
+            \\       copy_source_tax_year, copy_source_revision_id,
+            \\       copy_source_form_revision, copy_source_spec_revision,
+            \\       copy_source_spec_hash
+            \\FROM tax_profile_form_profile_revisions
+            \\WHERE profile_id = ? AND tax_year = ? AND form_code = ?
+            \\ORDER BY confirmed_at_unix_seconds, form_revision, sequence, id;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindInt64(2, tax_year);
+        try statement.bindText(3, form_code);
+        var items: std.ArrayList(OwnedTaxFormProfileRevision) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+        while (try statement.step() == .row) {
+            try items.append(
+                allocator,
+                try self.readTaxFormProfileRevision(allocator, statement.raw),
+            );
+        }
+        return .{ .items = try items.toOwnedSlice(allocator) };
+    }
+
+    /// Returns only a confirmed revision effective on the exact requested
+    /// date. Review-required copied proposals remain visible in history but
+    /// cannot satisfy filing readiness.
+    pub fn resolveTaxFormProfileRevisionOn(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        tax_year: u16,
+        form_code: []const u8,
+        form_revision: []const u8,
+        effective_on: []const u8,
+    ) !?OwnedTaxFormProfileRevision {
+        try validateTaxFormProfileStreamKey(
+            profile_id,
+            tax_year,
+            form_code,
+            form_revision,
+        );
+        try validateDate(effective_on);
+        if (!dateBelongsToTaxYear(effective_on, tax_year)) {
+            return Error.InvalidDate;
+        }
+        var statement = try self.prepare(
+            \\SELECT id, profile_id, tax_year, form_code, form_revision,
+            \\       sequence, effective_from, effective_until,
+            \\       spec_revision, spec_hash, review_state,
+            \\       confirmed_at_unix_seconds, source_tag, source_reference,
+            \\       copy_source_tax_year, copy_source_revision_id,
+            \\       copy_source_form_revision, copy_source_spec_revision,
+            \\       copy_source_spec_hash
+            \\FROM tax_profile_form_profile_revisions
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\  AND form_code = ? AND form_revision = ?
+            \\  AND review_state = 'confirmed'
+            \\  AND effective_from <= ?
+            \\  AND (effective_until IS NULL OR ? <= effective_until)
+            \\ORDER BY sequence DESC
+            \\LIMIT 1;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindInt64(2, tax_year);
+        try statement.bindText(3, form_code);
+        try statement.bindText(4, form_revision);
+        try statement.bindText(5, effective_on);
+        try statement.bindText(6, effective_on);
+        return switch (try statement.step()) {
+            .done => null,
+            .row => try self.readTaxFormProfileRevision(
+                allocator,
+                statement.raw,
+            ),
+        };
+    }
+
+    fn taxFormProfileCurrentSequence(
+        self: *Store,
+        value: TaxFormProfileRevisionWrite,
+    ) !u32 {
+        var statement = try self.prepare(
+            \\SELECT COALESCE(MAX(sequence), 0)
+            \\FROM tax_profile_form_profile_revisions
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\  AND form_code = ? AND form_revision = ?;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, value.profile_id);
+        try statement.bindInt64(2, value.tax_year);
+        try statement.bindText(3, value.form_code);
+        try statement.bindText(4, value.form_revision);
+        if (try statement.step() != .row) return Error.SqliteFailure;
+        const sequence = sqlite.sqlite3_column_int64(statement.raw, 0);
+        if (sequence < 0 or sequence > std.math.maxInt(u32)) {
+            return Error.SqliteFailure;
+        }
+        return @intCast(sequence);
+    }
+
+    fn taxFormProfilePeriodOverlaps(
+        self: *Store,
+        value: TaxFormProfileRevisionWrite,
+    ) !bool {
+        var year_end: DateText = undefined;
+        writeTaxYearEnd(value.tax_year, &year_end);
+        var statement = try self.prepare(
+            \\SELECT 1 FROM tax_profile_form_profile_revisions
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\  AND form_code = ? AND form_revision = ?
+            \\  AND effective_from <= ?
+            \\  AND ? <= COALESCE(effective_until, ?)
+            \\  AND NOT (
+            \\      effective_from = ? AND
+            \\      COALESCE(effective_until, ?) = COALESCE(?, ?)
+            \\  )
+            \\LIMIT 1;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, value.profile_id);
+        try statement.bindInt64(2, value.tax_year);
+        try statement.bindText(3, value.form_code);
+        try statement.bindText(4, value.form_revision);
+        try statement.bindDate(
+            5,
+            if (value.effective.until) |*until| until[0..] else year_end[0..],
+        );
+        try statement.bindDate(6, value.effective.from[0..]);
+        try statement.bindDate(7, year_end[0..]);
+        try statement.bindDate(8, value.effective.from[0..]);
+        try statement.bindDate(9, year_end[0..]);
+        try statement.bindOptionalDate(
+            10,
+            if (value.effective.until) |*until| until else null,
+        );
+        try statement.bindDate(11, year_end[0..]);
+        return try statement.step() == .row;
+    }
+
+    fn taxFormProfileActivationCovered(
+        self: *Store,
+        value: TaxFormProfileRevisionWrite,
+    ) !bool {
+        var year_end: DateText = undefined;
+        writeTaxYearEnd(value.tax_year, &year_end);
+        const effective_until = if (value.effective.until) |*until|
+            until[0..]
+        else
+            year_end[0..];
+        // These boundaries partition every state that can occur inside the
+        // candidate interval: its start/end, every From-date override, and
+        // the day after each bounded override where resolution returns to the
+        // base set. Checking only endpoints would miss a mid-interval
+        // deactivation.
+        var boundaries = try self.prepare(
+            \\WITH boundaries(boundary) AS (
+            \\    SELECT ?
+            \\    UNION SELECT ?
+            \\    UNION SELECT effective_from
+            \\      FROM tax_profile_form_set_interval_revisions
+            \\     WHERE profile_id = ? AND tax_year = ?
+            \\       AND effective_from BETWEEN ? AND ?
+            \\    UNION SELECT date(effective_until, '+1 day')
+            \\      FROM tax_profile_form_set_interval_revisions
+            \\     WHERE profile_id = ? AND tax_year = ?
+            \\       AND effective_until IS NOT NULL
+            \\       AND date(effective_until, '+1 day') BETWEEN ? AND ?
+            \\)
+            \\SELECT boundary FROM boundaries ORDER BY boundary;
+        );
+        defer boundaries.deinit();
+        try boundaries.bindDate(1, value.effective.from[0..]);
+        try boundaries.bindDate(2, effective_until);
+        try boundaries.bindText(3, value.profile_id);
+        try boundaries.bindInt64(4, value.tax_year);
+        try boundaries.bindDate(5, value.effective.from[0..]);
+        try boundaries.bindDate(6, effective_until);
+        try boundaries.bindText(7, value.profile_id);
+        try boundaries.bindInt64(8, value.tax_year);
+        try boundaries.bindDate(9, value.effective.from[0..]);
+        try boundaries.bindDate(10, effective_until);
+        while (try boundaries.step() == .row) {
+            const boundary = columnText(boundaries.raw, 0) orelse
+                return Error.SqliteFailure;
+            if (boundary.len != 10) return Error.SqliteFailure;
+            var boundary_copy: DateText = undefined;
+            @memcpy(&boundary_copy, boundary);
+            if (!(try self.exactFormActiveOn(
+                value.profile_id,
+                value.tax_year,
+                value.form_code,
+                value.form_revision,
+                boundary_copy[0..],
+            ))) return false;
+        }
+        return true;
+    }
+
+    fn exactFormActiveOn(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: u16,
+        form_code: []const u8,
+        form_revision: []const u8,
+        effective_on: []const u8,
+    ) !bool {
+        var interval = try self.prepare(
+            \\SELECT id
+            \\FROM tax_profile_form_set_interval_revisions
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\  AND effective_from <= ?
+            \\  AND (effective_until IS NULL OR ? <= effective_until)
+            \\ORDER BY sequence DESC
+            \\LIMIT 1;
+        );
+        defer interval.deinit();
+        try interval.bindText(1, profile_id);
+        try interval.bindInt64(2, tax_year);
+        try interval.bindText(3, effective_on);
+        try interval.bindText(4, effective_on);
+        if (try interval.step() == .row) {
+            const id = columnText(interval.raw, 0) orelse
+                return Error.SqliteFailure;
+            var id_copy: [64]u8 = undefined;
+            if (id.len > id_copy.len) return Error.SqliteFailure;
+            @memcpy(id_copy[0..id.len], id);
+            var entry = try self.prepare(
+                \\SELECT 1 FROM tax_profile_form_set_interval_entries
+                \\WHERE revision_id = ? AND form_code = ?
+                \\  AND form_revision = ?
+                \\LIMIT 1;
+            );
+            defer entry.deinit();
+            try entry.bindText(1, id_copy[0..id.len]);
+            try entry.bindText(2, form_code);
+            try entry.bindText(3, form_revision);
+            return try entry.step() == .row;
+        }
+
+        var base = try self.prepare(
+            \\SELECT 1
+            \\FROM tax_profile_form_sets AS set_row
+            \\JOIN tax_profile_form_set_entries AS entry
+            \\  ON entry.profile_id = set_row.profile_id
+            \\ AND entry.tax_year = set_row.tax_year
+            \\WHERE set_row.profile_id = ? AND set_row.tax_year = ?
+            \\  AND set_row.state = 'active_nonempty'
+            \\  AND entry.form_code = ? AND entry.form_revision = ?
+            \\LIMIT 1;
+        );
+        defer base.deinit();
+        try base.bindText(1, profile_id);
+        try base.bindInt64(2, tax_year);
+        try base.bindText(3, form_code);
+        try base.bindText(4, form_revision);
+        return try base.step() == .row;
+    }
+
+    fn validateTaxFormProfileReferences(
+        self: *Store,
+        revision: TaxFormProfileRevisionWrite,
+    ) !void {
+        for (revision.values) |setup_value| switch (setup_value.value) {
+            .profile_id => |selected_profile_id| {
+                var profile = try self.prepare(
+                    \\SELECT 1
+                    \\FROM tax_profiles AS owner
+                    \\JOIN tax_profiles AS selected
+                    \\  ON selected.owner_id = owner.owner_id
+                    \\WHERE owner.id = ? AND selected.id = ?
+                    \\  AND selected.id <> owner.id
+                    \\LIMIT 1;
+                );
+                defer profile.deinit();
+                try profile.bindText(1, revision.profile_id);
+                try profile.bindText(2, selected_profile_id);
+                if (try profile.step() != .row) {
+                    return Error.TaxFormProfileReferenceInvalid;
+                }
+            },
+            .business_activity_anchor_id => |anchor_id| {
+                const owner_profile_id = switch (setup_value.role) {
+                    .filer => revision.profile_id,
+                    .spouse => findTaxFormProfileReferencedProfile(
+                        revision.values,
+                        .spouse,
+                        .spouse_profile_id,
+                    ) orelse return Error.TaxFormProfileReferenceInvalid,
+                    else => return Error.TaxFormProfileReferenceInvalid,
+                };
+                var anchor = try self.prepare(
+                    \\SELECT 1 FROM tax_profile_business_activity_anchors
+                    \\WHERE profile_id = ? AND id = ?;
+                );
+                defer anchor.deinit();
+                try anchor.bindText(1, owner_profile_id);
+                try anchor.bindText(2, anchor_id);
+                if (try anchor.step() != .row) {
+                    return Error.TaxFormProfileReferenceInvalid;
+                }
+            },
+            .registration_obligation_anchor_id => |anchor_id| {
+                if (setup_value.role != .filer) {
+                    return Error.TaxFormProfileReferenceInvalid;
+                }
+                var anchor = try self.prepare(
+                    \\SELECT 1 FROM tax_profile_registration_fact_anchors
+                    \\WHERE profile_id = ? AND id = ?
+                    \\  AND kind = 'special_rate_basis';
+                );
+                defer anchor.deinit();
+                try anchor.bindText(1, revision.profile_id);
+                try anchor.bindText(2, anchor_id);
+                if (try anchor.step() != .row) {
+                    return Error.TaxFormProfileReferenceInvalid;
+                }
+            },
+            .text, .boolean, .integer, .date, .year, .choice => {},
+        };
+    }
+
+    fn validateTaxFormProfileCopySources(
+        self: *Store,
+        revision: TaxFormProfileRevisionWrite,
+    ) !void {
+        if (std.meta.activeTag(revision.source) == .copied_from_prior_year) {
+            const copy = revision.source.copied_from_prior_year;
+            var source = try self.prepare(
+                \\SELECT review_state, spec_revision, spec_hash
+                \\FROM tax_profile_form_profile_revisions
+                \\WHERE profile_id = ? AND tax_year = ?
+                \\  AND form_code = ? AND form_revision = ? AND id = ?;
+            );
+            defer source.deinit();
+            try source.bindText(1, revision.profile_id);
+            try source.bindInt64(2, copy.source_tax_year);
+            try source.bindText(3, revision.form_code);
+            try source.bindText(4, copy.source_form_revision);
+            try source.bindText(5, copy.source_revision_id);
+            if (try source.step() != .row or
+                !columnTextEql(source.raw, 0, "confirmed") or
+                sqlite.sqlite3_column_int64(source.raw, 1) !=
+                    copy.source_spec_revision or
+                !columnTextEql(source.raw, 2, copy.source_spec_hash))
+            {
+                return Error.InvalidValue;
+            }
+        }
+        for (revision.values) |setup_value| {
+            if (std.meta.activeTag(setup_value.source) !=
+                .copied_from_revision) continue;
+            const source_revision_id =
+                setup_value.source.copied_from_revision;
+            var source = try self.prepare(
+                \\SELECT 1 FROM tax_profile_form_profile_revisions
+                \\WHERE profile_id = ? AND form_code = ? AND id = ?
+                \\  AND form_revision = ?
+                \\  AND (? IS NULL OR tax_year = ?)
+                \\LIMIT 1;
+            );
+            defer source.deinit();
+            try source.bindText(1, revision.profile_id);
+            try source.bindText(2, revision.form_code);
+            try source.bindText(3, source_revision_id);
+            const copied = if (revision.source == .copied_from_prior_year)
+                revision.source.copied_from_prior_year
+            else
+                null;
+            if (copied) |copy| {
+                if (!std.mem.eql(
+                    u8,
+                    source_revision_id,
+                    copy.source_revision_id,
+                )) return Error.InvalidValue;
+            }
+            try source.bindText(
+                4,
+                if (copied) |copy| copy.source_form_revision else revision.form_revision,
+            );
+            try source.bindOptionalInt64(
+                5,
+                if (copied) |copy| copy.source_tax_year else null,
+            );
+            try source.bindOptionalInt64(
+                6,
+                if (copied) |copy| copy.source_tax_year else null,
+            );
+            if (try source.step() != .row) return Error.InvalidValue;
+        }
+    }
+
+    fn insertTaxFormProfileValue(
+        self: *Store,
+        statement: *Statement,
+        revision: TaxFormProfileRevisionWrite,
+        setup_value: TaxFormProfileSetupValueWrite,
+    ) !void {
+        _ = self;
+        const profile_value: ?[]const u8 = switch (setup_value.value) {
+            .profile_id => |value| value,
+            else => null,
+        };
+        const anchor_value: ?[]const u8 = switch (setup_value.value) {
+            .business_activity_anchor_id,
+            .registration_obligation_anchor_id,
+            => |value| value,
+            else => null,
+        };
+        const text_value: ?[]const u8 = switch (setup_value.value) {
+            .text => |value| value,
+            else => null,
+        };
+        const boolean_value: ?i64 = switch (setup_value.value) {
+            .boolean => |value| @intFromBool(value),
+            else => null,
+        };
+        const integer_value: ?i64 = switch (setup_value.value) {
+            .integer => |value| value,
+            else => null,
+        };
+        const date_value: ?[]const u8 = switch (setup_value.value) {
+            .date => |*value| value[0..],
+            else => null,
+        };
+        const year_value: ?i64 = switch (setup_value.value) {
+            .year => |value| value,
+            else => null,
+        };
+        const choice_value: ?[]const u8 = switch (setup_value.value) {
+            .choice => |value| value,
+            else => null,
+        };
+        const source_tag = @tagName(std.meta.activeTag(setup_value.source));
+        const source_revision_id: ?[]const u8 = switch (setup_value.source) {
+            .copied_from_revision => |id| id,
+            else => null,
+        };
+        const source_reference: ?[]const u8 = switch (setup_value.source) {
+            .migrated => |reference| reference,
+            else => null,
+        };
+        try statement.bindText(1, revision.profile_id);
+        try statement.bindInt64(2, revision.tax_year);
+        try statement.bindText(3, revision.form_code);
+        try statement.bindText(4, revision.form_revision);
+        try statement.bindText(5, revision.id);
+        try statement.bindInt64(6, revision.sequence);
+        try statement.bindText(7, @tagName(setup_value.semantic_key));
+        try statement.bindText(8, @tagName(setup_value.role));
+        try statement.bindText(9, @tagName(setup_value.value.valueType()));
+        try statement.bindOptionalText(10, profile_value);
+        try statement.bindOptionalText(11, anchor_value);
+        try statement.bindOptionalText(12, text_value);
+        try statement.bindOptionalInt64(13, boolean_value);
+        try statement.bindOptionalInt64(14, integer_value);
+        try statement.bindOptionalText(15, date_value);
+        try statement.bindOptionalInt64(16, year_value);
+        try statement.bindOptionalText(17, choice_value);
+        try statement.bindText(18, source_tag);
+        try statement.bindOptionalText(19, source_revision_id);
+        try statement.bindOptionalText(20, source_reference);
+        try statement.expectDone();
+        try statement.reset();
+    }
+
+    fn readTaxFormProfileRevision(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        row: *sqlite.sqlite3_stmt,
+    ) !OwnedTaxFormProfileRevision {
+        const id = try dupColumn(allocator, row, 0);
+        errdefer allocator.free(id);
+        const profile_id = try dupColumn(allocator, row, 1);
+        errdefer allocator.free(profile_id);
+        const tax_year_raw = sqlite.sqlite3_column_int64(row, 2);
+        if (tax_year_raw < 1 or tax_year_raw > std.math.maxInt(u16)) {
+            return Error.SqliteFailure;
+        }
+        const form_code = try dupColumn(allocator, row, 3);
+        errdefer allocator.free(form_code);
+        const form_revision = try dupColumn(allocator, row, 4);
+        errdefer allocator.free(form_revision);
+        const sequence_raw = sqlite.sqlite3_column_int64(row, 5);
+        if (sequence_raw < 1 or sequence_raw > std.math.maxInt(u32)) {
+            return Error.SqliteFailure;
+        }
+        const effective_from = try dupColumn(allocator, row, 6);
+        errdefer allocator.free(effective_from);
+        const effective_until = try dupOptionalColumn(allocator, row, 7);
+        errdefer freeOptional(allocator, effective_until);
+        const spec_revision_raw = sqlite.sqlite3_column_int64(row, 8);
+        if (spec_revision_raw < 1 or spec_revision_raw > std.math.maxInt(u32)) {
+            return Error.SqliteFailure;
+        }
+        const spec_hash = try dupColumn(allocator, row, 9);
+        errdefer allocator.free(spec_hash);
+        const review_text = columnText(row, 10) orelse
+            return Error.SqliteFailure;
+        const review_state = parseEnumText(
+            TaxFormProfileReviewState,
+            review_text,
+        ) orelse return Error.SqliteFailure;
+        const confirmed_at = try optionalInt64Column(row, 11);
+        var source = try readTaxFormProfileRevisionSource(allocator, row, 12);
+        errdefer source.deinit(allocator);
+        const values = try self.loadTaxFormProfileValues(
+            allocator,
+            profile_id,
+            @intCast(tax_year_raw),
+            form_code,
+            form_revision,
+            id,
+        );
+        errdefer {
+            for (values) |*value| value.deinit(allocator);
+            allocator.free(values);
+        }
+        return .{
+            .id = id,
+            .profile_id = profile_id,
+            .tax_year = @intCast(tax_year_raw),
+            .form_code = form_code,
+            .form_revision = form_revision,
+            .sequence = @intCast(sequence_raw),
+            .effective_from = effective_from,
+            .effective_until = effective_until,
+            .spec_revision = @intCast(spec_revision_raw),
+            .spec_hash = spec_hash,
+            .review_state = review_state,
+            .confirmed_at_unix_seconds = confirmed_at,
+            .source = source,
+            .values = values,
+        };
+    }
+
+    fn loadTaxFormProfileValues(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        tax_year: u16,
+        form_code: []const u8,
+        form_revision: []const u8,
+        revision_id: []const u8,
+    ) ![]OwnedTaxFormProfileSetupValue {
+        var statement = try self.prepare(
+            \\SELECT semantic_key, role, value_type, profile_value,
+            \\       anchor_value, text_value, boolean_value, integer_value,
+            \\       date_value, year_value, choice_value, source_tag,
+            \\       source_revision_id, source_reference
+            \\FROM tax_profile_form_profile_values
+            \\WHERE profile_id = ? AND tax_year = ? AND form_code = ?
+            \\  AND form_revision = ? AND revision_id = ?
+            \\ORDER BY role, semantic_key;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindInt64(2, tax_year);
+        try statement.bindText(3, form_code);
+        try statement.bindText(4, form_revision);
+        try statement.bindText(5, revision_id);
+        var values: std.ArrayList(OwnedTaxFormProfileSetupValue) = .empty;
+        errdefer {
+            for (values.items) |*value| value.deinit(allocator);
+            values.deinit(allocator);
+        }
+        while (try statement.step() == .row) {
+            const semantic_text = columnText(statement.raw, 0) orelse
+                return Error.SqliteFailure;
+            const semantic_key = parseEnumText(
+                form_catalog.TaxFormProfileSemanticKey,
+                semantic_text,
+            ) orelse return Error.SqliteFailure;
+            const role_text = columnText(statement.raw, 1) orelse
+                return Error.SqliteFailure;
+            const role = parseEnumText(form_catalog.Role, role_text) orelse
+                return Error.SqliteFailure;
+            var scalar = try readTaxFormProfileScalarValue(
+                allocator,
+                statement.raw,
+                2,
+            );
+            errdefer scalar.deinit(allocator);
+            var source = try readTaxFormProfileValueSource(
+                allocator,
+                statement.raw,
+                11,
+            );
+            errdefer source.deinit(allocator);
+            try values.append(allocator, .{
+                .semantic_key = semantic_key,
+                .role = role,
+                .value = scalar,
+                .source = source,
+            });
+        }
+        return values.toOwnedSlice(allocator);
+    }
+
+    /// Finds taxpayers whose local label or current legal/taxpayer name
+    /// contains the query, or whose canonical TIN contains the query's digits,
+    /// across the whole store.
     ///
     /// This exists because the sidebar holds a bounded number of rows: a
     /// taxpayer past that bound must still be findable by typing, otherwise
@@ -2858,6 +6086,8 @@ pub const Store = struct {
 
         var statement = try self.prepare(
             \\SELECT p.id, p.status, p.current_revision_id, r.sequence,
+            \\       COALESCE(p.local_label,
+            \\           COALESCE(r.taxpayer_name, r.registered_name)),
             \\       COALESCE(r.taxpayer_name, r.registered_name),
             \\       COALESCE(anchor.canonical_tin, r.tin), r.subject_kind
             \\FROM tax_profiles AS p
@@ -2872,20 +6102,23 @@ pub const Store = struct {
             \\ )
             \\WHERE (? = 1 OR p.status = 'active')
             \\  AND (
-            \\      COALESCE(r.taxpayer_name, r.registered_name)
+            \\      p.local_label LIKE ? ESCAPE '\'
+            \\      OR COALESCE(r.taxpayer_name, r.registered_name)
             \\          LIKE ? ESCAPE '\'
             \\      OR (? IS NOT NULL AND
             \\          COALESCE(anchor.canonical_tin, r.tin) LIKE ? ESCAPE '\')
             \\  )
             \\ORDER BY COALESCE(
-            \\    r.taxpayer_name, r.registered_name
+            \\    p.local_label,
+            \\    COALESCE(r.taxpayer_name, r.registered_name)
             \\) COLLATE NOCASE, p.id;
         );
         defer statement.deinit();
         try statement.bindBool(1, include_archived);
         try statement.bindText(2, name_pattern);
-        try statement.bindOptionalText(3, tin_pattern);
+        try statement.bindText(3, name_pattern);
         try statement.bindOptionalText(4, tin_pattern);
+        try statement.bindOptionalText(5, tin_pattern);
 
         var items: std.ArrayList(OwnedProfileSummary) = .empty;
         errdefer {
@@ -2901,6 +6134,1464 @@ pub const Store = struct {
             try items.append(allocator, item);
         }
         return .{ .items = try items.toOwnedSlice(allocator) };
+    }
+
+    /// Current optimistic sequence of the independent registration stream.
+    /// A profile without registration commits is sequence zero.
+    pub fn registrationStreamSequence(
+        self: *Store,
+        profile_id: []const u8,
+    ) !u32 {
+        try validateOpaqueText(profile_id);
+        var statement = try self.prepare(
+            \\SELECT COALESCE(MAX(sequence), 0)
+            \\FROM tax_profile_registration_commits
+            \\WHERE profile_id = ?;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        if (try statement.step() != .row) return Error.SqliteFailure;
+        const raw = sqlite.sqlite3_column_int64(statement.raw, 0);
+        if (raw < 0 or raw > std.math.maxInt(u32)) {
+            return Error.SqliteFailure;
+        }
+        return @intCast(raw);
+    }
+
+    /// Appends one atomic desired-set diff. Stable anchors may be introduced
+    /// in the same transaction, while every component value is an immutable
+    /// event in its own local history.
+    pub fn appendRegistrationCommit(
+        self: *Store,
+        value: RegistrationCommitWrite,
+    ) !u32 {
+        try validateRegistrationCommitWrite(value);
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        if (!(try self.profileExists(value.profile_id))) return Error.NotFound;
+        const current = try self.registrationStreamSequence(value.profile_id);
+        if (current != value.expected_current_sequence) {
+            return Error.RegistrationStreamConflict;
+        }
+        if (current == std.math.maxInt(u32)) return Error.InvalidValue;
+        const next = current + 1;
+
+        var commit_row = try self.prepare(
+            \\INSERT INTO tax_profile_registration_commits (
+            \\    profile_id, sequence
+            \\) VALUES (?, ?);
+        );
+        defer commit_row.deinit();
+        try commit_row.bindText(1, value.profile_id);
+        try commit_row.bindInt64(2, next);
+        try commit_row.expectDone();
+
+        for (value.activities) |activity| {
+            try self.appendRegistrationActivityInTx(
+                value.profile_id,
+                next,
+                activity,
+            );
+        }
+        for (value.obligations) |obligation| {
+            try self.appendRegistrationObligationInTx(
+                value.profile_id,
+                next,
+                obligation,
+            );
+        }
+        for (value.agent_designations) |fact| {
+            try self.appendRegistrationAgentDesignationInTx(
+                value.profile_id,
+                next,
+                fact,
+            );
+        }
+        for (value.eopt_tiers) |fact| {
+            try self.appendRegistrationEoptTierInTx(
+                value.profile_id,
+                next,
+                fact,
+            );
+        }
+        for (value.activity_statuses) |fact| {
+            try self.appendRegistrationActivityStatusInTx(
+                value.profile_id,
+                next,
+                fact,
+            );
+        }
+        for (value.special_bases) |fact| {
+            try self.appendRegistrationSpecialBasisInTx(
+                value.profile_id,
+                next,
+                fact,
+            );
+        }
+        try self.validateRegistrationObligationsInTx(value.profile_id);
+
+        try self.commit();
+        committed = true;
+        return next;
+    }
+
+    /// Complete immutable registration event history for one taxpayer.
+    pub fn listRegistrationHistory(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+    ) !RegistrationHistoryList {
+        return self.loadRegistrationHistory(allocator, profile_id, null);
+    }
+
+    /// Exact-date registration projection. Confirmed histories resolve to
+    /// their highest-sequence active event; every review-required proposal is
+    /// retained so callers cannot make it disappear by saving another row.
+    pub fn resolveRegistrationOn(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        effective_on: []const u8,
+    ) !RegistrationHistoryList {
+        try validateDate(effective_on);
+        return self.loadRegistrationHistory(
+            allocator,
+            profile_id,
+            effective_on,
+        );
+    }
+
+    fn appendRegistrationActivityInTx(
+        self: *Store,
+        profile_id: []const u8,
+        stream_sequence: u32,
+        value: RegistrationActivityRevisionWrite,
+    ) !void {
+        var anchor = try self.prepare(
+            \\INSERT INTO tax_profile_business_activity_anchors (
+            \\    profile_id, id
+            \\) VALUES (?, ?)
+            \\ON CONFLICT(profile_id, id) DO NOTHING;
+        );
+        defer anchor.deinit();
+        try anchor.bindText(1, profile_id);
+        try anchor.bindText(2, value.anchor_id);
+        try anchor.expectDone();
+
+        _ = try self.insertRegistrationMetadataInTx(
+            profile_id,
+            stream_sequence,
+            .business_activity,
+            value.anchor_id,
+            value.anchor_id,
+            value.metadata,
+        );
+        var payload = try self.prepare(
+            \\INSERT INTO tax_profile_registration_activity_values (
+            \\    profile_id, revision_id, line_of_business, atc
+            \\) VALUES (?, ?, ?, ?);
+        );
+        defer payload.deinit();
+        try payload.bindText(1, profile_id);
+        try payload.bindText(2, value.metadata.id);
+        try payload.bindText(3, value.line_of_business);
+        try payload.bindOptionalText(4, value.atc);
+        try payload.expectDone();
+    }
+
+    fn appendRegistrationObligationInTx(
+        self: *Store,
+        profile_id: []const u8,
+        stream_sequence: u32,
+        value: RegistrationObligationRevisionWrite,
+    ) !void {
+        var anchor = try self.prepare(
+            \\INSERT INTO tax_profile_registration_obligation_anchors (
+            \\    profile_id, id
+            \\) VALUES (?, ?)
+            \\ON CONFLICT(profile_id, id) DO NOTHING;
+        );
+        defer anchor.deinit();
+        try anchor.bindText(1, profile_id);
+        try anchor.bindText(2, value.anchor_id);
+        try anchor.expectDone();
+
+        _ = try self.insertRegistrationMetadataInTx(
+            profile_id,
+            stream_sequence,
+            .registration_obligation,
+            value.anchor_id,
+            value.anchor_id,
+            value.metadata,
+        );
+        var payload = try self.prepare(
+            \\INSERT INTO tax_profile_registration_obligation_values (
+            \\    profile_id, revision_id, obligation_kind, value_text
+            \\) VALUES (?, ?, ?, ?);
+        );
+        defer payload.deinit();
+        try payload.bindText(1, profile_id);
+        try payload.bindText(2, value.metadata.id);
+        try payload.bindText(3, value.kind.text());
+        try payload.bindOptionalText(4, value.value_text);
+        try payload.expectDone();
+    }
+
+    fn appendRegistrationAgentDesignationInTx(
+        self: *Store,
+        profile_id: []const u8,
+        stream_sequence: u32,
+        value: RegistrationAgentDesignationRevisionWrite,
+    ) !void {
+        try self.appendRegistrationFactInTx(
+            profile_id,
+            stream_sequence,
+            .agent_designation,
+            value.metadata,
+            value.value.text(),
+            null,
+        );
+    }
+
+    fn appendRegistrationEoptTierInTx(
+        self: *Store,
+        profile_id: []const u8,
+        stream_sequence: u32,
+        value: RegistrationEoptTierRevisionWrite,
+    ) !void {
+        try self.appendRegistrationFactInTx(
+            profile_id,
+            stream_sequence,
+            .eopt_tier,
+            value.metadata,
+            value.value.text(),
+            null,
+        );
+    }
+
+    fn appendRegistrationActivityStatusInTx(
+        self: *Store,
+        profile_id: []const u8,
+        stream_sequence: u32,
+        value: RegistrationActivityStatusRevisionWrite,
+    ) !void {
+        try self.appendRegistrationFactInTx(
+            profile_id,
+            stream_sequence,
+            .registration_activity_status,
+            value.metadata,
+            value.value.text(),
+            null,
+        );
+    }
+
+    fn appendRegistrationSpecialBasisInTx(
+        self: *Store,
+        profile_id: []const u8,
+        stream_sequence: u32,
+        value: RegistrationSpecialBasisRevisionWrite,
+    ) !void {
+        try self.appendRegistrationFactInTx(
+            profile_id,
+            stream_sequence,
+            .special_law_or_treaty_basis,
+            value.metadata,
+            value.kind.text(),
+            value.value_text,
+        );
+    }
+
+    fn appendRegistrationFactInTx(
+        self: *Store,
+        profile_id: []const u8,
+        stream_sequence: u32,
+        component_kind: RegistrationComponentKind,
+        metadata: RegistrationRevisionMetadataWrite,
+        value_tag: []const u8,
+        value_text: ?[]const u8,
+    ) !void {
+        _ = try self.insertRegistrationMetadataInTx(
+            profile_id,
+            stream_sequence,
+            component_kind,
+            component_kind.text(),
+            null,
+            metadata,
+        );
+        var payload = try self.prepare(
+            \\INSERT INTO tax_profile_registration_fact_values (
+            \\    profile_id, revision_id, fact_kind, value_tag, value_text
+            \\) VALUES (?, ?, ?, ?, ?);
+        );
+        defer payload.deinit();
+        try payload.bindText(1, profile_id);
+        try payload.bindText(2, metadata.id);
+        try payload.bindText(3, component_kind.text());
+        try payload.bindText(4, value_tag);
+        try payload.bindOptionalText(5, value_text);
+        try payload.expectDone();
+    }
+
+    fn insertRegistrationMetadataInTx(
+        self: *Store,
+        profile_id: []const u8,
+        stream_sequence: u32,
+        component_kind: RegistrationComponentKind,
+        history_key: []const u8,
+        anchor_id: ?[]const u8,
+        metadata: RegistrationRevisionMetadataWrite,
+    ) !u32 {
+        const current = try self.registrationComponentSequence(
+            profile_id,
+            component_kind,
+            history_key,
+        );
+        if (current != metadata.expected_component_sequence) {
+            return Error.RegistrationComponentConflict;
+        }
+        if (current == std.math.maxInt(u32)) return Error.InvalidValue;
+        const next = current + 1;
+
+        if (metadata.supersedes_id) |supersedes_id| {
+            var prior = try self.prepare(
+                \\SELECT 1
+                \\FROM tax_profile_registration_component_revisions AS prior
+                \\WHERE prior.profile_id = ? AND prior.id = ?
+                \\  AND prior.component_kind = ? AND prior.history_key = ?
+                \\  AND NOT EXISTS (
+                \\      SELECT 1
+                \\      FROM tax_profile_registration_component_revisions later
+                \\      WHERE later.profile_id = prior.profile_id
+                \\        AND later.supersedes_id = prior.id
+                \\  );
+            );
+            defer prior.deinit();
+            try prior.bindText(1, profile_id);
+            try prior.bindText(2, supersedes_id);
+            try prior.bindText(3, component_kind.text());
+            try prior.bindText(4, history_key);
+            if (try prior.step() != .row) {
+                return Error.RegistrationComponentConflict;
+            }
+        }
+
+        const confirmed_at: ?i64 = if (metadata.review_state == .confirmed)
+            metadata.confirmed_at_unix_seconds orelse
+                try self.currentUnixSeconds()
+        else
+            null;
+        var insert = try self.prepare(
+            \\INSERT INTO tax_profile_registration_component_revisions (
+            \\    profile_id, id, component_kind, history_key, anchor_id,
+            \\    component_sequence, stream_sequence, record_state,
+            \\    effective_from, effective_until, source_tag,
+            \\    evidence_reference, review_state, review_reason,
+            \\    confirmed_at, supersedes_id,
+            \\    legacy_revision_id, legacy_component_id
+            \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            \\          NULL, NULL);
+        );
+        defer insert.deinit();
+        try insert.bindText(1, profile_id);
+        try insert.bindText(2, metadata.id);
+        try insert.bindText(3, component_kind.text());
+        try insert.bindText(4, history_key);
+        try insert.bindOptionalText(5, anchor_id);
+        try insert.bindInt64(6, next);
+        try insert.bindInt64(7, stream_sequence);
+        try insert.bindText(8, metadata.record_state.text());
+        try insert.bindText(9, &metadata.effective.from);
+        try insert.bindOptionalText(
+            10,
+            if (metadata.effective.until) |*until| until else null,
+        );
+        try insert.bindText(11, metadata.source.text());
+        try insert.bindOptionalText(12, metadata.evidence_reference);
+        try insert.bindText(13, metadata.review_state.text());
+        try insert.bindOptionalText(
+            14,
+            if (metadata.review_reason) |reason| reason.text() else null,
+        );
+        try insert.bindOptionalInt64(15, confirmed_at);
+        try insert.bindOptionalText(16, metadata.supersedes_id);
+        try insert.expectDone();
+        return next;
+    }
+
+    fn currentUnixSeconds(self: *Store) !i64 {
+        var statement = try self.prepare("SELECT unixepoch();");
+        defer statement.deinit();
+        if (try statement.step() != .row) return Error.SqliteFailure;
+        return sqlite.sqlite3_column_int64(statement.raw, 0);
+    }
+
+    fn registrationComponentSequence(
+        self: *Store,
+        profile_id: []const u8,
+        component_kind: RegistrationComponentKind,
+        history_key: []const u8,
+    ) !u32 {
+        var statement = try self.prepare(
+            \\SELECT COALESCE(MAX(component_sequence), 0)
+            \\FROM tax_profile_registration_component_revisions
+            \\WHERE profile_id = ? AND component_kind = ?
+            \\  AND history_key = ?;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindText(2, component_kind.text());
+        try statement.bindText(3, history_key);
+        if (try statement.step() != .row) return Error.SqliteFailure;
+        const raw = sqlite.sqlite3_column_int64(statement.raw, 0);
+        if (raw < 0 or raw > std.math.maxInt(u32)) {
+            return Error.SqliteFailure;
+        }
+        return @intCast(raw);
+    }
+
+    fn validateRegistrationObligationsInTx(
+        self: *Store,
+        profile_id: []const u8,
+    ) !void {
+        // A stable obligation anchor cannot silently change semantic family.
+        var family = try self.prepare(
+            \\SELECT 1
+            \\FROM tax_profile_registration_component_revisions AS revision
+            \\JOIN tax_profile_registration_obligation_values AS value
+            \\  ON value.profile_id = revision.profile_id
+            \\ AND value.revision_id = revision.id
+            \\WHERE revision.profile_id = ?
+            \\  AND revision.component_kind = 'registration_obligation'
+            \\  AND value.obligation_kind NOT IN (
+            \\      'unknown_requires_review'
+            \\  )
+            \\GROUP BY revision.anchor_id
+            \\HAVING COUNT(DISTINCT CASE
+            \\    WHEN value.obligation_kind LIKE 'withholding_%'
+            \\        THEN 'withholding'
+            \\    ELSE value.obligation_kind
+            \\END) > 1
+            \\LIMIT 1;
+        );
+        defer family.deinit();
+        try family.bindText(1, profile_id);
+        if (try family.step() == .row) {
+            return Error.RegistrationComponentConflict;
+        }
+
+        const resolved_cte =
+            \\WITH boundaries(day) AS (
+            \\    SELECT effective_from
+            \\    FROM tax_profile_registration_component_revisions
+            \\    WHERE profile_id = ?1
+            \\      AND component_kind = 'registration_obligation'
+            \\      AND review_state = 'confirmed'
+            \\    UNION
+            \\    SELECT date(effective_until, '+1 day')
+            \\    FROM tax_profile_registration_component_revisions
+            \\    WHERE profile_id = ?1
+            \\      AND component_kind = 'registration_obligation'
+            \\      AND review_state = 'confirmed'
+            \\      AND effective_until IS NOT NULL
+            \\), ranked AS (
+            \\    SELECT boundary.day, revision.history_key,
+            \\           revision.record_state, value.obligation_kind,
+            \\           value.value_text,
+            \\           ROW_NUMBER() OVER (
+            \\               PARTITION BY boundary.day, revision.history_key
+            \\               ORDER BY revision.component_sequence DESC
+            \\           ) AS precedence
+            \\    FROM boundaries AS boundary
+            \\    JOIN tax_profile_registration_component_revisions revision
+            \\      ON revision.profile_id = ?1
+            \\     AND revision.component_kind = 'registration_obligation'
+            \\     AND revision.review_state = 'confirmed'
+            \\     AND revision.effective_from <= boundary.day
+            \\     AND boundary.day <= COALESCE(
+            \\         revision.effective_until, '9999-12-31'
+            \\     )
+            \\    JOIN tax_profile_registration_obligation_values value
+            \\      ON value.profile_id = revision.profile_id
+            \\     AND value.revision_id = revision.id
+            \\), current_values AS (
+            \\    SELECT * FROM ranked
+            \\    WHERE precedence = 1 AND record_state = 'present'
+            \\)
+        ;
+        var vat_conflict = try self.prepare(resolved_cte ++
+            \\SELECT 1 FROM current_values
+            \\GROUP BY day
+            \\HAVING SUM(obligation_kind = 'vat') > 0
+            \\   AND SUM(obligation_kind = 'percentage_tax') > 0
+            \\LIMIT 1;
+        );
+        defer vat_conflict.deinit();
+        try vat_conflict.bindText(1, profile_id);
+        if (try vat_conflict.step() == .row) {
+            return Error.RegistrationObligationConflict;
+        }
+
+        var duplicate = try self.prepare(resolved_cte ++
+            \\SELECT 1 FROM current_values
+            \\GROUP BY day, obligation_kind, COALESCE(value_text, '')
+            \\HAVING COUNT(*) > 1
+            \\LIMIT 1;
+        );
+        defer duplicate.deinit();
+        try duplicate.bindText(1, profile_id);
+        if (try duplicate.step() == .row) {
+            return Error.RegistrationObligationConflict;
+        }
+    }
+
+    fn loadRegistrationHistory(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        effective_on: ?[]const u8,
+    ) !RegistrationHistoryList {
+        try validateOpaqueText(profile_id);
+        if (!(try self.profileExists(profile_id))) return Error.NotFound;
+        const stream_sequence = try self.registrationStreamSequence(profile_id);
+
+        var activity_anchors: std.ArrayList(OwnedBusinessActivityAnchor) = .empty;
+        errdefer {
+            for (activity_anchors.items) |*item| item.deinit(allocator);
+            activity_anchors.deinit(allocator);
+        }
+        var activity_anchor_rows = try self.prepare(
+            \\SELECT profile_id, id
+            \\FROM tax_profile_business_activity_anchors
+            \\WHERE profile_id = ?
+            \\ORDER BY id;
+        );
+        defer activity_anchor_rows.deinit();
+        try activity_anchor_rows.bindText(1, profile_id);
+        while (try activity_anchor_rows.step() == .row) {
+            const owner = try dupColumn(allocator, activity_anchor_rows.raw, 0);
+            errdefer allocator.free(owner);
+            const id = try dupColumn(allocator, activity_anchor_rows.raw, 1);
+            try activity_anchors.append(allocator, .{
+                .profile_id = owner,
+                .anchor_id = id,
+            });
+        }
+
+        var obligation_anchors: std.ArrayList(OwnedRegistrationObligationAnchor) = .empty;
+        errdefer {
+            for (obligation_anchors.items) |*item| item.deinit(allocator);
+            obligation_anchors.deinit(allocator);
+        }
+        var obligation_anchor_rows = try self.prepare(
+            \\SELECT profile_id, id
+            \\FROM tax_profile_registration_obligation_anchors
+            \\WHERE profile_id = ?
+            \\ORDER BY id;
+        );
+        defer obligation_anchor_rows.deinit();
+        try obligation_anchor_rows.bindText(1, profile_id);
+        while (try obligation_anchor_rows.step() == .row) {
+            const owner = try dupColumn(allocator, obligation_anchor_rows.raw, 0);
+            errdefer allocator.free(owner);
+            const id = try dupColumn(allocator, obligation_anchor_rows.raw, 1);
+            try obligation_anchors.append(allocator, .{
+                .profile_id = owner,
+                .anchor_id = id,
+            });
+        }
+
+        var activities: std.ArrayList(OwnedRegistrationActivityRevision) = .empty;
+        errdefer {
+            for (activities.items) |*item| item.deinit(allocator);
+            activities.deinit(allocator);
+        }
+        var obligations: std.ArrayList(OwnedRegistrationObligationRevision) = .empty;
+        errdefer {
+            for (obligations.items) |*item| item.deinit(allocator);
+            obligations.deinit(allocator);
+        }
+        var agents: std.ArrayList(OwnedRegistrationAgentDesignationRevision) = .empty;
+        errdefer {
+            for (agents.items) |*item| item.deinit(allocator);
+            agents.deinit(allocator);
+        }
+        var eopt: std.ArrayList(OwnedRegistrationEoptTierRevision) = .empty;
+        errdefer {
+            for (eopt.items) |*item| item.deinit(allocator);
+            eopt.deinit(allocator);
+        }
+        var statuses: std.ArrayList(OwnedRegistrationActivityStatusRevision) = .empty;
+        errdefer {
+            for (statuses.items) |*item| item.deinit(allocator);
+            statuses.deinit(allocator);
+        }
+        var bases: std.ArrayList(OwnedRegistrationSpecialBasisRevision) = .empty;
+        errdefer {
+            for (bases.items) |*item| item.deinit(allocator);
+            bases.deinit(allocator);
+        }
+
+        const all_sql =
+            \\SELECT revision.id, revision.profile_id,
+            \\       revision.component_sequence, revision.stream_sequence,
+            \\       revision.effective_from, revision.effective_until,
+            \\       revision.record_state, revision.source_tag,
+            \\       revision.evidence_reference, revision.review_state,
+            \\       revision.review_reason, revision.confirmed_at,
+            \\       revision.supersedes_id, revision.legacy_revision_id,
+            \\       revision.legacy_component_id, revision.component_kind,
+            \\       revision.anchor_id,
+            \\       activity.line_of_business, activity.atc,
+            \\       obligation.obligation_kind, obligation.value_text,
+            \\       fact.fact_kind, fact.value_tag, fact.value_text
+            \\FROM tax_profile_registration_component_revisions revision
+            \\LEFT JOIN tax_profile_registration_activity_values activity
+            \\  ON activity.profile_id = revision.profile_id
+            \\ AND activity.revision_id = revision.id
+            \\LEFT JOIN tax_profile_registration_obligation_values obligation
+            \\  ON obligation.profile_id = revision.profile_id
+            \\ AND obligation.revision_id = revision.id
+            \\LEFT JOIN tax_profile_registration_fact_values fact
+            \\  ON fact.profile_id = revision.profile_id
+            \\ AND fact.revision_id = revision.id
+            \\WHERE revision.profile_id = ?1
+            \\ORDER BY revision.stream_sequence,
+            \\         revision.component_sequence, revision.id;
+        ;
+        const as_of_sql =
+            \\SELECT revision.id, revision.profile_id,
+            \\       revision.component_sequence, revision.stream_sequence,
+            \\       revision.effective_from, revision.effective_until,
+            \\       revision.record_state, revision.source_tag,
+            \\       revision.evidence_reference, revision.review_state,
+            \\       revision.review_reason, revision.confirmed_at,
+            \\       revision.supersedes_id, revision.legacy_revision_id,
+            \\       revision.legacy_component_id, revision.component_kind,
+            \\       revision.anchor_id,
+            \\       activity.line_of_business, activity.atc,
+            \\       obligation.obligation_kind, obligation.value_text,
+            \\       fact.fact_kind, fact.value_tag, fact.value_text
+            \\FROM tax_profile_registration_component_revisions revision
+            \\LEFT JOIN tax_profile_registration_activity_values activity
+            \\  ON activity.profile_id = revision.profile_id
+            \\ AND activity.revision_id = revision.id
+            \\LEFT JOIN tax_profile_registration_obligation_values obligation
+            \\  ON obligation.profile_id = revision.profile_id
+            \\ AND obligation.revision_id = revision.id
+            \\LEFT JOIN tax_profile_registration_fact_values fact
+            \\  ON fact.profile_id = revision.profile_id
+            \\ AND fact.revision_id = revision.id
+            \\WHERE revision.profile_id = ?1 AND (
+            \\    (revision.review_state = 'requires_review' AND
+            \\        revision.record_state = 'present' AND NOT EXISTS (
+            \\            SELECT 1
+            \\            FROM tax_profile_registration_component_revisions later
+            \\            WHERE later.profile_id = revision.profile_id
+            \\              AND later.supersedes_id = revision.id
+            \\        )) OR
+            \\    (revision.review_state = 'confirmed' AND
+            \\        revision.record_state = 'present' AND
+            \\        revision.effective_from <= ?2 AND
+            \\        ?2 <= COALESCE(revision.effective_until, '9999-12-31') AND
+            \\        NOT EXISTS (
+            \\            SELECT 1
+            \\            FROM tax_profile_registration_component_revisions later
+            \\            WHERE later.profile_id = revision.profile_id
+            \\              AND later.component_kind = revision.component_kind
+            \\              AND later.history_key = revision.history_key
+            \\              AND later.review_state = 'confirmed'
+            \\              AND later.component_sequence >
+            \\                  revision.component_sequence
+            \\              AND later.effective_from <= ?2
+            \\              AND ?2 <= COALESCE(
+            \\                  later.effective_until, '9999-12-31'
+            \\              )
+            \\        ))
+            \\)
+            \\ORDER BY revision.stream_sequence,
+            \\         revision.component_sequence, revision.id;
+        ;
+        var rows = try self.prepare(if (effective_on == null) all_sql else as_of_sql);
+        defer rows.deinit();
+        try rows.bindText(1, profile_id);
+        if (effective_on) |on| try rows.bindText(2, on);
+        while (try rows.step() == .row) {
+            const kind = parseEnumText(
+                RegistrationComponentKind,
+                columnText(rows.raw, 15) orelse return Error.SqliteFailure,
+            ) orelse return Error.SqliteFailure;
+            switch (kind) {
+                .business_activity => try activities.append(
+                    allocator,
+                    try readRegistrationActivity(allocator, rows.raw),
+                ),
+                .registration_obligation => try obligations.append(
+                    allocator,
+                    try readRegistrationObligation(allocator, rows.raw),
+                ),
+                .agent_designation => try agents.append(
+                    allocator,
+                    try readRegistrationAgentDesignation(allocator, rows.raw),
+                ),
+                .eopt_tier => try eopt.append(
+                    allocator,
+                    try readRegistrationEoptTier(allocator, rows.raw),
+                ),
+                .registration_activity_status => try statuses.append(
+                    allocator,
+                    try readRegistrationActivityStatus(allocator, rows.raw),
+                ),
+                .special_law_or_treaty_basis => try bases.append(
+                    allocator,
+                    try readRegistrationSpecialBasis(allocator, rows.raw),
+                ),
+            }
+        }
+
+        const owned_activity_anchors = try activity_anchors.toOwnedSlice(allocator);
+        errdefer {
+            for (owned_activity_anchors) |*item| item.deinit(allocator);
+            allocator.free(owned_activity_anchors);
+        }
+        const owned_obligation_anchors = try obligation_anchors.toOwnedSlice(allocator);
+        errdefer {
+            for (owned_obligation_anchors) |*item| item.deinit(allocator);
+            allocator.free(owned_obligation_anchors);
+        }
+        const owned_activities = try activities.toOwnedSlice(allocator);
+        errdefer {
+            for (owned_activities) |*item| item.deinit(allocator);
+            allocator.free(owned_activities);
+        }
+        const owned_obligations = try obligations.toOwnedSlice(allocator);
+        errdefer {
+            for (owned_obligations) |*item| item.deinit(allocator);
+            allocator.free(owned_obligations);
+        }
+        const owned_agents = try agents.toOwnedSlice(allocator);
+        errdefer {
+            for (owned_agents) |*item| item.deinit(allocator);
+            allocator.free(owned_agents);
+        }
+        const owned_eopt = try eopt.toOwnedSlice(allocator);
+        errdefer {
+            for (owned_eopt) |*item| item.deinit(allocator);
+            allocator.free(owned_eopt);
+        }
+        const owned_statuses = try statuses.toOwnedSlice(allocator);
+        errdefer {
+            for (owned_statuses) |*item| item.deinit(allocator);
+            allocator.free(owned_statuses);
+        }
+        const owned_bases = try bases.toOwnedSlice(allocator);
+        return .{
+            .stream_sequence = stream_sequence,
+            .activity_anchors = owned_activity_anchors,
+            .obligation_anchors = owned_obligation_anchors,
+            .activities = owned_activities,
+            .obligations = owned_obligations,
+            .agent_designations = owned_agents,
+            .eopt_tiers = owned_eopt,
+            .activity_statuses = owned_statuses,
+            .special_bases = owned_bases,
+        };
+    }
+
+    /// Appends one exact decision without mutating the v14 Forms Set
+    /// projection. Imported and COR decisions remain review-required
+    /// proposals; only confirmed current decisions participate in resolve.
+    pub fn appendFormSetDecision(
+        self: *Store,
+        value: FormSetDecisionWrite,
+    ) !void {
+        try validateFormSetDecisionWrite(value);
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        try self.appendFormSetDecisionInTx(value);
+
+        try self.commit();
+        committed = true;
+    }
+
+    pub fn listFormSetDecisions(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        tax_year: u16,
+        form_code: []const u8,
+        form_revision: []const u8,
+    ) !FormSetDecisionList {
+        try validateFormSetDecisionStream(
+            profile_id,
+            tax_year,
+            form_code,
+            form_revision,
+        );
+        var statement = try self.prepare(
+            \\SELECT id, profile_id, tax_year, form_code, form_revision,
+            \\       sequence, decision_state, decision_scope,
+            \\       effective_from, effective_until, source_tag,
+            \\       evidence_reference, review_state, supersedes_id,
+            \\       created_at
+            \\FROM tax_profile_form_set_decisions
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\  AND form_code = ? AND form_revision = ?
+            \\ORDER BY sequence;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindInt64(2, tax_year);
+        try statement.bindText(3, form_code);
+        try statement.bindText(4, form_revision);
+
+        var items: std.ArrayList(OwnedFormSetDecision) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+        while (try statement.step() == .row) {
+            try items.append(
+                allocator,
+                try self.readFormSetDecision(allocator, statement.raw),
+            );
+        }
+        return .{ .items = try items.toOwnedSlice(allocator) };
+    }
+
+    /// Exact-date decision resolver. A confirmed interval wins over the
+    /// confirmed whole-year baseline. Current proposals are reported via the
+    /// independent review flag and never change the selected decision.
+    pub fn resolveFormSetDecisionOn(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        tax_year: u16,
+        form_code: []const u8,
+        form_revision: []const u8,
+        effective_on: []const u8,
+    ) !ResolvedFormSetDecision {
+        try validateFormSetDecisionStream(
+            profile_id,
+            tax_year,
+            form_code,
+            form_revision,
+        );
+        try validateDate(effective_on);
+        if (!dateBelongsToTaxYear(effective_on, tax_year)) {
+            return Error.InvalidDate;
+        }
+
+        var review = try self.prepare(
+            \\SELECT EXISTS (
+            \\    SELECT 1 FROM tax_profile_form_set_decisions AS proposal
+            \\    WHERE proposal.profile_id = ? AND proposal.tax_year = ?
+            \\      AND proposal.form_code = ?
+            \\      AND proposal.form_revision = ?
+            \\      AND proposal.review_state = 'review_required'
+            \\      AND proposal.effective_from <= ?
+            \\      AND ? <= COALESCE(
+            \\          proposal.effective_until,
+            \\          printf('%04d-12-31', proposal.tax_year)
+            \\      )
+            \\      AND NOT EXISTS (
+            \\          SELECT 1 FROM tax_profile_form_set_decisions AS later
+            \\          WHERE later.profile_id = proposal.profile_id
+            \\            AND later.tax_year = proposal.tax_year
+            \\            AND later.form_code = proposal.form_code
+            \\            AND later.form_revision = proposal.form_revision
+            \\            AND later.supersedes_id = proposal.id
+            \\      )
+            \\);
+        );
+        defer review.deinit();
+        try review.bindText(1, profile_id);
+        try review.bindInt64(2, tax_year);
+        try review.bindText(3, form_code);
+        try review.bindText(4, form_revision);
+        try review.bindText(5, effective_on);
+        try review.bindText(6, effective_on);
+        if (try review.step() != .row) return Error.SqliteFailure;
+        const review_required = sqlite.sqlite3_column_int(review.raw, 0) == 1;
+
+        var decision = try self.prepare(
+            \\SELECT id, profile_id, tax_year, form_code, form_revision,
+            \\       sequence, decision_state, decision_scope,
+            \\       effective_from, effective_until, source_tag,
+            \\       evidence_reference, review_state, supersedes_id,
+            \\       created_at
+            \\FROM tax_profile_form_set_decisions AS decision
+            \\WHERE decision.profile_id = ? AND decision.tax_year = ?
+            \\  AND decision.form_code = ? AND decision.form_revision = ?
+            \\  AND decision.review_state = 'confirmed'
+            \\  AND decision.effective_from <= ?
+            \\  AND ? <= COALESCE(
+            \\      decision.effective_until,
+            \\      printf('%04d-12-31', decision.tax_year)
+            \\  )
+            \\  AND NOT EXISTS (
+            \\      SELECT 1 FROM tax_profile_form_set_decisions AS later
+            \\      WHERE later.profile_id = decision.profile_id
+            \\        AND later.tax_year = decision.tax_year
+            \\        AND later.form_code = decision.form_code
+            \\        AND later.form_revision = decision.form_revision
+            \\        AND later.supersedes_id = decision.id
+            \\  )
+            \\ORDER BY CASE decision.decision_scope
+            \\             WHEN 'interval' THEN 0 ELSE 1 END,
+            \\         decision.sequence DESC
+            \\LIMIT 1;
+        );
+        defer decision.deinit();
+        try decision.bindText(1, profile_id);
+        try decision.bindInt64(2, tax_year);
+        try decision.bindText(3, form_code);
+        try decision.bindText(4, form_revision);
+        try decision.bindText(5, effective_on);
+        try decision.bindText(6, effective_on);
+        return .{
+            .decision = switch (try decision.step()) {
+                .done => null,
+                .row => try self.readFormSetDecision(
+                    allocator,
+                    decision.raw,
+                ),
+            },
+            .review_required = review_required,
+        };
+    }
+
+    fn appendFormSetDecisionInTx(
+        self: *Store,
+        value: FormSetDecisionWrite,
+    ) !void {
+        const current_sequence = try self.formSetDecisionCurrentSequence(
+            value.profile_id,
+            value.tax_year,
+            value.form_code,
+            value.form_revision,
+        );
+        if (value.expected_current_sequence != current_sequence) {
+            return Error.RevisionConflict;
+        }
+        if (!(try self.profileExists(value.profile_id))) return Error.NotFound;
+        try self.validateFormSetDecisionTransitionInTx(value);
+
+        var insert = try self.prepare(
+            \\INSERT INTO tax_profile_form_set_decisions (
+            \\    profile_id, tax_year, form_code, form_revision,
+            \\    id, sequence, decision_state, decision_scope,
+            \\    effective_from, effective_until, source_tag,
+            \\    evidence_reference, review_state, supersedes_id
+            \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        );
+        defer insert.deinit();
+        try insert.bindText(1, value.profile_id);
+        try insert.bindInt64(2, value.tax_year);
+        try insert.bindText(3, value.form_code);
+        try insert.bindText(4, value.form_revision);
+        try insert.bindText(5, value.id);
+        try insert.bindInt64(6, @as(i64, current_sequence) + 1);
+        try insert.bindText(7, value.state.text());
+        try insert.bindText(8, value.scope.text());
+        try insert.bindText(9, &value.effective.from);
+        try insert.bindOptionalText(
+            10,
+            if (value.effective.until) |*until| until else null,
+        );
+        try insert.bindText(11, value.source.text());
+        try insert.bindOptionalText(12, value.evidence_reference);
+        try insert.bindText(13, value.review_state.text());
+        try insert.bindOptionalText(14, value.supersedes_id);
+        try insert.expectDone();
+    }
+
+    fn formSetDecisionCurrentSequence(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: u16,
+        form_code: []const u8,
+        form_revision: []const u8,
+    ) !u32 {
+        var statement = try self.prepare(
+            \\SELECT COALESCE(MAX(sequence), 0)
+            \\FROM tax_profile_form_set_decisions
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\  AND form_code = ? AND form_revision = ?;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindInt64(2, tax_year);
+        try statement.bindText(3, form_code);
+        try statement.bindText(4, form_revision);
+        if (try statement.step() != .row) return Error.SqliteFailure;
+        const sequence = sqlite.sqlite3_column_int64(statement.raw, 0);
+        if (sequence < 0 or sequence > std.math.maxInt(u32)) {
+            return Error.SqliteFailure;
+        }
+        return @intCast(sequence);
+    }
+
+    fn validateFormSetDecisionTransitionInTx(
+        self: *Store,
+        value: FormSetDecisionWrite,
+    ) !void {
+        if (value.supersedes_id) |supersedes_id| {
+            var prior = try self.prepare(
+                \\SELECT decision_state, decision_scope,
+                \\       effective_from, effective_until, review_state,
+                \\       EXISTS (
+                \\           SELECT 1 FROM tax_profile_form_set_decisions AS later
+                \\           WHERE later.profile_id = prior.profile_id
+                \\             AND later.tax_year = prior.tax_year
+                \\             AND later.form_code = prior.form_code
+                \\             AND later.form_revision = prior.form_revision
+                \\             AND later.supersedes_id = prior.id
+                \\       )
+                \\FROM tax_profile_form_set_decisions AS prior
+                \\WHERE profile_id = ? AND tax_year = ?
+                \\  AND form_code = ? AND form_revision = ? AND id = ?;
+            );
+            defer prior.deinit();
+            try prior.bindText(1, value.profile_id);
+            try prior.bindInt64(2, value.tax_year);
+            try prior.bindText(3, value.form_code);
+            try prior.bindText(4, value.form_revision);
+            try prior.bindText(5, supersedes_id);
+            if (try prior.step() == .done) {
+                return Error.FormSetDecisionInvalidTransition;
+            }
+            if (sqlite.sqlite3_column_int(prior.raw, 5) == 1) {
+                return Error.FormSetDecisionAlreadySuperseded;
+            }
+            const prior_state = parseEnumText(
+                FormSetDecisionState,
+                columnText(prior.raw, 0) orelse return Error.SqliteFailure,
+            ) orelse return Error.SqliteFailure;
+            const prior_scope = parseEnumText(
+                FormSetDecisionScope,
+                columnText(prior.raw, 1) orelse return Error.SqliteFailure,
+            ) orelse return Error.SqliteFailure;
+            const prior_from = columnText(prior.raw, 2) orelse
+                return Error.SqliteFailure;
+            const prior_until = columnText(prior.raw, 3);
+            const prior_review = parseEnumText(
+                FormSetDecisionReviewState,
+                columnText(prior.raw, 4) orelse return Error.SqliteFailure,
+            ) orelse return Error.SqliteFailure;
+            if (value.source != .manual or prior_scope != value.scope or
+                !std.mem.eql(u8, prior_from, &value.effective.from) or
+                !optionalDecisionEndEql(
+                    prior_until,
+                    value.effective.until,
+                    value.tax_year,
+                ))
+            {
+                return Error.FormSetDecisionInvalidTransition;
+            }
+            switch (prior_review) {
+                .review_required => if ((value.review_state != .confirmed and
+                    value.review_state != .rejected) or
+                    value.state != prior_state)
+                {
+                    return Error.FormSetDecisionInvalidTransition;
+                },
+                .confirmed => if (value.review_state != .confirmed)
+                    return Error.FormSetDecisionInvalidTransition,
+                .rejected => return Error.FormSetDecisionInvalidTransition,
+            }
+        }
+
+        if (value.review_state != .confirmed) return;
+        var overlap = try self.prepare(
+            \\SELECT decision_state
+            \\FROM tax_profile_form_set_decisions AS prior
+            \\WHERE prior.profile_id = ? AND prior.tax_year = ?
+            \\  AND prior.form_code = ? AND prior.form_revision = ?
+            \\  AND prior.review_state = 'confirmed'
+            \\  AND prior.decision_scope = ?
+            \\  AND (? IS NULL OR prior.id <> ?)
+            \\  AND NOT EXISTS (
+            \\      SELECT 1 FROM tax_profile_form_set_decisions AS later
+            \\      WHERE later.profile_id = prior.profile_id
+            \\        AND later.tax_year = prior.tax_year
+            \\        AND later.form_code = prior.form_code
+            \\        AND later.form_revision = prior.form_revision
+            \\        AND later.supersedes_id = prior.id
+            \\  )
+            \\  AND (
+            \\      ? = 'whole_year' OR (
+            \\          prior.effective_from <= COALESCE(
+            \\              ?, printf('%04d-12-31', ?)
+            \\          )
+            \\          AND ? <= COALESCE(
+            \\              prior.effective_until,
+            \\              printf('%04d-12-31', prior.tax_year)
+            \\          )
+            \\      )
+            \\  )
+            \\LIMIT 1;
+        );
+        defer overlap.deinit();
+        try overlap.bindText(1, value.profile_id);
+        try overlap.bindInt64(2, value.tax_year);
+        try overlap.bindText(3, value.form_code);
+        try overlap.bindText(4, value.form_revision);
+        try overlap.bindText(5, value.scope.text());
+        try overlap.bindOptionalText(6, value.supersedes_id);
+        try overlap.bindOptionalText(7, value.supersedes_id);
+        try overlap.bindText(8, value.scope.text());
+        try overlap.bindOptionalText(
+            9,
+            if (value.effective.until) |*until| until else null,
+        );
+        try overlap.bindInt64(10, value.tax_year);
+        try overlap.bindText(11, &value.effective.from);
+        if (try overlap.step() == .row) {
+            const prior_state = parseEnumText(
+                FormSetDecisionState,
+                columnText(overlap.raw, 0) orelse return Error.SqliteFailure,
+            ) orelse return Error.SqliteFailure;
+            if (value.scope == .whole_year or prior_state != value.state) {
+                return Error.FormSetDecisionConflict;
+            }
+            return Error.FormSetDecisionOverlap;
+        }
+    }
+
+    fn readFormSetDecision(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        row: *sqlite.sqlite3_stmt,
+    ) !OwnedFormSetDecision {
+        _ = self;
+        const state = parseEnumText(
+            FormSetDecisionState,
+            columnText(row, 6) orelse return Error.SqliteFailure,
+        ) orelse return Error.SqliteFailure;
+        const scope = parseEnumText(
+            FormSetDecisionScope,
+            columnText(row, 7) orelse return Error.SqliteFailure,
+        ) orelse return Error.SqliteFailure;
+        const source = parseEnumText(
+            FormSetDecisionSource,
+            columnText(row, 10) orelse return Error.SqliteFailure,
+        ) orelse return Error.SqliteFailure;
+        const review_state = parseEnumText(
+            FormSetDecisionReviewState,
+            columnText(row, 12) orelse return Error.SqliteFailure,
+        ) orelse return Error.SqliteFailure;
+        const tax_year_raw = sqlite.sqlite3_column_int64(row, 2);
+        const sequence_raw = sqlite.sqlite3_column_int64(row, 5);
+        if (tax_year_raw < 1 or tax_year_raw > std.math.maxInt(u16) or
+            sequence_raw < 1 or sequence_raw > std.math.maxInt(u32))
+        {
+            return Error.SqliteFailure;
+        }
+
+        const id = try dupColumn(allocator, row, 0);
+        errdefer allocator.free(id);
+        const profile_id = try dupColumn(allocator, row, 1);
+        errdefer allocator.free(profile_id);
+        const form_code = try dupColumn(allocator, row, 3);
+        errdefer allocator.free(form_code);
+        const form_revision = try dupColumn(allocator, row, 4);
+        errdefer allocator.free(form_revision);
+        const effective_from = try dupColumn(allocator, row, 8);
+        errdefer allocator.free(effective_from);
+        const effective_until = try dupOptionalColumn(allocator, row, 9);
+        errdefer freeOptional(allocator, effective_until);
+        const evidence_reference = try dupOptionalColumn(allocator, row, 11);
+        errdefer freeOptional(allocator, evidence_reference);
+        const supersedes_id = try dupOptionalColumn(allocator, row, 13);
+        errdefer freeOptional(allocator, supersedes_id);
+        return .{
+            .id = id,
+            .profile_id = profile_id,
+            .tax_year = @intCast(tax_year_raw),
+            .form_code = form_code,
+            .form_revision = form_revision,
+            .sequence = @intCast(sequence_raw),
+            .state = state,
+            .scope = scope,
+            .effective_from = effective_from,
+            .effective_until = effective_until,
+            .source = source,
+            .evidence_reference = evidence_reference,
+            .review_state = review_state,
+            .supersedes_id = supersedes_id,
+            .created_at_unix_seconds = sqlite.sqlite3_column_int64(row, 14),
+        };
+    }
+
+    fn recordManualWholeYearProjectionChangesInTx(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: i32,
+        forms: []const FormRegistrationWrite,
+    ) !void {
+        if (try self.schemaVersion() < 15) return;
+        // Preserve the legacy projection API's error mapping. Its parent-row
+        // foreign key remains responsible for a missing profile.
+        if (!(try self.profileExists(profile_id))) return;
+
+        var prior_entries = try self.prepare(
+            \\SELECT form_code, form_revision
+            \\FROM tax_profile_form_set_entries
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\ORDER BY form_code, form_revision;
+        );
+        defer prior_entries.deinit();
+        try prior_entries.bindText(1, profile_id);
+        try prior_entries.bindInt64(2, tax_year);
+        while (try prior_entries.step() == .row) {
+            const form_code = columnText(prior_entries.raw, 0) orelse
+                return Error.SqliteFailure;
+            const form_revision = columnText(prior_entries.raw, 1) orelse
+                return Error.SqliteFailure;
+            if (!formRegistrationContains(forms, form_code, form_revision)) {
+                try self.recordManualWholeYearDecisionInTx(
+                    profile_id,
+                    @intCast(tax_year),
+                    form_code,
+                    form_revision,
+                    .inactive,
+                );
+            }
+        }
+        for (forms) |form| {
+            try self.recordManualWholeYearDecisionInTx(
+                profile_id,
+                @intCast(tax_year),
+                form.form_code,
+                form.form_revision,
+                .active,
+            );
+        }
+    }
+
+    fn recordManualIntervalProjectionInTx(
+        self: *Store,
+        value: FormSetIntervalWrite,
+    ) !void {
+        if (try self.schemaVersion() < 15) return;
+        const has_base = try self.formSetParentExistsInTx(
+            value.profile_id,
+            value.tax_year,
+        );
+        var exact_forms = try self.prepare(
+            \\SELECT form_code, form_revision
+            \\FROM tax_profile_form_set_entries
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\UNION
+            \\SELECT entry.form_code, entry.form_revision
+            \\FROM tax_profile_form_set_interval_revisions AS interval
+            \\JOIN tax_profile_form_set_interval_entries AS entry
+            \\  ON entry.revision_id = interval.id
+            \\WHERE interval.profile_id = ? AND interval.tax_year = ?
+            \\ORDER BY form_code, form_revision;
+        );
+        defer exact_forms.deinit();
+        try exact_forms.bindText(1, value.profile_id);
+        try exact_forms.bindInt64(2, value.tax_year);
+        try exact_forms.bindText(3, value.profile_id);
+        try exact_forms.bindInt64(4, value.tax_year);
+        while (try exact_forms.step() == .row) {
+            const form_code = columnText(exact_forms.raw, 0) orelse
+                return Error.SqliteFailure;
+            const form_revision = columnText(exact_forms.raw, 1) orelse
+                return Error.SqliteFailure;
+            if (has_base) {
+                const base_active = try self.formSetBaseContainsInTx(
+                    value.profile_id,
+                    value.tax_year,
+                    form_code,
+                    form_revision,
+                );
+                try self.recordManualWholeYearDecisionInTx(
+                    value.profile_id,
+                    @intCast(value.tax_year),
+                    form_code,
+                    form_revision,
+                    if (base_active) .active else .inactive,
+                );
+            }
+            try self.recordManualIntervalDecisionInTx(
+                value,
+                form_code,
+                form_revision,
+                if (formRegistrationContains(
+                    value.forms,
+                    form_code,
+                    form_revision,
+                )) .active else .inactive,
+            );
+        }
+    }
+
+    fn formSetParentExistsInTx(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: i32,
+    ) !bool {
+        var statement = try self.prepare(
+            \\SELECT 1 FROM tax_profile_form_sets
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\LIMIT 1;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindInt64(2, tax_year);
+        return try statement.step() == .row;
+    }
+
+    fn formSetBaseContainsInTx(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: i32,
+        form_code: []const u8,
+        form_revision: []const u8,
+    ) !bool {
+        var statement = try self.prepare(
+            \\SELECT 1 FROM tax_profile_form_set_entries
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\  AND form_code = ? AND form_revision = ?
+            \\LIMIT 1;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindInt64(2, tax_year);
+        try statement.bindText(3, form_code);
+        try statement.bindText(4, form_revision);
+        return try statement.step() == .row;
+    }
+
+    fn recordManualIntervalDecisionInTx(
+        self: *Store,
+        value: FormSetIntervalWrite,
+        form_code: []const u8,
+        form_revision: []const u8,
+        state: FormSetDecisionState,
+    ) !void {
+        const id = try self.generateOpaqueId();
+        const expected_sequence = try self.formSetDecisionCurrentSequence(
+            value.profile_id,
+            @intCast(value.tax_year),
+            form_code,
+            form_revision,
+        );
+        const write: FormSetDecisionWrite = .{
+            .id = &id,
+            .profile_id = value.profile_id,
+            .tax_year = @intCast(value.tax_year),
+            .form_code = form_code,
+            .form_revision = form_revision,
+            .expected_current_sequence = expected_sequence,
+            .state = state,
+            .scope = .interval,
+            .effective = .{
+                .from = value.effective_from[0..10].*,
+                .until = if (value.effective_until) |until|
+                    until[0..10].*
+                else
+                    null,
+            },
+            .source = .manual,
+            .review_state = .confirmed,
+        };
+        try validateFormSetDecisionWrite(write);
+        try self.appendFormSetDecisionInTx(write);
+    }
+
+    fn recordManualWholeYearDecisionInTx(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: u16,
+        form_code: []const u8,
+        form_revision: []const u8,
+        state: FormSetDecisionState,
+    ) !void {
+        var supersedes_storage: [64]u8 = undefined;
+        var supersedes_len: usize = 0;
+        var current_state: ?FormSetDecisionState = null;
+        {
+            var current = try self.prepare(
+                \\SELECT decision.id, decision.decision_state
+                \\FROM tax_profile_form_set_decisions AS decision
+                \\WHERE decision.profile_id = ? AND decision.tax_year = ?
+                \\  AND decision.form_code = ?
+                \\  AND decision.form_revision = ?
+                \\  AND decision.review_state = 'confirmed'
+                \\  AND decision.decision_scope = 'whole_year'
+                \\  AND NOT EXISTS (
+                \\      SELECT 1 FROM tax_profile_form_set_decisions AS later
+                \\      WHERE later.profile_id = decision.profile_id
+                \\        AND later.tax_year = decision.tax_year
+                \\        AND later.form_code = decision.form_code
+                \\        AND later.form_revision = decision.form_revision
+                \\        AND later.supersedes_id = decision.id
+                \\  )
+                \\LIMIT 1;
+            );
+            defer current.deinit();
+            try current.bindText(1, profile_id);
+            try current.bindInt64(2, tax_year);
+            try current.bindText(3, form_code);
+            try current.bindText(4, form_revision);
+            if (try current.step() == .row) {
+                const id = columnText(current.raw, 0) orelse
+                    return Error.SqliteFailure;
+                if (id.len > supersedes_storage.len) {
+                    return Error.SqliteFailure;
+                }
+                @memcpy(supersedes_storage[0..id.len], id);
+                supersedes_len = id.len;
+                current_state = parseEnumText(
+                    FormSetDecisionState,
+                    columnText(current.raw, 1) orelse
+                        return Error.SqliteFailure,
+                ) orelse return Error.SqliteFailure;
+            }
+        }
+        if (current_state != null and current_state.? == state) return;
+
+        const id = try self.generateOpaqueId();
+        var year_start: DateText = undefined;
+        _ = std.fmt.bufPrint(
+            &year_start,
+            "{d:0>4}-01-01",
+            .{tax_year},
+        ) catch return Error.InvalidValue;
+        const expected_sequence = try self.formSetDecisionCurrentSequence(
+            profile_id,
+            tax_year,
+            form_code,
+            form_revision,
+        );
+        const write: FormSetDecisionWrite = .{
+            .id = &id,
+            .profile_id = profile_id,
+            .tax_year = tax_year,
+            .form_code = form_code,
+            .form_revision = form_revision,
+            .expected_current_sequence = expected_sequence,
+            .state = state,
+            .scope = .whole_year,
+            .effective = .{ .from = year_start },
+            .source = .manual,
+            .review_state = .confirmed,
+            .supersedes_id = if (supersedes_len == 0)
+                null
+            else
+                supersedes_storage[0..supersedes_len],
+        };
+        try validateFormSetDecisionWrite(write);
+        try self.appendFormSetDecisionInTx(write);
     }
 
     /// Replaces the authoritative per-year Forms Set. Passing an empty slice
@@ -2934,6 +7625,11 @@ pub const Store = struct {
         tax_year: i32,
         forms: []const FormRegistrationWrite,
     ) !void {
+        try self.recordManualWholeYearProjectionChangesInTx(
+            profile_id,
+            tax_year,
+            forms,
+        );
         var configure = try self.prepare(
             \\INSERT INTO tax_profile_form_sets(profile_id, tax_year, state)
             \\VALUES (?, ?, ?)
@@ -3007,6 +7703,11 @@ pub const Store = struct {
         tax_year: i32,
         forms: []const FormRegistrationWrite,
     ) !void {
+        try self.recordManualWholeYearProjectionChangesInTx(
+            profile_id,
+            tax_year,
+            forms,
+        );
         var parent = try self.prepare(
             \\INSERT INTO tax_profile_form_sets(profile_id, tax_year, state)
             \\VALUES (?, ?, ?);
@@ -3562,6 +8263,54 @@ pub const Store = struct {
         var committed = false;
         errdefer if (!committed) self.rollbackNoFail();
 
+        try self.createDraftInTx(draft, bindings, snapshots, values);
+
+        try self.commit();
+        committed = true;
+    }
+
+    /// Creates the coarse draft and its complete immutable provenance as one
+    /// SQLite unit. A validation, foreign-key, trigger, or child-row failure
+    /// rolls back the draft itself, so a newly composed draft can never be
+    /// mistaken for a pre-v17 legacy draft.
+    pub fn createDraftWithProvenance(
+        self: *Store,
+        draft: DraftWrite,
+        bindings: []const RoleBindingWrite,
+        snapshots: []const SnapshotFieldWrite,
+        values: []const DraftValueWrite,
+        provenance: DraftProvenanceWrite,
+    ) !u32 {
+        try validateDraft(draft, bindings, snapshots, values);
+        try validateDraftProvenanceWrite(provenance);
+        try validateDraftAndProvenanceIdentity(
+            draft,
+            bindings,
+            provenance,
+        );
+        if (provenance.expected_current_sequence != 0) {
+            return Error.DraftProvenanceConflict;
+        }
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        try self.createDraftInTx(draft, bindings, snapshots, values);
+        const sequence = try self.appendDraftProvenanceInTx(provenance);
+
+        try self.commit();
+        committed = true;
+        return sequence;
+    }
+
+    fn createDraftInTx(
+        self: *Store,
+        draft: DraftWrite,
+        bindings: []const RoleBindingWrite,
+        snapshots: []const SnapshotFieldWrite,
+        values: []const DraftValueWrite,
+    ) !void {
         if (draft.amendment_of) |prior_id| {
             var prior = try self.prepare(
                 \\SELECT form_code, form_revision
@@ -3678,9 +8427,429 @@ pub const Store = struct {
             try add_value.expectDone();
             try add_value.reset();
         }
+    }
+
+    /// Current immutable provenance sequence for one coarse draft. Zero means
+    /// either a pre-v17 legacy draft or a newly created draft whose exact
+    /// provenance has not yet been appended; one is the terminal sequence.
+    pub fn draftProvenanceSequence(
+        self: *Store,
+        draft_id: []const u8,
+    ) !u32 {
+        try validateOpaqueText(draft_id);
+        var statement = try self.prepare(
+            \\SELECT COALESCE(MAX(sequence), 0)
+            \\FROM tax_form_draft_provenance
+            \\WHERE draft_id = ?;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, draft_id);
+        if (try statement.step() != .row) return Error.SqliteFailure;
+        const raw = sqlite.sqlite3_column_int64(statement.raw, 0);
+        if (raw < 0 or raw > 1) return Error.SqliteFailure;
+        return @intCast(raw);
+    }
+
+    /// Appends the one permitted exact provenance snapshot for a draft. The
+    /// parent and every ordered child collection commit atomically.
+    pub fn appendDraftProvenance(
+        self: *Store,
+        value: DraftProvenanceWrite,
+    ) !u32 {
+        try validateDraftProvenanceWrite(value);
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        const sequence = try self.appendDraftProvenanceInTx(value);
 
         try self.commit();
         committed = true;
+        return sequence;
+    }
+
+    fn appendDraftProvenanceInTx(
+        self: *Store,
+        value: DraftProvenanceWrite,
+    ) !u32 {
+        const current = try self.draftProvenanceSequence(value.draft_id);
+        if (current != value.expected_current_sequence or current != 0) {
+            return Error.DraftProvenanceConflict;
+        }
+
+        var parent = try self.prepare(
+            \\INSERT INTO tax_form_draft_provenance (
+            \\    draft_id, sequence, owner_profile_id, tax_year,
+            \\    form_code, form_revision, catalog_revision,
+            \\    catalog_sha256, setup_spec_revision, setup_spec_hash,
+            \\    forms_set_decision_id, forms_set_decision_sequence,
+            \\    forms_set_source_tag, forms_set_evidence_reference,
+            \\    forms_set_applicability_date,
+            \\    taxpayer_year_profile_id, taxpayer_year_tax_year,
+            \\    taxpayer_year_revision_id,
+            \\    taxpayer_year_revision_sequence,
+            \\    form_profile_profile_id, form_profile_tax_year,
+            \\    form_profile_form_code, form_profile_form_revision,
+            \\    form_profile_revision_id,
+            \\    form_profile_revision_sequence,
+            \\    form_profile_spec_revision, form_profile_spec_hash
+            \\) VALUES (
+            \\    ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            \\    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            \\);
+        );
+        defer parent.deinit();
+        try parent.bindText(1, value.draft_id);
+        try parent.bindText(2, value.owner_profile_id);
+        try parent.bindInt64(3, value.tax_year);
+        try parent.bindText(4, value.form_code);
+        try parent.bindText(5, value.form_revision);
+        try parent.bindText(6, value.catalog_revision);
+        try parent.bindText(7, value.catalog_sha256);
+        try parent.bindInt64(8, value.setup_spec_revision);
+        try parent.bindText(9, value.setup_spec_hash);
+        try parent.bindText(10, value.forms_set_decision.id);
+        try parent.bindInt64(11, value.forms_set_decision.sequence);
+        try parent.bindText(12, value.forms_set_decision.source.text());
+        try parent.bindOptionalText(
+            13,
+            value.forms_set_decision.evidence_reference,
+        );
+        try parent.bindDate(
+            14,
+            &value.forms_set_decision.applicability_date,
+        );
+        if (value.taxpayer_year_revision) |year| {
+            try parent.bindText(15, year.profile_id);
+            try parent.bindInt64(16, year.tax_year);
+            try parent.bindText(17, year.revision_id);
+            try parent.bindInt64(18, year.revision_sequence);
+        } else {
+            try parent.bindOptionalText(15, null);
+            try parent.bindOptionalText(16, null);
+            try parent.bindOptionalText(17, null);
+            try parent.bindOptionalText(18, null);
+        }
+        if (value.tax_form_profile_revision) |form_profile| {
+            try parent.bindText(19, form_profile.profile_id);
+            try parent.bindInt64(20, form_profile.tax_year);
+            try parent.bindText(21, form_profile.form_code);
+            try parent.bindText(22, form_profile.form_revision);
+            try parent.bindText(23, form_profile.revision_id);
+            try parent.bindInt64(24, form_profile.revision_sequence);
+            try parent.bindInt64(25, form_profile.spec_revision);
+            try parent.bindText(26, form_profile.spec_hash);
+        } else {
+            var index: c_int = 19;
+            while (index <= 26) : (index += 1) {
+                try parent.bindOptionalText(index, null);
+            }
+        }
+        try parent.expectDone();
+
+        var add_taxpayer = try self.prepare(
+            \\INSERT INTO tax_form_draft_provenance_taxpayer_revisions (
+            \\    draft_id, ordinal, role, profile_id, revision_id,
+            \\    revision_sequence
+            \\) VALUES (?, ?, ?, ?, ?, ?);
+        );
+        defer add_taxpayer.deinit();
+        for (value.taxpayer_revisions, 0..) |revision, ordinal| {
+            try add_taxpayer.bindText(1, value.draft_id);
+            try add_taxpayer.bindInt64(2, @intCast(ordinal));
+            try add_taxpayer.bindText(3, @tagName(revision.role));
+            try add_taxpayer.bindText(4, revision.profile_id);
+            try add_taxpayer.bindText(5, revision.revision_id);
+            try add_taxpayer.bindInt64(6, revision.revision_sequence);
+            try add_taxpayer.expectDone();
+            try add_taxpayer.reset();
+        }
+
+        var add_component = try self.prepare(
+            \\INSERT INTO tax_form_draft_provenance_components (
+            \\    draft_id, ordinal, component_kind, role, profile_id,
+            \\    anchor_id, revision_id, revision_sequence
+            \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+        );
+        defer add_component.deinit();
+        for (value.components, 0..) |component, ordinal| {
+            const encoded = draftProvenanceComponentColumns(component);
+            try add_component.bindText(1, value.draft_id);
+            try add_component.bindInt64(2, @intCast(ordinal));
+            try add_component.bindText(3, encoded.kind.text());
+            try add_component.bindText(4, @tagName(encoded.role));
+            try add_component.bindText(5, encoded.profile_id);
+            try add_component.bindText(6, encoded.anchor_id);
+            try add_component.bindText(7, encoded.revision_id);
+            try add_component.bindInt64(8, encoded.revision_sequence);
+            try add_component.expectDone();
+            try add_component.reset();
+        }
+
+        var add_source = try self.prepare(
+            \\INSERT INTO tax_form_draft_provenance_sources (
+            \\    draft_id, ordinal, source_kind, role, source_key,
+            \\    anchor_id, value_kind, value_text, value_integer
+            \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+        );
+        defer add_source.deinit();
+        for (value.source_snapshots, 0..) |*source, ordinal| {
+            const key = draftProvenanceSourceKeyColumns(&source.key);
+            const copied = draftProvenanceValueColumns(&source.copied_value);
+            try add_source.bindText(1, value.draft_id);
+            try add_source.bindInt64(2, @intCast(ordinal));
+            try add_source.bindText(3, key.kind);
+            try add_source.bindText(4, @tagName(key.role));
+            try add_source.bindText(5, key.key);
+            try add_source.bindOptionalText(6, key.anchor_id);
+            try add_source.bindText(7, copied.kind);
+            try add_source.bindOptionalText(8, copied.text);
+            try add_source.bindOptionalInt64(9, copied.integer);
+            try add_source.expectDone();
+            try add_source.reset();
+        }
+
+        var add_seed = try self.prepare(
+            \\INSERT INTO tax_form_draft_provenance_transaction_seeds (
+            \\    draft_id, ordinal, filing_field, source_kind, role,
+            \\    source_key, anchor_id, seed_source_kind,
+            \\    seed_revision_id, seed_catalog_revision,
+            \\    seed_catalog_sha256, value_kind, value_text,
+            \\    value_integer
+            \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        );
+        defer add_seed.deinit();
+        for (value.transaction_seeds, 0..) |*seed, ordinal| {
+            const key = draftProvenanceSourceKeyColumns(&seed.source_key);
+            const copied = draftProvenanceValueColumns(
+                &seed.copied_seed_value,
+            );
+            const source = draftProvenanceSeedSourceColumns(&seed.source);
+            try add_seed.bindText(1, value.draft_id);
+            try add_seed.bindInt64(2, @intCast(ordinal));
+            try add_seed.bindText(3, seed.filing_field);
+            try add_seed.bindText(4, key.kind);
+            try add_seed.bindText(5, @tagName(key.role));
+            try add_seed.bindText(6, key.key);
+            try add_seed.bindOptionalText(7, key.anchor_id);
+            try add_seed.bindText(8, source.kind);
+            try add_seed.bindOptionalText(9, source.revision_id);
+            try add_seed.bindOptionalText(10, source.catalog_revision);
+            try add_seed.bindOptionalText(11, source.catalog_sha256);
+            try add_seed.bindText(12, copied.kind);
+            try add_seed.bindOptionalText(13, copied.text);
+            try add_seed.bindOptionalInt64(14, copied.integer);
+            try add_seed.expectDone();
+            try add_seed.reset();
+        }
+        return 1;
+    }
+
+    /// Loads either the exact immutable v17 snapshot or the explicit legacy
+    /// absence state for an older coarse draft. A missing draft is `NotFound`;
+    /// it is never conflated with a real legacy draft.
+    pub fn getDraftProvenance(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        draft_id: []const u8,
+    ) !DraftProvenanceLoad {
+        try validateOpaqueText(draft_id);
+        var parent = try self.prepare(
+            \\SELECT draft_id, sequence, owner_profile_id, tax_year,
+            \\       form_code, form_revision, catalog_revision,
+            \\       catalog_sha256, setup_spec_revision, setup_spec_hash,
+            \\       forms_set_decision_id, forms_set_decision_sequence,
+            \\       forms_set_applicability_date,
+            \\       taxpayer_year_profile_id, taxpayer_year_tax_year,
+            \\       taxpayer_year_revision_id,
+            \\       taxpayer_year_revision_sequence,
+            \\       form_profile_profile_id, form_profile_tax_year,
+            \\       form_profile_form_code, form_profile_form_revision,
+            \\       form_profile_revision_id,
+            \\       form_profile_revision_sequence,
+            \\       form_profile_spec_revision, form_profile_spec_hash
+            \\FROM tax_form_draft_provenance
+            \\WHERE draft_id = ?;
+        );
+        defer parent.deinit();
+        try parent.bindText(1, draft_id);
+        if (try parent.step() == .done) {
+            if (!(try self.draftExists(draft_id))) return Error.NotFound;
+            return .provenance_legacy_absent;
+        }
+
+        const sequence_raw = sqlite.sqlite3_column_int64(parent.raw, 1);
+        const tax_year_raw = sqlite.sqlite3_column_int64(parent.raw, 3);
+        const setup_revision_raw = sqlite.sqlite3_column_int64(parent.raw, 8);
+        const decision_sequence_raw = sqlite.sqlite3_column_int64(
+            parent.raw,
+            11,
+        );
+        if (sequence_raw != 1 or tax_year_raw < 1 or
+            tax_year_raw > std.math.maxInt(u16) or
+            setup_revision_raw < 1 or
+            setup_revision_raw > std.math.maxInt(u32) or
+            decision_sequence_raw < 1 or
+            decision_sequence_raw > std.math.maxInt(u32))
+        {
+            return Error.SqliteFailure;
+        }
+
+        const owned_draft_id = try dupColumn(allocator, parent.raw, 0);
+        errdefer allocator.free(owned_draft_id);
+        const owner_profile_id = try dupColumn(allocator, parent.raw, 2);
+        errdefer allocator.free(owner_profile_id);
+        const form_code = try dupColumn(allocator, parent.raw, 4);
+        errdefer allocator.free(form_code);
+        const form_revision = try dupColumn(allocator, parent.raw, 5);
+        errdefer allocator.free(form_revision);
+        const catalog_revision = try dupColumn(allocator, parent.raw, 6);
+        errdefer allocator.free(catalog_revision);
+        const catalog_sha256 = try dupColumn(allocator, parent.raw, 7);
+        errdefer allocator.free(catalog_sha256);
+        const setup_spec_hash = try dupColumn(allocator, parent.raw, 9);
+        errdefer allocator.free(setup_spec_hash);
+        const decision_id = columnText(parent.raw, 10) orelse
+            return Error.SqliteFailure;
+        const applicability_date = try dupColumn(allocator, parent.raw, 12);
+        errdefer allocator.free(applicability_date);
+
+        var decision = try self.loadDraftProvenanceDecision(
+            allocator,
+            owner_profile_id,
+            @intCast(tax_year_raw),
+            form_code,
+            form_revision,
+            decision_id,
+        );
+        errdefer decision.deinit(allocator);
+        if (decision.sequence != @as(u32, @intCast(decision_sequence_raw))) {
+            return Error.SqliteFailure;
+        }
+
+        var taxpayer_year_revision: ?OwnedDraftProvenanceTaxpayerYearRevision =
+            null;
+        if (sqlite.sqlite3_column_type(parent.raw, 13) != sqlite.SQLITE_NULL) {
+            const year_raw = sqlite.sqlite3_column_int64(parent.raw, 14);
+            const revision_sequence_raw = sqlite.sqlite3_column_int64(
+                parent.raw,
+                16,
+            );
+            if (year_raw < 1 or year_raw > std.math.maxInt(u16) or
+                revision_sequence_raw < 1 or
+                revision_sequence_raw > std.math.maxInt(u32))
+            {
+                return Error.SqliteFailure;
+            }
+            const profile = try dupColumn(allocator, parent.raw, 13);
+            errdefer allocator.free(profile);
+            const revision = try dupColumn(allocator, parent.raw, 15);
+            taxpayer_year_revision = .{
+                .profile_id = profile,
+                .tax_year = @intCast(year_raw),
+                .revision_id = revision,
+                .revision_sequence = @intCast(revision_sequence_raw),
+            };
+        }
+        errdefer if (taxpayer_year_revision) |*item| item.deinit(allocator);
+
+        var tax_form_profile_revision: ?OwnedDraftProvenanceTaxFormProfileRevision =
+            null;
+        if (sqlite.sqlite3_column_type(parent.raw, 17) != sqlite.SQLITE_NULL) {
+            const profile_year_raw = sqlite.sqlite3_column_int64(parent.raw, 18);
+            const revision_sequence_raw = sqlite.sqlite3_column_int64(
+                parent.raw,
+                22,
+            );
+            const spec_revision_raw = sqlite.sqlite3_column_int64(
+                parent.raw,
+                23,
+            );
+            if (profile_year_raw < 1 or
+                profile_year_raw > std.math.maxInt(u16) or
+                revision_sequence_raw < 1 or
+                revision_sequence_raw > std.math.maxInt(u32) or
+                spec_revision_raw < 1 or
+                spec_revision_raw > std.math.maxInt(u32))
+            {
+                return Error.SqliteFailure;
+            }
+            const profile = try dupColumn(allocator, parent.raw, 17);
+            errdefer allocator.free(profile);
+            const profile_form_code = try dupColumn(allocator, parent.raw, 19);
+            errdefer allocator.free(profile_form_code);
+            const profile_form_revision = try dupColumn(
+                allocator,
+                parent.raw,
+                20,
+            );
+            errdefer allocator.free(profile_form_revision);
+            const revision_id = try dupColumn(allocator, parent.raw, 21);
+            errdefer allocator.free(revision_id);
+            const spec_hash = try dupColumn(allocator, parent.raw, 24);
+            tax_form_profile_revision = .{
+                .profile_id = profile,
+                .tax_year = @intCast(profile_year_raw),
+                .form_code = profile_form_code,
+                .form_revision = profile_form_revision,
+                .revision_id = revision_id,
+                .revision_sequence = @intCast(revision_sequence_raw),
+                .spec_revision = @intCast(spec_revision_raw),
+                .spec_hash = spec_hash,
+            };
+        }
+        errdefer if (tax_form_profile_revision) |*item| item.deinit(allocator);
+
+        const taxpayers = try self.loadDraftProvenanceTaxpayerRevisions(
+            allocator,
+            draft_id,
+        );
+        errdefer {
+            for (taxpayers) |*item| item.deinit(allocator);
+            allocator.free(taxpayers);
+        }
+        const components = try self.loadDraftProvenanceComponents(
+            allocator,
+            draft_id,
+        );
+        errdefer {
+            for (components) |*item| item.deinit(allocator);
+            allocator.free(components);
+        }
+        const sources = try self.loadDraftProvenanceSources(
+            allocator,
+            draft_id,
+        );
+        errdefer {
+            for (sources) |*item| item.deinit(allocator);
+            allocator.free(sources);
+        }
+        const seeds = try self.loadDraftProvenanceSeeds(
+            allocator,
+            draft_id,
+        );
+
+        return .{ .exact = .{
+            .draft_id = owned_draft_id,
+            .sequence = 1,
+            .owner_profile_id = owner_profile_id,
+            .tax_year = @intCast(tax_year_raw),
+            .form_code = form_code,
+            .form_revision = form_revision,
+            .catalog_revision = catalog_revision,
+            .catalog_sha256 = catalog_sha256,
+            .setup_spec_revision = @intCast(setup_revision_raw),
+            .setup_spec_hash = setup_spec_hash,
+            .forms_set_decision = decision,
+            .forms_set_applicability_date = applicability_date,
+            .taxpayer_revisions = taxpayers,
+            .taxpayer_year_revision = taxpayer_year_revision,
+            .tax_form_profile_revision = tax_form_profile_revision,
+            .components = components,
+            .source_snapshots = sources,
+            .transaction_seeds = seeds,
+        } };
     }
 
     pub fn getDraft(
@@ -3966,7 +9135,73 @@ pub const Store = struct {
         try key_custody.requireSyntheticPlaintextForTest(
             plaintext_capability,
         );
+        return self.appendExactDraftRevisionAuthorized(guard, value, null);
+    }
+
+    pub fn appendExactDraftRevisionWithProvenance(
+        self: *Store,
+        plaintext_capability: *const key_custody.SyntheticPlaintextTestCapability,
+        guard: ExactDraftRevisionGuard,
+        value: ExactDraftRevisionWrite,
+        provenance: ExactDraftProvenanceWrite,
+    ) !void {
+        try key_custody.requireSyntheticPlaintextForTest(
+            plaintext_capability,
+        );
+        return self.appendExactDraftRevisionAuthorized(
+            guard,
+            value,
+            provenance,
+        );
+    }
+
+    /// Development-artifact counterpart to `appendExactDraftRevision`.
+    /// The opaque authority is validated before entering the exact-only write
+    /// path; this method never creates or updates a coarse `tax_form_drafts`
+    /// row.
+    pub fn appendExactDraftRevisionDevelopmentPlaintext(
+        self: *Store,
+        plaintext_capability: *const key_custody.DevelopmentPlaintextStorageCapability,
+        guard: ExactDraftRevisionGuard,
+        value: ExactDraftRevisionWrite,
+    ) !void {
+        try key_custody.requireDevelopmentPlaintextStorage(
+            plaintext_capability,
+        );
+        return self.appendExactDraftRevisionAuthorized(guard, value, null);
+    }
+
+    pub fn appendExactDraftRevisionDevelopmentPlaintextWithProvenance(
+        self: *Store,
+        plaintext_capability: *const key_custody.DevelopmentPlaintextStorageCapability,
+        guard: ExactDraftRevisionGuard,
+        value: ExactDraftRevisionWrite,
+        provenance: ExactDraftProvenanceWrite,
+    ) !void {
+        try key_custody.requireDevelopmentPlaintextStorage(
+            plaintext_capability,
+        );
+        return self.appendExactDraftRevisionAuthorized(
+            guard,
+            value,
+            provenance,
+        );
+    }
+
+    fn appendExactDraftRevisionAuthorized(
+        self: *Store,
+        guard: ExactDraftRevisionGuard,
+        value: ExactDraftRevisionWrite,
+        provenance: ?ExactDraftProvenanceWrite,
+    ) !void {
         try validateExactDraftRevisionWrite(value);
+        if (provenance) |exact_provenance| {
+            try validateExactDraftProvenanceWrite(exact_provenance);
+            try validateExactDraftAndProvenanceIdentity(
+                value,
+                exact_provenance,
+            );
+        }
 
         const snapshot = value.snapshot;
         const workspace_id = snapshot.draft_identity.workspace_id;
@@ -3989,6 +9224,11 @@ pub const Store = struct {
             value.filing_key,
             snapshot.schema.exact_schema_digest,
         );
+        if (provenance != null and
+            try self.exactWorkspaceHasRevisionWithoutProvenance(workspace_id))
+        {
+            return Error.ExactDraftProvenanceLegacyAbsent;
+        }
         switch (guard) {
             .create => {
                 if (persisted_current != null) {
@@ -4307,8 +9547,215 @@ pub const Store = struct {
         try add_revision.bindOptionalDigest(46, &artifact_columns.sha256);
         try add_revision.expectDone();
 
+        if (provenance) |exact_provenance| {
+            try self.appendExactDraftProvenanceInTx(
+                snapshot.draft_identity,
+                snapshot.revision,
+                exact_provenance,
+            );
+        }
+
         try self.commit();
         committed = true;
+    }
+
+    fn exactWorkspaceHasRevisionWithoutProvenance(
+        self: *Store,
+        workspace_id: DraftWorkspaceId,
+    ) !bool {
+        var statement = try self.prepare(
+            \\SELECT 1
+            \\FROM tax_exact_draft_revisions revision
+            \\WHERE revision.workspace_id = ?
+            \\  AND NOT EXISTS (
+            \\      SELECT 1
+            \\      FROM tax_exact_draft_revision_provenance provenance
+            \\      WHERE provenance.workspace_id = revision.workspace_id
+            \\        AND provenance.exact_schema_digest =
+            \\            revision.exact_schema_digest
+            \\        AND provenance.revision = revision.revision
+            \\  )
+            \\LIMIT 1;
+        );
+        defer statement.deinit();
+        try statement.bindBlob(1, &workspace_id.bytes);
+        return try statement.step() == .row;
+    }
+
+    fn appendExactDraftProvenanceInTx(
+        self: *Store,
+        draft_identity: ExactDraftIdentity,
+        revision: DraftRevision,
+        value: ExactDraftProvenanceWrite,
+    ) !void {
+        const revision_value = checkedU64ToI64(revision.value) orelse
+            return Error.InvalidValue;
+        const digest = exactDraftProvenanceDigest(value);
+        var parent = try self.prepare(
+            \\INSERT INTO tax_exact_draft_revision_provenance (
+            \\    workspace_id, exact_schema_digest, revision,
+            \\    provenance_digest, owner_profile_id, tax_year,
+            \\    form_code, form_revision, catalog_revision,
+            \\    catalog_sha256, setup_spec_revision, setup_spec_hash,
+            \\    forms_set_decision_id, forms_set_decision_sequence,
+            \\    forms_set_source_tag, forms_set_evidence_reference,
+            \\    forms_set_applicability_date,
+            \\    taxpayer_year_profile_id, taxpayer_year_tax_year,
+            \\    taxpayer_year_revision_id,
+            \\    taxpayer_year_revision_sequence,
+            \\    form_profile_profile_id, form_profile_tax_year,
+            \\    form_profile_form_code, form_profile_form_revision,
+            \\    form_profile_revision_id,
+            \\    form_profile_revision_sequence,
+            \\    form_profile_spec_revision, form_profile_spec_hash
+            \\) VALUES (
+            \\    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            \\    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            \\);
+        );
+        defer parent.deinit();
+        try parent.bindBlob(1, &draft_identity.workspace_id.bytes);
+        try parent.bindBlob(2, draft_identity.exact_schema_digest.asBytes());
+        try parent.bindInt64(3, revision_value);
+        try parent.bindBlob(4, digest.asBytes());
+        try parent.bindText(5, value.owner_profile_id);
+        try parent.bindInt64(6, value.tax_year);
+        try parent.bindText(7, value.form_code);
+        try parent.bindText(8, value.form_revision);
+        try parent.bindText(9, value.catalog_revision);
+        try parent.bindText(10, value.catalog_sha256);
+        try parent.bindInt64(11, value.setup_spec_revision);
+        try parent.bindText(12, value.setup_spec_hash);
+        try parent.bindText(13, value.forms_set_decision.id);
+        try parent.bindInt64(14, value.forms_set_decision.sequence);
+        try parent.bindText(15, value.forms_set_decision.source.text());
+        try parent.bindOptionalText(
+            16,
+            value.forms_set_decision.evidence_reference,
+        );
+        try parent.bindDate(17, &value.forms_set_decision.applicability_date);
+        if (value.taxpayer_year_revision) |year| {
+            try parent.bindText(18, year.profile_id);
+            try parent.bindInt64(19, year.tax_year);
+            try parent.bindText(20, year.revision_id);
+            try parent.bindInt64(21, year.revision_sequence);
+        } else {
+            try parent.bindOptionalText(18, null);
+            try parent.bindOptionalText(19, null);
+            try parent.bindOptionalText(20, null);
+            try parent.bindOptionalText(21, null);
+        }
+        if (value.tax_form_profile_revision) |form_profile| {
+            try parent.bindText(22, form_profile.profile_id);
+            try parent.bindInt64(23, form_profile.tax_year);
+            try parent.bindText(24, form_profile.form_code);
+            try parent.bindText(25, form_profile.form_revision);
+            try parent.bindText(26, form_profile.revision_id);
+            try parent.bindInt64(27, form_profile.revision_sequence);
+            try parent.bindInt64(28, form_profile.spec_revision);
+            try parent.bindText(29, form_profile.spec_hash);
+        } else {
+            var index: usize = 22;
+            while (index <= 29) : (index += 1) {
+                try parent.bindOptionalText(@intCast(index), null);
+            }
+        }
+        try parent.expectDone();
+
+        var add_component = try self.prepare(
+            \\INSERT INTO tax_exact_draft_provenance_components (
+            \\    workspace_id, exact_schema_digest, revision, ordinal,
+            \\    component_kind, role, profile_id, anchor_id,
+            \\    revision_id, revision_sequence
+            \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        );
+        defer add_component.deinit();
+        for (value.components, 0..) |component, ordinal| {
+            const encoded = draftProvenanceComponentColumns(component);
+            try add_component.bindBlob(1, &draft_identity.workspace_id.bytes);
+            try add_component.bindBlob(
+                2,
+                draft_identity.exact_schema_digest.asBytes(),
+            );
+            try add_component.bindInt64(3, revision_value);
+            try add_component.bindInt64(4, @intCast(ordinal));
+            try add_component.bindText(5, encoded.kind.text());
+            try add_component.bindText(6, @tagName(encoded.role));
+            try add_component.bindText(7, encoded.profile_id);
+            try add_component.bindText(8, encoded.anchor_id);
+            try add_component.bindText(9, encoded.revision_id);
+            try add_component.bindInt64(10, encoded.revision_sequence);
+            try add_component.expectDone();
+            try add_component.reset();
+        }
+
+        var add_source = try self.prepare(
+            \\INSERT INTO tax_exact_draft_provenance_sources (
+            \\    workspace_id, exact_schema_digest, revision, ordinal,
+            \\    source_kind, role, source_key, anchor_id,
+            \\    value_kind, value_text, value_integer
+            \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        );
+        defer add_source.deinit();
+        for (value.source_snapshots, 0..) |*source, ordinal| {
+            const key = draftProvenanceSourceKeyColumns(&source.key);
+            const copied = draftProvenanceValueColumns(&source.copied_value);
+            try add_source.bindBlob(1, &draft_identity.workspace_id.bytes);
+            try add_source.bindBlob(
+                2,
+                draft_identity.exact_schema_digest.asBytes(),
+            );
+            try add_source.bindInt64(3, revision_value);
+            try add_source.bindInt64(4, @intCast(ordinal));
+            try add_source.bindText(5, key.kind);
+            try add_source.bindText(6, @tagName(key.role));
+            try add_source.bindText(7, key.key);
+            try add_source.bindOptionalText(8, key.anchor_id);
+            try add_source.bindText(9, copied.kind);
+            try add_source.bindOptionalText(10, copied.text);
+            try add_source.bindOptionalInt64(11, copied.integer);
+            try add_source.expectDone();
+            try add_source.reset();
+        }
+
+        var add_seed = try self.prepare(
+            \\INSERT INTO tax_exact_draft_provenance_transaction_seeds (
+            \\    workspace_id, exact_schema_digest, revision, ordinal,
+            \\    filing_field, source_kind, role, source_key, anchor_id,
+            \\    seed_source_kind, seed_revision_id,
+            \\    seed_catalog_revision, seed_catalog_sha256,
+            \\    value_kind, value_text, value_integer
+            \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        );
+        defer add_seed.deinit();
+        for (value.transaction_seeds, 0..) |*seed, ordinal| {
+            const key = draftProvenanceSourceKeyColumns(&seed.source_key);
+            const copied = draftProvenanceValueColumns(
+                &seed.copied_seed_value,
+            );
+            const source = draftProvenanceSeedSourceColumns(&seed.source);
+            try add_seed.bindBlob(1, &draft_identity.workspace_id.bytes);
+            try add_seed.bindBlob(
+                2,
+                draft_identity.exact_schema_digest.asBytes(),
+            );
+            try add_seed.bindInt64(3, revision_value);
+            try add_seed.bindInt64(4, @intCast(ordinal));
+            try add_seed.bindText(5, seed.filing_field);
+            try add_seed.bindText(6, key.kind);
+            try add_seed.bindText(7, @tagName(key.role));
+            try add_seed.bindText(8, key.key);
+            try add_seed.bindOptionalText(9, key.anchor_id);
+            try add_seed.bindText(10, source.kind);
+            try add_seed.bindOptionalText(11, source.revision_id);
+            try add_seed.bindOptionalText(12, source.catalog_revision);
+            try add_seed.bindOptionalText(13, source.catalog_sha256);
+            try add_seed.bindText(14, copied.kind);
+            try add_seed.bindOptionalText(15, copied.text);
+            try add_seed.bindOptionalInt64(16, copied.integer);
+            try add_seed.expectDone();
+            try add_seed.reset();
+        }
     }
 
     /// Reads all immutable revisions in ascending order and deep-copies every
@@ -4322,6 +9769,35 @@ pub const Store = struct {
         try key_custody.requireSyntheticPlaintextForTest(
             plaintext_capability,
         );
+        return self.getExactDraftHistoryAuthorized(
+            allocator,
+            draft_identity,
+        );
+    }
+
+    /// Development-artifact counterpart to `getExactDraftHistory`. Every
+    /// returned buffer is still an owned exact-schema value and callers must
+    /// release it with `OwnedExactDraftHistory.deinit`.
+    pub fn getExactDraftHistoryDevelopmentPlaintext(
+        self: *Store,
+        plaintext_capability: *const key_custody.DevelopmentPlaintextStorageCapability,
+        allocator: std.mem.Allocator,
+        draft_identity: ExactDraftIdentity,
+    ) !?OwnedExactDraftHistory {
+        try key_custody.requireDevelopmentPlaintextStorage(
+            plaintext_capability,
+        );
+        return self.getExactDraftHistoryAuthorized(
+            allocator,
+            draft_identity,
+        );
+    }
+
+    fn getExactDraftHistoryAuthorized(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        draft_identity: ExactDraftIdentity,
+    ) !?OwnedExactDraftHistory {
         try validateDraftWorkspaceId(draft_identity.workspace_id);
         var workspace = try self.prepare(
             \\SELECT filer_profile_id, form_code, form_revision, period_key,
@@ -4399,6 +9875,331 @@ pub const Store = struct {
         return result;
     }
 
+    /// Loads the frozen v19 provenance attached to one exact revision. A real
+    /// pre-v19 exact revision is returned as `provenance_legacy_absent`; a
+    /// missing exact revision is `NotFound`. No current profile, annual, or
+    /// Forms Set row is substituted for either condition.
+    pub fn getExactDraftRevisionProvenance(
+        self: *Store,
+        plaintext_capability: *const key_custody.SyntheticPlaintextTestCapability,
+        allocator: std.mem.Allocator,
+        draft_identity: ExactDraftIdentity,
+        revision: DraftRevision,
+    ) !ExactDraftProvenanceLoad {
+        try key_custody.requireSyntheticPlaintextForTest(
+            plaintext_capability,
+        );
+        return self.getExactDraftRevisionProvenanceAuthorized(
+            allocator,
+            draft_identity,
+            revision,
+        );
+    }
+
+    pub fn getExactDraftRevisionProvenanceDevelopmentPlaintext(
+        self: *Store,
+        plaintext_capability: *const key_custody.DevelopmentPlaintextStorageCapability,
+        allocator: std.mem.Allocator,
+        draft_identity: ExactDraftIdentity,
+        revision: DraftRevision,
+    ) !ExactDraftProvenanceLoad {
+        try key_custody.requireDevelopmentPlaintextStorage(
+            plaintext_capability,
+        );
+        return self.getExactDraftRevisionProvenanceAuthorized(
+            allocator,
+            draft_identity,
+            revision,
+        );
+    }
+
+    fn getExactDraftRevisionProvenanceAuthorized(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        draft_identity: ExactDraftIdentity,
+        revision: DraftRevision,
+    ) !ExactDraftProvenanceLoad {
+        try validateDraftWorkspaceId(draft_identity.workspace_id);
+        const revision_value = checkedU64ToI64(revision.value) orelse
+            return Error.InvalidValue;
+        if (revision.value == 0) return Error.InvalidValue;
+
+        var parent = try self.prepare(
+            \\SELECT provenance.provenance_digest,
+            \\       provenance.owner_profile_id, provenance.tax_year,
+            \\       provenance.form_code, provenance.form_revision,
+            \\       provenance.catalog_revision,
+            \\       provenance.catalog_sha256,
+            \\       provenance.setup_spec_revision,
+            \\       provenance.setup_spec_hash,
+            \\       provenance.forms_set_decision_id,
+            \\       provenance.forms_set_decision_sequence,
+            \\       provenance.forms_set_source_tag,
+            \\       provenance.forms_set_evidence_reference,
+            \\       provenance.forms_set_applicability_date,
+            \\       provenance.taxpayer_year_profile_id,
+            \\       provenance.taxpayer_year_tax_year,
+            \\       provenance.taxpayer_year_revision_id,
+            \\       provenance.taxpayer_year_revision_sequence,
+            \\       provenance.form_profile_profile_id,
+            \\       provenance.form_profile_tax_year,
+            \\       provenance.form_profile_form_code,
+            \\       provenance.form_profile_form_revision,
+            \\       provenance.form_profile_revision_id,
+            \\       provenance.form_profile_revision_sequence,
+            \\       provenance.form_profile_spec_revision,
+            \\       provenance.form_profile_spec_hash,
+            \\       revision_row.profile_as_of, stream.filer_profile_id,
+            \\       stream.form_code, stream.form_revision,
+            \\       stream.period_key
+            \\FROM tax_exact_draft_revision_provenance AS provenance
+            \\JOIN tax_exact_draft_revisions AS revision_row
+            \\  ON revision_row.workspace_id = provenance.workspace_id
+            \\ AND revision_row.exact_schema_digest =
+            \\     provenance.exact_schema_digest
+            \\ AND revision_row.revision = provenance.revision
+            \\JOIN tax_exact_draft_streams AS stream
+            \\  ON stream.workspace_id = provenance.workspace_id
+            \\ AND stream.exact_schema_digest =
+            \\     provenance.exact_schema_digest
+            \\WHERE provenance.workspace_id = ?
+            \\  AND provenance.exact_schema_digest = ?
+            \\  AND provenance.revision = ?;
+        );
+        defer parent.deinit();
+        try parent.bindBlob(1, &draft_identity.workspace_id.bytes);
+        try parent.bindBlob(
+            2,
+            draft_identity.exact_schema_digest.asBytes(),
+        );
+        try parent.bindInt64(3, revision_value);
+        if (try parent.step() == .done) {
+            var exists = try self.prepare(
+                \\SELECT 1 FROM tax_exact_draft_revisions
+                \\WHERE workspace_id = ? AND exact_schema_digest = ?
+                \\  AND revision = ?;
+            );
+            defer exists.deinit();
+            try exists.bindBlob(1, &draft_identity.workspace_id.bytes);
+            try exists.bindBlob(
+                2,
+                draft_identity.exact_schema_digest.asBytes(),
+            );
+            try exists.bindInt64(3, revision_value);
+            if (try exists.step() != .row) return Error.NotFound;
+            return .provenance_legacy_absent;
+        }
+
+        const provenance_digest = try readDigest(parent.raw, 0);
+        const tax_year_raw = sqlite.sqlite3_column_int64(parent.raw, 2);
+        const setup_revision_raw = sqlite.sqlite3_column_int64(parent.raw, 7);
+        const decision_sequence_raw = sqlite.sqlite3_column_int64(
+            parent.raw,
+            10,
+        );
+        if (tax_year_raw < 1 or tax_year_raw > std.math.maxInt(u16) or
+            setup_revision_raw < 1 or
+            setup_revision_raw > std.math.maxInt(u32) or
+            decision_sequence_raw < 1 or
+            decision_sequence_raw > std.math.maxInt(u32))
+        {
+            return Error.SqliteFailure;
+        }
+
+        const owner_profile_id = try dupColumn(allocator, parent.raw, 1);
+        errdefer allocator.free(owner_profile_id);
+        const form_code = try dupColumn(allocator, parent.raw, 3);
+        errdefer allocator.free(form_code);
+        const form_revision = try dupColumn(allocator, parent.raw, 4);
+        errdefer allocator.free(form_revision);
+        const catalog_revision = try dupColumn(allocator, parent.raw, 5);
+        errdefer allocator.free(catalog_revision);
+        const catalog_sha256 = try dupColumn(allocator, parent.raw, 6);
+        errdefer allocator.free(catalog_sha256);
+        const setup_spec_hash = try dupColumn(allocator, parent.raw, 8);
+        errdefer allocator.free(setup_spec_hash);
+        const decision_id = columnText(parent.raw, 9) orelse
+            return Error.SqliteFailure;
+        const decision_source = parseEnumText(
+            FormSetDecisionSource,
+            columnText(parent.raw, 11) orelse return Error.SqliteFailure,
+        ) orelse return Error.SqliteFailure;
+        const decision_evidence = columnText(parent.raw, 12);
+        const applicability_date = try dupColumn(allocator, parent.raw, 13);
+        errdefer allocator.free(applicability_date);
+
+        var decision = try self.loadDraftProvenanceDecision(
+            allocator,
+            owner_profile_id,
+            @intCast(tax_year_raw),
+            form_code,
+            form_revision,
+            decision_id,
+        );
+        errdefer decision.deinit(allocator);
+        if (decision.sequence != @as(u32, @intCast(decision_sequence_raw)) or
+            decision.source != decision_source or
+            !optionalTextEqual(
+                if (decision.evidence_reference) |text| text else null,
+                decision_evidence,
+            ) or decision.state != .active or
+            decision.review_state != .confirmed)
+        {
+            return Error.SqliteFailure;
+        }
+
+        const profile_as_of = columnText(parent.raw, 26) orelse
+            return Error.SqliteFailure;
+        const stream_filer = columnText(parent.raw, 27) orelse
+            return Error.SqliteFailure;
+        const stream_form_code = columnText(parent.raw, 28) orelse
+            return Error.SqliteFailure;
+        const stream_form_revision = columnText(parent.raw, 29) orelse
+            return Error.SqliteFailure;
+        const period_key = columnText(parent.raw, 30) orelse
+            return Error.SqliteFailure;
+        if (!std.mem.eql(u8, owner_profile_id, stream_filer) or
+            !std.mem.eql(u8, form_code, stream_form_code) or
+            !std.mem.eql(u8, form_revision, stream_form_revision) or
+            !std.mem.eql(u8, applicability_date, profile_as_of) or
+            period_key.len < 4 or !std.mem.eql(
+            u8,
+            period_key[0..4],
+            applicability_date[0..4],
+        )) {
+            return Error.SqliteFailure;
+        }
+
+        var taxpayer_year_revision: ?OwnedDraftProvenanceTaxpayerYearRevision =
+            null;
+        if (sqlite.sqlite3_column_type(parent.raw, 14) != sqlite.SQLITE_NULL) {
+            const year_raw = sqlite.sqlite3_column_int64(parent.raw, 15);
+            const sequence_raw = sqlite.sqlite3_column_int64(parent.raw, 17);
+            if (year_raw < 1 or year_raw > std.math.maxInt(u16) or
+                sequence_raw < 1 or sequence_raw > std.math.maxInt(u32))
+            {
+                return Error.SqliteFailure;
+            }
+            const profile = try dupColumn(allocator, parent.raw, 14);
+            errdefer allocator.free(profile);
+            const revision_id = try dupColumn(allocator, parent.raw, 16);
+            taxpayer_year_revision = .{
+                .profile_id = profile,
+                .tax_year = @intCast(year_raw),
+                .revision_id = revision_id,
+                .revision_sequence = @intCast(sequence_raw),
+            };
+        }
+        errdefer if (taxpayer_year_revision) |*item| item.deinit(allocator);
+
+        var tax_form_profile_revision: ?OwnedDraftProvenanceTaxFormProfileRevision =
+            null;
+        if (sqlite.sqlite3_column_type(parent.raw, 18) != sqlite.SQLITE_NULL) {
+            const year_raw = sqlite.sqlite3_column_int64(parent.raw, 19);
+            const sequence_raw = sqlite.sqlite3_column_int64(parent.raw, 23);
+            const spec_revision_raw = sqlite.sqlite3_column_int64(
+                parent.raw,
+                24,
+            );
+            if (year_raw < 1 or year_raw > std.math.maxInt(u16) or
+                sequence_raw < 1 or sequence_raw > std.math.maxInt(u32) or
+                spec_revision_raw < 1 or
+                spec_revision_raw > std.math.maxInt(u32))
+            {
+                return Error.SqliteFailure;
+            }
+            const profile = try dupColumn(allocator, parent.raw, 18);
+            errdefer allocator.free(profile);
+            const profile_form_code = try dupColumn(
+                allocator,
+                parent.raw,
+                20,
+            );
+            errdefer allocator.free(profile_form_code);
+            const profile_form_revision = try dupColumn(
+                allocator,
+                parent.raw,
+                21,
+            );
+            errdefer allocator.free(profile_form_revision);
+            const revision_id = try dupColumn(allocator, parent.raw, 22);
+            errdefer allocator.free(revision_id);
+            const spec_hash = try dupColumn(allocator, parent.raw, 25);
+            tax_form_profile_revision = .{
+                .profile_id = profile,
+                .tax_year = @intCast(year_raw),
+                .form_code = profile_form_code,
+                .form_revision = profile_form_revision,
+                .revision_id = revision_id,
+                .revision_sequence = @intCast(sequence_raw),
+                .spec_revision = @intCast(spec_revision_raw),
+                .spec_hash = spec_hash,
+            };
+        }
+        errdefer if (tax_form_profile_revision) |*item| item.deinit(allocator);
+
+        const taxpayers = try self.loadExactDraftProvenanceTaxpayerRevisions(
+            allocator,
+            draft_identity,
+            revision,
+        );
+        errdefer {
+            for (taxpayers) |*item| item.deinit(allocator);
+            allocator.free(taxpayers);
+        }
+        const components = try self.loadExactDraftProvenanceComponents(
+            allocator,
+            draft_identity,
+            revision,
+        );
+        errdefer {
+            for (components) |*item| item.deinit(allocator);
+            allocator.free(components);
+        }
+        const sources = try self.loadExactDraftProvenanceSources(
+            allocator,
+            draft_identity,
+            revision,
+        );
+        errdefer {
+            for (sources) |*item| item.deinit(allocator);
+            allocator.free(sources);
+        }
+        const seeds = try self.loadExactDraftProvenanceSeeds(
+            allocator,
+            draft_identity,
+            revision,
+        );
+        errdefer {
+            for (seeds) |*item| item.deinit(allocator);
+            allocator.free(seeds);
+        }
+
+        var result: OwnedExactDraftProvenance = .{
+            .draft_identity = draft_identity,
+            .revision = revision,
+            .provenance_digest = provenance_digest,
+            .owner_profile_id = owner_profile_id,
+            .tax_year = @intCast(tax_year_raw),
+            .form_code = form_code,
+            .form_revision = form_revision,
+            .catalog_revision = catalog_revision,
+            .catalog_sha256 = catalog_sha256,
+            .setup_spec_revision = @intCast(setup_revision_raw),
+            .setup_spec_hash = setup_spec_hash,
+            .forms_set_decision = decision,
+            .forms_set_applicability_date = applicability_date,
+            .taxpayer_revisions = taxpayers,
+            .taxpayer_year_revision = taxpayer_year_revision,
+            .tax_form_profile_revision = tax_form_profile_revision,
+            .components = components,
+            .source_snapshots = sources,
+            .transaction_seeds = seeds,
+        };
+        try validateOwnedExactDraftProvenanceIntegrity(&result);
+        return .{ .exact = result };
+    }
+
     /// Returns every other random workspace with the same canonical filing
     /// business key. Same-key workspaces are valid alternates, not a uniqueness
     /// violation; this API makes the duplicate condition explicit to callers.
@@ -4412,6 +10213,38 @@ pub const Store = struct {
         try key_custody.requireSyntheticPlaintextForTest(
             plaintext_capability,
         );
+        return self.listExactDraftAlternatesAuthorized(
+            allocator,
+            filing_key,
+            excluding_workspace_id,
+        );
+    }
+
+    /// Development-artifact counterpart to `listExactDraftAlternates` using
+    /// the same canonical exact-draft business key and bounded result set.
+    pub fn listExactDraftAlternatesDevelopmentPlaintext(
+        self: *Store,
+        plaintext_capability: *const key_custody.DevelopmentPlaintextStorageCapability,
+        allocator: std.mem.Allocator,
+        filing_key: CanonicalFilingBusinessKeyWrite,
+        excluding_workspace_id: ?DraftWorkspaceId,
+    ) !ExactDraftAlternateList {
+        try key_custody.requireDevelopmentPlaintextStorage(
+            plaintext_capability,
+        );
+        return self.listExactDraftAlternatesAuthorized(
+            allocator,
+            filing_key,
+            excluding_workspace_id,
+        );
+    }
+
+    fn listExactDraftAlternatesAuthorized(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        filing_key: CanonicalFilingBusinessKeyWrite,
+        excluding_workspace_id: ?DraftWorkspaceId,
+    ) !ExactDraftAlternateList {
         try validateCanonicalFilingBusinessKey(filing_key);
         if (excluding_workspace_id) |workspace_id| {
             try validateDraftWorkspaceId(workspace_id);
@@ -5245,6 +11078,494 @@ pub const Store = struct {
         return items.toOwnedSlice(allocator);
     }
 
+    fn loadDraftProvenanceDecision(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        tax_year: u16,
+        form_code: []const u8,
+        form_revision: []const u8,
+        decision_id: []const u8,
+    ) !OwnedFormSetDecision {
+        var statement = try self.prepare(
+            \\SELECT id, profile_id, tax_year, form_code, form_revision,
+            \\       sequence, decision_state, decision_scope,
+            \\       effective_from, effective_until, source_tag,
+            \\       evidence_reference, review_state, supersedes_id,
+            \\       created_at
+            \\FROM tax_profile_form_set_decisions
+            \\WHERE profile_id = ? AND tax_year = ? AND form_code = ?
+            \\  AND form_revision = ? AND id = ?;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindInt64(2, tax_year);
+        try statement.bindText(3, form_code);
+        try statement.bindText(4, form_revision);
+        try statement.bindText(5, decision_id);
+        if (try statement.step() != .row) return Error.SqliteFailure;
+        return self.readFormSetDecision(allocator, statement.raw);
+    }
+
+    fn loadDraftProvenanceTaxpayerRevisions(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        draft_id: []const u8,
+    ) ![]OwnedDraftProvenanceTaxpayerRevision {
+        var statement = try self.prepare(
+            \\SELECT role, profile_id, revision_id, revision_sequence
+            \\FROM tax_form_draft_provenance_taxpayer_revisions
+            \\WHERE draft_id = ? ORDER BY ordinal;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, draft_id);
+        var items: std.ArrayList(OwnedDraftProvenanceTaxpayerRevision) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+        while (try statement.step() == .row) {
+            const role = parseEnumText(
+                form_catalog.Role,
+                columnText(statement.raw, 0) orelse return Error.SqliteFailure,
+            ) orelse return Error.SqliteFailure;
+            const sequence_raw = sqlite.sqlite3_column_int64(statement.raw, 3);
+            if (sequence_raw < 1 or sequence_raw > std.math.maxInt(u32)) {
+                return Error.SqliteFailure;
+            }
+            const profile = try dupColumn(allocator, statement.raw, 1);
+            errdefer allocator.free(profile);
+            const revision = try dupColumn(allocator, statement.raw, 2);
+            const item: OwnedDraftProvenanceTaxpayerRevision = .{
+                .role = role,
+                .profile_id = profile,
+                .revision_id = revision,
+                .revision_sequence = @intCast(sequence_raw),
+            };
+            errdefer {
+                var owned = item;
+                owned.deinit(allocator);
+            }
+            try items.append(allocator, item);
+        }
+        return items.toOwnedSlice(allocator);
+    }
+
+    fn loadDraftProvenanceComponents(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        draft_id: []const u8,
+    ) ![]OwnedDraftProvenanceComponent {
+        var statement = try self.prepare(
+            \\SELECT component_kind, role, profile_id, anchor_id,
+            \\       revision_id, revision_sequence
+            \\FROM tax_form_draft_provenance_components
+            \\WHERE draft_id = ? ORDER BY ordinal;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, draft_id);
+        var items: std.ArrayList(OwnedDraftProvenanceComponent) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+        while (try statement.step() == .row) {
+            const kind = parseEnumText(
+                RegistrationComponentKind,
+                columnText(statement.raw, 0) orelse return Error.SqliteFailure,
+            ) orelse return Error.SqliteFailure;
+            if (kind != .business_activity and
+                kind != .registration_obligation)
+            {
+                return Error.SqliteFailure;
+            }
+            const role = parseEnumText(
+                form_catalog.Role,
+                columnText(statement.raw, 1) orelse return Error.SqliteFailure,
+            ) orelse return Error.SqliteFailure;
+            const sequence_raw = sqlite.sqlite3_column_int64(statement.raw, 5);
+            if (sequence_raw < 1 or sequence_raw > std.math.maxInt(u32)) {
+                return Error.SqliteFailure;
+            }
+            const profile = try dupColumn(allocator, statement.raw, 2);
+            errdefer allocator.free(profile);
+            const anchor = try dupColumn(allocator, statement.raw, 3);
+            errdefer allocator.free(anchor);
+            const revision = try dupColumn(allocator, statement.raw, 4);
+            const item: OwnedDraftProvenanceComponent = .{
+                .kind = kind,
+                .role = role,
+                .profile_id = profile,
+                .anchor_id = anchor,
+                .revision_id = revision,
+                .revision_sequence = @intCast(sequence_raw),
+            };
+            errdefer {
+                var owned = item;
+                owned.deinit(allocator);
+            }
+            try items.append(allocator, item);
+        }
+        return items.toOwnedSlice(allocator);
+    }
+
+    fn loadDraftProvenanceSources(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        draft_id: []const u8,
+    ) ![]OwnedDraftProvenanceSourceSnapshot {
+        var statement = try self.prepare(
+            \\SELECT source_kind, role, source_key, anchor_id,
+            \\       value_kind, value_text, value_integer
+            \\FROM tax_form_draft_provenance_sources
+            \\WHERE draft_id = ? ORDER BY ordinal;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, draft_id);
+        var items: std.ArrayList(OwnedDraftProvenanceSourceSnapshot) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+        while (try statement.step() == .row) {
+            var key = try readDraftProvenanceSourceKey(
+                allocator,
+                statement.raw,
+                0,
+            );
+            errdefer key.deinit(allocator);
+            const copied = try readDraftProvenanceValue(
+                allocator,
+                statement.raw,
+                4,
+                5,
+                6,
+            );
+            const item: OwnedDraftProvenanceSourceSnapshot = .{
+                .key = key,
+                .copied_value = copied,
+            };
+            errdefer {
+                var owned = item;
+                owned.deinit(allocator);
+            }
+            try items.append(allocator, item);
+        }
+        return items.toOwnedSlice(allocator);
+    }
+
+    fn loadDraftProvenanceSeeds(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        draft_id: []const u8,
+    ) ![]OwnedDraftProvenanceTransactionSeed {
+        var statement = try self.prepare(
+            \\SELECT filing_field, source_kind, role, source_key, anchor_id,
+            \\       seed_source_kind, seed_revision_id,
+            \\       seed_catalog_revision, seed_catalog_sha256,
+            \\       value_kind, value_text, value_integer
+            \\FROM tax_form_draft_provenance_transaction_seeds
+            \\WHERE draft_id = ? ORDER BY ordinal;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, draft_id);
+        var items: std.ArrayList(OwnedDraftProvenanceTransactionSeed) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+        while (try statement.step() == .row) {
+            const filing_field = try dupColumn(allocator, statement.raw, 0);
+            errdefer allocator.free(filing_field);
+            var key = try readDraftProvenanceSourceKey(
+                allocator,
+                statement.raw,
+                1,
+            );
+            errdefer key.deinit(allocator);
+            var source = try readDraftProvenanceSeedSource(
+                allocator,
+                statement.raw,
+                5,
+            );
+            errdefer source.deinit(allocator);
+            const copied = try readDraftProvenanceValue(
+                allocator,
+                statement.raw,
+                9,
+                10,
+                11,
+            );
+            const item: OwnedDraftProvenanceTransactionSeed = .{
+                .filing_field = filing_field,
+                .source_key = key,
+                .source = source,
+                .copied_seed_value = copied,
+            };
+            errdefer {
+                var owned = item;
+                owned.deinit(allocator);
+            }
+            try items.append(allocator, item);
+        }
+        return items.toOwnedSlice(allocator);
+    }
+
+    fn bindExactDraftProvenanceKey(
+        statement: *Statement,
+        draft_identity: *const ExactDraftIdentity,
+        revision: DraftRevision,
+    ) !void {
+        try statement.bindBlob(1, &draft_identity.workspace_id.bytes);
+        try statement.bindBlob(
+            2,
+            draft_identity.exact_schema_digest.asBytes(),
+        );
+        try statement.bindInt64(
+            3,
+            checkedU64ToI64(revision.value) orelse
+                return Error.InvalidValue,
+        );
+    }
+
+    fn loadExactDraftProvenanceTaxpayerRevisions(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        draft_identity: ExactDraftIdentity,
+        revision: DraftRevision,
+    ) ![]OwnedDraftProvenanceTaxpayerRevision {
+        var statement = try self.prepare(
+            \\SELECT role, profile_id, profile_revision_id,
+            \\       profile_revision_sequence
+            \\FROM tax_exact_draft_revision_bindings
+            \\WHERE workspace_id = ? AND exact_schema_digest = ?
+            \\  AND revision = ?
+            \\ORDER BY CASE role WHEN 'filer' THEN 0 ELSE 1 END,
+            \\         instance_id COLLATE BINARY;
+        );
+        defer statement.deinit();
+        try bindExactDraftProvenanceKey(
+            &statement,
+            &draft_identity,
+            revision,
+        );
+        var items: std.ArrayList(OwnedDraftProvenanceTaxpayerRevision) =
+            .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+        while (try statement.step() == .row) {
+            if (items.items.len == max_exact_role_bindings) {
+                return Error.SqliteFailure;
+            }
+            const role = parseEnumText(
+                form_catalog.Role,
+                columnText(statement.raw, 0) orelse return Error.SqliteFailure,
+            ) orelse return Error.SqliteFailure;
+            const sequence_raw = sqlite.sqlite3_column_int64(statement.raw, 3);
+            if (sequence_raw < 1 or sequence_raw > std.math.maxInt(u32)) {
+                return Error.SqliteFailure;
+            }
+            const profile = try dupColumn(allocator, statement.raw, 1);
+            errdefer allocator.free(profile);
+            const revision_id = try dupColumn(allocator, statement.raw, 2);
+            const item: OwnedDraftProvenanceTaxpayerRevision = .{
+                .role = role,
+                .profile_id = profile,
+                .revision_id = revision_id,
+                .revision_sequence = @intCast(sequence_raw),
+            };
+            errdefer {
+                var owned = item;
+                owned.deinit(allocator);
+            }
+            try items.append(allocator, item);
+        }
+        return items.toOwnedSlice(allocator);
+    }
+
+    fn loadExactDraftProvenanceComponents(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        draft_identity: ExactDraftIdentity,
+        revision: DraftRevision,
+    ) ![]OwnedDraftProvenanceComponent {
+        var statement = try self.prepare(
+            \\SELECT component_kind, role, profile_id, anchor_id,
+            \\       revision_id, revision_sequence
+            \\FROM tax_exact_draft_provenance_components
+            \\WHERE workspace_id = ? AND exact_schema_digest = ?
+            \\  AND revision = ? ORDER BY ordinal;
+        );
+        defer statement.deinit();
+        try bindExactDraftProvenanceKey(
+            &statement,
+            &draft_identity,
+            revision,
+        );
+        var items: std.ArrayList(OwnedDraftProvenanceComponent) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+        while (try statement.step() == .row) {
+            if (items.items.len == 32) return Error.SqliteFailure;
+            const kind = parseEnumText(
+                RegistrationComponentKind,
+                columnText(statement.raw, 0) orelse return Error.SqliteFailure,
+            ) orelse return Error.SqliteFailure;
+            if (kind != .business_activity and
+                kind != .registration_obligation)
+            {
+                return Error.SqliteFailure;
+            }
+            const role = parseEnumText(
+                form_catalog.Role,
+                columnText(statement.raw, 1) orelse return Error.SqliteFailure,
+            ) orelse return Error.SqliteFailure;
+            const sequence_raw = sqlite.sqlite3_column_int64(statement.raw, 5);
+            if (sequence_raw < 1 or sequence_raw > std.math.maxInt(u32)) {
+                return Error.SqliteFailure;
+            }
+            const profile = try dupColumn(allocator, statement.raw, 2);
+            errdefer allocator.free(profile);
+            const anchor = try dupColumn(allocator, statement.raw, 3);
+            errdefer allocator.free(anchor);
+            const revision_id = try dupColumn(allocator, statement.raw, 4);
+            const item: OwnedDraftProvenanceComponent = .{
+                .kind = kind,
+                .role = role,
+                .profile_id = profile,
+                .anchor_id = anchor,
+                .revision_id = revision_id,
+                .revision_sequence = @intCast(sequence_raw),
+            };
+            errdefer {
+                var owned = item;
+                owned.deinit(allocator);
+            }
+            try items.append(allocator, item);
+        }
+        return items.toOwnedSlice(allocator);
+    }
+
+    fn loadExactDraftProvenanceSources(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        draft_identity: ExactDraftIdentity,
+        revision: DraftRevision,
+    ) ![]OwnedDraftProvenanceSourceSnapshot {
+        var statement = try self.prepare(
+            \\SELECT source_kind, role, source_key, anchor_id,
+            \\       value_kind, value_text, value_integer
+            \\FROM tax_exact_draft_provenance_sources
+            \\WHERE workspace_id = ? AND exact_schema_digest = ?
+            \\  AND revision = ? ORDER BY ordinal;
+        );
+        defer statement.deinit();
+        try bindExactDraftProvenanceKey(
+            &statement,
+            &draft_identity,
+            revision,
+        );
+        var items: std.ArrayList(OwnedDraftProvenanceSourceSnapshot) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+        while (try statement.step() == .row) {
+            if (items.items.len == 96) return Error.SqliteFailure;
+            var key = try readDraftProvenanceSourceKey(
+                allocator,
+                statement.raw,
+                0,
+            );
+            errdefer key.deinit(allocator);
+            const copied = try readDraftProvenanceValue(
+                allocator,
+                statement.raw,
+                4,
+                5,
+                6,
+            );
+            const item: OwnedDraftProvenanceSourceSnapshot = .{
+                .key = key,
+                .copied_value = copied,
+            };
+            errdefer {
+                var owned = item;
+                owned.deinit(allocator);
+            }
+            try items.append(allocator, item);
+        }
+        return items.toOwnedSlice(allocator);
+    }
+
+    fn loadExactDraftProvenanceSeeds(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        draft_identity: ExactDraftIdentity,
+        revision: DraftRevision,
+    ) ![]OwnedDraftProvenanceTransactionSeed {
+        var statement = try self.prepare(
+            \\SELECT filing_field, source_kind, role, source_key, anchor_id,
+            \\       seed_source_kind, seed_revision_id,
+            \\       seed_catalog_revision, seed_catalog_sha256,
+            \\       value_kind, value_text, value_integer
+            \\FROM tax_exact_draft_provenance_transaction_seeds
+            \\WHERE workspace_id = ? AND exact_schema_digest = ?
+            \\  AND revision = ? ORDER BY ordinal;
+        );
+        defer statement.deinit();
+        try bindExactDraftProvenanceKey(
+            &statement,
+            &draft_identity,
+            revision,
+        );
+        var items: std.ArrayList(OwnedDraftProvenanceTransactionSeed) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+        while (try statement.step() == .row) {
+            if (items.items.len == 32) return Error.SqliteFailure;
+            const filing_field = try dupColumn(allocator, statement.raw, 0);
+            errdefer allocator.free(filing_field);
+            var key = try readDraftProvenanceSourceKey(
+                allocator,
+                statement.raw,
+                1,
+            );
+            errdefer key.deinit(allocator);
+            var source = try readDraftProvenanceSeedSource(
+                allocator,
+                statement.raw,
+                5,
+            );
+            errdefer source.deinit(allocator);
+            const copied = try readDraftProvenanceValue(
+                allocator,
+                statement.raw,
+                9,
+                10,
+                11,
+            );
+            const item: OwnedDraftProvenanceTransactionSeed = .{
+                .filing_field = filing_field,
+                .source_key = key,
+                .source = source,
+                .copied_seed_value = copied,
+            };
+            errdefer {
+                var owned = item;
+                owned.deinit(allocator);
+            }
+            try items.append(allocator, item);
+        }
+        return items.toOwnedSlice(allocator);
+    }
+
     fn loadDraftValues(
         self: *Store,
         allocator: std.mem.Allocator,
@@ -5452,6 +11773,7 @@ pub const Store = struct {
         self: *Store,
         allocator: std.mem.Allocator,
         row: *sqlite.sqlite3_stmt,
+        canonical_subject: bool,
     ) !OwnedProfileRevision {
         const id = try dupColumn(allocator, row, 0);
         errdefer allocator.free(id);
@@ -5479,7 +11801,12 @@ pub const Store = struct {
         errdefer freeOptional(allocator, contact_number);
         const email_address = try dupOptionalColumn(allocator, row, 12);
         errdefer freeOptional(allocator, email_address);
-        var subject = try readSubject(allocator, row, 13);
+        var subject = try readSubject(
+            allocator,
+            row,
+            13,
+            canonical_subject,
+        );
         errdefer subject.deinit(allocator);
         const activities = try self.loadBusinessActivities(
             allocator,
@@ -5527,13 +11854,20 @@ pub const Store = struct {
         profile_id: []const u8,
         revision_id: []const u8,
     ) ![]OwnedBusinessActivity {
-        var statement = try self.prepare(
-            \\SELECT id, line_of_business, atc, effective_from,
+        const sql: []const u8 = if (try self.schemaVersion() >= 12)
+            \\SELECT id, anchor_id, line_of_business, atc, effective_from,
             \\       effective_until, ordinal
             \\FROM tax_profile_business_activities
             \\WHERE profile_id = ? AND revision_id = ?
             \\ORDER BY ordinal, id;
-        );
+        else
+            \\SELECT id, id, line_of_business, atc, effective_from,
+            \\       effective_until, ordinal
+            \\FROM tax_profile_business_activities
+            \\WHERE profile_id = ? AND revision_id = ?
+            \\ORDER BY ordinal, id;
+        ;
+        var statement = try self.prepare(sql);
         defer statement.deinit();
         try statement.bindText(1, profile_id);
         try statement.bindText(2, revision_id);
@@ -5546,24 +11880,27 @@ pub const Store = struct {
         while (try statement.step() == .row) {
             const id = try dupColumn(allocator, statement.raw, 0);
             errdefer allocator.free(id);
-            const line_of_business = try dupColumn(allocator, statement.raw, 1);
+            const anchor_id = try dupColumn(allocator, statement.raw, 1);
+            errdefer allocator.free(anchor_id);
+            const line_of_business = try dupColumn(allocator, statement.raw, 2);
             errdefer allocator.free(line_of_business);
-            const atc = try dupOptionalColumn(allocator, statement.raw, 2);
+            const atc = try dupOptionalColumn(allocator, statement.raw, 3);
             errdefer freeOptional(allocator, atc);
-            const effective_from = try dupColumn(allocator, statement.raw, 3);
+            const effective_from = try dupColumn(allocator, statement.raw, 4);
             errdefer allocator.free(effective_from);
             const effective_until = try dupOptionalColumn(
                 allocator,
                 statement.raw,
-                4,
+                5,
             );
             errdefer freeOptional(allocator, effective_until);
-            const ordinal_raw = sqlite.sqlite3_column_int64(statement.raw, 5);
+            const ordinal_raw = sqlite.sqlite3_column_int64(statement.raw, 6);
             if (ordinal_raw < 0 or ordinal_raw > std.math.maxInt(u32)) {
                 return Error.SqliteFailure;
             }
             try items.append(allocator, .{
                 .id = id,
+                .anchor_id = anchor_id,
                 .line_of_business = line_of_business,
                 .atc = atc,
                 .effective_from = effective_from,
@@ -5580,13 +11917,20 @@ pub const Store = struct {
         profile_id: []const u8,
         revision_id: []const u8,
     ) ![]OwnedRegistrationFact {
-        var statement = try self.prepare(
-            \\SELECT id, kind, value_text, effective_from,
+        const sql: []const u8 = if (try self.schemaVersion() >= 12)
+            \\SELECT id, anchor_id, kind, value_text, effective_from,
             \\       effective_until, ordinal
             \\FROM tax_profile_registration_facts
             \\WHERE profile_id = ? AND revision_id = ?
             \\ORDER BY ordinal, id;
-        );
+        else
+            \\SELECT id, id, kind, value_text, effective_from,
+            \\       effective_until, ordinal
+            \\FROM tax_profile_registration_facts
+            \\WHERE profile_id = ? AND revision_id = ?
+            \\ORDER BY ordinal, id;
+        ;
+        var statement = try self.prepare(sql);
         defer statement.deinit();
         try statement.bindText(1, profile_id);
         try statement.bindText(2, revision_id);
@@ -5599,27 +11943,30 @@ pub const Store = struct {
         while (try statement.step() == .row) {
             const id = try dupColumn(allocator, statement.raw, 0);
             errdefer allocator.free(id);
+            const anchor_id = try dupColumn(allocator, statement.raw, 1);
+            errdefer allocator.free(anchor_id);
             var value = try readRegistrationFactValue(
                 allocator,
                 statement.raw,
-                1,
                 2,
+                3,
             );
             errdefer value.deinit(allocator);
-            const effective_from = try dupColumn(allocator, statement.raw, 3);
+            const effective_from = try dupColumn(allocator, statement.raw, 4);
             errdefer allocator.free(effective_from);
             const effective_until = try dupOptionalColumn(
                 allocator,
                 statement.raw,
-                4,
+                5,
             );
             errdefer freeOptional(allocator, effective_until);
-            const ordinal_raw = sqlite.sqlite3_column_int64(statement.raw, 5);
+            const ordinal_raw = sqlite.sqlite3_column_int64(statement.raw, 6);
             if (ordinal_raw < 0 or ordinal_raw > std.math.maxInt(u32)) {
                 return Error.SqliteFailure;
             }
             try items.append(allocator, .{
                 .id = id,
+                .anchor_id = anchor_id,
                 .effective_from = effective_from,
                 .effective_until = effective_until,
                 .value = value,
@@ -5665,6 +12012,18 @@ pub const Store = struct {
         return self.db orelse Error.Closed;
     }
 };
+
+/// Narrow test-only access for upgrade fixtures that must represent rows
+/// written by an older generated catalog. Production builds expose an empty
+/// namespace and cannot bypass the current catalog write guard.
+pub const testing = if (@import("builtin").is_test) struct {
+    pub fn execHistoricalFixture(
+        store: *Store,
+        sql_text: [*:0]const u8,
+    ) !void {
+        try store.exec(sql_text);
+    }
+} else struct {};
 
 const StepResult = enum { row, done };
 
@@ -6284,6 +12643,187 @@ fn readExactArtifactStatus(
     return Error.SqliteFailure;
 }
 
+fn readRegistrationMetadata(
+    allocator: std.mem.Allocator,
+    row: *sqlite.sqlite3_stmt,
+) !OwnedRegistrationRevisionMetadata {
+    const component_sequence_raw = sqlite.sqlite3_column_int64(row, 2);
+    const stream_sequence_raw = sqlite.sqlite3_column_int64(row, 3);
+    if (component_sequence_raw < 1 or
+        component_sequence_raw > std.math.maxInt(u32) or
+        stream_sequence_raw < 1 or
+        stream_sequence_raw > std.math.maxInt(u32))
+    {
+        return Error.SqliteFailure;
+    }
+    const record_state = parseEnumText(
+        RegistrationRecordState,
+        columnText(row, 6) orelse return Error.SqliteFailure,
+    ) orelse return Error.SqliteFailure;
+    const source = parseEnumText(
+        RegistrationRecordSource,
+        columnText(row, 7) orelse return Error.SqliteFailure,
+    ) orelse return Error.SqliteFailure;
+    const review_state = parseEnumText(
+        RegistrationRecordReviewState,
+        columnText(row, 9) orelse return Error.SqliteFailure,
+    ) orelse return Error.SqliteFailure;
+    const review_reason: ?RegistrationReviewReason = if (columnText(row, 10)) |raw|
+        parseEnumText(RegistrationReviewReason, raw) orelse
+            return Error.SqliteFailure
+    else
+        null;
+    const confirmed_at: ?i64 = if (sqlite.sqlite3_column_type(row, 11) ==
+        sqlite.SQLITE_NULL)
+        null
+    else
+        sqlite.sqlite3_column_int64(row, 11);
+
+    const id = try dupColumn(allocator, row, 0);
+    errdefer allocator.free(id);
+    const profile_id = try dupColumn(allocator, row, 1);
+    errdefer allocator.free(profile_id);
+    const effective_from = try dupColumn(allocator, row, 4);
+    errdefer allocator.free(effective_from);
+    const effective_until = try dupOptionalColumn(allocator, row, 5);
+    errdefer freeOptional(allocator, effective_until);
+    const evidence_reference = try dupOptionalColumn(allocator, row, 8);
+    errdefer freeOptional(allocator, evidence_reference);
+    const supersedes_id = try dupOptionalColumn(allocator, row, 12);
+    errdefer freeOptional(allocator, supersedes_id);
+    const legacy_revision_id = try dupOptionalColumn(allocator, row, 13);
+    errdefer freeOptional(allocator, legacy_revision_id);
+    const legacy_component_id = try dupOptionalColumn(allocator, row, 14);
+    return .{
+        .id = id,
+        .profile_id = profile_id,
+        .component_sequence = @intCast(component_sequence_raw),
+        .stream_sequence = @intCast(stream_sequence_raw),
+        .effective_from = effective_from,
+        .effective_until = effective_until,
+        .record_state = record_state,
+        .source = source,
+        .evidence_reference = evidence_reference,
+        .review_state = review_state,
+        .review_reason = review_reason,
+        .confirmed_at_unix_seconds = confirmed_at,
+        .supersedes_id = supersedes_id,
+        .legacy_revision_id = legacy_revision_id,
+        .legacy_component_id = legacy_component_id,
+    };
+}
+
+fn readRegistrationActivity(
+    allocator: std.mem.Allocator,
+    row: *sqlite.sqlite3_stmt,
+) !OwnedRegistrationActivityRevision {
+    var metadata = try readRegistrationMetadata(allocator, row);
+    errdefer metadata.deinit(allocator);
+    const anchor_id = try dupColumn(allocator, row, 16);
+    errdefer allocator.free(anchor_id);
+    const line_of_business = try dupColumn(allocator, row, 17);
+    errdefer allocator.free(line_of_business);
+    return .{
+        .anchor_id = anchor_id,
+        .metadata = metadata,
+        .line_of_business = line_of_business,
+        .atc = try dupOptionalColumn(allocator, row, 18),
+    };
+}
+
+fn readRegistrationObligation(
+    allocator: std.mem.Allocator,
+    row: *sqlite.sqlite3_stmt,
+) !OwnedRegistrationObligationRevision {
+    var metadata = try readRegistrationMetadata(allocator, row);
+    errdefer metadata.deinit(allocator);
+    const anchor_id = try dupColumn(allocator, row, 16);
+    errdefer allocator.free(anchor_id);
+    const kind = parseEnumText(
+        RegistrationObligationKind,
+        columnText(row, 19) orelse return Error.SqliteFailure,
+    ) orelse return Error.SqliteFailure;
+    return .{
+        .anchor_id = anchor_id,
+        .metadata = metadata,
+        .kind = kind,
+        .value_text = try dupOptionalColumn(allocator, row, 20),
+    };
+}
+
+fn requireRegistrationFactKind(
+    row: *sqlite.sqlite3_stmt,
+    expected: RegistrationComponentKind,
+) !void {
+    const stored = columnText(row, 21) orelse return Error.SqliteFailure;
+    if (!std.mem.eql(u8, stored, expected.text())) {
+        return Error.SqliteFailure;
+    }
+}
+
+fn readRegistrationAgentDesignation(
+    allocator: std.mem.Allocator,
+    row: *sqlite.sqlite3_stmt,
+) !OwnedRegistrationAgentDesignationRevision {
+    try requireRegistrationFactKind(row, .agent_designation);
+    var metadata = try readRegistrationMetadata(allocator, row);
+    errdefer metadata.deinit(allocator);
+    const value = parseEnumText(
+        RegistrationAgentDesignation,
+        columnText(row, 22) orelse return Error.SqliteFailure,
+    ) orelse return Error.SqliteFailure;
+    if (columnText(row, 23) != null) return Error.SqliteFailure;
+    return .{ .metadata = metadata, .value = value };
+}
+
+fn readRegistrationEoptTier(
+    allocator: std.mem.Allocator,
+    row: *sqlite.sqlite3_stmt,
+) !OwnedRegistrationEoptTierRevision {
+    try requireRegistrationFactKind(row, .eopt_tier);
+    var metadata = try readRegistrationMetadata(allocator, row);
+    errdefer metadata.deinit(allocator);
+    const value = parseEnumText(
+        RegistrationEoptTier,
+        columnText(row, 22) orelse return Error.SqliteFailure,
+    ) orelse return Error.SqliteFailure;
+    if (columnText(row, 23) != null) return Error.SqliteFailure;
+    return .{ .metadata = metadata, .value = value };
+}
+
+fn readRegistrationActivityStatus(
+    allocator: std.mem.Allocator,
+    row: *sqlite.sqlite3_stmt,
+) !OwnedRegistrationActivityStatusRevision {
+    try requireRegistrationFactKind(row, .registration_activity_status);
+    var metadata = try readRegistrationMetadata(allocator, row);
+    errdefer metadata.deinit(allocator);
+    const value = parseEnumText(
+        RegistrationActivityStatus,
+        columnText(row, 22) orelse return Error.SqliteFailure,
+    ) orelse return Error.SqliteFailure;
+    if (columnText(row, 23) != null) return Error.SqliteFailure;
+    return .{ .metadata = metadata, .value = value };
+}
+
+fn readRegistrationSpecialBasis(
+    allocator: std.mem.Allocator,
+    row: *sqlite.sqlite3_stmt,
+) !OwnedRegistrationSpecialBasisRevision {
+    try requireRegistrationFactKind(row, .special_law_or_treaty_basis);
+    var metadata = try readRegistrationMetadata(allocator, row);
+    errdefer metadata.deinit(allocator);
+    const kind = parseEnumText(
+        RegistrationSpecialBasisKind,
+        columnText(row, 22) orelse return Error.SqliteFailure,
+    ) orelse return Error.SqliteFailure;
+    return .{
+        .metadata = metadata,
+        .kind = kind,
+        .value_text = try dupColumn(allocator, row, 23),
+    };
+}
+
 fn readProfileSummary(
     allocator: std.mem.Allocator,
     row: *sqlite.sqlite3_stmt,
@@ -6298,11 +12838,13 @@ fn readProfileSummary(
     if (sequence_raw <= 0 or sequence_raw > std.math.maxInt(u32)) {
         return Error.SqliteFailure;
     }
-    const display_name = try dupColumn(allocator, row, 4);
+    const profile_label = try dupColumn(allocator, row, 4);
+    errdefer allocator.free(profile_label);
+    const display_name = try dupColumn(allocator, row, 5);
     errdefer allocator.free(display_name);
-    const tin = try dupColumn(allocator, row, 5);
+    const tin = try dupColumn(allocator, row, 6);
     errdefer allocator.free(tin);
-    const subject_kind_text = columnText(row, 6) orelse return Error.SqliteFailure;
+    const subject_kind_text = columnText(row, 7) orelse return Error.SqliteFailure;
     const subject_kind = parseSubjectKind(subject_kind_text) orelse
         return Error.SqliteFailure;
     return .{
@@ -6310,6 +12852,7 @@ fn readProfileSummary(
         .status = status,
         .current_revision_id = current_revision_id,
         .current_revision_sequence = @intCast(sequence_raw),
+        .profile_label = profile_label,
         .display_name = display_name,
         .tin = tin,
         .subject_kind = subject_kind,
@@ -6342,6 +12885,192 @@ fn readRevisionSource(
             .migrated = try dupColumn(allocator, row, reference_column),
         },
     };
+}
+
+fn readTaxpayerYearRevisionSource(
+    allocator: std.mem.Allocator,
+    row: *sqlite.sqlite3_stmt,
+    tag_column: c_int,
+) !OwnedTaxpayerYearRevisionSource {
+    const tag = columnText(row, tag_column) orelse
+        return Error.SqliteFailure;
+    if (std.mem.eql(u8, tag, "manual_entry")) {
+        return .manual_entry;
+    }
+    if (std.mem.eql(u8, tag, "imported")) {
+        return .{ .imported = try dupColumn(allocator, row, tag_column + 1) };
+    }
+    if (std.mem.eql(u8, tag, "migrated")) {
+        return .{ .migrated = try dupColumn(allocator, row, tag_column + 1) };
+    }
+    if (!std.mem.eql(u8, tag, "copied_from_prior_year")) {
+        return Error.SqliteFailure;
+    }
+    const source_profile_id = try dupColumn(allocator, row, tag_column + 2);
+    errdefer allocator.free(source_profile_id);
+    const source_tax_year = sqlite.sqlite3_column_int64(row, tag_column + 3);
+    if (source_tax_year < 1 or source_tax_year > std.math.maxInt(u16)) {
+        return Error.SqliteFailure;
+    }
+    const source_revision_id = try dupColumn(
+        allocator,
+        row,
+        tag_column + 4,
+    );
+    errdefer allocator.free(source_revision_id);
+    const source_sequence = sqlite.sqlite3_column_int64(row, tag_column + 5);
+    if (source_sequence < 1 or source_sequence > std.math.maxInt(u32)) {
+        return Error.SqliteFailure;
+    }
+    return .{ .copied_from_prior_year = .{
+        .source_profile_id = source_profile_id,
+        .source_tax_year = @intCast(source_tax_year),
+        .source_revision_id = source_revision_id,
+        .source_revision_sequence = @intCast(source_sequence),
+    } };
+}
+
+fn readTaxFormProfileRevisionSource(
+    allocator: std.mem.Allocator,
+    row: *sqlite.sqlite3_stmt,
+    tag_column: c_int,
+) !OwnedTaxFormProfileRevisionSource {
+    const tag = columnText(row, tag_column) orelse
+        return Error.SqliteFailure;
+    if (std.mem.eql(u8, tag, "manual_entry")) return .manual_entry;
+    if (std.mem.eql(u8, tag, "migrated")) {
+        return .{ .migrated = try dupColumn(allocator, row, tag_column + 1) };
+    }
+    if (!std.mem.eql(u8, tag, "copied_from_prior_year")) {
+        return Error.SqliteFailure;
+    }
+    const source_tax_year = sqlite.sqlite3_column_int64(row, tag_column + 2);
+    if (source_tax_year < 1 or source_tax_year > std.math.maxInt(u16)) {
+        return Error.SqliteFailure;
+    }
+    const source_revision_id = try dupColumn(allocator, row, tag_column + 3);
+    errdefer allocator.free(source_revision_id);
+    const source_form_revision = try dupColumn(allocator, row, tag_column + 4);
+    errdefer allocator.free(source_form_revision);
+    const source_spec_revision = sqlite.sqlite3_column_int64(row, tag_column + 5);
+    if (source_spec_revision < 1 or
+        source_spec_revision > std.math.maxInt(u32))
+    {
+        return Error.SqliteFailure;
+    }
+    const source_spec_hash = try dupColumn(allocator, row, tag_column + 6);
+    errdefer allocator.free(source_spec_hash);
+    return .{ .copied_from_prior_year = .{
+        .source_tax_year = @intCast(source_tax_year),
+        .source_form_revision = source_form_revision,
+        .source_spec_revision = @intCast(source_spec_revision),
+        .source_spec_hash = source_spec_hash,
+        .source_revision_id = source_revision_id,
+    } };
+}
+
+fn readTaxFormProfileScalarValue(
+    allocator: std.mem.Allocator,
+    row: *sqlite.sqlite3_stmt,
+    value_type_column: c_int,
+) !OwnedTaxFormProfileScalarValue {
+    const type_text = columnText(row, value_type_column) orelse
+        return Error.SqliteFailure;
+    const value_type = parseEnumText(
+        form_catalog.TaxFormProfileValueType,
+        type_text,
+    ) orelse return Error.SqliteFailure;
+    return switch (value_type) {
+        .profile_id => .{
+            .profile_id = try dupColumn(allocator, row, value_type_column + 1),
+        },
+        .business_activity_anchor_id => .{
+            .business_activity_anchor_id = try dupColumn(
+                allocator,
+                row,
+                value_type_column + 2,
+            ),
+        },
+        .registration_obligation_anchor_id => .{
+            .registration_obligation_anchor_id = try dupColumn(
+                allocator,
+                row,
+                value_type_column + 2,
+            ),
+        },
+        .text => .{
+            .text = try dupColumn(allocator, row, value_type_column + 3),
+        },
+        .boolean => blk: {
+            if (sqlite.sqlite3_column_type(row, value_type_column + 4) !=
+                sqlite.SQLITE_INTEGER)
+            {
+                return Error.SqliteFailure;
+            }
+            break :blk .{ .boolean = switch (sqlite.sqlite3_column_int64(
+                row,
+                value_type_column + 4,
+            )) {
+                0 => false,
+                1 => true,
+                else => return Error.SqliteFailure,
+            } };
+        },
+        .integer => blk: {
+            if (sqlite.sqlite3_column_type(row, value_type_column + 5) !=
+                sqlite.SQLITE_INTEGER)
+            {
+                return Error.SqliteFailure;
+            }
+            break :blk .{ .integer = sqlite.sqlite3_column_int64(
+                row,
+                value_type_column + 5,
+            ) };
+        },
+        .date => .{
+            .date = try dupColumn(allocator, row, value_type_column + 6),
+        },
+        .year => blk: {
+            const year = sqlite.sqlite3_column_int64(
+                row,
+                value_type_column + 7,
+            );
+            if (year < 1 or year > std.math.maxInt(u16)) {
+                return Error.SqliteFailure;
+            }
+            break :blk .{ .year = @intCast(year) };
+        },
+        .choice => .{
+            .choice = try dupColumn(allocator, row, value_type_column + 8),
+        },
+    };
+}
+
+fn readTaxFormProfileValueSource(
+    allocator: std.mem.Allocator,
+    row: *sqlite.sqlite3_stmt,
+    tag_column: c_int,
+) !OwnedTaxFormProfileValueSource {
+    const tag = columnText(row, tag_column) orelse
+        return Error.SqliteFailure;
+    if (std.mem.eql(u8, tag, "manual_confirmation")) {
+        return .manual_confirmation;
+    }
+    if (std.mem.eql(u8, tag, "copied_from_revision")) {
+        return .{ .copied_from_revision = try dupColumn(
+            allocator,
+            row,
+            tag_column + 1,
+        ) };
+    }
+    if (std.mem.eql(u8, tag, "migrated")) {
+        return .{ .migrated = try dupColumn(
+            allocator,
+            row,
+            tag_column + 2,
+        ) };
+    }
+    return Error.SqliteFailure;
 }
 
 fn readIdentityAnchor(
@@ -6505,6 +13234,7 @@ fn readSubject(
     allocator: std.mem.Allocator,
     row: *sqlite.sqlite3_stmt,
     kind_column: c_int,
+    canonical_subject: bool,
 ) !OwnedSubject {
     const kind_text = columnText(row, kind_column) orelse
         return Error.SqliteFailure;
@@ -6514,9 +13244,14 @@ fn readSubject(
     const birth_date_column = kind_column + 3;
     const citizenship_column = kind_column + 4;
     const foreign_tax_number_column = kind_column + 5;
+    const natural_person_classification_column = kind_column + 6;
+    const trade_name_column = kind_column + 7;
 
     switch (kind) {
         .individual, .sole_proprietor => {
+            if (canonical_subject and kind == .sole_proprietor) {
+                return Error.SqliteFailure;
+            }
             const name = try dupColumn(allocator, row, taxpayer_name_column);
             errdefer allocator.free(name);
             const date_of_birth = try dupOptionalColumn(
@@ -6537,8 +13272,27 @@ fn readSubject(
                 foreign_tax_number_column,
             );
             errdefer freeOptional(allocator, foreign_tax_number);
+            const classification: NaturalPersonClassification = if (canonical_subject) blk: {
+                const classification_text = columnText(
+                    row,
+                    natural_person_classification_column,
+                ) orelse return Error.SqliteFailure;
+                break :blk parseNaturalPersonClassification(
+                    classification_text,
+                ) orelse return Error.SqliteFailure;
+            } else if (kind == .sole_proprietor)
+                .self_employed
+            else
+                .classification_unknown;
+            const person_trade_name = if (canonical_subject)
+                try dupOptionalColumn(allocator, row, trade_name_column)
+            else
+                null;
+            errdefer freeOptional(allocator, person_trade_name);
             const person: OwnedIndividual = .{
                 .name = name,
+                .classification = classification,
+                .trade_name = person_trade_name,
                 .date_of_birth = date_of_birth,
                 .citizenship = citizenship,
                 .foreign_tax_number = foreign_tax_number,
@@ -6567,14 +13321,30 @@ fn readSubject(
         .trust,
         .other_legal_entity,
         => {
+            if (canonical_subject and
+                (sqlite.sqlite3_column_type(
+                    row,
+                    natural_person_classification_column,
+                ) != sqlite.SQLITE_NULL or
+                    sqlite.sqlite3_column_type(row, taxpayer_name_column) !=
+                        sqlite.SQLITE_NULL))
+            {
+                return Error.SqliteFailure;
+            }
             const registered_name = try dupColumn(
                 allocator,
                 row,
                 registered_name_column,
             );
             errdefer allocator.free(registered_name);
+            const trade_name = if (canonical_subject)
+                try dupOptionalColumn(allocator, row, trade_name_column)
+            else
+                null;
+            errdefer freeOptional(allocator, trade_name);
             return .{ .legal_entity = .{
                 .registered_name = registered_name,
+                .trade_name = trade_name,
                 .kind = switch (kind) {
                     .corporation => .corporation,
                     .partnership => .partnership,
@@ -6767,6 +13537,19 @@ fn dupOptionalColumn(
     return try dupColumn(allocator, row, column);
 }
 
+fn optionalInt64Column(
+    row: *sqlite.sqlite3_stmt,
+    column: c_int,
+) !?i64 {
+    if (sqlite.sqlite3_column_type(row, column) == sqlite.SQLITE_NULL) {
+        return null;
+    }
+    if (sqlite.sqlite3_column_type(row, column) != sqlite.SQLITE_INTEGER) {
+        return Error.SqliteFailure;
+    }
+    return sqlite.sqlite3_column_int64(row, column);
+}
+
 fn columnText(row: *sqlite.sqlite3_stmt, column: c_int) ?[]const u8 {
     const raw = sqlite.sqlite3_column_text(row, column) orelse return null;
     const length = sqlite.sqlite3_column_bytes(row, column);
@@ -6944,6 +13727,17 @@ fn parseSubjectKind(value: []const u8) ?SubjectKind {
     return null;
 }
 
+fn parseNaturalPersonClassification(
+    value: []const u8,
+) ?NaturalPersonClassification {
+    inline for (std.meta.fields(NaturalPersonClassification)) |field| {
+        if (std.mem.eql(u8, value, field.name)) {
+            return @enumFromInt(field.value);
+        }
+    }
+    return null;
+}
+
 fn parseRevisionSourceTag(value: []const u8) ?RevisionSourceTag {
     inline for (std.meta.fields(RevisionSourceTag)) |field| {
         if (std.mem.eql(u8, value, field.name)) return @enumFromInt(field.value);
@@ -6997,6 +13791,22 @@ fn enumFromIntChecked(comptime Enum: type, value: i64) ?Enum {
 
 fn validateProfileCreate(value: ProfileCreate) Error!void {
     try validateIdText(value.id);
+    if (value.label) |label| try validateProfileLabel(label);
+}
+
+fn validateProfileLabel(value: []const u8) Error!void {
+    try requireValue(value);
+    if (std.mem.indexOfScalar(u8, value, 0) != null) {
+        return Error.InvalidValue;
+    }
+}
+
+fn profileDefaultLabel(subject: SubjectWrite) []const u8 {
+    return switch (subject) {
+        .individual => |person| person.name,
+        .sole_proprietor => |proprietor| proprietor.person.name,
+        .legal_entity => |entity| entity.registered_name,
+    };
 }
 
 fn validateRevisionSource(value: RevisionSourceWrite) Error!void {
@@ -7043,22 +13853,39 @@ fn validateRevision(
         .sole_proprietor => |proprietor| {
             try validateIndividual(proprietor.person);
             try validateOptionalValue(proprietor.trade_name);
+            if (proprietor.person.classification !=
+                .classification_unknown and
+                proprietor.person.classification != .self_employed)
+            {
+                return Error.InvalidValue;
+            }
+            _ = try soleProprietorTradeName(proprietor);
         },
-        .legal_entity => |entity| try requireValue(entity.registered_name),
+        .legal_entity => |entity| {
+            try requireValue(entity.registered_name);
+            try validateOptionalValue(entity.trade_name);
+        },
     }
     for (components.business_activities, 0..) |activity, index| {
         try validateIdText(activity.id);
+        const anchor_id = activity.anchor_id orelse activity.id;
+        try validateIdText(anchor_id);
         try requireValue(activity.line_of_business);
         try validateOptionalValue(activity.atc);
         try validatePeriod(activity.effective);
         for (components.business_activities[index + 1 ..]) |other| {
-            if (std.mem.eql(u8, activity.id, other.id)) {
+            const other_anchor_id = other.anchor_id orelse other.id;
+            if (std.mem.eql(u8, activity.id, other.id) or
+                std.mem.eql(u8, anchor_id, other_anchor_id))
+            {
                 return Error.InvalidValue;
             }
         }
     }
     for (components.registration_facts, 0..) |fact, index| {
         try validateIdText(fact.id);
+        const anchor_id = fact.anchor_id orelse fact.id;
+        try validateIdText(anchor_id);
         try validatePeriod(fact.effective);
         switch (fact.value) {
             .tax_type => |text| try requireValue(text),
@@ -7067,7 +13894,10 @@ fn validateRevision(
         }
         const kind: RegistrationFactKind = fact.value;
         for (components.registration_facts[index + 1 ..]) |other| {
-            if (std.mem.eql(u8, fact.id, other.id)) {
+            const other_anchor_id = other.anchor_id orelse other.id;
+            if (std.mem.eql(u8, fact.id, other.id) or
+                std.mem.eql(u8, anchor_id, other_anchor_id))
+            {
                 return Error.InvalidValue;
             }
             const other_kind: RegistrationFactKind = other.value;
@@ -7080,11 +13910,297 @@ fn validateRevision(
     }
 }
 
+fn validateTaxpayerYearRevisionWrite(
+    value: TaxpayerYearRevisionWrite,
+) Error!void {
+    try validateIdText(value.id);
+    try validateOpaqueText(value.profile_id);
+    if (value.tax_year == 0 or value.sequence == 0) {
+        return Error.InvalidValue;
+    }
+    try validatePeriod(value.effective);
+    const effective_until = value.effective.until orelse
+        return Error.InvalidValue;
+    if (!dateBelongsToTaxYear(value.effective.from[0..], value.tax_year) or
+        !dateBelongsToTaxYear(effective_until[0..], value.tax_year))
+    {
+        return Error.InvalidValue;
+    }
+    switch (value.review_state) {
+        .requires_review => if (value.confirmed_at_unix_seconds != null) {
+            return Error.InvalidValue;
+        },
+        .confirmed => {
+            const confirmed = value.confirmed_at_unix_seconds orelse
+                return Error.InvalidValue;
+            if (confirmed <= 0) return Error.InvalidValue;
+        },
+    }
+    switch (value.source) {
+        .manual_entry => {},
+        .imported => |reference| try requireValue(reference),
+        .migrated => |reference| try requireValue(reference),
+        .copied_from_prior_year => |copy| {
+            try validateOpaqueText(copy.source_profile_id);
+            try validateIdText(copy.source_revision_id);
+            if (!std.mem.eql(
+                u8,
+                copy.source_profile_id,
+                value.profile_id,
+            ) or copy.source_tax_year == 0 or
+                @as(u32, copy.source_tax_year) + 1 != value.tax_year or
+                copy.source_revision_sequence == 0 or
+                value.review_state != .requires_review)
+            {
+                return Error.InvalidValue;
+            }
+        },
+    }
+    var election: ?TaxpayerYearIncomeTaxRateElection = null;
+    var deduction: ?TaxpayerYearDeductionMethod = null;
+    for (value.values, 0..) |setting, index| {
+        const setting_tag = std.meta.activeTag(setting);
+        for (value.values[index + 1 ..]) |other| {
+            if (setting_tag == std.meta.activeTag(other)) {
+                return Error.InvalidValue;
+            }
+        }
+        switch (setting) {
+            .income_tax_rate_election => |selected| election = selected,
+            .deduction_method => |selected| deduction = selected,
+        }
+    }
+    if (deduction != null and election != .graduated) {
+        return Error.InvalidValue;
+    }
+}
+
+fn validateTaxFormProfileStreamKey(
+    profile_id: []const u8,
+    tax_year: u16,
+    form_code: []const u8,
+    form_revision: []const u8,
+) Error!void {
+    try validateOpaqueText(profile_id);
+    if (tax_year == 0) return Error.InvalidValue;
+    try requireValue(form_code);
+    try requireValue(form_revision);
+}
+
+fn validateTaxFormProfileRevisionWrite(
+    value: TaxFormProfileRevisionWrite,
+) Error!*const form_catalog.FormDefinition {
+    try validateTaxFormProfileStreamKey(
+        value.profile_id,
+        value.tax_year,
+        value.form_code,
+        value.form_revision,
+    );
+    try validateIdText(value.id);
+    if (value.sequence == 0) return Error.InvalidValue;
+    try validatePeriod(value.effective);
+    if (!dateBelongsToTaxYear(value.effective.from[0..], value.tax_year)) {
+        return Error.InvalidValue;
+    }
+    if (value.effective.until) |until| {
+        if (!dateBelongsToTaxYear(until[0..], value.tax_year)) {
+            return Error.InvalidValue;
+        }
+    }
+
+    const form = form_catalog.findForm(value.form_code) orelse
+        return Error.TaxFormProfileNoSetup;
+    if (form.tax_form_profile.mode != .setup) {
+        return Error.TaxFormProfileNoSetup;
+    }
+    const generated_revision = form.revision orelse
+        return Error.TaxFormProfileNoSetup;
+    if (!std.mem.eql(u8, generated_revision, value.form_revision)) {
+        return Error.TaxFormProfileSpecMismatch;
+    }
+    const generated_spec_revision = form.tax_form_profile.spec_revision orelse
+        return Error.TaxFormProfileNoSetup;
+    const generated_spec_hash = form.tax_form_profile.spec_hash orelse
+        return Error.TaxFormProfileNoSetup;
+    if (value.spec_revision != generated_spec_revision or
+        !std.mem.eql(u8, value.spec_hash, generated_spec_hash))
+    {
+        return Error.TaxFormProfileSpecMismatch;
+    }
+    if (value.values.len == 0) return Error.TaxFormProfileValueInvalid;
+    switch (value.review_state) {
+        .requires_review => if (value.confirmed_at_unix_seconds != null) {
+            return Error.InvalidValue;
+        },
+        .confirmed => if (value.confirmed_at_unix_seconds == null) {
+            return Error.InvalidValue;
+        },
+    }
+    switch (value.source) {
+        .manual_entry => {},
+        .migrated => |reference| try requireValue(reference),
+        .copied_from_prior_year => |copy| {
+            try validateIdText(copy.source_revision_id);
+            try requireValue(copy.source_form_revision);
+            try requireValue(copy.source_spec_hash);
+            if (copy.source_tax_year == 0 or
+                copy.source_tax_year >= value.tax_year or
+                copy.source_spec_revision == 0)
+            {
+                return Error.InvalidValue;
+            }
+        },
+    }
+
+    for (value.values, 0..) |setup_value, index| {
+        for (value.values[index + 1 ..]) |other| {
+            if (setup_value.role == other.role and
+                setup_value.semantic_key == other.semantic_key)
+            {
+                return Error.TaxFormProfileValueInvalid;
+            }
+        }
+        const definition = findTaxFormProfileDefinition(
+            &form.tax_form_profile,
+            setup_value.role,
+            setup_value.semantic_key,
+        ) orelse return Error.TaxFormProfileValueInvalid;
+        if (definition.availability != .supported or
+            (definition.ownership != .binding_selection and
+                definition.ownership != .yearly_value and
+                definition.ownership != .transaction_default) or
+            definition.value_type != setup_value.value.valueType())
+        {
+            return Error.TaxFormProfileValueInvalid;
+        }
+        try validateTaxFormProfileScalarValue(setup_value.value);
+        switch (setup_value.source) {
+            .manual_confirmation => {},
+            .copied_from_revision => |revision_id| {
+                try validateIdText(revision_id);
+            },
+            .migrated => |reference| try requireValue(reference),
+        }
+    }
+    for (form.tax_form_profile.values) |definition| {
+        if (definition.availability != .supported or
+            definition.presence != .required)
+        {
+            continue;
+        }
+        var found = false;
+        for (value.values) |setup_value| {
+            if (setup_value.role == definition.role and
+                setup_value.semantic_key == definition.semantic_key)
+            {
+                found = true;
+                break;
+            }
+        }
+        if (!found) return Error.TaxFormProfileValueInvalid;
+    }
+    return form;
+}
+
+fn validateTaxFormProfileScalarValue(
+    value: TaxFormProfileScalarValueWrite,
+) Error!void {
+    switch (value) {
+        .profile_id => |profile_id| try validateOpaqueText(profile_id),
+        .business_activity_anchor_id,
+        .registration_obligation_anchor_id,
+        => |anchor_id| try validateIdText(anchor_id),
+        .text, .choice => |text| {
+            try requireValue(text);
+            if (text.len > 255) return Error.InvalidValue;
+        },
+        .boolean, .integer => {},
+        .date => |date| try validateDate(date[0..]),
+        .year => |year| if (year == 0) return Error.InvalidValue,
+    }
+}
+
+fn findTaxFormProfileDefinition(
+    spec: *const form_catalog.TaxFormProfileSpec,
+    role: form_catalog.Role,
+    semantic_key: form_catalog.TaxFormProfileSemanticKey,
+) ?*const form_catalog.TaxFormProfileValueDefinition {
+    for (spec.values) |*definition| {
+        if (definition.role == role and
+            definition.semantic_key == semantic_key)
+        {
+            return definition;
+        }
+    }
+    return null;
+}
+
+fn findTaxFormProfileReferencedProfile(
+    values: []const TaxFormProfileSetupValueWrite,
+    role: form_catalog.Role,
+    semantic_key: form_catalog.TaxFormProfileSemanticKey,
+) ?[]const u8 {
+    for (values) |setup_value| {
+        if (setup_value.role != role or
+            setup_value.semantic_key != semantic_key)
+        {
+            continue;
+        }
+        return switch (setup_value.value) {
+            .profile_id => |profile_id| profile_id,
+            else => null,
+        };
+    }
+    return null;
+}
+
+fn dateBelongsToTaxYear(date: []const u8, tax_year: u16) bool {
+    if (date.len != 10) return false;
+    const parsed = std.fmt.parseInt(u16, date[0..4], 10) catch return false;
+    return parsed == tax_year;
+}
+
+fn writeTaxYearEnd(tax_year: u16, buffer: *DateText) void {
+    _ = std.fmt.bufPrint(buffer, "{d:0>4}-12-31", .{tax_year}) catch
+        unreachable;
+}
+
+fn validateBusinessActivityAnchorRef(
+    reference: BusinessActivityAnchorRef,
+) Error!void {
+    try validateOpaqueText(reference.profile_id);
+    try validateIdText(reference.anchor_id);
+}
+
+fn validateRegistrationFactAnchorRef(
+    reference: RegistrationFactAnchorRef,
+) Error!void {
+    try validateOpaqueText(reference.profile_id);
+    try validateIdText(reference.anchor_id);
+}
+
 fn validateIndividual(value: IndividualWrite) Error!void {
     try requireValue(value.name);
+    try validateOptionalValue(value.trade_name);
     if (value.date_of_birth) |date| try validateDate(date[0..]);
     try validateOptionalValue(value.citizenship);
     try validateOptionalValue(value.foreign_tax_number);
+}
+
+fn soleProprietorTradeName(
+    value: SoleProprietorWrite,
+) Error!?[]const u8 {
+    if (value.person.trade_name) |person_trade_name| {
+        if (value.trade_name) |compatibility_trade_name| {
+            if (!std.mem.eql(
+                u8,
+                person_trade_name,
+                compatibility_trade_name,
+            )) return Error.InvalidValue;
+        }
+        return person_trade_name;
+    }
+    return value.trade_name;
 }
 
 fn validatePeriod(value: EffectivePeriodWrite) Error!void {
@@ -7898,6 +15014,164 @@ fn updateDigestU32(
     });
 }
 
+fn updateDigestU64(
+    hash: *std.crypto.hash.sha2.Sha256,
+    value: u64,
+) void {
+    hash.update(&.{
+        @intCast(value >> 56),
+        @intCast((value >> 48) & 0xff),
+        @intCast((value >> 40) & 0xff),
+        @intCast((value >> 32) & 0xff),
+        @intCast((value >> 24) & 0xff),
+        @intCast((value >> 16) & 0xff),
+        @intCast((value >> 8) & 0xff),
+        @intCast(value & 0xff),
+    });
+}
+
+fn updateDigestI64(
+    hash: *std.crypto.hash.sha2.Sha256,
+    value: i64,
+) void {
+    updateDigestU64(hash, @bitCast(value));
+}
+
+fn updateDigestOptionalText(
+    hash: *std.crypto.hash.sha2.Sha256,
+    value: ?[]const u8,
+) void {
+    if (value) |text| {
+        hash.update(&.{1});
+        updateDigestLengthPrefixed(hash, text);
+    } else {
+        hash.update(&.{0});
+    }
+}
+
+fn updateDigestOptionalI64(
+    hash: *std.crypto.hash.sha2.Sha256,
+    value: ?i64,
+) void {
+    if (value) |integer| {
+        hash.update(&.{1});
+        updateDigestI64(hash, integer);
+    } else {
+        hash.update(&.{0});
+    }
+}
+
+fn exactDraftProvenanceDigest(
+    value: ExactDraftProvenanceWrite,
+) exact_identity.Sha256Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update("ebirforms.exact-draft-provenance.v1");
+    updateDigestLengthPrefixed(&hash, value.owner_profile_id);
+    updateDigestU16(&hash, value.tax_year);
+    updateDigestLengthPrefixed(&hash, value.form_code);
+    updateDigestLengthPrefixed(&hash, value.form_revision);
+    updateDigestLengthPrefixed(&hash, value.catalog_revision);
+    updateDigestLengthPrefixed(&hash, value.catalog_sha256);
+    updateDigestU32(&hash, value.setup_spec_revision);
+    updateDigestLengthPrefixed(&hash, value.setup_spec_hash);
+
+    updateDigestLengthPrefixed(&hash, value.forms_set_decision.id);
+    updateDigestU32(&hash, value.forms_set_decision.sequence);
+    updateDigestLengthPrefixed(
+        &hash,
+        value.forms_set_decision.source.text(),
+    );
+    updateDigestOptionalText(
+        &hash,
+        value.forms_set_decision.evidence_reference,
+    );
+    updateDigestLengthPrefixed(
+        &hash,
+        value.forms_set_decision.applicability_date[0..],
+    );
+
+    updateDigestU32(&hash, @intCast(value.taxpayer_revisions.len));
+    for (value.taxpayer_revisions) |revision| {
+        updateDigestLengthPrefixed(&hash, @tagName(revision.role));
+        updateDigestLengthPrefixed(&hash, revision.profile_id);
+        updateDigestLengthPrefixed(&hash, revision.revision_id);
+        updateDigestU32(&hash, revision.revision_sequence);
+    }
+
+    if (value.taxpayer_year_revision) |revision| {
+        hash.update(&.{1});
+        updateDigestLengthPrefixed(&hash, revision.profile_id);
+        updateDigestU16(&hash, revision.tax_year);
+        updateDigestLengthPrefixed(&hash, revision.revision_id);
+        updateDigestU32(&hash, revision.revision_sequence);
+    } else {
+        hash.update(&.{0});
+    }
+
+    if (value.tax_form_profile_revision) |revision| {
+        hash.update(&.{1});
+        updateDigestLengthPrefixed(&hash, revision.profile_id);
+        updateDigestU16(&hash, revision.tax_year);
+        updateDigestLengthPrefixed(&hash, revision.form_code);
+        updateDigestLengthPrefixed(&hash, revision.form_revision);
+        updateDigestLengthPrefixed(&hash, revision.revision_id);
+        updateDigestU32(&hash, revision.revision_sequence);
+        updateDigestU32(&hash, revision.spec_revision);
+        updateDigestLengthPrefixed(&hash, revision.spec_hash);
+    } else {
+        hash.update(&.{0});
+    }
+
+    updateDigestU32(&hash, @intCast(value.components.len));
+    for (value.components) |component| {
+        const columns = draftProvenanceComponentColumns(component);
+        updateDigestLengthPrefixed(&hash, columns.kind.text());
+        updateDigestLengthPrefixed(&hash, @tagName(columns.role));
+        updateDigestLengthPrefixed(&hash, columns.profile_id);
+        updateDigestLengthPrefixed(&hash, columns.anchor_id);
+        updateDigestLengthPrefixed(&hash, columns.revision_id);
+        updateDigestU32(&hash, columns.revision_sequence);
+    }
+
+    updateDigestU32(&hash, @intCast(value.source_snapshots.len));
+    for (value.source_snapshots) |*source| {
+        const key = draftProvenanceSourceKeyColumns(&source.key);
+        const copied = draftProvenanceValueColumns(&source.copied_value);
+        updateDigestLengthPrefixed(&hash, key.kind);
+        updateDigestLengthPrefixed(&hash, @tagName(key.role));
+        updateDigestLengthPrefixed(&hash, key.key);
+        updateDigestOptionalText(&hash, key.anchor_id);
+        updateDigestLengthPrefixed(&hash, copied.kind);
+        updateDigestOptionalText(&hash, copied.text);
+        updateDigestOptionalI64(&hash, copied.integer);
+    }
+
+    updateDigestU32(&hash, @intCast(value.transaction_seeds.len));
+    for (value.transaction_seeds) |*seed| {
+        const key = draftProvenanceSourceKeyColumns(&seed.source_key);
+        const source = draftProvenanceSeedSourceColumns(&seed.source);
+        const copied = draftProvenanceValueColumns(
+            &seed.copied_seed_value,
+        );
+        updateDigestLengthPrefixed(&hash, seed.filing_field);
+        updateDigestLengthPrefixed(&hash, key.kind);
+        updateDigestLengthPrefixed(&hash, @tagName(key.role));
+        updateDigestLengthPrefixed(&hash, key.key);
+        updateDigestOptionalText(&hash, key.anchor_id);
+        updateDigestLengthPrefixed(&hash, source.kind);
+        updateDigestOptionalText(&hash, source.revision_id);
+        updateDigestOptionalText(&hash, source.catalog_revision);
+        updateDigestOptionalText(&hash, source.catalog_sha256);
+        updateDigestLengthPrefixed(&hash, copied.kind);
+        updateDigestOptionalText(&hash, copied.text);
+        updateDigestOptionalI64(&hash, copied.integer);
+    }
+
+    var result: exact_identity.Sha256Digest = .{ .bytes = undefined };
+    hash.final(&result.bytes);
+    return result;
+}
+
 fn checkedU64ToI64(value: u64) ?i64 {
     if (value > std.math.maxInt(i64)) return null;
     return @intCast(value);
@@ -7964,6 +15238,400 @@ fn validateDraft(
         }
     }
     try validateDraftValues(values);
+}
+
+fn validateDraftAndProvenanceIdentity(
+    draft: DraftWrite,
+    bindings: []const RoleBindingWrite,
+    provenance: DraftProvenanceWrite,
+) Error!void {
+    if (!std.mem.eql(u8, draft.id, provenance.draft_id) or
+        !std.mem.eql(u8, draft.form_code, provenance.form_code) or
+        !std.mem.eql(u8, draft.form_revision, provenance.form_revision) or
+        !dateBelongsToTaxYear(&draft.profile_as_of, provenance.tax_year))
+    {
+        return Error.DraftProvenanceInvalidBinding;
+    }
+    if (bindings.len != provenance.taxpayer_revisions.len) {
+        return Error.DraftProvenanceInvalidBinding;
+    }
+    for (provenance.taxpayer_revisions) |revision| {
+        const binding = findBinding(bindings, @tagName(revision.role)) orelse
+            return Error.DraftProvenanceInvalidBinding;
+        if (!std.mem.eql(u8, binding.profile_id, revision.profile_id) or
+            !std.mem.eql(
+                u8,
+                binding.profile_revision_id,
+                revision.revision_id,
+            ) or binding.profile_revision_sequence != revision.revision_sequence)
+        {
+            return Error.DraftProvenanceInvalidBinding;
+        }
+    }
+}
+
+fn exactDraftProvenanceAsCoarse(
+    value: ExactDraftProvenanceWrite,
+) DraftProvenanceWrite {
+    return .{
+        // Validation only: exact provenance is keyed by the binary exact
+        // draft identity, so this valid opaque identifier is never stored as
+        // a coarse draft ID.
+        .draft_id = value.owner_profile_id,
+        .expected_current_sequence = 0,
+        .owner_profile_id = value.owner_profile_id,
+        .tax_year = value.tax_year,
+        .form_code = value.form_code,
+        .form_revision = value.form_revision,
+        .catalog_revision = value.catalog_revision,
+        .catalog_sha256 = value.catalog_sha256,
+        .setup_spec_revision = value.setup_spec_revision,
+        .setup_spec_hash = value.setup_spec_hash,
+        .forms_set_decision = value.forms_set_decision,
+        .taxpayer_revisions = value.taxpayer_revisions,
+        .taxpayer_year_revision = value.taxpayer_year_revision,
+        .tax_form_profile_revision = value.tax_form_profile_revision,
+        .components = value.components,
+        .source_snapshots = value.source_snapshots,
+        .transaction_seeds = value.transaction_seeds,
+    };
+}
+
+fn validateExactDraftProvenanceWrite(
+    value: ExactDraftProvenanceWrite,
+) Error!void {
+    try validateDraftProvenanceWrite(exactDraftProvenanceAsCoarse(value));
+    if (value.taxpayer_revisions.len == 0 or
+        value.taxpayer_revisions.len > max_exact_role_bindings or
+        value.taxpayer_revisions[0].role != .filer or
+        (value.taxpayer_revisions.len == 2 and
+            value.taxpayer_revisions[1].role != .spouse))
+    {
+        return Error.DraftProvenanceInvalidBinding;
+    }
+}
+
+fn validateExactDraftAndProvenanceIdentity(
+    exact: ExactDraftRevisionWrite,
+    provenance: ExactDraftProvenanceWrite,
+) Error!void {
+    if (!std.mem.eql(
+        u8,
+        exact.filing_key.filer_profile_id,
+        provenance.owner_profile_id,
+    ) or !std.mem.eql(
+        u8,
+        exact.filing_key.form_code,
+        provenance.form_code,
+    ) or !std.mem.eql(
+        u8,
+        exact.filing_key.form_revision,
+        provenance.form_revision,
+    ) or !dateBelongsToTaxYear(
+        &exact.profile_as_of,
+        provenance.tax_year,
+    ) or !std.mem.eql(
+        u8,
+        exact.profile_as_of[0..],
+        provenance.forms_set_decision.applicability_date[0..],
+    )) {
+        return Error.DraftProvenanceInvalidBinding;
+    }
+    if (exact.filing_key.period_key.len < 4) {
+        return Error.DraftProvenanceInvalidBinding;
+    }
+    const period_year = std.fmt.parseInt(
+        u16,
+        exact.filing_key.period_key[0..4],
+        10,
+    ) catch return Error.DraftProvenanceInvalidBinding;
+    if (period_year != provenance.tax_year or
+        exact.bindings.len != provenance.taxpayer_revisions.len)
+    {
+        return Error.DraftProvenanceInvalidBinding;
+    }
+
+    for (provenance.taxpayer_revisions) |revision| {
+        var matched: ?ExactDraftRoleBindingWrite = null;
+        for (exact.bindings) |binding| {
+            if (std.mem.eql(u8, binding.role, @tagName(revision.role))) {
+                if (matched != null) {
+                    return Error.DraftProvenanceInvalidBinding;
+                }
+                matched = binding;
+            }
+        }
+        const binding = matched orelse
+            return Error.DraftProvenanceInvalidBinding;
+        if (!std.mem.eql(u8, binding.profile_id, revision.profile_id) or
+            !std.mem.eql(
+                u8,
+                binding.profile_revision_id,
+                revision.revision_id,
+            ) or binding.profile_revision_sequence != revision.revision_sequence)
+        {
+            return Error.DraftProvenanceInvalidBinding;
+        }
+
+        // A v16 component anchor is not a legacy profile-revision activity
+        // row. Persisting it in the old binding FK would either fail or, worse,
+        // point at a different historical object. The typed v19 child is the
+        // sole activity identity whenever one is present for this role.
+        for (provenance.components) |component| switch (component) {
+            .business_activity => |activity| {
+                if (activity.role == revision.role and
+                    std.mem.eql(
+                        u8,
+                        activity.profile_id,
+                        revision.profile_id,
+                    ) and binding.business_activity_id != null)
+                {
+                    return Error.DraftProvenanceInvalidBinding;
+                }
+            },
+            .registration_obligation => {},
+        };
+    }
+}
+
+fn storedDateText(value: []const u8) Error!DateText {
+    if (value.len != 10) return Error.SqliteFailure;
+    validateDate(value) catch return Error.SqliteFailure;
+    var result: DateText = undefined;
+    @memcpy(result[0..], value);
+    return result;
+}
+
+fn borrowedOwnedDraftProvenanceSourceKey(
+    value: *const OwnedDraftProvenanceSourceKey,
+) DraftProvenanceSourceKeyWrite {
+    return switch (value.*) {
+        .taxpayer_fact => |key| .{ .taxpayer_fact = .{
+            .role = key.role,
+            .key = key.key,
+        } },
+        .taxpayer_year_setting => |key| .{ .taxpayer_year_setting = .{
+            .role = key.role,
+            .key = key.key,
+        } },
+        .tax_form_profile_value => |key| .{
+            .tax_form_profile_value = .{
+                .role = key.role,
+                .key = key.key,
+            },
+        },
+        .business_activity_fact => |key| .{
+            .business_activity_fact = .{
+                .role = key.role,
+                .anchor_id = key.anchor_id,
+                .key = key.key,
+            },
+        },
+        .registration_obligation_fact => |key| .{
+            .registration_obligation_fact = .{
+                .role = key.role,
+                .anchor_id = key.anchor_id,
+                .key = key.key,
+            },
+        },
+    };
+}
+
+fn borrowedOwnedDraftProvenanceValue(
+    value: *const OwnedDraftProvenanceValue,
+) Error!DraftProvenanceValueWrite {
+    return switch (value.*) {
+        .text => |text| .{ .text = text },
+        .choice => |text| .{ .choice = text },
+        .boolean => |boolean| .{ .boolean = boolean },
+        .integer => |integer| .{ .integer = integer },
+        .date => |date| .{ .date = try storedDateText(date) },
+        .year => |year| .{ .year = year },
+        .profile_id => |id| .{ .profile_id = id },
+        .business_activity_anchor_id => |id| .{
+            .business_activity_anchor_id = id,
+        },
+        .registration_obligation_anchor_id => |id| .{
+            .registration_obligation_anchor_id = id,
+        },
+        .income_tax_rate_election => |choice| .{
+            .income_tax_rate_election = choice,
+        },
+        .deduction_method => |choice| .{ .deduction_method = choice },
+    };
+}
+
+fn borrowedOwnedDraftProvenanceSeedSource(
+    value: *const OwnedDraftProvenanceSeedSource,
+) DraftProvenanceSeedSourceWrite {
+    return switch (value.*) {
+        .tax_form_profile_revision => |id| .{
+            .tax_form_profile_revision = id,
+        },
+        .catalog_default => |catalog| .{ .catalog_default = .{
+            .revision = catalog.revision,
+            .sha256 = catalog.sha256,
+        } },
+    };
+}
+
+fn validateOwnedExactDraftProvenanceIntegrity(
+    value: *const OwnedExactDraftProvenance,
+) Error!void {
+    try validateDraftWorkspaceId(value.draft_identity.workspace_id);
+    if (value.revision.value == 0 or
+        checkedU64ToI64(value.revision.value) == null or
+        value.taxpayer_revisions.len > max_exact_role_bindings or
+        value.components.len > 32 or value.source_snapshots.len > 96 or
+        value.transaction_seeds.len > 32)
+    {
+        return Error.SqliteFailure;
+    }
+
+    var taxpayer_storage: [max_exact_role_bindings]DraftProvenanceTaxpayerRevisionWrite =
+        undefined;
+    for (value.taxpayer_revisions, 0..) |revision, index| {
+        taxpayer_storage[index] = .{
+            .role = revision.role,
+            .profile_id = revision.profile_id,
+            .revision_id = revision.revision_id,
+            .revision_sequence = revision.revision_sequence,
+        };
+    }
+
+    var year_storage: DraftProvenanceTaxpayerYearRevisionWrite = undefined;
+    const year_revision: ?DraftProvenanceTaxpayerYearRevisionWrite =
+        if (value.taxpayer_year_revision) |revision| blk: {
+            year_storage = .{
+                .profile_id = revision.profile_id,
+                .tax_year = revision.tax_year,
+                .revision_id = revision.revision_id,
+                .revision_sequence = revision.revision_sequence,
+            };
+            break :blk year_storage;
+        } else null;
+
+    var form_profile_storage: DraftProvenanceTaxFormProfileRevisionWrite =
+        undefined;
+    const form_profile_revision: ?DraftProvenanceTaxFormProfileRevisionWrite =
+        if (value.tax_form_profile_revision) |revision| blk: {
+            form_profile_storage = .{
+                .profile_id = revision.profile_id,
+                .tax_year = revision.tax_year,
+                .form_code = revision.form_code,
+                .form_revision = revision.form_revision,
+                .revision_id = revision.revision_id,
+                .revision_sequence = revision.revision_sequence,
+                .spec_revision = revision.spec_revision,
+                .spec_hash = revision.spec_hash,
+            };
+            break :blk form_profile_storage;
+        } else null;
+
+    var component_storage: [32]DraftProvenanceComponentWrite = undefined;
+    for (value.components, 0..) |component, index| {
+        component_storage[index] = switch (component.kind) {
+            .business_activity => .{ .business_activity = .{
+                .role = component.role,
+                .profile_id = component.profile_id,
+                .anchor_id = component.anchor_id,
+                .revision_id = component.revision_id,
+                .revision_sequence = component.revision_sequence,
+            } },
+            .registration_obligation => .{
+                .registration_obligation = .{
+                    .role = component.role,
+                    .profile_id = component.profile_id,
+                    .anchor_id = component.anchor_id,
+                    .revision_id = component.revision_id,
+                    .revision_sequence = component.revision_sequence,
+                },
+            },
+            else => return Error.SqliteFailure,
+        };
+    }
+
+    var source_storage: [96]DraftProvenanceSourceSnapshotWrite = undefined;
+    for (value.source_snapshots, 0..) |*source, index| {
+        source_storage[index] = .{
+            .key = borrowedOwnedDraftProvenanceSourceKey(&source.key),
+            .copied_value = try borrowedOwnedDraftProvenanceValue(
+                &source.copied_value,
+            ),
+        };
+    }
+
+    var seed_storage: [32]DraftProvenanceTransactionSeedWrite = undefined;
+    for (value.transaction_seeds, 0..) |*seed, index| {
+        seed_storage[index] = .{
+            .filing_field = seed.filing_field,
+            .source_key = borrowedOwnedDraftProvenanceSourceKey(
+                &seed.source_key,
+            ),
+            .source = borrowedOwnedDraftProvenanceSeedSource(&seed.source),
+            .copied_seed_value = try borrowedOwnedDraftProvenanceValue(
+                &seed.copied_seed_value,
+            ),
+        };
+    }
+
+    const applicability_date = try storedDateText(
+        value.forms_set_applicability_date,
+    );
+    if (!std.mem.eql(
+        u8,
+        value.forms_set_decision.profile_id,
+        value.owner_profile_id,
+    ) or value.forms_set_decision.tax_year != value.tax_year or
+        !std.mem.eql(
+            u8,
+            value.forms_set_decision.form_code,
+            value.form_code,
+        ) or !std.mem.eql(
+        u8,
+        value.forms_set_decision.form_revision,
+        value.form_revision,
+    ) or std.mem.order(
+        u8,
+        value.forms_set_decision.effective_from,
+        applicability_date[0..],
+    ) == .gt or (value.forms_set_decision.effective_until != null and
+        std.mem.order(
+            u8,
+            applicability_date[0..],
+            value.forms_set_decision.effective_until.?,
+        ) == .gt))
+    {
+        return Error.SqliteFailure;
+    }
+
+    const borrowed: ExactDraftProvenanceWrite = .{
+        .owner_profile_id = value.owner_profile_id,
+        .tax_year = value.tax_year,
+        .form_code = value.form_code,
+        .form_revision = value.form_revision,
+        .catalog_revision = value.catalog_revision,
+        .catalog_sha256 = value.catalog_sha256,
+        .setup_spec_revision = value.setup_spec_revision,
+        .setup_spec_hash = value.setup_spec_hash,
+        .forms_set_decision = .{
+            .id = value.forms_set_decision.id,
+            .sequence = value.forms_set_decision.sequence,
+            .source = value.forms_set_decision.source,
+            .evidence_reference = value.forms_set_decision.evidence_reference,
+            .applicability_date = applicability_date,
+        },
+        .taxpayer_revisions = taxpayer_storage[0..value.taxpayer_revisions.len],
+        .taxpayer_year_revision = year_revision,
+        .tax_form_profile_revision = form_profile_revision,
+        .components = component_storage[0..value.components.len],
+        .source_snapshots = source_storage[0..value.source_snapshots.len],
+        .transaction_seeds = seed_storage[0..value.transaction_seeds.len],
+    };
+    validateExactDraftProvenanceWrite(borrowed) catch
+        return Error.SqliteFailure;
+    const digest = exactDraftProvenanceDigest(borrowed);
+    if (!digest.eql(&value.provenance_digest)) return Error.SqliteFailure;
 }
 
 fn validateDraftValues(values: []const DraftValueWrite) Error!void {
@@ -8059,6 +15727,875 @@ fn validateLocalOwnerId(value: []const u8) Error!void {
 
 fn validateTaxYear(value: i32) Error!void {
     if (value < 1 or value > 9999) return Error.InvalidValue;
+}
+
+fn validateFormSetDecisionStream(
+    profile_id: []const u8,
+    tax_year: u16,
+    form_code: []const u8,
+    form_revision: []const u8,
+) Error!void {
+    try validateOpaqueText(profile_id);
+    try validateTaxYear(tax_year);
+    try requireValue(form_code);
+    try requireValue(form_revision);
+}
+
+const DraftProvenanceComponentColumns = struct {
+    kind: RegistrationComponentKind,
+    role: form_catalog.Role,
+    profile_id: []const u8,
+    anchor_id: []const u8,
+    revision_id: []const u8,
+    revision_sequence: u32,
+};
+
+fn draftProvenanceComponentColumns(
+    value: DraftProvenanceComponentWrite,
+) DraftProvenanceComponentColumns {
+    return switch (value) {
+        .business_activity => |component| .{
+            .kind = .business_activity,
+            .role = component.role,
+            .profile_id = component.profile_id,
+            .anchor_id = component.anchor_id,
+            .revision_id = component.revision_id,
+            .revision_sequence = component.revision_sequence,
+        },
+        .registration_obligation => |component| .{
+            .kind = .registration_obligation,
+            .role = component.role,
+            .profile_id = component.profile_id,
+            .anchor_id = component.anchor_id,
+            .revision_id = component.revision_id,
+            .revision_sequence = component.revision_sequence,
+        },
+    };
+}
+
+const DraftProvenanceSourceKeyColumns = struct {
+    kind: []const u8,
+    role: form_catalog.Role,
+    key: []const u8,
+    anchor_id: ?[]const u8,
+};
+
+fn draftProvenanceSourceKeyColumns(
+    value: *const DraftProvenanceSourceKeyWrite,
+) DraftProvenanceSourceKeyColumns {
+    return switch (value.*) {
+        .taxpayer_fact => |key| .{
+            .kind = "taxpayer_fact",
+            .role = key.role,
+            .key = @tagName(key.key),
+            .anchor_id = null,
+        },
+        .taxpayer_year_setting => |key| .{
+            .kind = "taxpayer_year_setting",
+            .role = key.role,
+            .key = @tagName(key.key),
+            .anchor_id = null,
+        },
+        .tax_form_profile_value => |key| .{
+            .kind = "tax_form_profile_value",
+            .role = key.role,
+            .key = @tagName(key.key),
+            .anchor_id = null,
+        },
+        .business_activity_fact => |key| .{
+            .kind = "business_activity_fact",
+            .role = key.role,
+            .key = @tagName(key.key),
+            .anchor_id = key.anchor_id,
+        },
+        .registration_obligation_fact => |key| .{
+            .kind = "registration_obligation_fact",
+            .role = key.role,
+            .key = @tagName(key.key),
+            .anchor_id = key.anchor_id,
+        },
+    };
+}
+
+const DraftProvenanceValueColumns = struct {
+    kind: []const u8,
+    text: ?[]const u8,
+    integer: ?i64,
+};
+
+fn draftProvenanceValueColumns(
+    value: *const DraftProvenanceValueWrite,
+) DraftProvenanceValueColumns {
+    return switch (value.*) {
+        .text => |text| .{ .kind = "text", .text = text, .integer = null },
+        .choice => |text| .{ .kind = "choice", .text = text, .integer = null },
+        .boolean => |boolean| .{
+            .kind = "boolean",
+            .text = null,
+            .integer = @intFromBool(boolean),
+        },
+        .integer => |integer| .{
+            .kind = "integer",
+            .text = null,
+            .integer = integer,
+        },
+        .date => |*date| .{ .kind = "date", .text = date, .integer = null },
+        .year => |year| .{
+            .kind = "year",
+            .text = null,
+            .integer = year,
+        },
+        .profile_id => |id| .{
+            .kind = "profile_id",
+            .text = id,
+            .integer = null,
+        },
+        .business_activity_anchor_id => |id| .{
+            .kind = "business_activity_anchor_id",
+            .text = id,
+            .integer = null,
+        },
+        .registration_obligation_anchor_id => |id| .{
+            .kind = "registration_obligation_anchor_id",
+            .text = id,
+            .integer = null,
+        },
+        .income_tax_rate_election => |choice| .{
+            .kind = "income_tax_rate_election",
+            .text = @tagName(choice),
+            .integer = null,
+        },
+        .deduction_method => |choice| .{
+            .kind = "deduction_method",
+            .text = @tagName(choice),
+            .integer = null,
+        },
+    };
+}
+
+const DraftProvenanceSeedSourceColumns = struct {
+    kind: []const u8,
+    revision_id: ?[]const u8,
+    catalog_revision: ?[]const u8,
+    catalog_sha256: ?[]const u8,
+};
+
+fn draftProvenanceSeedSourceColumns(
+    value: *const DraftProvenanceSeedSourceWrite,
+) DraftProvenanceSeedSourceColumns {
+    return switch (value.*) {
+        .tax_form_profile_revision => |id| .{
+            .kind = "tax_form_profile_revision",
+            .revision_id = id,
+            .catalog_revision = null,
+            .catalog_sha256 = null,
+        },
+        .catalog_default => |catalog| .{
+            .kind = "catalog_default",
+            .revision_id = null,
+            .catalog_revision = catalog.revision,
+            .catalog_sha256 = catalog.sha256,
+        },
+    };
+}
+
+fn validateDraftProvenanceWrite(value: DraftProvenanceWrite) Error!void {
+    try validateOpaqueText(value.draft_id);
+    try validateOpaqueText(value.owner_profile_id);
+    try validateTaxYear(value.tax_year);
+    try requireValue(value.form_code);
+    try requireValue(value.form_revision);
+    try validateDraftProvenanceIdentifier(value.catalog_revision, 64);
+    try validateLowerSha256(value.catalog_sha256);
+    if (value.setup_spec_revision == 0) return Error.InvalidValue;
+    try validateLowerSha256(value.setup_spec_hash);
+    try validateIdText(value.forms_set_decision.id);
+    if (value.forms_set_decision.sequence == 0) return Error.InvalidValue;
+    try validateDate(&value.forms_set_decision.applicability_date);
+    if (!dateBelongsToTaxYear(
+        &value.forms_set_decision.applicability_date,
+        value.tax_year,
+    )) return Error.InvalidDate;
+    if (value.forms_set_decision.evidence_reference) |reference| {
+        try requireValue(reference);
+    }
+    if (value.taxpayer_revisions.len == 0 or
+        value.taxpayer_revisions.len > 10 or value.components.len > 32 or
+        value.source_snapshots.len > 96 or value.transaction_seeds.len > 32)
+    {
+        return Error.InvalidValue;
+    }
+
+    var filer_found = false;
+    for (value.taxpayer_revisions, 0..) |revision, index| {
+        try validateOpaqueText(revision.profile_id);
+        try validateIdText(revision.revision_id);
+        if (revision.revision_sequence == 0) return Error.InvalidValue;
+        if (revision.role == .filer) {
+            if (!std.mem.eql(
+                u8,
+                revision.profile_id,
+                value.owner_profile_id,
+            )) return Error.DraftProvenanceInvalidBinding;
+            filer_found = true;
+        }
+        for (value.taxpayer_revisions[index + 1 ..]) |other| {
+            if (revision.role == other.role) {
+                return Error.DraftProvenanceInvalidBinding;
+            }
+        }
+    }
+    if (!filer_found) return Error.DraftProvenanceInvalidBinding;
+
+    if (value.taxpayer_year_revision) |revision| {
+        try validateOpaqueText(revision.profile_id);
+        try validateIdText(revision.revision_id);
+        if (!std.mem.eql(
+            u8,
+            revision.profile_id,
+            value.owner_profile_id,
+        ) or revision.tax_year != value.tax_year or
+            revision.revision_sequence == 0)
+        {
+            return Error.DraftProvenanceInvalidBinding;
+        }
+    }
+    if (value.tax_form_profile_revision) |revision| {
+        try validateOpaqueText(revision.profile_id);
+        try validateIdText(revision.revision_id);
+        try requireValue(revision.form_code);
+        try requireValue(revision.form_revision);
+        try validateLowerSha256(revision.spec_hash);
+        if (!std.mem.eql(
+            u8,
+            revision.profile_id,
+            value.owner_profile_id,
+        ) or revision.tax_year != value.tax_year or
+            !std.mem.eql(u8, revision.form_code, value.form_code) or
+            !std.mem.eql(u8, revision.form_revision, value.form_revision) or
+            revision.revision_sequence == 0 or
+            revision.spec_revision != value.setup_spec_revision or
+            !std.mem.eql(u8, revision.spec_hash, value.setup_spec_hash))
+        {
+            return Error.DraftProvenanceInvalidBinding;
+        }
+    }
+
+    for (value.components, 0..) |component, index| {
+        const columns = draftProvenanceComponentColumns(component);
+        try validateOpaqueText(columns.profile_id);
+        try validateIdText(columns.anchor_id);
+        try validateIdText(columns.revision_id);
+        if (columns.revision_sequence == 0 or
+            !draftProvenanceRoleOwnsProfile(
+                value.taxpayer_revisions,
+                columns.role,
+                columns.profile_id,
+            ))
+        {
+            return Error.DraftProvenanceInvalidBinding;
+        }
+        for (value.components[index + 1 ..]) |other| {
+            const right = draftProvenanceComponentColumns(other);
+            if (columns.kind == right.kind and columns.role == right.role and
+                std.mem.eql(u8, columns.anchor_id, right.anchor_id))
+            {
+                return Error.DraftProvenanceInvalidBinding;
+            }
+        }
+    }
+
+    for (value.source_snapshots, 0..) |*snapshot, index| {
+        try validateDraftProvenanceSourceKey(
+            value,
+            &snapshot.key,
+            false,
+        );
+        try validateDraftProvenanceValue(&snapshot.copied_value);
+        for (value.source_snapshots[index + 1 ..]) |*other| {
+            if (draftProvenanceSourceKeysEqual(&snapshot.key, &other.key)) {
+                return Error.DraftProvenanceInvalidBinding;
+            }
+        }
+        for (value.transaction_seeds) |*seed| {
+            if (draftProvenanceSourceKeysEqual(
+                &snapshot.key,
+                &seed.source_key,
+            )) return Error.DraftProvenanceInvalidBinding;
+        }
+    }
+    for (value.transaction_seeds, 0..) |*seed, index| {
+        try validateDraftProvenanceIdentifier(seed.filing_field, 96);
+        try validateDraftProvenanceSourceKey(value, &seed.source_key, true);
+        try validateDraftProvenanceValue(&seed.copied_seed_value);
+        switch (seed.source) {
+            .tax_form_profile_revision => |id| {
+                const revision = value.tax_form_profile_revision orelse
+                    return Error.DraftProvenanceInvalidBinding;
+                if (!std.mem.eql(u8, id, revision.revision_id)) {
+                    return Error.DraftProvenanceInvalidBinding;
+                }
+            },
+            .catalog_default => |catalog| {
+                if (!std.mem.eql(
+                    u8,
+                    catalog.revision,
+                    value.catalog_revision,
+                ) or !std.mem.eql(
+                    u8,
+                    catalog.sha256,
+                    value.catalog_sha256,
+                )) return Error.DraftProvenanceInvalidBinding;
+            },
+        }
+        for (value.transaction_seeds[index + 1 ..]) |*other| {
+            if (std.mem.eql(u8, seed.filing_field, other.filing_field) or
+                draftProvenanceSourceKeysEqual(
+                    &seed.source_key,
+                    &other.source_key,
+                )) return Error.DraftProvenanceInvalidBinding;
+        }
+    }
+}
+
+fn validateDraftProvenanceIdentifier(
+    raw: []const u8,
+    capacity: usize,
+) Error!void {
+    const value = std.mem.trim(u8, raw, " \t\r\n");
+    if (value.len == 0 or value.len > capacity or value.len != raw.len) {
+        return Error.InvalidValue;
+    }
+    for (value) |byte| {
+        if (!std.ascii.isAlphanumeric(byte) and byte != '-' and byte != '_' and
+            byte != '.' and byte != ':' and byte != '/')
+        {
+            return Error.InvalidValue;
+        }
+    }
+}
+
+fn validateLowerSha256(value: []const u8) Error!void {
+    if (value.len != 64) return Error.InvalidValue;
+    for (value) |byte| {
+        if (!std.ascii.isDigit(byte) and (byte < 'a' or byte > 'f')) {
+            return Error.InvalidValue;
+        }
+    }
+}
+
+fn draftProvenanceRoleOwnsProfile(
+    revisions: []const DraftProvenanceTaxpayerRevisionWrite,
+    role: form_catalog.Role,
+    profile_id: []const u8,
+) bool {
+    for (revisions) |revision| {
+        if (revision.role == role and
+            std.mem.eql(u8, revision.profile_id, profile_id)) return true;
+    }
+    return false;
+}
+
+fn validateDraftProvenanceSourceKey(
+    value: DraftProvenanceWrite,
+    key: *const DraftProvenanceSourceKeyWrite,
+    transaction_seed: bool,
+) Error!void {
+    const columns = draftProvenanceSourceKeyColumns(key);
+    if (!draftProvenanceRoleExists(value.taxpayer_revisions, columns.role)) {
+        return Error.DraftProvenanceInvalidBinding;
+    }
+    if (transaction_seed and key.* != .tax_form_profile_value) {
+        return Error.DraftProvenanceInvalidBinding;
+    }
+    switch (key.*) {
+        .taxpayer_fact => {},
+        .taxpayer_year_setting => |setting| {
+            const year = value.taxpayer_year_revision orelse
+                return Error.DraftProvenanceInvalidBinding;
+            if (!draftProvenanceRoleOwnsProfile(
+                value.taxpayer_revisions,
+                setting.role,
+                year.profile_id,
+            )) return Error.DraftProvenanceInvalidBinding;
+        },
+        .tax_form_profile_value => if (value.tax_form_profile_revision == null) {
+            return Error.DraftProvenanceInvalidBinding;
+        },
+        .business_activity_fact => |activity| {
+            if (!draftProvenanceHasComponent(
+                value.components,
+                .business_activity,
+                activity.role,
+                activity.anchor_id,
+            )) return Error.DraftProvenanceInvalidBinding;
+        },
+        .registration_obligation_fact => |obligation| {
+            if (!draftProvenanceHasComponent(
+                value.components,
+                .registration_obligation,
+                obligation.role,
+                obligation.anchor_id,
+            )) return Error.DraftProvenanceInvalidBinding;
+        },
+    }
+}
+
+fn draftProvenanceRoleExists(
+    revisions: []const DraftProvenanceTaxpayerRevisionWrite,
+    role: form_catalog.Role,
+) bool {
+    for (revisions) |revision| if (revision.role == role) return true;
+    return false;
+}
+
+fn draftProvenanceHasComponent(
+    components: []const DraftProvenanceComponentWrite,
+    kind: RegistrationComponentKind,
+    role: form_catalog.Role,
+    anchor_id: []const u8,
+) bool {
+    for (components) |component| {
+        const columns = draftProvenanceComponentColumns(component);
+        if (columns.kind == kind and columns.role == role and
+            std.mem.eql(u8, columns.anchor_id, anchor_id)) return true;
+    }
+    return false;
+}
+
+fn draftProvenanceSourceKeysEqual(
+    left: *const DraftProvenanceSourceKeyWrite,
+    right: *const DraftProvenanceSourceKeyWrite,
+) bool {
+    const a = draftProvenanceSourceKeyColumns(left);
+    const b = draftProvenanceSourceKeyColumns(right);
+    return std.mem.eql(u8, a.kind, b.kind) and a.role == b.role and
+        std.mem.eql(u8, a.key, b.key) and
+        optionalTextEqual(a.anchor_id, b.anchor_id);
+}
+
+fn optionalTextEqual(left: ?[]const u8, right: ?[]const u8) bool {
+    if (left == null or right == null) return left == null and right == null;
+    return std.mem.eql(u8, left.?, right.?);
+}
+
+fn validateDraftProvenanceValue(
+    value: *const DraftProvenanceValueWrite,
+) Error!void {
+    switch (value.*) {
+        .text, .choice => |text| if (text.len > 255) return Error.InvalidValue,
+        .boolean, .integer, .year => {},
+        .date => |*date| try validateDate(date),
+        .profile_id,
+        .business_activity_anchor_id,
+        .registration_obligation_anchor_id,
+        => |id| try validateIdText(id),
+        .income_tax_rate_election, .deduction_method => {},
+    }
+}
+
+fn readDraftProvenanceSourceKey(
+    allocator: std.mem.Allocator,
+    row: *sqlite.sqlite3_stmt,
+    kind_column: c_int,
+) !OwnedDraftProvenanceSourceKey {
+    const kind = columnText(row, kind_column) orelse return Error.SqliteFailure;
+    const role = parseEnumText(
+        form_catalog.Role,
+        columnText(row, kind_column + 1) orelse return Error.SqliteFailure,
+    ) orelse return Error.SqliteFailure;
+    const key = columnText(row, kind_column + 2) orelse
+        return Error.SqliteFailure;
+    if (std.mem.eql(u8, kind, "taxpayer_fact")) return .{
+        .taxpayer_fact = .{
+            .role = role,
+            .key = parseEnumText(DraftProvenanceTaxpayerFactKey, key) orelse
+                return Error.SqliteFailure,
+        },
+    };
+    if (std.mem.eql(u8, kind, "taxpayer_year_setting")) return .{
+        .taxpayer_year_setting = .{
+            .role = role,
+            .key = parseEnumText(
+                DraftProvenanceTaxpayerYearSettingKey,
+                key,
+            ) orelse return Error.SqliteFailure,
+        },
+    };
+    if (std.mem.eql(u8, kind, "tax_form_profile_value")) return .{
+        .tax_form_profile_value = .{
+            .role = role,
+            .key = parseEnumText(
+                form_catalog.TaxFormProfileSemanticKey,
+                key,
+            ) orelse return Error.SqliteFailure,
+        },
+    };
+    const anchor = try dupColumn(allocator, row, kind_column + 3);
+    if (std.mem.eql(u8, kind, "business_activity_fact")) return .{
+        .business_activity_fact = .{
+            .role = role,
+            .anchor_id = anchor,
+            .key = parseEnumText(DraftProvenanceActivityFactKey, key) orelse {
+                allocator.free(anchor);
+                return Error.SqliteFailure;
+            },
+        },
+    };
+    if (std.mem.eql(u8, kind, "registration_obligation_fact")) return .{
+        .registration_obligation_fact = .{
+            .role = role,
+            .anchor_id = anchor,
+            .key = parseEnumText(DraftProvenanceObligationFactKey, key) orelse {
+                allocator.free(anchor);
+                return Error.SqliteFailure;
+            },
+        },
+    };
+    allocator.free(anchor);
+    return Error.SqliteFailure;
+}
+
+fn readDraftProvenanceValue(
+    allocator: std.mem.Allocator,
+    row: *sqlite.sqlite3_stmt,
+    kind_column: c_int,
+    text_column: c_int,
+    integer_column: c_int,
+) !OwnedDraftProvenanceValue {
+    const kind = columnText(row, kind_column) orelse return Error.SqliteFailure;
+    if (std.mem.eql(u8, kind, "text")) {
+        return .{ .text = try dupColumn(allocator, row, text_column) };
+    }
+    if (std.mem.eql(u8, kind, "choice")) {
+        return .{ .choice = try dupColumn(allocator, row, text_column) };
+    }
+    if (std.mem.eql(u8, kind, "boolean")) {
+        const raw = sqlite.sqlite3_column_int64(row, integer_column);
+        if (raw != 0 and raw != 1) return Error.SqliteFailure;
+        return .{ .boolean = raw == 1 };
+    }
+    if (std.mem.eql(u8, kind, "integer")) return .{
+        .integer = sqlite.sqlite3_column_int64(row, integer_column),
+    };
+    if (std.mem.eql(u8, kind, "date")) {
+        return .{ .date = try dupColumn(allocator, row, text_column) };
+    }
+    if (std.mem.eql(u8, kind, "year")) {
+        const raw = sqlite.sqlite3_column_int64(row, integer_column);
+        if (raw < 0 or raw > std.math.maxInt(u16)) return Error.SqliteFailure;
+        return .{ .year = @intCast(raw) };
+    }
+    if (std.mem.eql(u8, kind, "profile_id")) return .{
+        .profile_id = try dupColumn(allocator, row, text_column),
+    };
+    if (std.mem.eql(u8, kind, "business_activity_anchor_id")) return .{
+        .business_activity_anchor_id = try dupColumn(
+            allocator,
+            row,
+            text_column,
+        ),
+    };
+    if (std.mem.eql(u8, kind, "registration_obligation_anchor_id")) return .{
+        .registration_obligation_anchor_id = try dupColumn(
+            allocator,
+            row,
+            text_column,
+        ),
+    };
+    if (std.mem.eql(u8, kind, "income_tax_rate_election")) {
+        return .{ .income_tax_rate_election = parseEnumText(
+            TaxpayerYearIncomeTaxRateElection,
+            columnText(row, text_column) orelse return Error.SqliteFailure,
+        ) orelse return Error.SqliteFailure };
+    }
+    if (std.mem.eql(u8, kind, "deduction_method")) {
+        return .{ .deduction_method = parseEnumText(
+            TaxpayerYearDeductionMethod,
+            columnText(row, text_column) orelse return Error.SqliteFailure,
+        ) orelse return Error.SqliteFailure };
+    }
+    return Error.SqliteFailure;
+}
+
+fn readDraftProvenanceSeedSource(
+    allocator: std.mem.Allocator,
+    row: *sqlite.sqlite3_stmt,
+    kind_column: c_int,
+) !OwnedDraftProvenanceSeedSource {
+    const kind = columnText(row, kind_column) orelse return Error.SqliteFailure;
+    if (std.mem.eql(u8, kind, "tax_form_profile_revision")) return .{
+        .tax_form_profile_revision = try dupColumn(
+            allocator,
+            row,
+            kind_column + 1,
+        ),
+    };
+    if (!std.mem.eql(u8, kind, "catalog_default")) {
+        return Error.SqliteFailure;
+    }
+    const revision = try dupColumn(allocator, row, kind_column + 2);
+    errdefer allocator.free(revision);
+    return .{ .catalog_default = .{
+        .revision = revision,
+        .sha256 = try dupColumn(allocator, row, kind_column + 3),
+    } };
+}
+
+fn validateRegistrationCommitWrite(
+    value: RegistrationCommitWrite,
+) Error!void {
+    try validateOpaqueText(value.profile_id);
+    const component_count = value.activities.len + value.obligations.len +
+        value.agent_designations.len + value.eopt_tiers.len +
+        value.activity_statuses.len + value.special_bases.len;
+    if (component_count == 0) return Error.RegistrationNoChanges;
+
+    for (value.activities) |item| {
+        try validateIdText(item.anchor_id);
+        try validateRegistrationMetadata(item.metadata);
+        _ = profile_field.LineOfBusiness.parse(item.line_of_business) catch
+            return Error.InvalidValue;
+        if (item.atc) |atc| {
+            _ = profile_field.Atc.parse(atc) catch return Error.InvalidValue;
+        }
+        if (registrationRevisionIdCount(value, item.metadata.id) != 1) {
+            return Error.InvalidValue;
+        }
+    }
+    for (value.obligations) |item| {
+        try validateIdText(item.anchor_id);
+        try validateRegistrationMetadata(item.metadata);
+        if (item.kind.requiresText() != (item.value_text != null)) {
+            return Error.InvalidValue;
+        }
+        if (item.value_text) |text| {
+            _ = profile_field.TaxType.parse(text) catch
+                return Error.InvalidValue;
+        }
+        if (item.kind.requiresReview() and
+            item.metadata.review_state != .requires_review)
+        {
+            return Error.InvalidValue;
+        }
+        if (registrationRevisionIdCount(value, item.metadata.id) != 1) {
+            return Error.InvalidValue;
+        }
+    }
+    for (value.agent_designations) |item| {
+        try validateRegistrationMetadata(item.metadata);
+        if (item.value == .unknown_requires_review and
+            item.metadata.review_state != .requires_review)
+        {
+            return Error.InvalidValue;
+        }
+        if (registrationRevisionIdCount(value, item.metadata.id) != 1) {
+            return Error.InvalidValue;
+        }
+    }
+    for (value.eopt_tiers) |item| {
+        try validateRegistrationMetadata(item.metadata);
+        if (item.value == .unknown_requires_review and
+            item.metadata.review_state != .requires_review)
+        {
+            return Error.InvalidValue;
+        }
+        if (registrationRevisionIdCount(value, item.metadata.id) != 1) {
+            return Error.InvalidValue;
+        }
+    }
+    for (value.activity_statuses) |item| {
+        try validateRegistrationMetadata(item.metadata);
+        if (item.value == .unknown_requires_review and
+            item.metadata.review_state != .requires_review)
+        {
+            return Error.InvalidValue;
+        }
+        if (registrationRevisionIdCount(value, item.metadata.id) != 1) {
+            return Error.InvalidValue;
+        }
+    }
+    for (value.special_bases) |item| {
+        try validateRegistrationMetadata(item.metadata);
+        _ = profile_field.SpecialRateBasis.parse(item.value_text) catch
+            return Error.InvalidValue;
+        if (item.kind == .unknown_requires_review and
+            item.metadata.review_state != .requires_review)
+        {
+            return Error.InvalidValue;
+        }
+        if (registrationRevisionIdCount(value, item.metadata.id) != 1) {
+            return Error.InvalidValue;
+        }
+    }
+}
+
+fn validateRegistrationMetadata(
+    value: RegistrationRevisionMetadataWrite,
+) Error!void {
+    try validateIdText(value.id);
+    try validateDate(&value.effective.from);
+    if (value.effective.until) |*until| {
+        try validateDate(until);
+        if (std.mem.order(u8, until, &value.effective.from) == .lt) {
+            return Error.InvalidDate;
+        }
+    }
+    switch (value.source) {
+        .manual_entry => if (value.evidence_reference != null) {
+            return Error.InvalidValue;
+        },
+        .documented, .imported, .migrated => {
+            const reference = value.evidence_reference orelse
+                return Error.InvalidValue;
+            _ = profile_field.SourceReference.parse(reference) catch
+                return Error.InvalidValue;
+        },
+    }
+    switch (value.review_state) {
+        .requires_review => {
+            if (value.review_reason == null or
+                value.confirmed_at_unix_seconds != null)
+            {
+                return Error.InvalidValue;
+            }
+        },
+        .confirmed => if (value.review_reason != null) {
+            return Error.InvalidValue;
+        },
+    }
+    if (value.record_state == .retired and
+        (value.review_state != .confirmed or value.source != .manual_entry))
+    {
+        return Error.InvalidValue;
+    }
+    if (value.supersedes_id) |supersedes_id| {
+        try validateIdText(supersedes_id);
+        if (std.mem.eql(u8, supersedes_id, value.id)) {
+            return Error.InvalidValue;
+        }
+    }
+}
+
+fn registrationRevisionIdCount(
+    value: RegistrationCommitWrite,
+    id: []const u8,
+) usize {
+    var count: usize = 0;
+    for (value.activities) |item| {
+        count += @intFromBool(std.mem.eql(u8, item.metadata.id, id));
+    }
+    for (value.obligations) |item| {
+        count += @intFromBool(std.mem.eql(u8, item.metadata.id, id));
+    }
+    for (value.agent_designations) |item| {
+        count += @intFromBool(std.mem.eql(u8, item.metadata.id, id));
+    }
+    for (value.eopt_tiers) |item| {
+        count += @intFromBool(std.mem.eql(u8, item.metadata.id, id));
+    }
+    for (value.activity_statuses) |item| {
+        count += @intFromBool(std.mem.eql(u8, item.metadata.id, id));
+    }
+    for (value.special_bases) |item| {
+        count += @intFromBool(std.mem.eql(u8, item.metadata.id, id));
+    }
+    return count;
+}
+
+fn validateFormSetDecisionWrite(value: FormSetDecisionWrite) Error!void {
+    try validateIdText(value.id);
+    try validateFormSetDecisionStream(
+        value.profile_id,
+        value.tax_year,
+        value.form_code,
+        value.form_revision,
+    );
+    try validateDate(&value.effective.from);
+    if (!dateBelongsToTaxYear(&value.effective.from, value.tax_year)) {
+        return Error.FormSetIntervalOutsideYear;
+    }
+    if (value.effective.until) |*until| {
+        try validateDate(until);
+        if (!dateBelongsToTaxYear(until, value.tax_year)) {
+            return Error.FormSetIntervalOutsideYear;
+        }
+        if (std.mem.order(u8, until, &value.effective.from) == .lt) {
+            return Error.InvalidDate;
+        }
+    }
+
+    var year_start: DateText = undefined;
+    var year_end: DateText = undefined;
+    _ = std.fmt.bufPrint(
+        &year_start,
+        "{d:0>4}-01-01",
+        .{value.tax_year},
+    ) catch return Error.InvalidValue;
+    _ = std.fmt.bufPrint(
+        &year_end,
+        "{d:0>4}-12-31",
+        .{value.tax_year},
+    ) catch return Error.InvalidValue;
+    const effective_end: []const u8 = if (value.effective.until) |*until|
+        until
+    else
+        &year_end;
+    const whole_year = std.mem.eql(u8, &value.effective.from, &year_start) and
+        std.mem.eql(u8, effective_end, &year_end);
+    switch (value.scope) {
+        .whole_year => if (!whole_year) return Error.InvalidValue,
+        .interval => if (whole_year) return Error.InvalidValue,
+    }
+
+    if (value.evidence_reference) |reference| try requireValue(reference);
+    if (value.supersedes_id) |supersedes_id| try validateIdText(supersedes_id);
+    switch (value.source) {
+        .manual => if (value.review_state == .review_required)
+            return Error.FormSetDecisionInvalidTransition,
+        .imported, .cor => if (value.review_state != .review_required)
+            return Error.FormSetDecisionInvalidTransition,
+    }
+    if (value.review_state == .rejected and value.supersedes_id == null) {
+        return Error.FormSetDecisionInvalidTransition;
+    }
+    if (value.supersedes_id != null and value.source != .manual) {
+        return Error.FormSetDecisionInvalidTransition;
+    }
+}
+
+fn optionalDecisionEndEql(
+    stored_until: ?[]const u8,
+    candidate_until: ?DateText,
+    tax_year: u16,
+) bool {
+    var year_end: DateText = undefined;
+    _ = std.fmt.bufPrint(
+        &year_end,
+        "{d:0>4}-12-31",
+        .{tax_year},
+    ) catch return false;
+    const stored_end = stored_until orelse &year_end;
+    const candidate_end: []const u8 = if (candidate_until) |*until|
+        until
+    else
+        &year_end;
+    return std.mem.eql(u8, stored_end, candidate_end);
+}
+
+fn formRegistrationContains(
+    forms: []const FormRegistrationWrite,
+    form_code: []const u8,
+    form_revision: []const u8,
+) bool {
+    for (forms) |form| {
+        if (std.mem.eql(u8, form.form_code, form_code) and
+            std.mem.eql(u8, form.form_revision, form_revision))
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 fn requireValue(value: []const u8) Error!void {
@@ -9560,6 +18097,2828 @@ const schema_v10 =
     \\END;
 ;
 
+/// A profile label is mutable app metadata, not a legal/taxpayer fact. Existing
+/// profiles receive a one-time default from the name on their current saved
+/// revision. The revision row is read only; neither history nor its current
+/// pointer is rewritten by this migration.
+const schema_v11 =
+    \\ALTER TABLE tax_profiles
+    \\    ADD COLUMN local_label TEXT CHECK (
+    \\        local_label IS NULL OR length(trim(local_label)) > 0
+    \\    );
+    \\
+    \\UPDATE tax_profiles
+    \\SET local_label = (
+    \\    SELECT COALESCE(revision.taxpayer_name, revision.registered_name)
+    \\    FROM tax_profile_revisions AS revision
+    \\    WHERE revision.profile_id = tax_profiles.id
+    \\      AND revision.id = tax_profiles.current_revision_id
+    \\)
+    \\WHERE local_label IS NULL
+    \\  AND current_revision_id IS NOT NULL;
+;
+
+/// Stable component anchors are profile-owned identities. Revision rows keep
+/// all existing values and row IDs; migration only adds and fills the anchor
+/// reference from the already-semantic component ID. Registration anchor kind
+/// is intentionally stored as open text rather than a schema enum so a later
+/// obligation-domain normalization can extend it through a reviewed migration.
+const schema_v12 =
+    \\CREATE TABLE tax_profile_business_activity_anchors (
+    \\    profile_id TEXT NOT NULL
+    \\        REFERENCES tax_profiles(id) ON DELETE RESTRICT,
+    \\    id TEXT NOT NULL CHECK (
+    \\        length(id) BETWEEN 1 AND 64 AND id = trim(id)
+    \\    ),
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    PRIMARY KEY (profile_id, id)
+    \\);
+    \\
+    \\CREATE TABLE tax_profile_registration_fact_anchors (
+    \\    profile_id TEXT NOT NULL
+    \\        REFERENCES tax_profiles(id) ON DELETE RESTRICT,
+    \\    id TEXT NOT NULL CHECK (
+    \\        length(id) BETWEEN 1 AND 64 AND id = trim(id)
+    \\    ),
+    \\    kind TEXT NOT NULL CHECK (length(trim(kind)) > 0),
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    PRIMARY KEY (profile_id, id),
+    \\    UNIQUE (profile_id, id, kind)
+    \\);
+    \\
+    \\ALTER TABLE tax_profile_business_activities
+    \\    ADD COLUMN anchor_id TEXT CHECK (
+    \\        anchor_id IS NULL OR (
+    \\            length(anchor_id) BETWEEN 1 AND 64 AND
+    \\            anchor_id = trim(anchor_id)
+    \\        )
+    \\    );
+    \\ALTER TABLE tax_profile_registration_facts
+    \\    ADD COLUMN anchor_id TEXT CHECK (
+    \\        anchor_id IS NULL OR (
+    \\            length(anchor_id) BETWEEN 1 AND 64 AND
+    \\            anchor_id = trim(anchor_id)
+    \\        )
+    \\    );
+    \\
+    \\INSERT INTO tax_profile_business_activity_anchors (profile_id, id)
+    \\SELECT DISTINCT profile_id, id
+    \\FROM tax_profile_business_activities;
+    \\INSERT INTO tax_profile_registration_fact_anchors (
+    \\    profile_id, id, kind
+    \\)
+    \\SELECT profile_id, id, MIN(kind)
+    \\FROM tax_profile_registration_facts
+    \\GROUP BY profile_id, id;
+    \\
+    \\DROP TRIGGER tax_profile_business_activities_immutable;
+    \\DROP TRIGGER tax_profile_registration_facts_immutable;
+    \\UPDATE tax_profile_business_activities
+    \\SET anchor_id = id
+    \\WHERE anchor_id IS NULL;
+    \\UPDATE tax_profile_registration_facts
+    \\SET anchor_id = id
+    \\WHERE anchor_id IS NULL;
+    \\CREATE TRIGGER tax_profile_business_activities_immutable
+    \\BEFORE UPDATE ON tax_profile_business_activities
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'business activities are immutable');
+    \\END;
+    \\CREATE TRIGGER tax_profile_registration_facts_immutable
+    \\BEFORE UPDATE ON tax_profile_registration_facts
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'registration facts are immutable');
+    \\END;
+    \\
+    \\CREATE UNIQUE INDEX tax_profile_business_activities_anchor_idx
+    \\    ON tax_profile_business_activities(
+    \\        profile_id, revision_id, anchor_id
+    \\    ) WHERE anchor_id IS NOT NULL;
+    \\CREATE UNIQUE INDEX tax_profile_registration_facts_anchor_idx
+    \\    ON tax_profile_registration_facts(
+    \\        profile_id, revision_id, anchor_id
+    \\    ) WHERE anchor_id IS NOT NULL;
+    \\
+    \\CREATE TRIGGER tax_profile_business_activity_anchor_insert_guard
+    \\BEFORE INSERT ON tax_profile_business_activities
+    \\WHEN NEW.anchor_id IS NULL OR NOT EXISTS (
+    \\    SELECT 1 FROM tax_profile_business_activity_anchors AS anchor
+    \\    WHERE anchor.profile_id = NEW.profile_id
+    \\      AND anchor.id = NEW.anchor_id
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid business activity anchor');
+    \\END;
+    \\CREATE TRIGGER tax_profile_registration_fact_anchor_insert_guard
+    \\BEFORE INSERT ON tax_profile_registration_facts
+    \\WHEN NEW.anchor_id IS NULL OR NOT EXISTS (
+    \\    SELECT 1 FROM tax_profile_registration_fact_anchors AS anchor
+    \\    WHERE anchor.profile_id = NEW.profile_id
+    \\      AND anchor.id = NEW.anchor_id
+    \\      AND anchor.kind = NEW.kind
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid registration fact anchor');
+    \\END;
+    \\
+    \\CREATE TRIGGER tax_profile_business_activity_anchors_update_guard
+    \\BEFORE UPDATE ON tax_profile_business_activity_anchors
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'business activity anchors are immutable');
+    \\END;
+    \\CREATE TRIGGER tax_profile_business_activity_anchors_delete_guard
+    \\BEFORE DELETE ON tax_profile_business_activity_anchors
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'business activity anchors are permanent');
+    \\END;
+    \\CREATE TRIGGER tax_profile_registration_fact_anchors_update_guard
+    \\BEFORE UPDATE ON tax_profile_registration_fact_anchors
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'registration fact anchors are immutable');
+    \\END;
+    \\CREATE TRIGGER tax_profile_registration_fact_anchors_delete_guard
+    \\BEFORE DELETE ON tax_profile_registration_fact_anchors
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'registration fact anchors are permanent');
+    \\END;
+;
+
+/// A natural person's employment/business status is a classification of the
+/// person, not a second subject kind. The legacy sole-proprietor row has
+/// enough evidence to become self-employed and keeps its former
+/// `registered_name` as `trade_name`; an unclassified legacy individual is
+/// deliberately marked unknown. The temporary trigger removal permits only
+/// this transactional migration and is followed immediately by restoration.
+const schema_v13 =
+    \\ALTER TABLE tax_profile_revisions
+    \\    ADD COLUMN natural_person_classification TEXT CHECK (
+    \\        natural_person_classification IS NULL OR
+    \\        natural_person_classification IN (
+    \\            'classification_unknown', 'pure_compensation',
+    \\            'self_employed', 'mixed_income'
+    \\        )
+    \\    );
+    \\ALTER TABLE tax_profile_revisions
+    \\    ADD COLUMN trade_name TEXT CHECK (
+    \\        trade_name IS NULL OR length(trim(trade_name)) > 0
+    \\    );
+    \\
+    \\DROP TRIGGER tax_profile_revisions_immutable;
+    \\UPDATE tax_profile_revisions
+    \\SET subject_kind = 'individual',
+    \\    natural_person_classification = 'self_employed',
+    \\    trade_name = registered_name,
+    \\    registered_name = NULL
+    \\WHERE subject_kind = 'sole_proprietor';
+    \\UPDATE tax_profile_revisions
+    \\SET natural_person_classification = 'classification_unknown'
+    \\WHERE subject_kind = 'individual'
+    \\  AND natural_person_classification IS NULL;
+    \\CREATE TRIGGER tax_profile_revisions_immutable
+    \\BEFORE UPDATE ON tax_profile_revisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'tax profile revisions are append-only');
+    \\END;
+    \\
+    \\CREATE TRIGGER tax_profile_revision_subject_shape_insert_guard
+    \\BEFORE INSERT ON tax_profile_revisions
+    \\WHEN
+    \\    NEW.subject_kind = 'sole_proprietor' OR
+    \\    (NEW.subject_kind = 'individual' AND (
+    \\        NEW.natural_person_classification IS NULL OR
+    \\        NEW.registered_name IS NOT NULL
+    \\    )) OR
+    \\    (NEW.subject_kind IN (
+    \\        'corporation', 'partnership', 'estate', 'trust',
+    \\        'other_legal_entity'
+    \\    ) AND (
+    \\        NEW.natural_person_classification IS NOT NULL OR
+    \\        NEW.taxpayer_name IS NOT NULL OR
+    \\        NEW.date_of_birth IS NOT NULL OR
+    \\        NEW.citizenship IS NOT NULL OR
+    \\        NEW.foreign_tax_number IS NOT NULL
+    \\    ))
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid canonical taxpayer subject shape');
+    \\END;
+;
+
+/// Additive append-only annual streams. No existing table is altered, so the
+/// migration cannot rewrite taxpayer revisions, anchors, COR evidence, or
+/// draft snapshots. Closed SQL vocabularies mirror the pure domains and the
+/// generated setup catalog rather than accepting free-form key/value maps.
+const schema_v14 =
+    \\CREATE TABLE tax_profile_taxpayer_year_revisions (
+    \\    profile_id TEXT NOT NULL
+    \\        REFERENCES tax_profiles(id) ON DELETE RESTRICT,
+    \\    tax_year INTEGER NOT NULL CHECK (tax_year BETWEEN 1 AND 9999),
+    \\    id TEXT NOT NULL CHECK (
+    \\        length(id) BETWEEN 1 AND 64 AND id = trim(id)
+    \\    ),
+    \\    sequence INTEGER NOT NULL CHECK (
+    \\        sequence > 0 AND sequence <= 4294967295
+    \\    ),
+    \\    effective_from TEXT NOT NULL CHECK (
+    \\        length(effective_from) = 10 AND
+    \\        substr(effective_from, 1, 4) = printf('%04d', tax_year)
+    \\    ),
+    \\    effective_until TEXT NOT NULL CHECK (
+    \\        length(effective_until) = 10 AND
+    \\        substr(effective_until, 1, 4) = printf('%04d', tax_year) AND
+    \\        effective_from <= effective_until
+    \\    ),
+    \\    review_state TEXT NOT NULL CHECK (
+    \\        review_state IN ('requires_review', 'confirmed')
+    \\    ),
+    \\    confirmed_at_unix_seconds INTEGER,
+    \\    source_tag TEXT NOT NULL CHECK (source_tag IN (
+    \\        'manual_entry', 'imported', 'migrated',
+    \\        'copied_from_prior_year'
+    \\    )),
+    \\    source_reference TEXT,
+    \\    copy_source_profile_id TEXT,
+    \\    copy_source_tax_year INTEGER,
+    \\    copy_source_revision_id TEXT,
+    \\    copy_source_revision_sequence INTEGER,
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    PRIMARY KEY (profile_id, tax_year, id),
+    \\    UNIQUE (profile_id, tax_year, sequence),
+    \\    UNIQUE (profile_id, tax_year, id, sequence),
+    \\    FOREIGN KEY (
+    \\        copy_source_profile_id, copy_source_tax_year,
+    \\        copy_source_revision_id, copy_source_revision_sequence
+    \\    ) REFERENCES tax_profile_taxpayer_year_revisions (
+    \\        profile_id, tax_year, id, sequence
+    \\    ) ON DELETE RESTRICT,
+    \\    CHECK (
+    \\        (review_state = 'requires_review' AND
+    \\            confirmed_at_unix_seconds IS NULL) OR
+    \\        (review_state = 'confirmed' AND
+    \\            confirmed_at_unix_seconds > 0)
+    \\    ),
+    \\    CHECK (
+    \\        (source_tag = 'manual_entry' AND
+    \\            source_reference IS NULL AND
+    \\            copy_source_profile_id IS NULL AND
+    \\            copy_source_tax_year IS NULL AND
+    \\            copy_source_revision_id IS NULL AND
+    \\            copy_source_revision_sequence IS NULL) OR
+    \\        (source_tag IN ('imported', 'migrated') AND
+    \\            length(trim(source_reference)) > 0 AND
+    \\            copy_source_profile_id IS NULL AND
+    \\            copy_source_tax_year IS NULL AND
+    \\            copy_source_revision_id IS NULL AND
+    \\            copy_source_revision_sequence IS NULL) OR
+    \\        (source_tag = 'copied_from_prior_year' AND
+    \\            source_reference IS NULL AND
+    \\            copy_source_profile_id = profile_id AND
+    \\            copy_source_tax_year + 1 = tax_year AND
+    \\            length(trim(copy_source_revision_id)) > 0 AND
+    \\            copy_source_revision_sequence > 0 AND
+    \\            review_state = 'requires_review')
+    \\    )
+    \\);
+    \\CREATE TABLE tax_profile_taxpayer_year_values (
+    \\    profile_id TEXT NOT NULL,
+    \\    tax_year INTEGER NOT NULL,
+    \\    revision_id TEXT NOT NULL,
+    \\    revision_sequence INTEGER NOT NULL,
+    \\    setting_key TEXT NOT NULL CHECK (setting_key IN (
+    \\        'income_tax_rate_election', 'deduction_method'
+    \\    )),
+    \\    value_type TEXT NOT NULL CHECK (value_type IN (
+    \\        'income_tax_rate_election', 'deduction_method'
+    \\    )),
+    \\    value_text TEXT NOT NULL,
+    \\    PRIMARY KEY (profile_id, tax_year, revision_id, setting_key),
+    \\    FOREIGN KEY (
+    \\        profile_id, tax_year, revision_id, revision_sequence
+    \\    ) REFERENCES tax_profile_taxpayer_year_revisions (
+    \\        profile_id, tax_year, id, sequence
+    \\    ) ON DELETE RESTRICT,
+    \\    CHECK (
+    \\        (setting_key = 'income_tax_rate_election' AND
+    \\            value_type = 'income_tax_rate_election' AND
+    \\            value_text IN ('graduated', 'eight_percent')) OR
+    \\        (setting_key = 'deduction_method' AND
+    \\            value_type = 'deduction_method' AND value_text IN (
+    \\                'itemized_deduction',
+    \\                'optional_standard_deduction'
+    \\            ))
+    \\    )
+    \\);
+    \\CREATE INDEX tax_profile_taxpayer_year_effective_idx
+    \\    ON tax_profile_taxpayer_year_revisions (
+    \\        profile_id, tax_year, effective_from, effective_until
+    \\    );
+    \\CREATE TRIGGER tax_profile_taxpayer_year_sequence_guard
+    \\BEFORE INSERT ON tax_profile_taxpayer_year_revisions
+    \\WHEN NEW.sequence <> COALESCE((
+    \\    SELECT MAX(sequence) + 1
+    \\    FROM tax_profile_taxpayer_year_revisions
+    \\    WHERE profile_id = NEW.profile_id AND tax_year = NEW.tax_year
+    \\), 1)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid taxpayer-year revision sequence');
+    \\END;
+    \\CREATE TRIGGER tax_profile_taxpayer_year_overlap_guard
+    \\BEFORE INSERT ON tax_profile_taxpayer_year_revisions
+    \\WHEN EXISTS (
+    \\    SELECT 1 FROM tax_profile_taxpayer_year_revisions AS prior
+    \\    WHERE prior.profile_id = NEW.profile_id
+    \\      AND prior.tax_year = NEW.tax_year
+    \\      AND prior.effective_from <= NEW.effective_until
+    \\      AND NEW.effective_from <= prior.effective_until
+    \\      AND NOT (
+    \\          prior.effective_from = NEW.effective_from AND
+    \\          prior.effective_until = NEW.effective_until
+    \\      )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'overlapping taxpayer-year revisions');
+    \\END;
+    \\CREATE TRIGGER tax_profile_taxpayer_year_revisions_update_guard
+    \\BEFORE UPDATE ON tax_profile_taxpayer_year_revisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'taxpayer-year revisions are append-only');
+    \\END;
+    \\CREATE TRIGGER tax_profile_taxpayer_year_revisions_delete_guard
+    \\BEFORE DELETE ON tax_profile_taxpayer_year_revisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'taxpayer-year revisions are permanent');
+    \\END;
+    \\CREATE TRIGGER tax_profile_taxpayer_year_values_update_guard
+    \\BEFORE UPDATE ON tax_profile_taxpayer_year_values
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'taxpayer-year values are immutable');
+    \\END;
+    \\CREATE TRIGGER tax_profile_taxpayer_year_values_delete_guard
+    \\BEFORE DELETE ON tax_profile_taxpayer_year_values
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'taxpayer-year values are permanent');
+    \\END;
+    \\
+    \\CREATE TABLE tax_profile_form_profile_revisions (
+    \\    profile_id TEXT NOT NULL
+    \\        REFERENCES tax_profiles(id) ON DELETE RESTRICT,
+    \\    tax_year INTEGER NOT NULL CHECK (tax_year BETWEEN 1 AND 9999),
+    \\    form_code TEXT NOT NULL CHECK (length(trim(form_code)) > 0),
+    \\    form_revision TEXT NOT NULL CHECK (
+    \\        length(trim(form_revision)) > 0
+    \\    ),
+    \\    id TEXT NOT NULL CHECK (
+    \\        length(id) BETWEEN 1 AND 64 AND id = trim(id)
+    \\    ),
+    \\    sequence INTEGER NOT NULL CHECK (
+    \\        sequence > 0 AND sequence <= 4294967295
+    \\    ),
+    \\    effective_from TEXT NOT NULL CHECK (
+    \\        length(effective_from) = 10 AND
+    \\        substr(effective_from, 1, 4) = printf('%04d', tax_year)
+    \\    ),
+    \\    effective_until TEXT CHECK (
+    \\        effective_until IS NULL OR (
+    \\            length(effective_until) = 10 AND
+    \\            substr(effective_until, 1, 4) = printf('%04d', tax_year) AND
+    \\            effective_from <= effective_until
+    \\        )
+    \\    ),
+    \\    spec_revision INTEGER NOT NULL CHECK (spec_revision > 0),
+    \\    spec_hash TEXT NOT NULL CHECK (length(trim(spec_hash)) > 0),
+    \\    review_state TEXT NOT NULL CHECK (
+    \\        review_state IN ('requires_review', 'confirmed')
+    \\    ),
+    \\    confirmed_at_unix_seconds INTEGER,
+    \\    source_tag TEXT NOT NULL CHECK (source_tag IN (
+    \\        'manual_entry', 'copied_from_prior_year', 'migrated'
+    \\    )),
+    \\    source_reference TEXT,
+    \\    copy_source_tax_year INTEGER,
+    \\    copy_source_revision_id TEXT,
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    PRIMARY KEY (
+    \\        profile_id, tax_year, form_code, form_revision, id
+    \\    ),
+    \\    UNIQUE (
+    \\        profile_id, tax_year, form_code, form_revision, sequence
+    \\    ),
+    \\    UNIQUE (
+    \\        profile_id, tax_year, form_code, form_revision, id, sequence
+    \\    ),
+    \\    FOREIGN KEY (
+    \\        profile_id, copy_source_tax_year, form_code, form_revision,
+    \\        copy_source_revision_id
+    \\    ) REFERENCES tax_profile_form_profile_revisions (
+    \\        profile_id, tax_year, form_code, form_revision, id
+    \\    ) ON DELETE RESTRICT,
+    \\    CHECK (
+    \\        (review_state = 'requires_review' AND
+    \\            confirmed_at_unix_seconds IS NULL) OR
+    \\        (review_state = 'confirmed' AND
+    \\            confirmed_at_unix_seconds IS NOT NULL)
+    \\    ),
+    \\    CHECK (
+    \\        (source_tag = 'manual_entry' AND
+    \\            source_reference IS NULL AND
+    \\            copy_source_tax_year IS NULL AND
+    \\            copy_source_revision_id IS NULL) OR
+    \\        (source_tag = 'migrated' AND
+    \\            length(trim(source_reference)) > 0 AND
+    \\            copy_source_tax_year IS NULL AND
+    \\            copy_source_revision_id IS NULL) OR
+    \\        (source_tag = 'copied_from_prior_year' AND
+    \\            source_reference IS NULL AND
+    \\            copy_source_tax_year < tax_year AND
+    \\            length(trim(copy_source_revision_id)) > 0)
+    \\    )
+    \\);
+    \\CREATE TABLE tax_profile_form_profile_values (
+    \\    profile_id TEXT NOT NULL,
+    \\    tax_year INTEGER NOT NULL,
+    \\    form_code TEXT NOT NULL,
+    \\    form_revision TEXT NOT NULL,
+    \\    revision_id TEXT NOT NULL,
+    \\    revision_sequence INTEGER NOT NULL,
+    \\    semantic_key TEXT NOT NULL CHECK (semantic_key IN (
+    \\        'business_activity_anchor_id', 'spouse_profile_id',
+    \\        'spouse_business_activity_anchor_id',
+    \\        'special_rate_obligation_anchor_id'
+    \\    )),
+    \\    role TEXT NOT NULL CHECK (role IN (
+    \\        'filer', 'spouse', 'filing', 'payment', 'preparer',
+    \\        'employer', 'withholding_agent', 'attachment', 'evidence',
+    \\        'system'
+    \\    )),
+    \\    value_type TEXT NOT NULL CHECK (value_type IN (
+    \\        'profile_id', 'business_activity_anchor_id',
+    \\        'registration_obligation_anchor_id', 'text', 'boolean',
+    \\        'integer', 'date', 'year', 'choice'
+    \\    )),
+    \\    profile_value TEXT REFERENCES tax_profiles(id) ON DELETE RESTRICT,
+    \\    anchor_value TEXT,
+    \\    text_value TEXT,
+    \\    boolean_value INTEGER,
+    \\    integer_value INTEGER,
+    \\    date_value TEXT,
+    \\    year_value INTEGER,
+    \\    choice_value TEXT,
+    \\    source_tag TEXT NOT NULL CHECK (source_tag IN (
+    \\        'manual_confirmation', 'copied_from_revision', 'migrated'
+    \\    )),
+    \\    source_revision_id TEXT,
+    \\    source_reference TEXT,
+    \\    PRIMARY KEY (
+    \\        profile_id, tax_year, form_code, form_revision, revision_id,
+    \\        role, semantic_key
+    \\    ),
+    \\    FOREIGN KEY (
+    \\        profile_id, tax_year, form_code, form_revision,
+    \\        revision_id, revision_sequence
+    \\    ) REFERENCES tax_profile_form_profile_revisions (
+    \\        profile_id, tax_year, form_code, form_revision, id, sequence
+    \\    ) ON DELETE RESTRICT,
+    \\    CHECK (
+    \\        (value_type = 'profile_id' AND profile_value IS NOT NULL AND
+    \\            anchor_value IS NULL AND text_value IS NULL AND
+    \\            boolean_value IS NULL AND integer_value IS NULL AND
+    \\            date_value IS NULL AND year_value IS NULL AND
+    \\            choice_value IS NULL) OR
+    \\        (value_type IN (
+    \\            'business_activity_anchor_id',
+    \\            'registration_obligation_anchor_id'
+    \\        ) AND anchor_value IS NOT NULL AND profile_value IS NULL AND
+    \\            text_value IS NULL AND boolean_value IS NULL AND
+    \\            integer_value IS NULL AND date_value IS NULL AND
+    \\            year_value IS NULL AND choice_value IS NULL) OR
+    \\        (value_type = 'text' AND text_value IS NOT NULL AND
+    \\            profile_value IS NULL AND anchor_value IS NULL AND
+    \\            boolean_value IS NULL AND integer_value IS NULL AND
+    \\            date_value IS NULL AND year_value IS NULL AND
+    \\            choice_value IS NULL) OR
+    \\        (value_type = 'boolean' AND boolean_value IN (0, 1) AND
+    \\            profile_value IS NULL AND anchor_value IS NULL AND
+    \\            text_value IS NULL AND integer_value IS NULL AND
+    \\            date_value IS NULL AND year_value IS NULL AND
+    \\            choice_value IS NULL) OR
+    \\        (value_type = 'integer' AND integer_value IS NOT NULL AND
+    \\            profile_value IS NULL AND anchor_value IS NULL AND
+    \\            text_value IS NULL AND boolean_value IS NULL AND
+    \\            date_value IS NULL AND year_value IS NULL AND
+    \\            choice_value IS NULL) OR
+    \\        (value_type = 'date' AND length(date_value) = 10 AND
+    \\            profile_value IS NULL AND anchor_value IS NULL AND
+    \\            text_value IS NULL AND boolean_value IS NULL AND
+    \\            integer_value IS NULL AND year_value IS NULL AND
+    \\            choice_value IS NULL) OR
+    \\        (value_type = 'year' AND year_value BETWEEN 1 AND 9999 AND
+    \\            profile_value IS NULL AND anchor_value IS NULL AND
+    \\            text_value IS NULL AND boolean_value IS NULL AND
+    \\            integer_value IS NULL AND date_value IS NULL AND
+    \\            choice_value IS NULL) OR
+    \\        (value_type = 'choice' AND choice_value IS NOT NULL AND
+    \\            profile_value IS NULL AND anchor_value IS NULL AND
+    \\            text_value IS NULL AND boolean_value IS NULL AND
+    \\            integer_value IS NULL AND date_value IS NULL AND
+    \\            year_value IS NULL)
+    \\    ),
+    \\    CHECK (
+    \\        (source_tag = 'manual_confirmation' AND
+    \\            source_revision_id IS NULL AND source_reference IS NULL) OR
+    \\        (source_tag = 'copied_from_revision' AND
+    \\            length(trim(source_revision_id)) > 0 AND
+    \\            source_reference IS NULL) OR
+    \\        (source_tag = 'migrated' AND
+    \\            source_revision_id IS NULL AND
+    \\            length(trim(source_reference)) > 0)
+    \\    )
+    \\);
+    \\CREATE INDEX tax_profile_form_profile_effective_idx
+    \\    ON tax_profile_form_profile_revisions (
+    \\        profile_id, tax_year, form_code, form_revision,
+    \\        effective_from, effective_until
+    \\    );
+    \\CREATE TRIGGER tax_profile_form_profile_sequence_guard
+    \\BEFORE INSERT ON tax_profile_form_profile_revisions
+    \\WHEN NEW.sequence <> COALESCE((
+    \\    SELECT MAX(sequence) + 1
+    \\    FROM tax_profile_form_profile_revisions
+    \\    WHERE profile_id = NEW.profile_id AND tax_year = NEW.tax_year
+    \\      AND form_code = NEW.form_code
+    \\      AND form_revision = NEW.form_revision
+    \\), 1)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid Tax Form Profile revision sequence');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_profile_overlap_guard
+    \\BEFORE INSERT ON tax_profile_form_profile_revisions
+    \\WHEN EXISTS (
+    \\    SELECT 1 FROM tax_profile_form_profile_revisions AS prior
+    \\    WHERE prior.profile_id = NEW.profile_id
+    \\      AND prior.tax_year = NEW.tax_year
+    \\      AND prior.form_code = NEW.form_code
+    \\      AND prior.form_revision = NEW.form_revision
+    \\      AND prior.effective_from <= COALESCE(
+    \\          NEW.effective_until, printf('%04d-12-31', NEW.tax_year)
+    \\      )
+    \\      AND NEW.effective_from <= COALESCE(
+    \\          prior.effective_until, printf('%04d-12-31', prior.tax_year)
+    \\      )
+    \\      AND NOT (
+    \\          prior.effective_from = NEW.effective_from AND
+    \\          COALESCE(
+    \\              prior.effective_until,
+    \\              printf('%04d-12-31', prior.tax_year)
+    \\          ) = COALESCE(
+    \\              NEW.effective_until,
+    \\              printf('%04d-12-31', NEW.tax_year)
+    \\          )
+    \\      )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'overlapping Tax Form Profile revisions');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_profile_profile_reference_guard
+    \\BEFORE INSERT ON tax_profile_form_profile_values
+    \\WHEN NEW.semantic_key = 'spouse_profile_id' AND (
+    \\    NEW.role <> 'spouse' OR NEW.profile_value = NEW.profile_id OR
+    \\    NOT EXISTS (
+    \\        SELECT 1
+    \\        FROM tax_profiles AS owner
+    \\        JOIN tax_profiles AS selected
+    \\          ON selected.owner_id = owner.owner_id
+    \\        WHERE owner.id = NEW.profile_id
+    \\          AND selected.id = NEW.profile_value
+    \\    )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid Tax Form Profile profile reference');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_profile_activity_anchor_guard
+    \\BEFORE INSERT ON tax_profile_form_profile_values
+    \\WHEN NEW.value_type = 'business_activity_anchor_id' AND NOT EXISTS (
+    \\    SELECT 1 FROM tax_profile_business_activity_anchors AS anchor
+    \\    WHERE anchor.id = NEW.anchor_value AND anchor.profile_id = CASE
+    \\        WHEN NEW.role = 'filer' THEN NEW.profile_id
+    \\        WHEN NEW.role = 'spouse' THEN (
+    \\            SELECT owner.profile_value
+    \\            FROM tax_profile_form_profile_values AS owner
+    \\            WHERE owner.profile_id = NEW.profile_id
+    \\              AND owner.tax_year = NEW.tax_year
+    \\              AND owner.form_code = NEW.form_code
+    \\              AND owner.form_revision = NEW.form_revision
+    \\              AND owner.revision_id = NEW.revision_id
+    \\              AND owner.role = 'spouse'
+    \\              AND owner.semantic_key = 'spouse_profile_id'
+    \\        )
+    \\        ELSE NULL
+    \\    END
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid Tax Form Profile activity anchor');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_profile_obligation_anchor_guard
+    \\BEFORE INSERT ON tax_profile_form_profile_values
+    \\WHEN NEW.value_type = 'registration_obligation_anchor_id' AND
+    \\    NOT EXISTS (
+    \\        SELECT 1 FROM tax_profile_registration_fact_anchors AS anchor
+    \\        WHERE anchor.profile_id = NEW.profile_id
+    \\          AND anchor.id = NEW.anchor_value
+    \\          AND anchor.kind = 'special_rate_basis'
+    \\    )
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid Tax Form Profile obligation anchor');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_profile_revisions_update_guard
+    \\BEFORE UPDATE ON tax_profile_form_profile_revisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'Tax Form Profile revisions are append-only');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_profile_revisions_delete_guard
+    \\BEFORE DELETE ON tax_profile_form_profile_revisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'Tax Form Profile revisions are permanent');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_profile_values_update_guard
+    \\BEFORE UPDATE ON tax_profile_form_profile_values
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'Tax Form Profile values are immutable');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_profile_values_delete_guard
+    \\BEFORE DELETE ON tax_profile_form_profile_values
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'Tax Form Profile values are permanent');
+    \\END;
+;
+
+/// Exact append-only Forms Set decisions. The v14 parent/entry/interval
+/// tables remain the compatibility projection; this schema reconstructs one
+/// whole-year baseline and one decision for every known exact form in every
+/// persisted interval. An absent form in a complete projected set becomes an
+/// explicit inactive decision, so date resolution remains lossless.
+const schema_v15 =
+    \\DROP TRIGGER tax_profile_taxpayer_year_overlap_guard;
+    \\CREATE TRIGGER tax_profile_taxpayer_year_overlap_guard
+    \\BEFORE INSERT ON tax_profile_taxpayer_year_revisions
+    \\WHEN EXISTS (
+    \\    SELECT 1 FROM tax_profile_taxpayer_year_revisions AS prior
+    \\    WHERE prior.profile_id = NEW.profile_id
+    \\      AND prior.tax_year = NEW.tax_year
+    \\      AND prior.effective_from <= NEW.effective_until
+    \\      AND NEW.effective_from <= prior.effective_until
+    \\      AND NOT (
+    \\          prior.effective_from = NEW.effective_from AND
+    \\          prior.effective_until = NEW.effective_until
+    \\      )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'overlapping taxpayer-year revisions');
+    \\END;
+    \\DROP TRIGGER tax_profile_form_profile_overlap_guard;
+    \\CREATE TRIGGER tax_profile_form_profile_overlap_guard
+    \\BEFORE INSERT ON tax_profile_form_profile_revisions
+    \\WHEN EXISTS (
+    \\    SELECT 1 FROM tax_profile_form_profile_revisions AS prior
+    \\    WHERE prior.profile_id = NEW.profile_id
+    \\      AND prior.tax_year = NEW.tax_year
+    \\      AND prior.form_code = NEW.form_code
+    \\      AND prior.form_revision = NEW.form_revision
+    \\      AND prior.effective_from <= COALESCE(
+    \\          NEW.effective_until, printf('%04d-12-31', NEW.tax_year)
+    \\      )
+    \\      AND NEW.effective_from <= COALESCE(
+    \\          prior.effective_until, printf('%04d-12-31', prior.tax_year)
+    \\      )
+    \\      AND NOT (
+    \\          prior.effective_from = NEW.effective_from AND
+    \\          COALESCE(
+    \\              prior.effective_until,
+    \\              printf('%04d-12-31', prior.tax_year)
+    \\          ) = COALESCE(
+    \\              NEW.effective_until,
+    \\              printf('%04d-12-31', NEW.tax_year)
+    \\          )
+    \\      )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'overlapping Tax Form Profile revisions');
+    \\END;
+    \\
+    \\CREATE TABLE tax_profile_form_set_decisions (
+    \\    profile_id TEXT NOT NULL
+    \\        REFERENCES tax_profiles(id) ON DELETE RESTRICT,
+    \\    tax_year INTEGER NOT NULL CHECK (tax_year BETWEEN 1 AND 9999),
+    \\    form_code TEXT NOT NULL CHECK (length(trim(form_code)) > 0),
+    \\    form_revision TEXT NOT NULL CHECK (
+    \\        length(trim(form_revision)) > 0
+    \\    ),
+    \\    id TEXT NOT NULL CHECK (
+    \\        length(id) BETWEEN 1 AND 64 AND id = trim(id)
+    \\    ),
+    \\    sequence INTEGER NOT NULL CHECK (
+    \\        sequence > 0 AND sequence <= 4294967295
+    \\    ),
+    \\    decision_state TEXT NOT NULL CHECK (
+    \\        decision_state IN ('active', 'inactive')
+    \\    ),
+    \\    decision_scope TEXT NOT NULL CHECK (
+    \\        decision_scope IN ('whole_year', 'interval')
+    \\    ),
+    \\    effective_from TEXT NOT NULL CHECK (
+    \\        length(effective_from) = 10 AND
+    \\        substr(effective_from, 1, 4) = printf('%04d', tax_year)
+    \\    ),
+    \\    effective_until TEXT CHECK (
+    \\        effective_until IS NULL OR (
+    \\            length(effective_until) = 10 AND
+    \\            substr(effective_until, 1, 4) = printf('%04d', tax_year) AND
+    \\            effective_from <= effective_until
+    \\        )
+    \\    ),
+    \\    source_tag TEXT NOT NULL CHECK (
+    \\        source_tag IN ('manual', 'imported', 'cor')
+    \\    ),
+    \\    evidence_reference TEXT CHECK (
+    \\        evidence_reference IS NULL OR
+    \\        length(trim(evidence_reference)) > 0
+    \\    ),
+    \\    review_state TEXT NOT NULL CHECK (
+    \\        review_state IN ('confirmed', 'review_required', 'rejected')
+    \\    ),
+    \\    supersedes_id TEXT,
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    PRIMARY KEY (
+    \\        profile_id, tax_year, form_code, form_revision, id
+    \\    ),
+    \\    UNIQUE (
+    \\        profile_id, tax_year, form_code, form_revision, sequence
+    \\    ),
+    \\    FOREIGN KEY (
+    \\        profile_id, tax_year, form_code, form_revision, supersedes_id
+    \\    ) REFERENCES tax_profile_form_set_decisions (
+    \\        profile_id, tax_year, form_code, form_revision, id
+    \\    ) ON DELETE RESTRICT,
+    \\    CHECK (
+    \\        (decision_scope = 'whole_year' AND
+    \\            effective_from = printf('%04d-01-01', tax_year) AND
+    \\            COALESCE(
+    \\                effective_until, printf('%04d-12-31', tax_year)
+    \\            ) = printf('%04d-12-31', tax_year)) OR
+    \\        (decision_scope = 'interval' AND NOT (
+    \\            effective_from = printf('%04d-01-01', tax_year) AND
+    \\            COALESCE(
+    \\                effective_until, printf('%04d-12-31', tax_year)
+    \\            ) = printf('%04d-12-31', tax_year)
+    \\        ))
+    \\    ),
+    \\    CHECK (
+    \\        (source_tag = 'manual' AND
+    \\            review_state IN ('confirmed', 'rejected')) OR
+    \\        (source_tag IN ('imported', 'cor') AND
+    \\            review_state = 'review_required')
+    \\    ),
+    \\    CHECK (review_state <> 'rejected' OR supersedes_id IS NOT NULL),
+    \\    CHECK (supersedes_id IS NULL OR source_tag = 'manual')
+    \\);
+    \\CREATE UNIQUE INDEX tax_profile_form_set_decision_superseded_once
+    \\    ON tax_profile_form_set_decisions (
+    \\        profile_id, tax_year, form_code, form_revision, supersedes_id
+    \\    ) WHERE supersedes_id IS NOT NULL;
+    \\CREATE INDEX tax_profile_form_set_decision_resolution_idx
+    \\    ON tax_profile_form_set_decisions (
+    \\        profile_id, tax_year, form_code, form_revision,
+    \\        decision_scope, effective_from, effective_until, sequence
+    \\    );
+    \\CREATE TRIGGER tax_profile_form_set_decision_sequence_guard
+    \\BEFORE INSERT ON tax_profile_form_set_decisions
+    \\WHEN NEW.sequence <> COALESCE((
+    \\    SELECT MAX(sequence) + 1
+    \\    FROM tax_profile_form_set_decisions
+    \\    WHERE profile_id = NEW.profile_id AND tax_year = NEW.tax_year
+    \\      AND form_code = NEW.form_code
+    \\      AND form_revision = NEW.form_revision
+    \\), 1)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid Forms Set decision sequence');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_set_decision_supersession_guard
+    \\BEFORE INSERT ON tax_profile_form_set_decisions
+    \\WHEN NEW.supersedes_id IS NOT NULL AND NOT EXISTS (
+    \\    SELECT 1 FROM tax_profile_form_set_decisions AS prior
+    \\    WHERE prior.profile_id = NEW.profile_id
+    \\      AND prior.tax_year = NEW.tax_year
+    \\      AND prior.form_code = NEW.form_code
+    \\      AND prior.form_revision = NEW.form_revision
+    \\      AND prior.id = NEW.supersedes_id
+    \\      AND prior.decision_scope = NEW.decision_scope
+    \\      AND prior.effective_from = NEW.effective_from
+    \\      AND COALESCE(
+    \\          prior.effective_until, printf('%04d-12-31', prior.tax_year)
+    \\      ) = COALESCE(
+    \\          NEW.effective_until, printf('%04d-12-31', NEW.tax_year)
+    \\      )
+    \\      AND (
+    \\          (prior.review_state = 'review_required' AND
+    \\              NEW.review_state IN ('confirmed', 'rejected') AND
+    \\              prior.decision_state = NEW.decision_state) OR
+    \\          (prior.review_state = 'confirmed' AND
+    \\              NEW.review_state = 'confirmed')
+    \\      )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid Forms Set decision supersession');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_set_decision_whole_year_guard
+    \\BEFORE INSERT ON tax_profile_form_set_decisions
+    \\WHEN NEW.review_state = 'confirmed'
+    \\ AND NEW.decision_scope = 'whole_year'
+    \\ AND EXISTS (
+    \\    SELECT 1 FROM tax_profile_form_set_decisions AS prior
+    \\    WHERE prior.profile_id = NEW.profile_id
+    \\      AND prior.tax_year = NEW.tax_year
+    \\      AND prior.form_code = NEW.form_code
+    \\      AND prior.form_revision = NEW.form_revision
+    \\      AND prior.review_state = 'confirmed'
+    \\      AND prior.decision_scope = 'whole_year'
+    \\      AND (NEW.supersedes_id IS NULL OR prior.id <> NEW.supersedes_id)
+    \\      AND NOT EXISTS (
+    \\          SELECT 1 FROM tax_profile_form_set_decisions AS later
+    \\          WHERE later.profile_id = prior.profile_id
+    \\            AND later.tax_year = prior.tax_year
+    \\            AND later.form_code = prior.form_code
+    \\            AND later.form_revision = prior.form_revision
+    \\            AND later.supersedes_id = prior.id
+    \\      )
+    \\ )
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'duplicate Forms Set whole-year decision');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_set_decision_interval_guard
+    \\BEFORE INSERT ON tax_profile_form_set_decisions
+    \\WHEN NEW.review_state = 'confirmed'
+    \\ AND NEW.decision_scope = 'interval'
+    \\ AND EXISTS (
+    \\    SELECT 1 FROM tax_profile_form_set_decisions AS prior
+    \\    WHERE prior.profile_id = NEW.profile_id
+    \\      AND prior.tax_year = NEW.tax_year
+    \\      AND prior.form_code = NEW.form_code
+    \\      AND prior.form_revision = NEW.form_revision
+    \\      AND prior.review_state = 'confirmed'
+    \\      AND prior.decision_scope = 'interval'
+    \\      AND (NEW.supersedes_id IS NULL OR prior.id <> NEW.supersedes_id)
+    \\      AND NOT EXISTS (
+    \\          SELECT 1 FROM tax_profile_form_set_decisions AS later
+    \\          WHERE later.profile_id = prior.profile_id
+    \\            AND later.tax_year = prior.tax_year
+    \\            AND later.form_code = prior.form_code
+    \\            AND later.form_revision = prior.form_revision
+    \\            AND later.supersedes_id = prior.id
+    \\      )
+    \\      AND prior.effective_from <= COALESCE(
+    \\          NEW.effective_until, printf('%04d-12-31', NEW.tax_year)
+    \\      )
+    \\      AND NEW.effective_from <= COALESCE(
+    \\          prior.effective_until, printf('%04d-12-31', prior.tax_year)
+    \\      )
+    \\ )
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'overlapping Forms Set interval decision');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_set_decisions_update_guard
+    \\BEFORE UPDATE ON tax_profile_form_set_decisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'Forms Set decisions are append-only');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_set_decisions_delete_guard
+    \\BEFORE DELETE ON tax_profile_form_set_decisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'Forms Set decision history is permanent');
+    \\END;
+    \\
+    \\WITH exact_forms AS (
+    \\    SELECT profile_id, tax_year, form_code, form_revision
+    \\    FROM tax_profile_form_set_entries
+    \\    UNION
+    \\    SELECT interval.profile_id, interval.tax_year,
+    \\           entry.form_code, entry.form_revision
+    \\    FROM tax_profile_form_set_interval_revisions AS interval
+    \\    JOIN tax_profile_form_set_interval_entries AS entry
+    \\      ON entry.revision_id = interval.id
+    \\)
+    \\INSERT INTO tax_profile_form_set_decisions (
+    \\    profile_id, tax_year, form_code, form_revision, id, sequence,
+    \\    decision_state, decision_scope, effective_from, effective_until,
+    \\    source_tag, evidence_reference, review_state, supersedes_id
+    \\)
+    \\SELECT exact.profile_id, exact.tax_year,
+    \\       exact.form_code, exact.form_revision,
+    \\       'v15-base', 1,
+    \\       CASE WHEN EXISTS (
+    \\           SELECT 1 FROM tax_profile_form_set_entries AS active
+    \\           WHERE active.profile_id = exact.profile_id
+    \\             AND active.tax_year = exact.tax_year
+    \\             AND active.form_code = exact.form_code
+    \\             AND active.form_revision = exact.form_revision
+    \\       ) THEN 'active' ELSE 'inactive' END,
+    \\       'whole_year', printf('%04d-01-01', exact.tax_year), NULL,
+    \\       'manual', NULL, 'confirmed', NULL
+    \\FROM exact_forms AS exact
+    \\WHERE EXISTS (
+    \\    SELECT 1 FROM tax_profile_form_sets AS parent
+    \\    WHERE parent.profile_id = exact.profile_id
+    \\      AND parent.tax_year = exact.tax_year
+    \\)
+    \\ORDER BY exact.profile_id, exact.tax_year,
+    \\         exact.form_code, exact.form_revision;
+    \\
+    \\WITH exact_forms AS (
+    \\    SELECT profile_id, tax_year, form_code, form_revision
+    \\    FROM tax_profile_form_set_entries
+    \\    UNION
+    \\    SELECT interval.profile_id, interval.tax_year,
+    \\           entry.form_code, entry.form_revision
+    \\    FROM tax_profile_form_set_interval_revisions AS interval
+    \\    JOIN tax_profile_form_set_interval_entries AS entry
+    \\      ON entry.revision_id = interval.id
+    \\)
+    \\INSERT INTO tax_profile_form_set_decisions (
+    \\    profile_id, tax_year, form_code, form_revision, id, sequence,
+    \\    decision_state, decision_scope, effective_from, effective_until,
+    \\    source_tag, evidence_reference, review_state, supersedes_id
+    \\)
+    \\SELECT exact.profile_id, exact.tax_year,
+    \\       exact.form_code, exact.form_revision,
+    \\       'v15-interval-' || interval.sequence,
+    \\       interval.sequence + CASE WHEN EXISTS (
+    \\           SELECT 1 FROM tax_profile_form_sets AS parent
+    \\           WHERE parent.profile_id = exact.profile_id
+    \\             AND parent.tax_year = exact.tax_year
+    \\       ) THEN 1 ELSE 0 END,
+    \\       CASE WHEN EXISTS (
+    \\           SELECT 1 FROM tax_profile_form_set_interval_entries AS active
+    \\           WHERE active.revision_id = interval.id
+    \\             AND active.form_code = exact.form_code
+    \\             AND active.form_revision = exact.form_revision
+    \\       ) THEN 'active' ELSE 'inactive' END,
+    \\       'interval', interval.effective_from, interval.effective_until,
+    \\       'manual', NULL, 'confirmed', NULL
+    \\FROM exact_forms AS exact
+    \\JOIN tax_profile_form_set_interval_revisions AS interval
+    \\  ON interval.profile_id = exact.profile_id
+    \\ AND interval.tax_year = exact.tax_year
+    \\ORDER BY exact.profile_id, exact.tax_year,
+    \\         exact.form_code, exact.form_revision, interval.sequence;
+;
+
+/// Independent append-only registration stream. Existing v12 activity
+/// anchors are deliberately reused; typed obligations receive their own
+/// profile-scoped anchors. Legacy component rows remain untouched and are
+/// cited by the new trace columns.
+const schema_v16 =
+    \\CREATE TABLE tax_profile_registration_commits (
+    \\    profile_id TEXT NOT NULL
+    \\        REFERENCES tax_profiles(id) ON DELETE RESTRICT,
+    \\    sequence INTEGER NOT NULL CHECK (
+    \\        sequence > 0 AND sequence <= 4294967295
+    \\    ),
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    PRIMARY KEY (profile_id, sequence)
+    \\);
+    \\CREATE TRIGGER tax_profile_registration_commit_sequence_guard
+    \\BEFORE INSERT ON tax_profile_registration_commits
+    \\WHEN NEW.sequence <> COALESCE((
+    \\    SELECT MAX(sequence) + 1
+    \\    FROM tax_profile_registration_commits
+    \\    WHERE profile_id = NEW.profile_id
+    \\), 1)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid registration stream sequence');
+    \\END;
+    \\CREATE TRIGGER tax_profile_registration_commits_update_guard
+    \\BEFORE UPDATE ON tax_profile_registration_commits
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'registration commits are immutable');
+    \\END;
+    \\CREATE TRIGGER tax_profile_registration_commits_delete_guard
+    \\BEFORE DELETE ON tax_profile_registration_commits
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'registration commits are permanent');
+    \\END;
+    \\
+    \\CREATE TABLE tax_profile_registration_obligation_anchors (
+    \\    profile_id TEXT NOT NULL
+    \\        REFERENCES tax_profiles(id) ON DELETE RESTRICT,
+    \\    id TEXT NOT NULL CHECK (
+    \\        length(id) BETWEEN 1 AND 64 AND id = trim(id)
+    \\    ),
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    PRIMARY KEY (profile_id, id)
+    \\);
+    \\CREATE TRIGGER tax_profile_registration_obligation_anchors_update_guard
+    \\BEFORE UPDATE ON tax_profile_registration_obligation_anchors
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'registration obligation anchors are immutable');
+    \\END;
+    \\CREATE TRIGGER tax_profile_registration_obligation_anchors_delete_guard
+    \\BEFORE DELETE ON tax_profile_registration_obligation_anchors
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'registration obligation anchors are permanent');
+    \\END;
+    \\
+    \\CREATE TABLE tax_profile_registration_component_revisions (
+    \\    profile_id TEXT NOT NULL,
+    \\    id TEXT NOT NULL CHECK (
+    \\        length(id) BETWEEN 1 AND 64 AND id = trim(id)
+    \\    ),
+    \\    component_kind TEXT NOT NULL CHECK (component_kind IN (
+    \\        'business_activity', 'registration_obligation',
+    \\        'agent_designation', 'eopt_tier',
+    \\        'registration_activity_status',
+    \\        'special_law_or_treaty_basis'
+    \\    )),
+    \\    history_key TEXT NOT NULL CHECK (
+    \\        length(history_key) BETWEEN 1 AND 64 AND
+    \\        history_key = trim(history_key)
+    \\    ),
+    \\    anchor_id TEXT,
+    \\    component_sequence INTEGER NOT NULL CHECK (
+    \\        component_sequence > 0 AND component_sequence <= 4294967295
+    \\    ),
+    \\    stream_sequence INTEGER NOT NULL,
+    \\    record_state TEXT NOT NULL CHECK (
+    \\        record_state IN ('present', 'retired')
+    \\    ),
+    \\    effective_from TEXT NOT NULL CHECK (length(effective_from) = 10),
+    \\    effective_until TEXT CHECK (
+    \\        effective_until IS NULL OR (
+    \\            length(effective_until) = 10 AND
+    \\            effective_from <= effective_until
+    \\        )
+    \\    ),
+    \\    source_tag TEXT NOT NULL CHECK (source_tag IN (
+    \\        'manual_entry', 'documented', 'imported', 'migrated'
+    \\    )),
+    \\    evidence_reference TEXT CHECK (
+    \\        evidence_reference IS NULL OR
+    \\        (length(trim(evidence_reference)) > 0 AND
+    \\         length(CAST(evidence_reference AS BLOB)) <= 160)
+    \\    ),
+    \\    review_state TEXT NOT NULL CHECK (
+    \\        review_state IN ('requires_review', 'confirmed')
+    \\    ),
+    \\    review_reason TEXT CHECK (review_reason IN (
+    \\        'evidence_missing', 'specificity_unknown',
+    \\        'migrated_without_confirmation', 'manual_proposal'
+    \\    )),
+    \\    confirmed_at INTEGER,
+    \\    supersedes_id TEXT,
+    \\    legacy_revision_id TEXT,
+    \\    legacy_component_id TEXT,
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    PRIMARY KEY (profile_id, id),
+    \\    UNIQUE (
+    \\        profile_id, component_kind, history_key, component_sequence
+    \\    ),
+    \\    FOREIGN KEY (profile_id, stream_sequence)
+    \\        REFERENCES tax_profile_registration_commits(
+    \\            profile_id, sequence
+    \\        ) ON DELETE RESTRICT,
+    \\    FOREIGN KEY (profile_id, supersedes_id)
+    \\        REFERENCES tax_profile_registration_component_revisions(
+    \\            profile_id, id
+    \\        ) ON DELETE RESTRICT,
+    \\    CHECK (
+    \\        (component_kind IN (
+    \\            'business_activity', 'registration_obligation'
+    \\        ) AND anchor_id = history_key) OR
+    \\        (component_kind NOT IN (
+    \\            'business_activity', 'registration_obligation'
+    \\        ) AND anchor_id IS NULL AND history_key = component_kind)
+    \\    ),
+    \\    CHECK (
+    \\        (source_tag = 'manual_entry' AND evidence_reference IS NULL) OR
+    \\        (source_tag <> 'manual_entry' AND
+    \\            length(trim(evidence_reference)) > 0)
+    \\    ),
+    \\    CHECK (
+    \\        (review_state = 'requires_review' AND
+    \\            review_reason IS NOT NULL AND confirmed_at IS NULL) OR
+    \\        (review_state = 'confirmed' AND
+    \\            review_reason IS NULL AND confirmed_at IS NOT NULL)
+    \\    ),
+    \\    CHECK (
+    \\        record_state <> 'retired' OR
+    \\        (source_tag = 'manual_entry' AND review_state = 'confirmed')
+    \\    ),
+    \\    CHECK (
+    \\        (legacy_revision_id IS NULL) = (legacy_component_id IS NULL)
+    \\    ),
+    \\    CHECK (supersedes_id IS NULL OR supersedes_id <> id)
+    \\);
+    \\CREATE INDEX tax_profile_registration_resolution_idx
+    \\    ON tax_profile_registration_component_revisions (
+    \\        profile_id, component_kind, history_key,
+    \\        effective_from, effective_until, component_sequence
+    \\    );
+    \\CREATE UNIQUE INDEX tax_profile_registration_superseded_once
+    \\    ON tax_profile_registration_component_revisions (
+    \\        profile_id, supersedes_id
+    \\    ) WHERE supersedes_id IS NOT NULL;
+    \\CREATE TRIGGER tax_profile_registration_component_sequence_guard
+    \\BEFORE INSERT ON tax_profile_registration_component_revisions
+    \\WHEN NEW.component_sequence <> COALESCE((
+    \\    SELECT MAX(component_sequence) + 1
+    \\    FROM tax_profile_registration_component_revisions
+    \\    WHERE profile_id = NEW.profile_id
+    \\      AND component_kind = NEW.component_kind
+    \\      AND history_key = NEW.history_key
+    \\), 1)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid registration component sequence');
+    \\END;
+    \\CREATE TRIGGER tax_profile_registration_activity_anchor_guard
+    \\BEFORE INSERT ON tax_profile_registration_component_revisions
+    \\WHEN NEW.component_kind = 'business_activity' AND NOT EXISTS (
+    \\    SELECT 1 FROM tax_profile_business_activity_anchors anchor
+    \\    WHERE anchor.profile_id = NEW.profile_id
+    \\      AND anchor.id = NEW.anchor_id
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid registration activity anchor');
+    \\END;
+    \\CREATE TRIGGER tax_profile_registration_obligation_anchor_guard
+    \\BEFORE INSERT ON tax_profile_registration_component_revisions
+    \\WHEN NEW.component_kind = 'registration_obligation' AND NOT EXISTS (
+    \\    SELECT 1 FROM tax_profile_registration_obligation_anchors anchor
+    \\    WHERE anchor.profile_id = NEW.profile_id
+    \\      AND anchor.id = NEW.anchor_id
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid registration obligation anchor');
+    \\END;
+    \\CREATE TRIGGER tax_profile_registration_component_update_guard
+    \\BEFORE UPDATE ON tax_profile_registration_component_revisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'registration component revisions are immutable');
+    \\END;
+    \\CREATE TRIGGER tax_profile_registration_component_delete_guard
+    \\BEFORE DELETE ON tax_profile_registration_component_revisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'registration component revisions are permanent');
+    \\END;
+    \\
+    \\CREATE TABLE tax_profile_registration_activity_values (
+    \\    profile_id TEXT NOT NULL,
+    \\    revision_id TEXT NOT NULL,
+    \\    line_of_business TEXT NOT NULL CHECK (
+    \\        length(trim(line_of_business)) > 0 AND
+    \\        length(CAST(line_of_business AS BLOB)) <= 160
+    \\    ),
+    \\    atc TEXT CHECK (
+    \\        atc IS NULL OR length(trim(atc)) > 0
+    \\    ),
+    \\    PRIMARY KEY (profile_id, revision_id),
+    \\    FOREIGN KEY (profile_id, revision_id)
+    \\        REFERENCES tax_profile_registration_component_revisions(
+    \\            profile_id, id
+    \\        ) ON DELETE RESTRICT
+    \\);
+    \\CREATE TRIGGER tax_profile_registration_activity_value_kind_guard
+    \\BEFORE INSERT ON tax_profile_registration_activity_values
+    \\WHEN NOT EXISTS (
+    \\    SELECT 1 FROM tax_profile_registration_component_revisions revision
+    \\    WHERE revision.profile_id = NEW.profile_id
+    \\      AND revision.id = NEW.revision_id
+    \\      AND revision.component_kind = 'business_activity'
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid registration activity payload');
+    \\END;
+    \\CREATE TRIGGER tax_profile_registration_activity_value_update_guard
+    \\BEFORE UPDATE ON tax_profile_registration_activity_values
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'registration activity values are immutable');
+    \\END;
+    \\CREATE TRIGGER tax_profile_registration_activity_value_delete_guard
+    \\BEFORE DELETE ON tax_profile_registration_activity_values
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'registration activity values are permanent');
+    \\END;
+    \\
+    \\CREATE TABLE tax_profile_registration_obligation_values (
+    \\    profile_id TEXT NOT NULL,
+    \\    revision_id TEXT NOT NULL,
+    \\    obligation_kind TEXT NOT NULL CHECK (obligation_kind IN (
+    \\        'registered_income_tax', 'vat', 'percentage_tax',
+    \\        'withholding_compensation', 'withholding_expanded',
+    \\        'withholding_final', 'withholding_other',
+    \\        'withholding_unspecified_requires_review',
+    \\        'unknown_requires_review'
+    \\    )),
+    \\    value_text TEXT CHECK (
+    \\        value_text IS NULL OR
+    \\        (length(trim(value_text)) > 0 AND
+    \\         length(CAST(value_text AS BLOB)) <= 80)
+    \\    ),
+    \\    PRIMARY KEY (profile_id, revision_id),
+    \\    FOREIGN KEY (profile_id, revision_id)
+    \\        REFERENCES tax_profile_registration_component_revisions(
+    \\            profile_id, id
+    \\        ) ON DELETE RESTRICT,
+    \\    CHECK (
+    \\        (obligation_kind IN (
+    \\            'withholding_other',
+    \\            'withholding_unspecified_requires_review',
+    \\            'unknown_requires_review'
+    \\        )) = (value_text IS NOT NULL)
+    \\    )
+    \\);
+    \\CREATE TRIGGER tax_profile_registration_obligation_value_kind_guard
+    \\BEFORE INSERT ON tax_profile_registration_obligation_values
+    \\WHEN NOT EXISTS (
+    \\    SELECT 1 FROM tax_profile_registration_component_revisions revision
+    \\    WHERE revision.profile_id = NEW.profile_id
+    \\      AND revision.id = NEW.revision_id
+    \\      AND revision.component_kind = 'registration_obligation'
+    \\      AND (
+    \\          NEW.obligation_kind NOT IN (
+    \\              'withholding_unspecified_requires_review',
+    \\              'unknown_requires_review'
+    \\          ) OR revision.review_state = 'requires_review'
+    \\      )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid registration obligation payload');
+    \\END;
+    \\CREATE TRIGGER tax_profile_registration_obligation_value_update_guard
+    \\BEFORE UPDATE ON tax_profile_registration_obligation_values
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'registration obligation values are immutable');
+    \\END;
+    \\CREATE TRIGGER tax_profile_registration_obligation_value_delete_guard
+    \\BEFORE DELETE ON tax_profile_registration_obligation_values
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'registration obligation values are permanent');
+    \\END;
+    \\
+    \\CREATE TABLE tax_profile_registration_fact_values (
+    \\    profile_id TEXT NOT NULL,
+    \\    revision_id TEXT NOT NULL,
+    \\    fact_kind TEXT NOT NULL CHECK (fact_kind IN (
+    \\        'agent_designation', 'eopt_tier',
+    \\        'registration_activity_status',
+    \\        'special_law_or_treaty_basis'
+    \\    )),
+    \\    value_tag TEXT NOT NULL CHECK (length(trim(value_tag)) > 0),
+    \\    value_text TEXT CHECK (
+    \\        value_text IS NULL OR
+    \\        (length(trim(value_text)) > 0 AND
+    \\         length(CAST(value_text AS BLOB)) <= 160)
+    \\    ),
+    \\    PRIMARY KEY (profile_id, revision_id),
+    \\    FOREIGN KEY (profile_id, revision_id)
+    \\        REFERENCES tax_profile_registration_component_revisions(
+    \\            profile_id, id
+    \\        ) ON DELETE RESTRICT,
+    \\    CHECK (
+    \\        (fact_kind = 'agent_designation' AND value_tag IN (
+    \\            'not_designated', 'government_withholding_agent',
+    \\            'top_withholding_agent',
+    \\            'government_and_top_withholding_agent',
+    \\            'unknown_requires_review'
+    \\        ) AND value_text IS NULL) OR
+    \\        (fact_kind = 'eopt_tier' AND value_tag IN (
+    \\            'not_applicable', 'micro', 'small', 'medium', 'large',
+    \\            'unknown_requires_review'
+    \\        ) AND value_text IS NULL) OR
+    \\        (fact_kind = 'registration_activity_status' AND value_tag IN (
+    \\            'active', 'inactive', 'unknown_requires_review'
+    \\        ) AND value_text IS NULL) OR
+    \\        (fact_kind = 'special_law_or_treaty_basis' AND value_tag IN (
+    \\            'special_law', 'treaty', 'unknown_requires_review'
+    \\        ) AND value_text IS NOT NULL)
+    \\    )
+    \\);
+    \\CREATE TRIGGER tax_profile_registration_fact_value_kind_guard
+    \\BEFORE INSERT ON tax_profile_registration_fact_values
+    \\WHEN NOT EXISTS (
+    \\    SELECT 1 FROM tax_profile_registration_component_revisions revision
+    \\    WHERE revision.profile_id = NEW.profile_id
+    \\      AND revision.id = NEW.revision_id
+    \\      AND revision.component_kind = NEW.fact_kind
+    \\      AND (
+    \\          NEW.value_tag <> 'unknown_requires_review' OR
+    \\          revision.review_state = 'requires_review'
+    \\      )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid registration fact payload');
+    \\END;
+    \\CREATE TRIGGER tax_profile_registration_fact_value_update_guard
+    \\BEFORE UPDATE ON tax_profile_registration_fact_values
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'registration fact values are immutable');
+    \\END;
+    \\CREATE TRIGGER tax_profile_registration_fact_value_delete_guard
+    \\BEFORE DELETE ON tax_profile_registration_fact_values
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'registration fact values are permanent');
+    \\END;
+    \\
+    \\INSERT INTO tax_profile_registration_commits (profile_id, sequence)
+    \\SELECT profile_id, 1
+    \\FROM (
+    \\    SELECT profile_id FROM tax_profile_business_activities
+    \\    UNION
+    \\    SELECT profile_id FROM tax_profile_registration_facts
+    \\)
+    \\ORDER BY profile_id;
+    \\
+    \\INSERT INTO tax_profile_registration_obligation_anchors (profile_id, id)
+    \\SELECT DISTINCT profile_id, anchor_id
+    \\FROM tax_profile_registration_facts
+    \\WHERE kind = 'tax_type'
+    \\ORDER BY profile_id, anchor_id;
+    \\
+    \\INSERT INTO tax_profile_registration_component_revisions (
+    \\    profile_id, id, component_kind, history_key, anchor_id,
+    \\    component_sequence, stream_sequence, record_state,
+    \\    effective_from, effective_until, source_tag,
+    \\    evidence_reference, review_state, review_reason, confirmed_at,
+    \\    supersedes_id, legacy_revision_id, legacy_component_id
+    \\)
+    \\SELECT activity.profile_id, printf('v16a-%016x', activity.rowid),
+    \\       'business_activity', activity.anchor_id, activity.anchor_id,
+    \\       ROW_NUMBER() OVER (
+    \\           PARTITION BY activity.profile_id, activity.anchor_id
+    \\           ORDER BY revision.sequence, activity.ordinal, activity.rowid
+    \\       ),
+    \\       1, 'present', activity.effective_from, activity.effective_until,
+    \\       'migrated', 'v16-legacy-profile-component',
+    \\       'confirmed', NULL, revision.created_at, NULL,
+    \\       activity.revision_id, activity.id
+    \\FROM tax_profile_business_activities activity
+    \\JOIN tax_profile_revisions revision
+    \\  ON revision.profile_id = activity.profile_id
+    \\ AND revision.id = activity.revision_id
+    \\ORDER BY activity.profile_id, activity.anchor_id,
+    \\         revision.sequence, activity.ordinal, activity.rowid;
+    \\INSERT INTO tax_profile_registration_activity_values (
+    \\    profile_id, revision_id, line_of_business, atc
+    \\)
+    \\SELECT profile_id, printf('v16a-%016x', rowid),
+    \\       line_of_business, atc
+    \\FROM tax_profile_business_activities
+    \\ORDER BY profile_id, rowid;
+    \\
+    \\INSERT INTO tax_profile_registration_component_revisions (
+    \\    profile_id, id, component_kind, history_key, anchor_id,
+    \\    component_sequence, stream_sequence, record_state,
+    \\    effective_from, effective_until, source_tag,
+    \\    evidence_reference, review_state, review_reason, confirmed_at,
+    \\    supersedes_id, legacy_revision_id, legacy_component_id
+    \\)
+    \\SELECT fact.profile_id, printf('v16o-%016x', fact.rowid),
+    \\       'registration_obligation', fact.anchor_id, fact.anchor_id,
+    \\       ROW_NUMBER() OVER (
+    \\           PARTITION BY fact.profile_id, fact.anchor_id
+    \\           ORDER BY revision.sequence, fact.ordinal, fact.rowid
+    \\       ),
+    \\       1, 'present', fact.effective_from, fact.effective_until,
+    \\       'migrated', 'v16-legacy-profile-component',
+    \\       'requires_review', 'specificity_unknown', NULL, NULL,
+    \\       fact.revision_id, fact.id
+    \\FROM tax_profile_registration_facts fact
+    \\JOIN tax_profile_revisions revision
+    \\  ON revision.profile_id = fact.profile_id
+    \\ AND revision.id = fact.revision_id
+    \\WHERE fact.kind = 'tax_type'
+    \\ORDER BY fact.profile_id, fact.anchor_id,
+    \\         revision.sequence, fact.ordinal, fact.rowid;
+    \\INSERT INTO tax_profile_registration_obligation_values (
+    \\    profile_id, revision_id, obligation_kind, value_text
+    \\)
+    \\SELECT profile_id, printf('v16o-%016x', rowid),
+    \\       'unknown_requires_review', value_text
+    \\FROM tax_profile_registration_facts
+    \\WHERE kind = 'tax_type'
+    \\ORDER BY profile_id, rowid;
+    \\
+    \\INSERT INTO tax_profile_registration_component_revisions (
+    \\    profile_id, id, component_kind, history_key, anchor_id,
+    \\    component_sequence, stream_sequence, record_state,
+    \\    effective_from, effective_until, source_tag,
+    \\    evidence_reference, review_state, review_reason, confirmed_at,
+    \\    supersedes_id, legacy_revision_id, legacy_component_id
+    \\)
+    \\SELECT fact.profile_id, printf('v16g-%016x', fact.rowid),
+    \\       'agent_designation', 'agent_designation', NULL,
+    \\       ROW_NUMBER() OVER (
+    \\           PARTITION BY fact.profile_id
+    \\           ORDER BY revision.sequence, fact.ordinal, fact.rowid
+    \\       ),
+    \\       1, 'present', fact.effective_from, fact.effective_until,
+    \\       'migrated', 'v16-legacy-profile-component',
+    \\       'confirmed', NULL, revision.created_at, NULL,
+    \\       fact.revision_id, fact.id
+    \\FROM tax_profile_registration_facts fact
+    \\JOIN tax_profile_revisions revision
+    \\  ON revision.profile_id = fact.profile_id
+    \\ AND revision.id = fact.revision_id
+    \\WHERE fact.kind = 'government_withholding_agent'
+    \\ORDER BY fact.profile_id, revision.sequence, fact.ordinal, fact.rowid;
+    \\INSERT INTO tax_profile_registration_fact_values (
+    \\    profile_id, revision_id, fact_kind, value_tag, value_text
+    \\)
+    \\SELECT profile_id, printf('v16g-%016x', rowid),
+    \\       'agent_designation',
+    \\       CASE value_text
+    \\           WHEN 'yes' THEN 'government_withholding_agent'
+    \\           ELSE 'not_designated'
+    \\       END,
+    \\       NULL
+    \\FROM tax_profile_registration_facts
+    \\WHERE kind = 'government_withholding_agent'
+    \\ORDER BY profile_id, rowid;
+    \\
+    \\INSERT INTO tax_profile_registration_component_revisions (
+    \\    profile_id, id, component_kind, history_key, anchor_id,
+    \\    component_sequence, stream_sequence, record_state,
+    \\    effective_from, effective_until, source_tag,
+    \\    evidence_reference, review_state, review_reason, confirmed_at,
+    \\    supersedes_id, legacy_revision_id, legacy_component_id
+    \\)
+    \\SELECT fact.profile_id, printf('v16s-%016x', fact.rowid),
+    \\       'special_law_or_treaty_basis',
+    \\       'special_law_or_treaty_basis', NULL,
+    \\       ROW_NUMBER() OVER (
+    \\           PARTITION BY fact.profile_id
+    \\           ORDER BY revision.sequence, fact.ordinal, fact.rowid
+    \\       ),
+    \\       1, 'present', fact.effective_from, fact.effective_until,
+    \\       'migrated', 'v16-legacy-profile-component',
+    \\       'requires_review', 'specificity_unknown', NULL, NULL,
+    \\       fact.revision_id, fact.id
+    \\FROM tax_profile_registration_facts fact
+    \\JOIN tax_profile_revisions revision
+    \\  ON revision.profile_id = fact.profile_id
+    \\ AND revision.id = fact.revision_id
+    \\WHERE fact.kind = 'special_rate_basis'
+    \\ORDER BY fact.profile_id, revision.sequence, fact.ordinal, fact.rowid;
+    \\INSERT INTO tax_profile_registration_fact_values (
+    \\    profile_id, revision_id, fact_kind, value_tag, value_text
+    \\)
+    \\SELECT profile_id, printf('v16s-%016x', rowid),
+    \\       'special_law_or_treaty_basis',
+    \\       'unknown_requires_review', value_text
+    \\FROM tax_profile_registration_facts
+    \\WHERE kind = 'special_rate_basis'
+    \\ORDER BY profile_id, rowid;
+;
+
+/// Immutable provenance for coarse form drafts. Parent and child rows are
+/// append-once and retain both exact immutable revision references and the
+/// copied source/seed values used during composition. Missing parent rows are
+/// the truthful legacy representation for drafts created before v17.
+const schema_v17 =
+    \\CREATE TABLE tax_form_draft_provenance (
+    \\    draft_id TEXT PRIMARY KEY
+    \\        REFERENCES tax_form_drafts(id) ON DELETE RESTRICT,
+    \\    sequence INTEGER NOT NULL CHECK (sequence = 1),
+    \\    owner_profile_id TEXT NOT NULL
+    \\        REFERENCES tax_profiles(id) ON DELETE RESTRICT,
+    \\    tax_year INTEGER NOT NULL CHECK (tax_year BETWEEN 1 AND 9999),
+    \\    form_code TEXT NOT NULL CHECK (length(trim(form_code)) > 0),
+    \\    form_revision TEXT NOT NULL CHECK (
+    \\        length(trim(form_revision)) > 0
+    \\    ),
+    \\    catalog_revision TEXT NOT NULL CHECK (
+    \\        length(catalog_revision) BETWEEN 1 AND 64 AND
+    \\        catalog_revision = trim(catalog_revision)
+    \\    ),
+    \\    catalog_sha256 TEXT NOT NULL CHECK (
+    \\        length(catalog_sha256) = 64 AND
+    \\        catalog_sha256 = lower(catalog_sha256) AND
+    \\        catalog_sha256 NOT GLOB '*[^0-9a-f]*'
+    \\    ),
+    \\    setup_spec_revision INTEGER NOT NULL CHECK (
+    \\        setup_spec_revision > 0 AND
+    \\        setup_spec_revision <= 4294967295
+    \\    ),
+    \\    setup_spec_hash TEXT NOT NULL CHECK (
+    \\        length(setup_spec_hash) = 64 AND
+    \\        setup_spec_hash = lower(setup_spec_hash) AND
+    \\        setup_spec_hash NOT GLOB '*[^0-9a-f]*'
+    \\    ),
+    \\    forms_set_decision_id TEXT NOT NULL,
+    \\    forms_set_decision_sequence INTEGER NOT NULL CHECK (
+    \\        forms_set_decision_sequence > 0 AND
+    \\        forms_set_decision_sequence <= 4294967295
+    \\    ),
+    \\    forms_set_source_tag TEXT NOT NULL CHECK (
+    \\        forms_set_source_tag IN ('manual', 'imported', 'cor')
+    \\    ),
+    \\    forms_set_evidence_reference TEXT,
+    \\    forms_set_applicability_date TEXT NOT NULL CHECK (
+    \\        length(forms_set_applicability_date) = 10 AND
+    \\        substr(forms_set_applicability_date, 1, 4) =
+    \\            printf('%04d', tax_year)
+    \\    ),
+    \\    taxpayer_year_profile_id TEXT,
+    \\    taxpayer_year_tax_year INTEGER,
+    \\    taxpayer_year_revision_id TEXT,
+    \\    taxpayer_year_revision_sequence INTEGER,
+    \\    form_profile_profile_id TEXT,
+    \\    form_profile_tax_year INTEGER,
+    \\    form_profile_form_code TEXT,
+    \\    form_profile_form_revision TEXT,
+    \\    form_profile_revision_id TEXT,
+    \\    form_profile_revision_sequence INTEGER,
+    \\    form_profile_spec_revision INTEGER,
+    \\    form_profile_spec_hash TEXT,
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    FOREIGN KEY (
+    \\        owner_profile_id, tax_year, form_code, form_revision,
+    \\        forms_set_decision_id
+    \\    ) REFERENCES tax_profile_form_set_decisions (
+    \\        profile_id, tax_year, form_code, form_revision, id
+    \\    ) ON DELETE RESTRICT,
+    \\    FOREIGN KEY (
+    \\        taxpayer_year_profile_id, taxpayer_year_tax_year,
+    \\        taxpayer_year_revision_id, taxpayer_year_revision_sequence
+    \\    ) REFERENCES tax_profile_taxpayer_year_revisions (
+    \\        profile_id, tax_year, id, sequence
+    \\    ) ON DELETE RESTRICT,
+    \\    FOREIGN KEY (
+    \\        form_profile_profile_id, form_profile_tax_year,
+    \\        form_profile_form_code, form_profile_form_revision,
+    \\        form_profile_revision_id, form_profile_revision_sequence
+    \\    ) REFERENCES tax_profile_form_profile_revisions (
+    \\        profile_id, tax_year, form_code, form_revision, id, sequence
+    \\    ) ON DELETE RESTRICT,
+    \\    CHECK (
+    \\        (taxpayer_year_profile_id IS NULL AND
+    \\            taxpayer_year_tax_year IS NULL AND
+    \\            taxpayer_year_revision_id IS NULL AND
+    \\            taxpayer_year_revision_sequence IS NULL) OR
+    \\        (taxpayer_year_profile_id IS NOT NULL AND
+    \\            taxpayer_year_tax_year = tax_year AND
+    \\            taxpayer_year_revision_id IS NOT NULL AND
+    \\            taxpayer_year_revision_sequence > 0)
+    \\    ),
+    \\    CHECK (
+    \\        (form_profile_profile_id IS NULL AND
+    \\            form_profile_tax_year IS NULL AND
+    \\            form_profile_form_code IS NULL AND
+    \\            form_profile_form_revision IS NULL AND
+    \\            form_profile_revision_id IS NULL AND
+    \\            form_profile_revision_sequence IS NULL AND
+    \\            form_profile_spec_revision IS NULL AND
+    \\            form_profile_spec_hash IS NULL) OR
+    \\        (form_profile_profile_id = owner_profile_id AND
+    \\            form_profile_tax_year = tax_year AND
+    \\            form_profile_form_code = form_code AND
+    \\            form_profile_form_revision = form_revision AND
+    \\            form_profile_revision_id IS NOT NULL AND
+    \\            form_profile_revision_sequence > 0 AND
+    \\            form_profile_spec_revision = setup_spec_revision AND
+    \\            form_profile_spec_hash = setup_spec_hash)
+    \\    )
+    \\);
+    \\CREATE TRIGGER tax_form_draft_provenance_identity_guard
+    \\BEFORE INSERT ON tax_form_draft_provenance
+    \\WHEN NOT EXISTS (
+    \\    SELECT 1 FROM tax_form_drafts draft
+    \\    WHERE draft.id = NEW.draft_id
+    \\      AND draft.form_code = NEW.form_code
+    \\      AND draft.form_revision = NEW.form_revision
+    \\      AND substr(draft.period_key, 1, 4) =
+    \\          printf('%04d', NEW.tax_year)
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'draft provenance identity mismatch');
+    \\END;
+    \\CREATE TRIGGER tax_form_draft_provenance_forms_set_guard
+    \\BEFORE INSERT ON tax_form_draft_provenance
+    \\WHEN NOT EXISTS (
+    \\    SELECT 1 FROM tax_profile_form_set_decisions decision
+    \\    WHERE decision.profile_id = NEW.owner_profile_id
+    \\      AND decision.tax_year = NEW.tax_year
+    \\      AND decision.form_code = NEW.form_code
+    \\      AND decision.form_revision = NEW.form_revision
+    \\      AND decision.id = NEW.forms_set_decision_id
+    \\      AND decision.sequence = NEW.forms_set_decision_sequence
+    \\      AND decision.source_tag = NEW.forms_set_source_tag
+    \\      AND decision.evidence_reference IS
+    \\          NEW.forms_set_evidence_reference
+    \\      AND decision.review_state = 'confirmed'
+    \\      AND decision.decision_state = 'active'
+    \\      AND decision.effective_from <=
+    \\          NEW.forms_set_applicability_date
+    \\      AND NEW.forms_set_applicability_date <= COALESCE(
+    \\          decision.effective_until,
+    \\          printf('%04d-12-31', decision.tax_year)
+    \\      )
+    \\      AND NOT EXISTS (
+    \\          SELECT 1 FROM tax_profile_form_set_decisions later
+    \\          WHERE later.profile_id = decision.profile_id
+    \\            AND later.tax_year = decision.tax_year
+    \\            AND later.form_code = decision.form_code
+    \\            AND later.form_revision = decision.form_revision
+    \\            AND later.supersedes_id = decision.id
+    \\      )
+    \\      AND (
+    \\          decision.decision_scope = 'interval' OR NOT EXISTS (
+    \\              SELECT 1
+    \\              FROM tax_profile_form_set_decisions interval
+    \\              WHERE interval.profile_id = decision.profile_id
+    \\                AND interval.tax_year = decision.tax_year
+    \\                AND interval.form_code = decision.form_code
+    \\                AND interval.form_revision = decision.form_revision
+    \\                AND interval.review_state = 'confirmed'
+    \\                AND interval.decision_scope = 'interval'
+    \\                AND interval.effective_from <=
+    \\                    NEW.forms_set_applicability_date
+    \\                AND NEW.forms_set_applicability_date <= COALESCE(
+    \\                    interval.effective_until,
+    \\                    printf('%04d-12-31', interval.tax_year)
+    \\                )
+    \\                AND NOT EXISTS (
+    \\                    SELECT 1
+    \\                    FROM tax_profile_form_set_decisions later_interval
+    \\                    WHERE later_interval.profile_id = interval.profile_id
+    \\                      AND later_interval.tax_year = interval.tax_year
+    \\                      AND later_interval.form_code = interval.form_code
+    \\                      AND later_interval.form_revision =
+    \\                          interval.form_revision
+    \\                      AND later_interval.supersedes_id = interval.id
+    \\                )
+    \\          )
+    \\      )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid draft Forms Set provenance');
+    \\END;
+    \\CREATE TRIGGER tax_form_draft_provenance_form_profile_guard
+    \\BEFORE INSERT ON tax_form_draft_provenance
+    \\WHEN NEW.form_profile_revision_id IS NOT NULL AND NOT EXISTS (
+    \\    SELECT 1 FROM tax_profile_form_profile_revisions revision
+    \\    WHERE revision.profile_id = NEW.form_profile_profile_id
+    \\      AND revision.tax_year = NEW.form_profile_tax_year
+    \\      AND revision.form_code = NEW.form_profile_form_code
+    \\      AND revision.form_revision = NEW.form_profile_form_revision
+    \\      AND revision.id = NEW.form_profile_revision_id
+    \\      AND revision.sequence = NEW.form_profile_revision_sequence
+    \\      AND revision.spec_revision = NEW.form_profile_spec_revision
+    \\      AND revision.spec_hash = NEW.form_profile_spec_hash
+    \\      AND revision.review_state = 'confirmed'
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid draft Tax Form Profile provenance');
+    \\END;
+    \\CREATE TRIGGER tax_form_draft_provenance_update_guard
+    \\BEFORE UPDATE ON tax_form_draft_provenance
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'draft provenance is immutable');
+    \\END;
+    \\CREATE TRIGGER tax_form_draft_provenance_delete_guard
+    \\BEFORE DELETE ON tax_form_draft_provenance
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'draft provenance is permanent');
+    \\END;
+    \\
+    \\CREATE TABLE tax_form_draft_provenance_taxpayer_revisions (
+    \\    draft_id TEXT NOT NULL
+    \\        REFERENCES tax_form_draft_provenance(draft_id)
+    \\        ON DELETE RESTRICT,
+    \\    ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 9),
+    \\    role TEXT NOT NULL CHECK (role IN (
+    \\        'filer', 'spouse', 'filing', 'payment', 'preparer',
+    \\        'employer', 'withholding_agent', 'attachment', 'evidence',
+    \\        'system'
+    \\    )),
+    \\    profile_id TEXT NOT NULL,
+    \\    revision_id TEXT NOT NULL,
+    \\    revision_sequence INTEGER NOT NULL CHECK (
+    \\        revision_sequence > 0 AND revision_sequence <= 4294967295
+    \\    ),
+    \\    PRIMARY KEY (draft_id, ordinal),
+    \\    UNIQUE (draft_id, role),
+    \\    FOREIGN KEY (profile_id, revision_id, revision_sequence)
+    \\        REFERENCES tax_profile_revisions(profile_id, id, sequence)
+    \\        ON DELETE RESTRICT
+    \\);
+    \\CREATE TRIGGER tax_form_draft_provenance_taxpayer_update_guard
+    \\BEFORE UPDATE ON tax_form_draft_provenance_taxpayer_revisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'draft taxpayer provenance is immutable');
+    \\END;
+    \\CREATE TRIGGER tax_form_draft_provenance_taxpayer_delete_guard
+    \\BEFORE DELETE ON tax_form_draft_provenance_taxpayer_revisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'draft taxpayer provenance is permanent');
+    \\END;
+    \\
+    \\CREATE TABLE tax_form_draft_provenance_components (
+    \\    draft_id TEXT NOT NULL
+    \\        REFERENCES tax_form_draft_provenance(draft_id)
+    \\        ON DELETE RESTRICT,
+    \\    ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 31),
+    \\    component_kind TEXT NOT NULL CHECK (component_kind IN (
+    \\        'business_activity', 'registration_obligation'
+    \\    )),
+    \\    role TEXT NOT NULL CHECK (role IN (
+    \\        'filer', 'spouse', 'filing', 'payment', 'preparer',
+    \\        'employer', 'withholding_agent', 'attachment', 'evidence',
+    \\        'system'
+    \\    )),
+    \\    profile_id TEXT NOT NULL,
+    \\    anchor_id TEXT NOT NULL,
+    \\    revision_id TEXT NOT NULL,
+    \\    revision_sequence INTEGER NOT NULL CHECK (
+    \\        revision_sequence > 0 AND revision_sequence <= 4294967295
+    \\    ),
+    \\    PRIMARY KEY (draft_id, ordinal),
+    \\    UNIQUE (draft_id, component_kind, role, anchor_id),
+    \\    FOREIGN KEY (profile_id, revision_id)
+    \\        REFERENCES tax_profile_registration_component_revisions(
+    \\            profile_id, id
+    \\        ) ON DELETE RESTRICT
+    \\);
+    \\CREATE TRIGGER tax_form_draft_provenance_component_guard
+    \\BEFORE INSERT ON tax_form_draft_provenance_components
+    \\WHEN NOT EXISTS (
+    \\    SELECT 1
+    \\    FROM tax_profile_registration_component_revisions revision
+    \\    JOIN tax_form_draft_provenance_taxpayer_revisions taxpayer
+    \\      ON taxpayer.draft_id = NEW.draft_id
+    \\     AND taxpayer.role = NEW.role
+    \\     AND taxpayer.profile_id = NEW.profile_id
+    \\    WHERE revision.profile_id = NEW.profile_id
+    \\      AND revision.id = NEW.revision_id
+    \\      AND revision.component_kind = NEW.component_kind
+    \\      AND revision.anchor_id = NEW.anchor_id
+    \\      AND revision.component_sequence = NEW.revision_sequence
+    \\      AND revision.record_state = 'present'
+    \\      AND revision.review_state = 'confirmed'
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid draft registration provenance');
+    \\END;
+    \\CREATE TRIGGER tax_form_draft_provenance_component_update_guard
+    \\BEFORE UPDATE ON tax_form_draft_provenance_components
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'draft component provenance is immutable');
+    \\END;
+    \\CREATE TRIGGER tax_form_draft_provenance_component_delete_guard
+    \\BEFORE DELETE ON tax_form_draft_provenance_components
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'draft component provenance is permanent');
+    \\END;
+    \\
+    \\CREATE TABLE tax_form_draft_provenance_sources (
+    \\    draft_id TEXT NOT NULL
+    \\        REFERENCES tax_form_draft_provenance(draft_id)
+    \\        ON DELETE RESTRICT,
+    \\    ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 95),
+    \\    source_kind TEXT NOT NULL CHECK (source_kind IN (
+    \\        'taxpayer_fact', 'taxpayer_year_setting',
+    \\        'tax_form_profile_value', 'business_activity_fact',
+    \\        'registration_obligation_fact'
+    \\    )),
+    \\    role TEXT NOT NULL CHECK (role IN (
+    \\        'filer', 'spouse', 'filing', 'payment', 'preparer',
+    \\        'employer', 'withholding_agent', 'attachment', 'evidence',
+    \\        'system'
+    \\    )),
+    \\    source_key TEXT NOT NULL CHECK (
+    \\        (source_kind = 'taxpayer_fact' AND source_key IN (
+    \\            'tin', 'rdo_code', 'taxpayer_name', 'registered_name',
+    \\            'trade_name', 'registered_address', 'zip_code',
+    \\            'contact_number', 'email_address', 'subject_kind',
+    \\            'natural_person_classification'
+    \\        )) OR
+    \\        (source_kind = 'taxpayer_year_setting' AND source_key IN (
+    \\            'income_tax_rate_election', 'deduction_method'
+    \\        )) OR
+    \\        (source_kind = 'tax_form_profile_value' AND source_key IN (
+    \\            'business_activity_anchor_id', 'spouse_profile_id',
+    \\            'spouse_business_activity_anchor_id',
+    \\            'special_rate_obligation_anchor_id'
+    \\        )) OR
+    \\        (source_kind = 'business_activity_fact' AND source_key IN (
+    \\            'line_of_business', 'atc'
+    \\        )) OR
+    \\        (source_kind = 'registration_obligation_fact' AND
+    \\            source_key = 'registration_kind')
+    \\    ),
+    \\    anchor_id TEXT,
+    \\    value_kind TEXT NOT NULL CHECK (value_kind IN (
+    \\        'text', 'choice', 'boolean', 'integer', 'date', 'year',
+    \\        'profile_id', 'business_activity_anchor_id',
+    \\        'registration_obligation_anchor_id',
+    \\        'income_tax_rate_election', 'deduction_method'
+    \\    )),
+    \\    value_text TEXT,
+    \\    value_integer INTEGER,
+    \\    PRIMARY KEY (draft_id, ordinal),
+    \\    CHECK (
+    \\        (source_kind IN (
+    \\            'business_activity_fact',
+    \\            'registration_obligation_fact'
+    \\        ) AND length(trim(anchor_id)) > 0) OR
+    \\        (source_kind NOT IN (
+    \\            'business_activity_fact',
+    \\            'registration_obligation_fact'
+    \\        ) AND anchor_id IS NULL)
+    \\    ),
+    \\    CHECK (
+    \\        (value_kind IN (
+    \\            'text', 'choice', 'date', 'profile_id',
+    \\            'business_activity_anchor_id',
+    \\            'registration_obligation_anchor_id',
+    \\            'income_tax_rate_election', 'deduction_method'
+    \\        ) AND value_text IS NOT NULL AND value_integer IS NULL) OR
+    \\        (value_kind IN ('boolean', 'integer', 'year') AND
+    \\            value_text IS NULL AND value_integer IS NOT NULL)
+    \\    ),
+    \\    CHECK (value_kind <> 'boolean' OR value_integer IN (0, 1)),
+    \\    CHECK (value_kind <> 'year' OR value_integer BETWEEN 0 AND 65535),
+    \\    CHECK (value_kind <> 'date' OR length(value_text) = 10),
+    \\    CHECK (value_kind <> 'income_tax_rate_election' OR value_text IN (
+    \\        'graduated', 'eight_percent'
+    \\    )),
+    \\    CHECK (value_kind <> 'deduction_method' OR value_text IN (
+    \\        'itemized_deduction', 'optional_standard_deduction'
+    \\    ))
+    \\);
+    \\CREATE UNIQUE INDEX tax_form_draft_provenance_source_key_unique
+    \\    ON tax_form_draft_provenance_sources (
+    \\        draft_id, source_kind, role, source_key,
+    \\        COALESCE(anchor_id, '')
+    \\    );
+    \\CREATE TRIGGER tax_form_draft_provenance_source_update_guard
+    \\BEFORE UPDATE ON tax_form_draft_provenance_sources
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'draft source provenance is immutable');
+    \\END;
+    \\CREATE TRIGGER tax_form_draft_provenance_source_delete_guard
+    \\BEFORE DELETE ON tax_form_draft_provenance_sources
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'draft source provenance is permanent');
+    \\END;
+    \\
+    \\CREATE TABLE tax_form_draft_provenance_transaction_seeds (
+    \\    draft_id TEXT NOT NULL
+    \\        REFERENCES tax_form_draft_provenance(draft_id)
+    \\        ON DELETE RESTRICT,
+    \\    ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 31),
+    \\    filing_field TEXT NOT NULL CHECK (
+    \\        length(filing_field) BETWEEN 1 AND 96 AND
+    \\        filing_field = trim(filing_field)
+    \\    ),
+    \\    source_kind TEXT NOT NULL CHECK (
+    \\        source_kind = 'tax_form_profile_value'
+    \\    ),
+    \\    role TEXT NOT NULL CHECK (role IN (
+    \\        'filer', 'spouse', 'filing', 'payment', 'preparer',
+    \\        'employer', 'withholding_agent', 'attachment', 'evidence',
+    \\        'system'
+    \\    )),
+    \\    source_key TEXT NOT NULL CHECK (source_key IN (
+    \\        'business_activity_anchor_id', 'spouse_profile_id',
+    \\        'spouse_business_activity_anchor_id',
+    \\        'special_rate_obligation_anchor_id'
+    \\    )),
+    \\    anchor_id TEXT,
+    \\    seed_source_kind TEXT NOT NULL CHECK (seed_source_kind IN (
+    \\        'tax_form_profile_revision', 'catalog_default'
+    \\    )),
+    \\    seed_revision_id TEXT,
+    \\    seed_catalog_revision TEXT,
+    \\    seed_catalog_sha256 TEXT,
+    \\    value_kind TEXT NOT NULL CHECK (value_kind IN (
+    \\        'text', 'choice', 'boolean', 'integer', 'date', 'year',
+    \\        'profile_id', 'business_activity_anchor_id',
+    \\        'registration_obligation_anchor_id',
+    \\        'income_tax_rate_election', 'deduction_method'
+    \\    )),
+    \\    value_text TEXT,
+    \\    value_integer INTEGER,
+    \\    PRIMARY KEY (draft_id, ordinal),
+    \\    UNIQUE (draft_id, filing_field),
+    \\    UNIQUE (draft_id, source_kind, role, source_key),
+    \\    CHECK (anchor_id IS NULL),
+    \\    CHECK (
+    \\        (seed_source_kind = 'tax_form_profile_revision' AND
+    \\            length(trim(seed_revision_id)) > 0 AND
+    \\            seed_catalog_revision IS NULL AND
+    \\            seed_catalog_sha256 IS NULL) OR
+    \\        (seed_source_kind = 'catalog_default' AND
+    \\            seed_revision_id IS NULL AND
+    \\            length(seed_catalog_revision) BETWEEN 1 AND 64 AND
+    \\            length(seed_catalog_sha256) = 64)
+    \\    ),
+    \\    CHECK (
+    \\        (value_kind IN (
+    \\            'text', 'choice', 'date', 'profile_id',
+    \\            'business_activity_anchor_id',
+    \\            'registration_obligation_anchor_id',
+    \\            'income_tax_rate_election', 'deduction_method'
+    \\        ) AND value_text IS NOT NULL AND value_integer IS NULL) OR
+    \\        (value_kind IN ('boolean', 'integer', 'year') AND
+    \\            value_text IS NULL AND value_integer IS NOT NULL)
+    \\    ),
+    \\    CHECK (value_kind <> 'boolean' OR value_integer IN (0, 1)),
+    \\    CHECK (value_kind <> 'year' OR value_integer BETWEEN 0 AND 65535),
+    \\    CHECK (value_kind <> 'date' OR length(value_text) = 10),
+    \\    CHECK (value_kind <> 'income_tax_rate_election' OR value_text IN (
+    \\        'graduated', 'eight_percent'
+    \\    )),
+    \\    CHECK (value_kind <> 'deduction_method' OR value_text IN (
+    \\        'itemized_deduction', 'optional_standard_deduction'
+    \\    ))
+    \\);
+    \\CREATE TRIGGER tax_form_draft_provenance_seed_source_guard
+    \\BEFORE INSERT ON tax_form_draft_provenance_transaction_seeds
+    \\WHEN NOT EXISTS (
+    \\    SELECT 1 FROM tax_form_draft_provenance provenance
+    \\    WHERE provenance.draft_id = NEW.draft_id AND (
+    \\        (NEW.seed_source_kind = 'tax_form_profile_revision' AND
+    \\            provenance.form_profile_revision_id =
+    \\                NEW.seed_revision_id) OR
+    \\        (NEW.seed_source_kind = 'catalog_default' AND
+    \\            provenance.catalog_revision =
+    \\                NEW.seed_catalog_revision AND
+    \\            provenance.catalog_sha256 = NEW.seed_catalog_sha256)
+    \\    )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid draft transaction seed source');
+    \\END;
+    \\CREATE TRIGGER tax_form_draft_provenance_seed_update_guard
+    \\BEFORE UPDATE ON tax_form_draft_provenance_transaction_seeds
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'draft transaction seed is immutable');
+    \\END;
+    \\CREATE TRIGGER tax_form_draft_provenance_seed_delete_guard
+    \\BEFORE DELETE ON tax_form_draft_provenance_transaction_seeds
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'draft transaction seed is permanent');
+    \\END;
+;
+
+/// SQLite cannot alter an existing table-level CHECK in place. Rebuild the
+/// Tax Form Profile parent while foreign-key enforcement is temporarily off;
+/// `migrateToV18` uses legacy rename behavior so child FK declarations and
+/// trigger bodies continue to target the canonical table name. Immutable
+/// rowids and timestamps are copied explicitly, then every named index and
+/// append-only guard is restored before `foreign_key_check` is allowed to
+/// pass and the transaction commits.
+const schema_v18 =
+    \\DROP TRIGGER tax_profile_form_profile_sequence_guard;
+    \\DROP TRIGGER tax_profile_form_profile_overlap_guard;
+    \\DROP TRIGGER tax_profile_form_profile_revisions_update_guard;
+    \\DROP TRIGGER tax_profile_form_profile_revisions_delete_guard;
+    \\DROP INDEX tax_profile_form_profile_effective_idx;
+    \\ALTER TABLE tax_profile_form_profile_revisions
+    \\    RENAME TO tax_profile_form_profile_revisions_v17_migration;
+    \\CREATE TABLE tax_profile_form_profile_revisions (
+    \\    profile_id TEXT NOT NULL
+    \\        REFERENCES tax_profiles(id) ON DELETE RESTRICT,
+    \\    tax_year INTEGER NOT NULL CHECK (tax_year BETWEEN 1 AND 9999),
+    \\    form_code TEXT NOT NULL CHECK (length(trim(form_code)) > 0),
+    \\    form_revision TEXT NOT NULL CHECK (
+    \\        length(trim(form_revision)) > 0
+    \\    ),
+    \\    id TEXT NOT NULL CHECK (
+    \\        length(id) BETWEEN 1 AND 64 AND id = trim(id)
+    \\    ),
+    \\    sequence INTEGER NOT NULL CHECK (
+    \\        sequence > 0 AND sequence <= 4294967295
+    \\    ),
+    \\    effective_from TEXT NOT NULL CHECK (
+    \\        length(effective_from) = 10 AND
+    \\        substr(effective_from, 1, 4) = printf('%04d', tax_year)
+    \\    ),
+    \\    effective_until TEXT CHECK (
+    \\        effective_until IS NULL OR (
+    \\            length(effective_until) = 10 AND
+    \\            substr(effective_until, 1, 4) = printf('%04d', tax_year) AND
+    \\            effective_from <= effective_until
+    \\        )
+    \\    ),
+    \\    spec_revision INTEGER NOT NULL CHECK (spec_revision > 0),
+    \\    spec_hash TEXT NOT NULL CHECK (length(trim(spec_hash)) > 0),
+    \\    review_state TEXT NOT NULL CHECK (
+    \\        review_state IN ('requires_review', 'confirmed')
+    \\    ),
+    \\    confirmed_at_unix_seconds INTEGER,
+    \\    source_tag TEXT NOT NULL CHECK (source_tag IN (
+    \\        'manual_entry', 'copied_from_prior_year', 'migrated'
+    \\    )),
+    \\    source_reference TEXT,
+    \\    copy_source_tax_year INTEGER,
+    \\    copy_source_revision_id TEXT,
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    PRIMARY KEY (
+    \\        profile_id, tax_year, form_code, form_revision, id
+    \\    ),
+    \\    UNIQUE (
+    \\        profile_id, tax_year, form_code, form_revision, sequence
+    \\    ),
+    \\    UNIQUE (
+    \\        profile_id, tax_year, form_code, form_revision, id, sequence
+    \\    ),
+    \\    FOREIGN KEY (
+    \\        profile_id, copy_source_tax_year, form_code, form_revision,
+    \\        copy_source_revision_id
+    \\    ) REFERENCES tax_profile_form_profile_revisions (
+    \\        profile_id, tax_year, form_code, form_revision, id
+    \\    ) ON DELETE RESTRICT,
+    \\    CHECK (
+    \\        (review_state = 'requires_review' AND
+    \\            confirmed_at_unix_seconds IS NULL) OR
+    \\        (review_state = 'confirmed' AND
+    \\            confirmed_at_unix_seconds IS NOT NULL)
+    \\    ),
+    \\    CHECK (
+    \\        (source_tag = 'manual_entry' AND
+    \\            source_reference IS NULL AND
+    \\            copy_source_tax_year IS NULL AND
+    \\            copy_source_revision_id IS NULL) OR
+    \\        (source_tag = 'migrated' AND
+    \\            length(trim(source_reference)) > 0 AND
+    \\            copy_source_tax_year IS NULL AND
+    \\            copy_source_revision_id IS NULL) OR
+    \\        (source_tag = 'copied_from_prior_year' AND
+    \\            source_reference IS NULL AND
+    \\            copy_source_tax_year < tax_year AND
+    \\            length(trim(copy_source_revision_id)) > 0)
+    \\    )
+    \\);
+    \\INSERT INTO tax_profile_form_profile_revisions (
+    \\    rowid, profile_id, tax_year, form_code, form_revision, id,
+    \\    sequence, effective_from, effective_until, spec_revision,
+    \\    spec_hash, review_state, confirmed_at_unix_seconds, source_tag,
+    \\    source_reference, copy_source_tax_year, copy_source_revision_id,
+    \\    created_at
+    \\)
+    \\SELECT rowid, profile_id, tax_year, form_code, form_revision, id,
+    \\       sequence, effective_from, effective_until, spec_revision,
+    \\       spec_hash, review_state, confirmed_at_unix_seconds, source_tag,
+    \\       source_reference, copy_source_tax_year,
+    \\       copy_source_revision_id, created_at
+    \\FROM tax_profile_form_profile_revisions_v17_migration
+    \\ORDER BY rowid;
+    \\DROP TABLE tax_profile_form_profile_revisions_v17_migration;
+    \\CREATE INDEX tax_profile_form_profile_effective_idx
+    \\    ON tax_profile_form_profile_revisions (
+    \\        profile_id, tax_year, form_code, form_revision,
+    \\        effective_from, effective_until
+    \\    );
+    \\CREATE TRIGGER tax_profile_form_profile_sequence_guard
+    \\BEFORE INSERT ON tax_profile_form_profile_revisions
+    \\WHEN NEW.sequence <> COALESCE((
+    \\    SELECT MAX(sequence) + 1
+    \\    FROM tax_profile_form_profile_revisions
+    \\    WHERE profile_id = NEW.profile_id AND tax_year = NEW.tax_year
+    \\      AND form_code = NEW.form_code
+    \\      AND form_revision = NEW.form_revision
+    \\), 1)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid Tax Form Profile revision sequence');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_profile_overlap_guard
+    \\BEFORE INSERT ON tax_profile_form_profile_revisions
+    \\WHEN EXISTS (
+    \\    SELECT 1 FROM tax_profile_form_profile_revisions AS prior
+    \\    WHERE prior.profile_id = NEW.profile_id
+    \\      AND prior.tax_year = NEW.tax_year
+    \\      AND prior.form_code = NEW.form_code
+    \\      AND prior.form_revision = NEW.form_revision
+    \\      AND prior.effective_from <= COALESCE(
+    \\          NEW.effective_until, printf('%04d-12-31', NEW.tax_year)
+    \\      )
+    \\      AND NEW.effective_from <= COALESCE(
+    \\          prior.effective_until, printf('%04d-12-31', prior.tax_year)
+    \\      )
+    \\      AND NOT (
+    \\          prior.effective_from = NEW.effective_from AND
+    \\          COALESCE(
+    \\              prior.effective_until,
+    \\              printf('%04d-12-31', prior.tax_year)
+    \\          ) = COALESCE(
+    \\              NEW.effective_until,
+    \\              printf('%04d-12-31', NEW.tax_year)
+    \\          )
+    \\      )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'overlapping Tax Form Profile revisions');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_profile_revisions_update_guard
+    \\BEFORE UPDATE ON tax_profile_form_profile_revisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'Tax Form Profile revisions are append-only');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_profile_revisions_delete_guard
+    \\BEFORE DELETE ON tax_profile_form_profile_revisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'Tax Form Profile revisions are permanent');
+    \\END;
+;
+
+/// Additive exact-revision provenance. Pre-v19 exact rows deliberately have
+/// no parent row and therefore load as legacy/absent. The normalized children
+/// use the same closed semantic/value vocabulary as the v17 coarse-draft
+/// provenance tables; no JSON or free-text key/value encoding is accepted.
+const schema_v19 =
+    \\CREATE TABLE tax_exact_draft_revision_provenance (
+    \\    workspace_id BLOB NOT NULL CHECK (
+    \\        typeof(workspace_id) = 'blob' AND length(workspace_id) = 16
+    \\    ),
+    \\    exact_schema_digest BLOB NOT NULL CHECK (
+    \\        typeof(exact_schema_digest) = 'blob' AND
+    \\        length(exact_schema_digest) = 32
+    \\    ),
+    \\    revision INTEGER NOT NULL CHECK (revision BETWEEN 1 AND 64),
+    \\    provenance_digest BLOB NOT NULL CHECK (
+    \\        typeof(provenance_digest) = 'blob' AND
+    \\        length(provenance_digest) = 32
+    \\    ),
+    \\    owner_profile_id TEXT NOT NULL,
+    \\    tax_year INTEGER NOT NULL CHECK (tax_year BETWEEN 1 AND 9999),
+    \\    form_code TEXT NOT NULL CHECK (length(trim(form_code)) > 0),
+    \\    form_revision TEXT NOT NULL CHECK (
+    \\        length(trim(form_revision)) > 0
+    \\    ),
+    \\    catalog_revision TEXT NOT NULL CHECK (
+    \\        length(catalog_revision) BETWEEN 1 AND 64
+    \\    ),
+    \\    catalog_sha256 TEXT NOT NULL CHECK (length(catalog_sha256) = 64),
+    \\    setup_spec_revision INTEGER NOT NULL CHECK (
+    \\        setup_spec_revision > 0
+    \\    ),
+    \\    setup_spec_hash TEXT NOT NULL CHECK (length(setup_spec_hash) = 64),
+    \\    forms_set_decision_id TEXT NOT NULL,
+    \\    forms_set_decision_sequence INTEGER NOT NULL CHECK (
+    \\        forms_set_decision_sequence > 0
+    \\    ),
+    \\    forms_set_source_tag TEXT NOT NULL CHECK (
+    \\        forms_set_source_tag IN ('manual', 'imported', 'cor')
+    \\    ),
+    \\    forms_set_evidence_reference TEXT,
+    \\    forms_set_applicability_date TEXT NOT NULL CHECK (
+    \\        length(forms_set_applicability_date) = 10
+    \\    ),
+    \\    taxpayer_year_profile_id TEXT,
+    \\    taxpayer_year_tax_year INTEGER,
+    \\    taxpayer_year_revision_id TEXT,
+    \\    taxpayer_year_revision_sequence INTEGER,
+    \\    form_profile_profile_id TEXT,
+    \\    form_profile_tax_year INTEGER,
+    \\    form_profile_form_code TEXT,
+    \\    form_profile_form_revision TEXT,
+    \\    form_profile_revision_id TEXT,
+    \\    form_profile_revision_sequence INTEGER,
+    \\    form_profile_spec_revision INTEGER,
+    \\    form_profile_spec_hash TEXT,
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    PRIMARY KEY (workspace_id, exact_schema_digest, revision),
+    \\    FOREIGN KEY (workspace_id, exact_schema_digest, revision)
+    \\        REFERENCES tax_exact_draft_revisions(
+    \\            workspace_id, exact_schema_digest, revision
+    \\        ) ON DELETE RESTRICT,
+    \\    FOREIGN KEY (
+    \\        owner_profile_id, tax_year, form_code, form_revision,
+    \\        forms_set_decision_id
+    \\    ) REFERENCES tax_profile_form_set_decisions (
+    \\        profile_id, tax_year, form_code, form_revision, id
+    \\    ) ON DELETE RESTRICT,
+    \\    FOREIGN KEY (
+    \\        taxpayer_year_profile_id, taxpayer_year_tax_year,
+    \\        taxpayer_year_revision_id, taxpayer_year_revision_sequence
+    \\    ) REFERENCES tax_profile_taxpayer_year_revisions (
+    \\        profile_id, tax_year, id, sequence
+    \\    ) ON DELETE RESTRICT,
+    \\    FOREIGN KEY (
+    \\        form_profile_profile_id, form_profile_tax_year,
+    \\        form_profile_form_code, form_profile_form_revision,
+    \\        form_profile_revision_id, form_profile_revision_sequence
+    \\    ) REFERENCES tax_profile_form_profile_revisions (
+    \\        profile_id, tax_year, form_code, form_revision, id, sequence
+    \\    ) ON DELETE RESTRICT,
+    \\    CHECK (
+    \\        (taxpayer_year_profile_id IS NULL AND
+    \\            taxpayer_year_tax_year IS NULL AND
+    \\            taxpayer_year_revision_id IS NULL AND
+    \\            taxpayer_year_revision_sequence IS NULL) OR
+    \\        (taxpayer_year_profile_id = owner_profile_id AND
+    \\            taxpayer_year_tax_year = tax_year AND
+    \\            taxpayer_year_revision_id IS NOT NULL AND
+    \\            taxpayer_year_revision_sequence > 0)
+    \\    ),
+    \\    CHECK (
+    \\        (form_profile_profile_id IS NULL AND
+    \\            form_profile_tax_year IS NULL AND
+    \\            form_profile_form_code IS NULL AND
+    \\            form_profile_form_revision IS NULL AND
+    \\            form_profile_revision_id IS NULL AND
+    \\            form_profile_revision_sequence IS NULL AND
+    \\            form_profile_spec_revision IS NULL AND
+    \\            form_profile_spec_hash IS NULL) OR
+    \\        (form_profile_profile_id = owner_profile_id AND
+    \\            form_profile_tax_year = tax_year AND
+    \\            form_profile_form_code = form_code AND
+    \\            form_profile_form_revision = form_revision AND
+    \\            form_profile_revision_id IS NOT NULL AND
+    \\            form_profile_revision_sequence > 0 AND
+    \\            form_profile_spec_revision = setup_spec_revision AND
+    \\            form_profile_spec_hash = setup_spec_hash)
+    \\    )
+    \\);
+    \\CREATE TRIGGER tax_exact_draft_provenance_identity_guard
+    \\BEFORE INSERT ON tax_exact_draft_revision_provenance
+    \\WHEN NOT EXISTS (
+    \\    SELECT 1
+    \\    FROM tax_exact_draft_revisions revision
+    \\    JOIN tax_exact_draft_streams stream
+    \\      ON stream.workspace_id = revision.workspace_id
+    \\     AND stream.exact_schema_digest = revision.exact_schema_digest
+    \\    JOIN tax_exact_draft_revision_bindings filer
+    \\      ON filer.workspace_id = revision.workspace_id
+    \\     AND filer.exact_schema_digest = revision.exact_schema_digest
+    \\     AND filer.revision = revision.revision
+    \\     AND filer.role = 'filer'
+    \\    WHERE revision.workspace_id = NEW.workspace_id
+    \\      AND revision.exact_schema_digest = NEW.exact_schema_digest
+    \\      AND revision.revision = NEW.revision
+    \\      AND stream.filer_profile_id = NEW.owner_profile_id
+    \\      AND filer.profile_id = NEW.owner_profile_id
+    \\      AND stream.form_code = NEW.form_code
+    \\      AND stream.form_revision = NEW.form_revision
+    \\      AND revision.package_form_code = NEW.form_code
+    \\      AND revision.package_form_revision = NEW.form_revision
+    \\      AND substr(stream.period_key, 1, 4) =
+    \\          printf('%04d', NEW.tax_year)
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'exact draft provenance identity mismatch');
+    \\END;
+    \\CREATE TRIGGER tax_exact_draft_provenance_workspace_guard
+    \\BEFORE INSERT ON tax_exact_draft_revision_provenance
+    \\WHEN EXISTS (
+    \\    SELECT 1 FROM tax_exact_draft_revision_provenance prior
+    \\    WHERE prior.workspace_id = NEW.workspace_id
+    \\      AND prior.provenance_digest <> NEW.provenance_digest
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'exact workspace provenance changed');
+    \\END;
+    \\CREATE TRIGGER tax_exact_draft_provenance_forms_set_guard
+    \\BEFORE INSERT ON tax_exact_draft_revision_provenance
+    \\WHEN NOT EXISTS (
+    \\    SELECT 1 FROM tax_profile_form_set_decisions decision
+    \\    WHERE decision.profile_id = NEW.owner_profile_id
+    \\      AND decision.tax_year = NEW.tax_year
+    \\      AND decision.form_code = NEW.form_code
+    \\      AND decision.form_revision = NEW.form_revision
+    \\      AND decision.id = NEW.forms_set_decision_id
+    \\      AND decision.sequence = NEW.forms_set_decision_sequence
+    \\      AND decision.source_tag = NEW.forms_set_source_tag
+    \\      AND decision.evidence_reference IS
+    \\          NEW.forms_set_evidence_reference
+    \\      AND decision.review_state = 'confirmed'
+    \\      AND decision.decision_state = 'active'
+    \\      AND decision.effective_from <= NEW.forms_set_applicability_date
+    \\      AND NEW.forms_set_applicability_date <= COALESCE(
+    \\          decision.effective_until,
+    \\          printf('%04d-12-31', decision.tax_year)
+    \\      )
+    \\      AND (
+    \\          NOT EXISTS (
+    \\              SELECT 1 FROM tax_profile_form_set_decisions later
+    \\              WHERE later.profile_id = decision.profile_id
+    \\                AND later.tax_year = decision.tax_year
+    \\                AND later.form_code = decision.form_code
+    \\                AND later.form_revision = decision.form_revision
+    \\                AND later.supersedes_id = decision.id
+    \\          ) OR EXISTS (
+    \\              SELECT 1
+    \\              FROM tax_exact_draft_revision_provenance frozen
+    \\              WHERE frozen.workspace_id = NEW.workspace_id
+    \\                AND frozen.provenance_digest =
+    \\                    NEW.provenance_digest
+    \\                AND frozen.forms_set_decision_id = decision.id
+    \\                AND frozen.forms_set_decision_sequence =
+    \\                    decision.sequence
+    \\          )
+    \\      )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid exact draft Forms Set provenance');
+    \\END;
+    \\CREATE TRIGGER tax_exact_draft_provenance_year_guard
+    \\BEFORE INSERT ON tax_exact_draft_revision_provenance
+    \\WHEN NEW.taxpayer_year_revision_id IS NOT NULL AND NOT EXISTS (
+    \\    SELECT 1 FROM tax_profile_taxpayer_year_revisions revision
+    \\    WHERE revision.profile_id = NEW.taxpayer_year_profile_id
+    \\      AND revision.tax_year = NEW.taxpayer_year_tax_year
+    \\      AND revision.id = NEW.taxpayer_year_revision_id
+    \\      AND revision.sequence = NEW.taxpayer_year_revision_sequence
+    \\      AND revision.review_state = 'confirmed'
+    \\      AND revision.effective_from <= NEW.forms_set_applicability_date
+    \\      AND NEW.forms_set_applicability_date <= revision.effective_until
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid exact taxpayer-year provenance');
+    \\END;
+    \\CREATE TRIGGER tax_exact_draft_provenance_form_profile_guard
+    \\BEFORE INSERT ON tax_exact_draft_revision_provenance
+    \\WHEN NEW.form_profile_revision_id IS NOT NULL AND NOT EXISTS (
+    \\    SELECT 1 FROM tax_profile_form_profile_revisions revision
+    \\    WHERE revision.profile_id = NEW.form_profile_profile_id
+    \\      AND revision.tax_year = NEW.form_profile_tax_year
+    \\      AND revision.form_code = NEW.form_profile_form_code
+    \\      AND revision.form_revision = NEW.form_profile_form_revision
+    \\      AND revision.id = NEW.form_profile_revision_id
+    \\      AND revision.sequence = NEW.form_profile_revision_sequence
+    \\      AND revision.spec_revision = NEW.form_profile_spec_revision
+    \\      AND revision.spec_hash = NEW.form_profile_spec_hash
+    \\      AND revision.review_state = 'confirmed'
+    \\      AND revision.effective_from <= NEW.forms_set_applicability_date
+    \\      AND NEW.forms_set_applicability_date <= COALESCE(
+    \\          revision.effective_until,
+    \\          printf('%04d-12-31', revision.tax_year)
+    \\      )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid exact Tax Form Profile provenance');
+    \\END;
+    \\CREATE TRIGGER tax_exact_draft_provenance_update_guard
+    \\BEFORE UPDATE ON tax_exact_draft_revision_provenance
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'exact draft provenance is immutable');
+    \\END;
+    \\CREATE TRIGGER tax_exact_draft_provenance_delete_guard
+    \\BEFORE DELETE ON tax_exact_draft_revision_provenance
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'exact draft provenance is permanent');
+    \\END;
+    \\
+    \\CREATE TABLE tax_exact_draft_provenance_components (
+    \\    workspace_id BLOB NOT NULL,
+    \\    exact_schema_digest BLOB NOT NULL,
+    \\    revision INTEGER NOT NULL,
+    \\    ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 31),
+    \\    component_kind TEXT NOT NULL CHECK (component_kind IN (
+    \\        'business_activity', 'registration_obligation'
+    \\    )),
+    \\    role TEXT NOT NULL,
+    \\    profile_id TEXT NOT NULL,
+    \\    anchor_id TEXT NOT NULL,
+    \\    revision_id TEXT NOT NULL,
+    \\    revision_sequence INTEGER NOT NULL CHECK (
+    \\        revision_sequence > 0 AND revision_sequence <= 4294967295
+    \\    ),
+    \\    PRIMARY KEY (
+    \\        workspace_id, exact_schema_digest, revision, ordinal
+    \\    ),
+    \\    UNIQUE (
+    \\        workspace_id, exact_schema_digest, revision,
+    \\        component_kind, role, anchor_id
+    \\    ),
+    \\    FOREIGN KEY (workspace_id, exact_schema_digest, revision)
+    \\        REFERENCES tax_exact_draft_revision_provenance(
+    \\            workspace_id, exact_schema_digest, revision
+    \\        ) ON DELETE RESTRICT,
+    \\    FOREIGN KEY (profile_id, revision_id)
+    \\        REFERENCES tax_profile_registration_component_revisions(
+    \\            profile_id, id
+    \\        ) ON DELETE RESTRICT
+    \\);
+    \\CREATE TRIGGER tax_exact_draft_provenance_component_guard
+    \\BEFORE INSERT ON tax_exact_draft_provenance_components
+    \\WHEN NOT EXISTS (
+    \\    SELECT 1
+    \\    FROM tax_profile_registration_component_revisions component
+    \\    JOIN tax_exact_draft_revision_bindings binding
+    \\      ON binding.workspace_id = NEW.workspace_id
+    \\     AND binding.exact_schema_digest = NEW.exact_schema_digest
+    \\     AND binding.revision = NEW.revision
+    \\     AND binding.role = NEW.role
+    \\     AND binding.profile_id = NEW.profile_id
+    \\    JOIN tax_exact_draft_revision_provenance provenance
+    \\      ON provenance.workspace_id = NEW.workspace_id
+    \\     AND provenance.exact_schema_digest = NEW.exact_schema_digest
+    \\     AND provenance.revision = NEW.revision
+    \\    WHERE component.profile_id = NEW.profile_id
+    \\      AND component.id = NEW.revision_id
+    \\      AND component.component_kind = NEW.component_kind
+    \\      AND component.anchor_id = NEW.anchor_id
+    \\      AND component.component_sequence = NEW.revision_sequence
+    \\      AND component.record_state = 'present'
+    \\      AND component.review_state = 'confirmed'
+    \\      AND component.effective_from <=
+    \\          provenance.forms_set_applicability_date
+    \\      AND provenance.forms_set_applicability_date <= COALESCE(
+    \\          component.effective_until, '9999-12-31'
+    \\      )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid exact registration provenance');
+    \\END;
+    \\CREATE TRIGGER tax_exact_draft_provenance_component_update_guard
+    \\BEFORE UPDATE ON tax_exact_draft_provenance_components
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'exact component provenance is immutable');
+    \\END;
+    \\CREATE TRIGGER tax_exact_draft_provenance_component_delete_guard
+    \\BEFORE DELETE ON tax_exact_draft_provenance_components
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'exact component provenance is permanent');
+    \\END;
+    \\
+    \\CREATE TABLE tax_exact_draft_provenance_sources (
+    \\    workspace_id BLOB NOT NULL,
+    \\    exact_schema_digest BLOB NOT NULL,
+    \\    revision INTEGER NOT NULL,
+    \\    ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 95),
+    \\    source_kind TEXT NOT NULL CHECK (source_kind IN (
+    \\        'taxpayer_fact', 'taxpayer_year_setting',
+    \\        'tax_form_profile_value', 'business_activity_fact',
+    \\        'registration_obligation_fact'
+    \\    )),
+    \\    role TEXT NOT NULL,
+    \\    source_key TEXT NOT NULL CHECK (
+    \\        (source_kind = 'taxpayer_fact' AND source_key IN (
+    \\            'tin', 'rdo_code', 'taxpayer_name', 'registered_name',
+    \\            'trade_name', 'registered_address', 'zip_code',
+    \\            'contact_number', 'email_address', 'subject_kind',
+    \\            'natural_person_classification'
+    \\        )) OR
+    \\        (source_kind = 'taxpayer_year_setting' AND source_key IN (
+    \\            'income_tax_rate_election', 'deduction_method'
+    \\        )) OR
+    \\        (source_kind = 'tax_form_profile_value' AND source_key IN (
+    \\            'business_activity_anchor_id', 'spouse_profile_id',
+    \\            'spouse_business_activity_anchor_id',
+    \\            'special_rate_obligation_anchor_id'
+    \\        )) OR
+    \\        (source_kind = 'business_activity_fact' AND source_key IN (
+    \\            'line_of_business', 'atc'
+    \\        )) OR
+    \\        (source_kind = 'registration_obligation_fact' AND
+    \\            source_key = 'registration_kind')
+    \\    ),
+    \\    anchor_id TEXT,
+    \\    value_kind TEXT NOT NULL CHECK (value_kind IN (
+    \\        'text', 'choice', 'boolean', 'integer', 'date', 'year',
+    \\        'profile_id', 'business_activity_anchor_id',
+    \\        'registration_obligation_anchor_id',
+    \\        'income_tax_rate_election', 'deduction_method'
+    \\    )),
+    \\    value_text TEXT,
+    \\    value_integer INTEGER,
+    \\    PRIMARY KEY (
+    \\        workspace_id, exact_schema_digest, revision, ordinal
+    \\    ),
+    \\    FOREIGN KEY (workspace_id, exact_schema_digest, revision)
+    \\        REFERENCES tax_exact_draft_revision_provenance(
+    \\            workspace_id, exact_schema_digest, revision
+    \\        ) ON DELETE RESTRICT,
+    \\    CHECK (
+    \\        (source_kind IN (
+    \\            'business_activity_fact',
+    \\            'registration_obligation_fact'
+    \\        ) AND length(trim(anchor_id)) > 0) OR
+    \\        (source_kind NOT IN (
+    \\            'business_activity_fact',
+    \\            'registration_obligation_fact'
+    \\        ) AND anchor_id IS NULL)
+    \\    ),
+    \\    CHECK (
+    \\        (value_kind IN (
+    \\            'text', 'choice', 'date', 'profile_id',
+    \\            'business_activity_anchor_id',
+    \\            'registration_obligation_anchor_id',
+    \\            'income_tax_rate_election', 'deduction_method'
+    \\        ) AND value_text IS NOT NULL AND value_integer IS NULL) OR
+    \\        (value_kind IN ('boolean', 'integer', 'year') AND
+    \\            value_text IS NULL AND value_integer IS NOT NULL)
+    \\    ),
+    \\    CHECK (value_kind <> 'boolean' OR value_integer IN (0, 1)),
+    \\    CHECK (value_kind <> 'year' OR value_integer BETWEEN 0 AND 65535),
+    \\    CHECK (value_kind <> 'date' OR length(value_text) = 10),
+    \\    CHECK (value_kind <> 'income_tax_rate_election' OR value_text IN (
+    \\        'graduated', 'eight_percent'
+    \\    )),
+    \\    CHECK (value_kind <> 'deduction_method' OR value_text IN (
+    \\        'itemized_deduction', 'optional_standard_deduction'
+    \\    ))
+    \\);
+    \\CREATE UNIQUE INDEX tax_exact_draft_provenance_source_unique
+    \\    ON tax_exact_draft_provenance_sources (
+    \\        workspace_id, exact_schema_digest, revision,
+    \\        source_kind, role, source_key, COALESCE(anchor_id, '')
+    \\    );
+    \\CREATE TRIGGER tax_exact_draft_provenance_source_update_guard
+    \\BEFORE UPDATE ON tax_exact_draft_provenance_sources
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'exact source provenance is immutable');
+    \\END;
+    \\CREATE TRIGGER tax_exact_draft_provenance_source_delete_guard
+    \\BEFORE DELETE ON tax_exact_draft_provenance_sources
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'exact source provenance is permanent');
+    \\END;
+    \\
+    \\CREATE TABLE tax_exact_draft_provenance_transaction_seeds (
+    \\    workspace_id BLOB NOT NULL,
+    \\    exact_schema_digest BLOB NOT NULL,
+    \\    revision INTEGER NOT NULL,
+    \\    ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 31),
+    \\    filing_field TEXT NOT NULL CHECK (
+    \\        length(filing_field) BETWEEN 1 AND 96 AND
+    \\        filing_field = trim(filing_field)
+    \\    ),
+    \\    source_kind TEXT NOT NULL CHECK (
+    \\        source_kind = 'tax_form_profile_value'
+    \\    ),
+    \\    role TEXT NOT NULL,
+    \\    source_key TEXT NOT NULL CHECK (source_key IN (
+    \\        'business_activity_anchor_id', 'spouse_profile_id',
+    \\        'spouse_business_activity_anchor_id',
+    \\        'special_rate_obligation_anchor_id'
+    \\    )),
+    \\    anchor_id TEXT CHECK (anchor_id IS NULL),
+    \\    seed_source_kind TEXT NOT NULL CHECK (seed_source_kind IN (
+    \\        'tax_form_profile_revision', 'catalog_default'
+    \\    )),
+    \\    seed_revision_id TEXT,
+    \\    seed_catalog_revision TEXT,
+    \\    seed_catalog_sha256 TEXT,
+    \\    value_kind TEXT NOT NULL CHECK (value_kind IN (
+    \\        'text', 'choice', 'boolean', 'integer', 'date', 'year',
+    \\        'profile_id', 'business_activity_anchor_id',
+    \\        'registration_obligation_anchor_id',
+    \\        'income_tax_rate_election', 'deduction_method'
+    \\    )),
+    \\    value_text TEXT,
+    \\    value_integer INTEGER,
+    \\    PRIMARY KEY (
+    \\        workspace_id, exact_schema_digest, revision, ordinal
+    \\    ),
+    \\    UNIQUE (
+    \\        workspace_id, exact_schema_digest, revision, filing_field
+    \\    ),
+    \\    UNIQUE (
+    \\        workspace_id, exact_schema_digest, revision,
+    \\        source_kind, role, source_key
+    \\    ),
+    \\    FOREIGN KEY (workspace_id, exact_schema_digest, revision)
+    \\        REFERENCES tax_exact_draft_revision_provenance(
+    \\            workspace_id, exact_schema_digest, revision
+    \\        ) ON DELETE RESTRICT,
+    \\    CHECK (
+    \\        (seed_source_kind = 'tax_form_profile_revision' AND
+    \\            length(trim(seed_revision_id)) > 0 AND
+    \\            seed_catalog_revision IS NULL AND
+    \\            seed_catalog_sha256 IS NULL) OR
+    \\        (seed_source_kind = 'catalog_default' AND
+    \\            seed_revision_id IS NULL AND
+    \\            length(seed_catalog_revision) BETWEEN 1 AND 64 AND
+    \\            length(seed_catalog_sha256) = 64)
+    \\    ),
+    \\    CHECK (
+    \\        (value_kind IN (
+    \\            'text', 'choice', 'date', 'profile_id',
+    \\            'business_activity_anchor_id',
+    \\            'registration_obligation_anchor_id',
+    \\            'income_tax_rate_election', 'deduction_method'
+    \\        ) AND value_text IS NOT NULL AND value_integer IS NULL) OR
+    \\        (value_kind IN ('boolean', 'integer', 'year') AND
+    \\            value_text IS NULL AND value_integer IS NOT NULL)
+    \\    )
+    \\);
+    \\CREATE TRIGGER tax_exact_draft_provenance_seed_update_guard
+    \\BEFORE UPDATE ON tax_exact_draft_provenance_transaction_seeds
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'exact transaction seed is immutable');
+    \\END;
+    \\CREATE TRIGGER tax_exact_draft_provenance_seed_delete_guard
+    \\BEFORE DELETE ON tax_exact_draft_provenance_transaction_seeds
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'exact transaction seed is permanent');
+    \\END;
+;
+
+/// Preserve exact historical form/spec identity for reviewed prior-year
+/// mappings. Existing v19 copies are backfilled from their already-enforced
+/// same-revision source row; manual and migrated rows retain null provenance.
+const schema_v20 =
+    \\DROP TRIGGER tax_profile_form_profile_sequence_guard;
+    \\DROP TRIGGER tax_profile_form_profile_overlap_guard;
+    \\DROP TRIGGER tax_profile_form_profile_revisions_update_guard;
+    \\DROP TRIGGER tax_profile_form_profile_revisions_delete_guard;
+    \\DROP INDEX tax_profile_form_profile_effective_idx;
+    \\ALTER TABLE tax_profile_form_profile_revisions
+    \\    RENAME TO tax_profile_form_profile_revisions_v19_migration;
+    \\CREATE TABLE tax_profile_form_profile_revisions (
+    \\    profile_id TEXT NOT NULL
+    \\        REFERENCES tax_profiles(id) ON DELETE RESTRICT,
+    \\    tax_year INTEGER NOT NULL CHECK (tax_year BETWEEN 1 AND 9999),
+    \\    form_code TEXT NOT NULL CHECK (length(trim(form_code)) > 0),
+    \\    form_revision TEXT NOT NULL CHECK (
+    \\        length(trim(form_revision)) > 0
+    \\    ),
+    \\    id TEXT NOT NULL CHECK (
+    \\        length(id) BETWEEN 1 AND 64 AND id = trim(id)
+    \\    ),
+    \\    sequence INTEGER NOT NULL CHECK (
+    \\        sequence > 0 AND sequence <= 4294967295
+    \\    ),
+    \\    effective_from TEXT NOT NULL CHECK (
+    \\        length(effective_from) = 10 AND
+    \\        substr(effective_from, 1, 4) = printf('%04d', tax_year)
+    \\    ),
+    \\    effective_until TEXT CHECK (
+    \\        effective_until IS NULL OR (
+    \\            length(effective_until) = 10 AND
+    \\            substr(effective_until, 1, 4) = printf('%04d', tax_year) AND
+    \\            effective_from <= effective_until
+    \\        )
+    \\    ),
+    \\    spec_revision INTEGER NOT NULL CHECK (spec_revision > 0),
+    \\    spec_hash TEXT NOT NULL CHECK (length(trim(spec_hash)) > 0),
+    \\    review_state TEXT NOT NULL CHECK (
+    \\        review_state IN ('requires_review', 'confirmed')
+    \\    ),
+    \\    confirmed_at_unix_seconds INTEGER,
+    \\    source_tag TEXT NOT NULL CHECK (source_tag IN (
+    \\        'manual_entry', 'copied_from_prior_year', 'migrated'
+    \\    )),
+    \\    source_reference TEXT,
+    \\    copy_source_tax_year INTEGER,
+    \\    copy_source_revision_id TEXT,
+    \\    copy_source_form_revision TEXT,
+    \\    copy_source_spec_revision INTEGER,
+    \\    copy_source_spec_hash TEXT,
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    PRIMARY KEY (
+    \\        profile_id, tax_year, form_code, form_revision, id
+    \\    ),
+    \\    UNIQUE (
+    \\        profile_id, tax_year, form_code, form_revision, sequence
+    \\    ),
+    \\    UNIQUE (
+    \\        profile_id, tax_year, form_code, form_revision, id, sequence
+    \\    ),
+    \\    FOREIGN KEY (
+    \\        profile_id, copy_source_tax_year, form_code,
+    \\        copy_source_form_revision, copy_source_revision_id
+    \\    ) REFERENCES tax_profile_form_profile_revisions (
+    \\        profile_id, tax_year, form_code, form_revision, id
+    \\    ) ON DELETE RESTRICT,
+    \\    CHECK (
+    \\        (review_state = 'requires_review' AND
+    \\            confirmed_at_unix_seconds IS NULL) OR
+    \\        (review_state = 'confirmed' AND
+    \\            confirmed_at_unix_seconds IS NOT NULL)
+    \\    ),
+    \\    CHECK (
+    \\        (source_tag = 'manual_entry' AND
+    \\            source_reference IS NULL AND
+    \\            copy_source_tax_year IS NULL AND
+    \\            copy_source_revision_id IS NULL AND
+    \\            copy_source_form_revision IS NULL AND
+    \\            copy_source_spec_revision IS NULL AND
+    \\            copy_source_spec_hash IS NULL) OR
+    \\        (source_tag = 'migrated' AND
+    \\            length(trim(source_reference)) > 0 AND
+    \\            copy_source_tax_year IS NULL AND
+    \\            copy_source_revision_id IS NULL AND
+    \\            copy_source_form_revision IS NULL AND
+    \\            copy_source_spec_revision IS NULL AND
+    \\            copy_source_spec_hash IS NULL) OR
+    \\        (source_tag = 'copied_from_prior_year' AND
+    \\            source_reference IS NULL AND
+    \\            copy_source_tax_year < tax_year AND
+    \\            length(trim(copy_source_revision_id)) > 0 AND
+    \\            length(trim(copy_source_form_revision)) > 0 AND
+    \\            copy_source_spec_revision > 0 AND
+    \\            length(trim(copy_source_spec_hash)) > 0)
+    \\    )
+    \\);
+    \\INSERT INTO tax_profile_form_profile_revisions (
+    \\    rowid, profile_id, tax_year, form_code, form_revision, id,
+    \\    sequence, effective_from, effective_until, spec_revision,
+    \\    spec_hash, review_state, confirmed_at_unix_seconds, source_tag,
+    \\    source_reference, copy_source_tax_year, copy_source_revision_id,
+    \\    copy_source_form_revision, copy_source_spec_revision,
+    \\    copy_source_spec_hash, created_at
+    \\)
+    \\SELECT target.rowid, target.profile_id, target.tax_year,
+    \\       target.form_code, target.form_revision, target.id,
+    \\       target.sequence, target.effective_from, target.effective_until,
+    \\       target.spec_revision, target.spec_hash, target.review_state,
+    \\       target.confirmed_at_unix_seconds, target.source_tag,
+    \\       target.source_reference, target.copy_source_tax_year,
+    \\       target.copy_source_revision_id,
+    \\       CASE WHEN target.source_tag = 'copied_from_prior_year'
+    \\            THEN target.form_revision END,
+    \\       CASE WHEN target.source_tag = 'copied_from_prior_year' THEN (
+    \\           SELECT source.spec_revision
+    \\           FROM tax_profile_form_profile_revisions_v19_migration source
+    \\           WHERE source.profile_id = target.profile_id
+    \\             AND source.tax_year = target.copy_source_tax_year
+    \\             AND source.form_code = target.form_code
+    \\             AND source.form_revision = target.form_revision
+    \\             AND source.id = target.copy_source_revision_id
+    \\       ) END,
+    \\       CASE WHEN target.source_tag = 'copied_from_prior_year' THEN (
+    \\           SELECT source.spec_hash
+    \\           FROM tax_profile_form_profile_revisions_v19_migration source
+    \\           WHERE source.profile_id = target.profile_id
+    \\             AND source.tax_year = target.copy_source_tax_year
+    \\             AND source.form_code = target.form_code
+    \\             AND source.form_revision = target.form_revision
+    \\             AND source.id = target.copy_source_revision_id
+    \\       ) END,
+    \\       target.created_at
+    \\FROM tax_profile_form_profile_revisions_v19_migration target
+    \\ORDER BY target.rowid;
+    \\DROP TABLE tax_profile_form_profile_revisions_v19_migration;
+    \\CREATE INDEX tax_profile_form_profile_effective_idx
+    \\    ON tax_profile_form_profile_revisions (
+    \\        profile_id, tax_year, form_code, form_revision,
+    \\        effective_from, effective_until
+    \\    );
+    \\CREATE TRIGGER tax_profile_form_profile_sequence_guard
+    \\BEFORE INSERT ON tax_profile_form_profile_revisions
+    \\WHEN NEW.sequence <> COALESCE((
+    \\    SELECT MAX(sequence) + 1
+    \\    FROM tax_profile_form_profile_revisions
+    \\    WHERE profile_id = NEW.profile_id AND tax_year = NEW.tax_year
+    \\      AND form_code = NEW.form_code
+    \\      AND form_revision = NEW.form_revision
+    \\), 1)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid Tax Form Profile revision sequence');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_profile_overlap_guard
+    \\BEFORE INSERT ON tax_profile_form_profile_revisions
+    \\WHEN EXISTS (
+    \\    SELECT 1 FROM tax_profile_form_profile_revisions AS prior
+    \\    WHERE prior.profile_id = NEW.profile_id
+    \\      AND prior.tax_year = NEW.tax_year
+    \\      AND prior.form_code = NEW.form_code
+    \\      AND prior.form_revision = NEW.form_revision
+    \\      AND prior.effective_from <= COALESCE(
+    \\          NEW.effective_until, printf('%04d-12-31', NEW.tax_year)
+    \\      )
+    \\      AND NEW.effective_from <= COALESCE(
+    \\          prior.effective_until, printf('%04d-12-31', prior.tax_year)
+    \\      )
+    \\      AND NOT (
+    \\          prior.effective_from = NEW.effective_from AND
+    \\          COALESCE(prior.effective_until,
+    \\              printf('%04d-12-31', prior.tax_year)) =
+    \\          COALESCE(NEW.effective_until,
+    \\              printf('%04d-12-31', NEW.tax_year))
+    \\      )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'overlapping Tax Form Profile revisions');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_profile_copy_source_guard
+    \\BEFORE INSERT ON tax_profile_form_profile_revisions
+    \\WHEN NEW.source_tag = 'copied_from_prior_year' AND NOT EXISTS (
+    \\    SELECT 1 FROM tax_profile_form_profile_revisions source
+    \\    WHERE source.profile_id = NEW.profile_id
+    \\      AND source.tax_year = NEW.copy_source_tax_year
+    \\      AND source.form_code = NEW.form_code
+    \\      AND source.form_revision = NEW.copy_source_form_revision
+    \\      AND source.id = NEW.copy_source_revision_id
+    \\      AND source.spec_revision = NEW.copy_source_spec_revision
+    \\      AND source.spec_hash = NEW.copy_source_spec_hash
+    \\      AND source.review_state = 'confirmed'
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid Tax Form Profile copy source');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_profile_revisions_update_guard
+    \\BEFORE UPDATE ON tax_profile_form_profile_revisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'Tax Form Profile revisions are append-only');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_profile_revisions_delete_guard
+    \\BEFORE DELETE ON tax_profile_form_profile_revisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'Tax Form Profile revisions are permanent');
+    \\END;
+;
+
 test "tax profile migration is namespaced idempotent and preserves user_version" {
     var store = try Store.openMemory(std.testing.allocator);
     defer store.close();
@@ -10896,7 +22255,7 @@ test "atomic first revision and optimistic append maintain current revision" {
     try std.testing.expectEqualStrings("revision-1", first.id);
     try std.testing.expectEqualStrings(
         "Juan Dela Cruz",
-        first.subject.sole_proprietor.person.name,
+        first.subject.individual.name,
     );
     try std.testing.expectEqual(@as(usize, 1), first.business_activities.len);
     try std.testing.expectEqualStrings(
@@ -10927,7 +22286,7 @@ test "atomic first revision and optimistic append maintain current revision" {
     try std.testing.expectEqualStrings("revision-2", current.id);
     try std.testing.expectEqualStrings(
         "Juan Updated",
-        current.subject.sole_proprietor.person.name,
+        current.subject.individual.name,
     );
 
     var historical = (try store.getRevision(
@@ -10938,7 +22297,7 @@ test "atomic first revision and optimistic append maintain current revision" {
     defer historical.deinit(allocator);
     try std.testing.expectEqualStrings(
         "Juan Dela Cruz",
-        historical.subject.sole_proprietor.person.name,
+        historical.subject.individual.name,
     );
 
     try store.appendRevision(
@@ -10959,7 +22318,7 @@ test "atomic first revision and optimistic append maintain current revision" {
     try std.testing.expectEqual(@as(u32, 3), retroactive.sequence);
     try std.testing.expectEqualStrings(
         "Juan Retroactive",
-        retroactive.subject.sole_proprietor.person.name,
+        retroactive.subject.individual.name,
     );
 
     var effective = (try store.getEffectiveRevision(
@@ -11657,7 +23016,7 @@ test "failed first save rolls back and immutable rows reject updates" {
     defer current.deinit(allocator);
     try std.testing.expectEqualStrings(
         "Immutable",
-        current.subject.sole_proprietor.person.name,
+        current.subject.individual.name,
     );
 }
 
@@ -11752,7 +23111,7 @@ test "file store reopens with revisions Forms Set and drafts intact" {
         defer revision.deinit(allocator);
         try std.testing.expectEqualStrings(
             "Reopen Profile",
-            revision.subject.sole_proprietor.person.name,
+            revision.subject.individual.name,
         );
 
         var form_set = (try reopened.getFormSet(allocator, profile_id, 2026)).?;
@@ -12012,6 +23371,1045 @@ test "schema v10 adds the COR link to v9 stores without touching history" {
     try std.testing.expectEqual(
         StepResult.done,
         try foreign_key_check.step(),
+    );
+}
+
+test "schema v11 backfills labels from current saved taxpayer and registered names" {
+    const allocator = std.testing.allocator;
+    var store = try openLegacyStoreForTest(10);
+    defer store.close();
+
+    const person_id = "tax-profile-v10-person-label";
+    try store.createProfileWithRevision(
+        .{ .id = person_id },
+        testRevision(person_id, 0, "Earlier Person Name", "2025-01-01"),
+        .{},
+    );
+    try store.appendRevision(
+        testRevision(person_id, 1, "Current Person Name", "2026-01-01"),
+        .{},
+    );
+
+    const entity_id = "tax-profile-v10-entity-label";
+    var entity = testRevisionWithTin(
+        entity_id,
+        0,
+        "unused natural-person fixture name",
+        "2026-01-01",
+        "987654321000",
+    );
+    entity.subject = .{ .legal_entity = .{
+        .registered_name = "Current Registered Corporation",
+        .kind = .corporation,
+    } };
+    try store.createProfileWithRevision(.{ .id = entity_id }, entity, .{});
+
+    try std.testing.expectEqual(@as(u32, 10), try store.schemaVersion());
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+
+    var person_label = (try store.getProfileLabel(allocator, person_id)).?;
+    defer person_label.deinit(allocator);
+    try std.testing.expectEqualStrings("Current Person Name", person_label.label.?);
+    var entity_label = (try store.getProfileLabel(allocator, entity_id)).?;
+    defer entity_label.deinit(allocator);
+    try std.testing.expectEqualStrings(
+        "Current Registered Corporation",
+        entity_label.label.?,
+    );
+
+    // Backfill reads current history but never rewrites it.
+    var first = (try store.getRevision(
+        allocator,
+        person_id,
+        "revision-1",
+    )).?;
+    defer first.deinit(allocator);
+    try std.testing.expectEqualStrings(
+        "Earlier Person Name",
+        first.subject.individual.name,
+    );
+    var current = (try store.getCurrentRevision(allocator, person_id)).?;
+    defer current.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 2), current.sequence);
+    try std.testing.expectEqualStrings(
+        "Current Person Name",
+        current.subject.individual.name,
+    );
+
+    try store.migrate();
+    var label_after_retry = (try store.getProfileLabel(
+        allocator,
+        person_id,
+    )).?;
+    defer label_after_retry.deinit(allocator);
+    try std.testing.expectEqualStrings(
+        "Current Person Name",
+        label_after_retry.label.?,
+    );
+}
+
+test "local profile label is mutable metadata and legal name remains revision owned" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    const shell_id = "tax-profile-label-shell";
+    try store.createProfile(.{ .id = shell_id });
+    var empty_label = (try store.getProfileLabel(allocator, shell_id)).?;
+    defer empty_label.deinit(allocator);
+    try std.testing.expect(empty_label.label == null);
+    try store.appendRevision(
+        testRevisionWithTin(
+            shell_id,
+            0,
+            "Shell First Saved Name",
+            "2026-01-01",
+            "987654321000",
+        ),
+        .{},
+    );
+    var defaulted_label = (try store.getProfileLabel(allocator, shell_id)).?;
+    defer defaulted_label.deinit(allocator);
+    try std.testing.expectEqualStrings(
+        "Shell First Saved Name",
+        defaulted_label.label.?,
+    );
+
+    const profile_id = "tax-profile-local-label";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id, .label = "My 2026 filings" },
+        testRevision(profile_id, 0, "Juan Dela Cruz", "2026-01-01"),
+        .{},
+    );
+    try store.updateProfileLabel(.{
+        .profile_id = profile_id,
+        .label = "Household account",
+    });
+
+    var before_name_change = (try store.getCurrentRevision(
+        allocator,
+        profile_id,
+    )).?;
+    defer before_name_change.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 1), before_name_change.sequence);
+    try std.testing.expectEqualStrings(
+        "Juan Dela Cruz",
+        before_name_change.subject.individual.name,
+    );
+
+    try store.appendRevision(
+        testRevision(profile_id, 1, "Juan Dela Cruz Updated", "2026-07-01"),
+        .{},
+    );
+    var summaries = try store.listProfiles(allocator, false);
+    defer summaries.deinit(allocator);
+    const summary = for (summaries.items) |item| {
+        if (std.mem.eql(u8, item.id, profile_id)) break item;
+    } else return error.TestExpectedEqual;
+    try std.testing.expectEqualStrings("Household account", summary.profile_label);
+    try std.testing.expectEqualStrings("Juan Dela Cruz Updated", summary.display_name);
+
+    var owner = (try store.findProfileWithCanonicalTin(
+        allocator,
+        "123456789000",
+        null,
+    )).?;
+    defer owner.deinit(allocator);
+    try std.testing.expectEqualStrings("Household account", owner.profile_label.?);
+    try std.testing.expectEqualStrings("Juan Dela Cruz Updated", owner.display_name.?);
+
+    var by_label = try store.searchProfiles(allocator, "household", false);
+    defer by_label.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), by_label.items.len);
+    try std.testing.expectEqualStrings(profile_id, by_label.items[0].id);
+    var by_legal_name = try store.searchProfiles(allocator, "Cruz Updated", false);
+    defer by_legal_name.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), by_legal_name.items.len);
+    try std.testing.expectEqualStrings(profile_id, by_legal_name.items[0].id);
+
+    try std.testing.expectError(
+        Error.InvalidValue,
+        store.updateProfileLabel(.{ .profile_id = profile_id, .label = "   " }),
+    );
+    try std.testing.expectError(
+        Error.NotFound,
+        store.updateProfileLabel(.{
+            .profile_id = "missing-profile-label",
+            .label = "Valid local label",
+        }),
+    );
+}
+
+test "schema v12 backfills stable component anchors without changing revision values" {
+    const allocator = std.testing.allocator;
+    var store = try openLegacyStoreForTest(11);
+    defer store.close();
+    const profile_id = "tax-profile-v11-component-anchors";
+    const first_activities = [_]BusinessActivityWrite{.{
+        .id = "primary",
+        .line_of_business = "Earlier professional services",
+        .atc = "PT010",
+        .effective = testPeriod("2025-01-01", null),
+    }};
+    const first_facts = [_]RegistrationFactWrite{.{
+        .id = "tax-type",
+        .effective = testPeriod("2025-01-01", null),
+        .value = .{ .tax_type = "Earlier Percentage Tax" },
+    }};
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Anchor Migration", "2025-01-01"),
+        .{
+            .business_activities = &first_activities,
+            .registration_facts = &first_facts,
+        },
+    );
+    const current_activities = [_]BusinessActivityWrite{.{
+        .id = "primary",
+        .line_of_business = "Current professional services",
+        .atc = "PT011",
+        .effective = testPeriod("2026-01-01", null),
+    }};
+    const current_facts = [_]RegistrationFactWrite{.{
+        .id = "tax-type",
+        .effective = testPeriod("2026-01-01", null),
+        .value = .{ .tax_type = "Current Percentage Tax" },
+    }};
+    try store.appendRevision(
+        testRevision(profile_id, 1, "Anchor Migration", "2026-01-01"),
+        .{
+            .business_activities = &current_activities,
+            .registration_facts = &current_facts,
+        },
+    );
+
+    var before_first = (try store.getRevision(
+        allocator,
+        profile_id,
+        "revision-1",
+    )).?;
+    defer before_first.deinit(allocator);
+    var before_current = (try store.getCurrentRevision(
+        allocator,
+        profile_id,
+    )).?;
+    defer before_current.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 11), try store.schemaVersion());
+
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+    var after_first = (try store.getRevision(
+        allocator,
+        profile_id,
+        "revision-1",
+    )).?;
+    defer after_first.deinit(allocator);
+    var after_current = (try store.getCurrentRevision(
+        allocator,
+        profile_id,
+    )).?;
+    defer after_current.deinit(allocator);
+
+    try std.testing.expectEqualStrings(before_first.id, after_first.id);
+    try std.testing.expectEqualStrings(
+        before_first.business_activities[0].line_of_business,
+        after_first.business_activities[0].line_of_business,
+    );
+    try std.testing.expectEqualStrings(
+        before_first.business_activities[0].atc.?,
+        after_first.business_activities[0].atc.?,
+    );
+    try std.testing.expectEqualStrings(
+        before_first.registration_facts[0].value.tax_type,
+        after_first.registration_facts[0].value.tax_type,
+    );
+    try std.testing.expectEqualStrings("primary", after_first.business_activities[0].anchor_id);
+    try std.testing.expectEqualStrings("primary", after_current.business_activities[0].anchor_id);
+    try std.testing.expectEqualStrings("tax-type", after_first.registration_facts[0].anchor_id);
+    try std.testing.expectEqualStrings("tax-type", after_current.registration_facts[0].anchor_id);
+    try std.testing.expectEqualStrings(
+        before_current.business_activities[0].line_of_business,
+        after_current.business_activities[0].line_of_business,
+    );
+    try std.testing.expectEqualStrings(
+        before_current.registration_facts[0].value.tax_type,
+        after_current.registration_facts[0].value.tax_type,
+    );
+
+    var activity_anchor = (try store.getBusinessActivityAnchor(
+        allocator,
+        .{ .profile_id = profile_id, .anchor_id = "primary" },
+    )).?;
+    defer activity_anchor.deinit(allocator);
+    try std.testing.expectEqualStrings(profile_id, activity_anchor.profile_id);
+    var fact_anchor = (try store.getRegistrationFactAnchor(
+        allocator,
+        .{
+            .profile_id = profile_id,
+            .anchor_id = "tax-type",
+            .kind = .tax_type,
+        },
+    )).?;
+    defer fact_anchor.deinit(allocator);
+    try std.testing.expectEqual(RegistrationFactKind.tax_type, fact_anchor.kind);
+
+    try store.migrate();
+    var anchor_count = try store.prepare(
+        \\SELECT COUNT(*) FROM tax_profile_business_activity_anchors
+        \\WHERE profile_id = ?;
+    );
+    defer anchor_count.deinit();
+    try anchor_count.bindText(1, profile_id);
+    try std.testing.expectEqual(StepResult.row, try anchor_count.step());
+    try std.testing.expectEqual(
+        @as(i64, 1),
+        sqlite.sqlite3_column_int64(anchor_count.raw, 0),
+    );
+    var fact_anchor_count = try store.prepare(
+        \\SELECT COUNT(*) FROM tax_profile_registration_fact_anchors
+        \\WHERE profile_id = ?;
+    );
+    defer fact_anchor_count.deinit();
+    try fact_anchor_count.bindText(1, profile_id);
+    try std.testing.expectEqual(StepResult.row, try fact_anchor_count.step());
+    try std.testing.expectEqual(
+        @as(i64, 1),
+        sqlite.sqlite3_column_int64(fact_anchor_count.raw, 0),
+    );
+    var foreign_key_check = try store.prepare("PRAGMA foreign_key_check;");
+    defer foreign_key_check.deinit();
+    try std.testing.expectEqual(StepResult.done, try foreign_key_check.step());
+}
+
+test "component anchors remain stable and reject cross-owner or wrong-kind use" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+    const profile_id = "tax-profile-stable-component-anchors";
+    const first_activities = [_]BusinessActivityWrite{.{
+        .id = "activity-row-one",
+        .anchor_id = "primary",
+        .line_of_business = "Consulting",
+        .effective = testPeriod("2026-01-01", null),
+    }};
+    const first_facts = [_]RegistrationFactWrite{.{
+        .id = "tax-type-row-one",
+        .anchor_id = "tax-type",
+        .effective = testPeriod("2026-01-01", null),
+        .value = .{ .tax_type = "Percentage Tax" },
+    }};
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Stable Anchors", "2026-01-01"),
+        .{
+            .business_activities = &first_activities,
+            .registration_facts = &first_facts,
+        },
+    );
+    const second_activities = [_]BusinessActivityWrite{.{
+        .id = "activity-row-two",
+        .anchor_id = "primary",
+        .line_of_business = "Expanded consulting",
+        .effective = testPeriod("2026-07-01", null),
+    }};
+    const second_facts = [_]RegistrationFactWrite{.{
+        .id = "tax-type-row-two",
+        .anchor_id = "tax-type",
+        .effective = testPeriod("2026-07-01", null),
+        .value = .{ .tax_type = "Percentage Tax Updated" },
+    }};
+    try store.appendRevision(
+        testRevision(profile_id, 1, "Stable Anchors", "2026-07-01"),
+        .{
+            .business_activities = &second_activities,
+            .registration_facts = &second_facts,
+        },
+    );
+    var current = (try store.getCurrentRevision(allocator, profile_id)).?;
+    defer current.deinit(allocator);
+    try std.testing.expectEqualStrings("activity-row-two", current.business_activities[0].id);
+    try std.testing.expectEqualStrings("primary", current.business_activities[0].anchor_id);
+    try std.testing.expectEqualStrings("tax-type-row-two", current.registration_facts[0].id);
+    try std.testing.expectEqualStrings("tax-type", current.registration_facts[0].anchor_id);
+
+    const other_profile = "tax-profile-other-anchor-owner";
+    try store.createProfileWithRevision(
+        .{ .id = other_profile },
+        testRevisionWithTin(
+            other_profile,
+            0,
+            "Other Anchor Owner",
+            "2026-01-01",
+            "987654321000",
+        ),
+        .{},
+    );
+    try std.testing.expect((try store.getBusinessActivityAnchor(
+        allocator,
+        .{ .profile_id = other_profile, .anchor_id = "primary" },
+    )) == null);
+    try std.testing.expect((try store.getRegistrationFactAnchor(
+        allocator,
+        .{
+            .profile_id = profile_id,
+            .anchor_id = "tax-type",
+            .kind = .special_rate_basis,
+        },
+    )) == null);
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\INSERT INTO tax_profile_business_activities (
+            \\    profile_id, revision_id, id, line_of_business,
+            \\    effective_from, ordinal, anchor_id
+            \\) VALUES (
+            \\    'tax-profile-other-anchor-owner', 'revision-1',
+            \\    'cross-owner-activity', 'Invalid cross-owner activity',
+            \\    '2026-01-01', 0, 'primary'
+            \\);
+        ),
+    );
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\INSERT INTO tax_profile_registration_facts (
+            \\    profile_id, revision_id, id, kind, value_text,
+            \\    effective_from, ordinal, anchor_id
+            \\) VALUES (
+            \\    'tax-profile-other-anchor-owner', 'revision-1',
+            \\    'cross-owner-fact', 'tax_type', 'Invalid cross-owner fact',
+            \\    '2026-01-01', 0, 'tax-type'
+            \\);
+        ),
+    );
+
+    const wrong_kind = [_]RegistrationFactWrite{.{
+        .id = "wrong-kind-row",
+        .anchor_id = "tax-type",
+        .effective = testPeriod("2026-08-01", null),
+        .value = .{ .special_rate_basis = "Treaty rate" },
+    }};
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.appendRevision(
+            testRevision(profile_id, 2, "Stable Anchors", "2026-08-01"),
+            .{ .registration_facts = &wrong_kind },
+        ),
+    );
+    var after_failure = (try store.getCurrentRevision(allocator, profile_id)).?;
+    defer after_failure.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 2), after_failure.sequence);
+
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\DELETE FROM tax_profile_business_activity_anchors
+            \\WHERE profile_id = 'tax-profile-stable-component-anchors'
+            \\  AND id = 'primary';
+        ),
+    );
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\DELETE FROM tax_profile_registration_fact_anchors
+            \\WHERE profile_id = 'tax-profile-stable-component-anchors'
+            \\  AND id = 'tax-type';
+        ),
+    );
+}
+
+test "schema v12 rejects ambiguous legacy registration anchor kinds atomically" {
+    const allocator = std.testing.allocator;
+    var store = try openLegacyStoreForTest(11);
+    defer store.close();
+    const profile_id = "tax-profile-ambiguous-fact-anchor";
+    const first_facts = [_]RegistrationFactWrite{.{
+        .id = "ambiguous",
+        .effective = testPeriod("2025-01-01", null),
+        .value = .{ .tax_type = "Percentage Tax" },
+    }};
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Ambiguous Anchor", "2025-01-01"),
+        .{ .registration_facts = &first_facts },
+    );
+    const second_facts = [_]RegistrationFactWrite{.{
+        .id = "ambiguous",
+        .effective = testPeriod("2026-01-01", null),
+        .value = .{ .special_rate_basis = "Special law" },
+    }};
+    try store.appendRevision(
+        testRevision(profile_id, 1, "Ambiguous Anchor", "2026-01-01"),
+        .{ .registration_facts = &second_facts },
+    );
+
+    try std.testing.expectError(
+        Error.ComponentAnchorKindConflict,
+        store.migrate(),
+    );
+    try std.testing.expectEqual(@as(u32, 11), try store.schemaVersion());
+    try std.testing.expect(!(try tableExistsForTest(
+        &store,
+        "tax_profile_registration_fact_anchors",
+    )));
+    var current = (try store.getCurrentRevision(allocator, profile_id)).?;
+    defer current.deinit(allocator);
+    try std.testing.expectEqualStrings(
+        "Special law",
+        current.registration_facts[0].value.special_rate_basis,
+    );
+}
+
+test "latest schema rejects a newer tax-profile schema before mutation" {
+    var store = try openLegacyStoreForTest(11);
+    defer store.close();
+    try store.exec(
+        \\UPDATE app_component_migrations
+        \\SET version = 21
+        \\WHERE component = 'tax_profile';
+    );
+    try std.testing.expectError(Error.SchemaTooNew, store.migrate());
+    try std.testing.expect(!(try tableExistsForTest(
+        &store,
+        "tax_profile_business_activity_anchors",
+    )));
+}
+
+test "schema v14 adds empty annual streams without rewriting v13 records" {
+    const allocator = std.testing.allocator;
+    var store = try openLegacyStoreForTest(13);
+    defer store.close();
+    const profile_id = "tax-profile-v14-preserved";
+    const activities = [_]BusinessActivityWrite{.{
+        .id = "v14-activity-row",
+        .anchor_id = "v14-activity-anchor",
+        .line_of_business = "Preserved services",
+        .atc = "PT010",
+        .effective = testPeriod("2026-01-01", null),
+    }};
+    const facts = [_]RegistrationFactWrite{.{
+        .id = "v14-fact-row",
+        .anchor_id = "v14-fact-anchor",
+        .effective = testPeriod("2026-01-01", null),
+        .value = .{ .tax_type = "Percentage Tax" },
+    }};
+    try store.createProfileWithRevision(
+        .{ .id = profile_id, .label = "Preserved local label" },
+        testRevision(profile_id, 0, "Preserved Taxpayer", "2026-01-01"),
+        .{
+            .business_activities = &activities,
+            .registration_facts = &facts,
+        },
+    );
+    try store.attachCorDocument(testCorDocument("cor-v14-preserved", profile_id));
+    try store.createDraft(
+        .{
+            .id = "draft-v14-preserved",
+            .form_code = "2551Q",
+            .form_revision = "2018-01-ENCS",
+            .period_key = "2026-Q1",
+            .profile_as_of = testDate("2026-03-31"),
+            .mapping_revision = "mapping-v14-preserved",
+        },
+        &.{.{
+            .role = "filer",
+            .profile_id = profile_id,
+            .profile_revision_id = "revision-1",
+            .profile_revision_sequence = 1,
+            .business_activity_id = "v14-activity-row",
+        }},
+        &.{.{
+            .role = "filer",
+            .field_id = "filer.line_of_business",
+            .reusable_field = "line_of_business",
+            .value_type = "line_of_business",
+            .value_text = "Preserved services",
+            .provenance = "tax_profile",
+            .profile_revision_id = "revision-1",
+            .profile_revision_sequence = 1,
+            .revision_source = .{ .imported = "test fixture" },
+            .business_activity_id = "v14-activity-row",
+        }},
+        &.{.{
+            .field_id = "taxable_sales",
+            .value_text = "12345.67",
+            .provenance = "transaction",
+        }},
+    );
+
+    const rowids_before = try v14PreservedRowidsForTest(&store);
+    var revision_before = (try store.getCurrentRevision(
+        allocator,
+        profile_id,
+    )).?;
+    defer revision_before.deinit(allocator);
+    var activity_before = (try store.getBusinessActivityAnchor(
+        allocator,
+        .{ .profile_id = profile_id, .anchor_id = "v14-activity-anchor" },
+    )).?;
+    defer activity_before.deinit(allocator);
+    var fact_before = (try store.getRegistrationFactAnchor(
+        allocator,
+        .{
+            .profile_id = profile_id,
+            .anchor_id = "v14-fact-anchor",
+            .kind = .tax_type,
+        },
+    )).?;
+    defer fact_before.deinit(allocator);
+    var cor_before = (try store.getLatestCorDocument(
+        allocator,
+        profile_id,
+    )).?;
+    defer cor_before.deinit(allocator);
+    var draft_before = (try store.getDraft(
+        allocator,
+        "draft-v14-preserved",
+    )).?;
+    defer draft_before.deinit(allocator);
+
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+    try std.testing.expectEqualSlices(
+        i64,
+        &rowids_before,
+        &(try v14PreservedRowidsForTest(&store)),
+    );
+    try std.testing.expect(try tableExistsForTest(
+        &store,
+        "tax_profile_taxpayer_year_revisions",
+    ));
+    try std.testing.expect(try tableExistsForTest(
+        &store,
+        "tax_profile_form_profile_revisions",
+    ));
+    var annual_counts = try store.prepare(
+        \\SELECT
+        \\  (SELECT COUNT(*) FROM tax_profile_taxpayer_year_revisions),
+        \\  (SELECT COUNT(*) FROM tax_profile_form_profile_revisions);
+    );
+    defer annual_counts.deinit();
+    try std.testing.expectEqual(StepResult.row, try annual_counts.step());
+    try std.testing.expectEqual(
+        @as(i64, 0),
+        sqlite.sqlite3_column_int64(annual_counts.raw, 0),
+    );
+    try std.testing.expectEqual(
+        @as(i64, 0),
+        sqlite.sqlite3_column_int64(annual_counts.raw, 1),
+    );
+
+    var revision_after = (try store.getCurrentRevision(
+        allocator,
+        profile_id,
+    )).?;
+    defer revision_after.deinit(allocator);
+    try std.testing.expectEqualStrings(revision_before.id, revision_after.id);
+    try std.testing.expectEqualStrings(revision_before.tin, revision_after.tin);
+    try std.testing.expectEqualStrings(
+        revision_before.business_activities[0].anchor_id,
+        revision_after.business_activities[0].anchor_id,
+    );
+    try std.testing.expectEqualStrings(
+        revision_before.registration_facts[0].anchor_id,
+        revision_after.registration_facts[0].anchor_id,
+    );
+    var activity_after = (try store.getBusinessActivityAnchor(
+        allocator,
+        .{ .profile_id = profile_id, .anchor_id = "v14-activity-anchor" },
+    )).?;
+    defer activity_after.deinit(allocator);
+    try std.testing.expectEqualStrings(
+        activity_before.profile_id,
+        activity_after.profile_id,
+    );
+    try std.testing.expectEqualStrings(
+        activity_before.anchor_id,
+        activity_after.anchor_id,
+    );
+    var fact_after = (try store.getRegistrationFactAnchor(
+        allocator,
+        .{
+            .profile_id = profile_id,
+            .anchor_id = "v14-fact-anchor",
+            .kind = .tax_type,
+        },
+    )).?;
+    defer fact_after.deinit(allocator);
+    try std.testing.expectEqualStrings(fact_before.profile_id, fact_after.profile_id);
+    try std.testing.expectEqualStrings(fact_before.anchor_id, fact_after.anchor_id);
+    try std.testing.expectEqual(fact_before.kind, fact_after.kind);
+    var cor_after = (try store.getLatestCorDocument(
+        allocator,
+        profile_id,
+    )).?;
+    defer cor_after.deinit(allocator);
+    try std.testing.expectEqualStrings(cor_before.id, cor_after.id);
+    try std.testing.expectEqualStrings(cor_before.file_path, cor_after.file_path);
+    try std.testing.expectEqualStrings(cor_before.sha256, cor_after.sha256);
+    try std.testing.expectEqual(cor_before.byte_size, cor_after.byte_size);
+    var draft_after = (try store.getDraft(
+        allocator,
+        "draft-v14-preserved",
+    )).?;
+    defer draft_after.deinit(allocator);
+    try expectLegacyDraftEqualForTest(&draft_before, &draft_after);
+}
+
+test "schema v13 canonicalizes legacy people without changing revision anchors or drafts" {
+    const allocator = std.testing.allocator;
+    var store = try openLegacyStoreForTest(12);
+    defer store.close();
+
+    const profile_id = "tax-profile-v13-legacy-sole";
+    const first_activities = [_]BusinessActivityWrite{.{
+        .id = "activity-row-one",
+        .anchor_id = "primary-business",
+        .line_of_business = "Legacy retail",
+        .effective = testPeriod("2025-01-01", null),
+    }};
+    const first_facts = [_]RegistrationFactWrite{.{
+        .id = "tax-type-row-one",
+        .anchor_id = "primary-tax-type",
+        .effective = testPeriod("2025-01-01", null),
+        .value = .{ .tax_type = "Percentage Tax" },
+    }};
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Legacy Owner", "2025-01-01"),
+        .{
+            .business_activities = &first_activities,
+            .registration_facts = &first_facts,
+        },
+    );
+    const second_activities = [_]BusinessActivityWrite{.{
+        .id = "activity-row-two",
+        .anchor_id = "primary-business",
+        .line_of_business = "Legacy retail updated",
+        .effective = testPeriod("2026-01-01", null),
+    }};
+    const second_facts = [_]RegistrationFactWrite{.{
+        .id = "tax-type-row-two",
+        .anchor_id = "primary-tax-type",
+        .effective = testPeriod("2026-01-01", null),
+        .value = .{ .tax_type = "Percentage Tax Updated" },
+    }};
+    try store.appendRevision(
+        testRevision(profile_id, 1, "Legacy Owner Updated", "2026-01-01"),
+        .{
+            .business_activities = &second_activities,
+            .registration_facts = &second_facts,
+        },
+    );
+
+    const individual_profile_id = "tax-profile-v13-legacy-individual";
+    var legacy_individual = testRevisionWithTin(
+        individual_profile_id,
+        0,
+        "Legacy Unknown",
+        "2026-01-01",
+        "987654321000",
+    );
+    legacy_individual.subject = .{ .individual = .{
+        .name = "Legacy Unknown",
+        .date_of_birth = testDate("1990-01-01"),
+        .citizenship = "PH",
+    } };
+    try store.createProfileWithRevision(
+        .{ .id = individual_profile_id },
+        legacy_individual,
+        .{},
+    );
+
+    try store.createDraft(
+        .{
+            .id = "draft-v13-preserved",
+            .form_code = "2551Q",
+            .form_revision = "2018-01-ENCS",
+            .period_key = "2025-Q1",
+            .profile_as_of = testDate("2025-03-31"),
+            .mapping_revision = "mapping-v13-fixture",
+        },
+        &.{.{
+            .role = "filer",
+            .profile_id = profile_id,
+            .profile_revision_id = "revision-1",
+            .profile_revision_sequence = 1,
+            .business_activity_id = "activity-row-one",
+        }},
+        &.{
+            .{
+                .role = "filer",
+                .field_id = "filer.line_of_business",
+                .reusable_field = "line_of_business",
+                .value_type = "line_of_business",
+                .value_text = "Legacy retail",
+                .provenance = "tax_profile",
+                .profile_revision_id = "revision-1",
+                .profile_revision_sequence = 1,
+                .revision_source = .{ .imported = "test fixture" },
+                .business_activity_id = "activity-row-one",
+            },
+            .{
+                .role = "filer",
+                .field_id = "filer.tax_type",
+                .reusable_field = "tax_type",
+                .value_type = "tax_type",
+                .value_text = "Percentage Tax",
+                .provenance = "tax_profile",
+                .profile_revision_id = "revision-1",
+                .profile_revision_sequence = 1,
+                .revision_source = .{ .imported = "test fixture" },
+                .registration_fact_id = "tax-type-row-one",
+            },
+        },
+        &.{.{
+            .field_id = "taxable_sales",
+            .value_text = "125000.00",
+            .provenance = "transaction",
+        }},
+    );
+
+    const first_rowid_before = try revisionStorageRowidForTest(
+        &store,
+        profile_id,
+        "revision-1",
+    );
+    const current_rowid_before = try revisionStorageRowidForTest(
+        &store,
+        profile_id,
+        "revision-2",
+    );
+    var draft_before = (try store.getDraft(
+        allocator,
+        "draft-v13-preserved",
+    )).?;
+    defer draft_before.deinit(allocator);
+    var legacy_before = (try store.getRevision(
+        allocator,
+        profile_id,
+        "revision-1",
+    )).?;
+    defer legacy_before.deinit(allocator);
+    try std.testing.expectEqual(
+        std.meta.Tag(OwnedSubject).sole_proprietor,
+        std.meta.activeTag(legacy_before.subject),
+    );
+
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+    try std.testing.expectEqual(
+        first_rowid_before,
+        try revisionStorageRowidForTest(&store, profile_id, "revision-1"),
+    );
+    try std.testing.expectEqual(
+        current_rowid_before,
+        try revisionStorageRowidForTest(&store, profile_id, "revision-2"),
+    );
+
+    var first_after = (try store.getRevision(
+        allocator,
+        profile_id,
+        "revision-1",
+    )).?;
+    defer first_after.deinit(allocator);
+    var current_after = (try store.getCurrentRevision(
+        allocator,
+        profile_id,
+    )).?;
+    defer current_after.deinit(allocator);
+    try std.testing.expectEqualStrings("revision-1", first_after.id);
+    try std.testing.expectEqual(@as(u32, 1), first_after.sequence);
+    try std.testing.expectEqualStrings("revision-2", current_after.id);
+    try std.testing.expectEqual(@as(u32, 2), current_after.sequence);
+    for ([_]*const OwnedProfileRevision{ &first_after, &current_after }) |revision| {
+        try std.testing.expectEqual(
+            std.meta.Tag(OwnedSubject).individual,
+            std.meta.activeTag(revision.subject),
+        );
+        try std.testing.expectEqual(
+            NaturalPersonClassification.self_employed,
+            revision.subject.individual.classification,
+        );
+        try std.testing.expectEqualStrings(
+            "Sample Trade",
+            revision.subject.individual.trade_name.?,
+        );
+    }
+    try std.testing.expectEqualStrings(
+        "primary-business",
+        first_after.business_activities[0].anchor_id,
+    );
+    try std.testing.expectEqualStrings(
+        "primary-business",
+        current_after.business_activities[0].anchor_id,
+    );
+    try std.testing.expectEqualStrings(
+        "primary-tax-type",
+        first_after.registration_facts[0].anchor_id,
+    );
+    try std.testing.expectEqualStrings(
+        "primary-tax-type",
+        current_after.registration_facts[0].anchor_id,
+    );
+
+    var unknown_after = (try store.getCurrentRevision(
+        allocator,
+        individual_profile_id,
+    )).?;
+    defer unknown_after.deinit(allocator);
+    try std.testing.expectEqual(
+        NaturalPersonClassification.classification_unknown,
+        unknown_after.subject.individual.classification,
+    );
+    try std.testing.expect(unknown_after.subject.individual.trade_name == null);
+
+    var draft_after = (try store.getDraft(
+        allocator,
+        "draft-v13-preserved",
+    )).?;
+    defer draft_after.deinit(allocator);
+    try expectLegacyDraftEqualForTest(&draft_before, &draft_after);
+
+    var canonical_row = try store.prepare(
+        \\SELECT subject_kind, natural_person_classification,
+        \\       registered_name, trade_name
+        \\FROM tax_profile_revisions
+        \\WHERE profile_id = ? AND id = 'revision-1';
+    );
+    defer canonical_row.deinit();
+    try canonical_row.bindText(1, profile_id);
+    try std.testing.expectEqual(StepResult.row, try canonical_row.step());
+    try std.testing.expectEqualStrings("individual", columnText(canonical_row.raw, 0).?);
+    try std.testing.expectEqualStrings("self_employed", columnText(canonical_row.raw, 1).?);
+    try std.testing.expect(
+        sqlite.sqlite3_column_type(canonical_row.raw, 2) == sqlite.SQLITE_NULL,
+    );
+    try std.testing.expectEqualStrings("Sample Trade", columnText(canonical_row.raw, 3).?);
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\UPDATE tax_profile_revisions
+            \\SET natural_person_classification = 'mixed_income'
+            \\WHERE profile_id = 'tax-profile-v13-legacy-sole';
+        ),
+    );
+}
+
+test "schema v13 round trips every classification and legal trade names" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    const classifications = [_]NaturalPersonClassification{
+        .classification_unknown,
+        .pure_compensation,
+        .self_employed,
+        .mixed_income,
+    };
+    const profile_ids = [_][]const u8{
+        "tax-profile-v13-class-unknown",
+        "tax-profile-v13-class-compensation",
+        "tax-profile-v13-class-self-employed",
+        "tax-profile-v13-class-mixed",
+    };
+    const tins = [_][]const u8{
+        "100000000001",
+        "100000000002",
+        "100000000003",
+        "100000000004",
+    };
+    for (classifications, profile_ids, tins) |classification, profile_id, tin| {
+        var revision = testRevisionWithTin(
+            profile_id,
+            0,
+            "Canonical Individual",
+            "2026-01-01",
+            tin,
+        );
+        revision.subject = .{ .individual = .{
+            .name = "Canonical Individual",
+            .classification = classification,
+            .trade_name = "INDIVIDUAL TRADE",
+        } };
+        try store.createProfileWithRevision(.{ .id = profile_id }, revision, .{});
+        var loaded = (try store.getCurrentRevision(allocator, profile_id)).?;
+        defer loaded.deinit(allocator);
+        try std.testing.expectEqual(
+            std.meta.Tag(OwnedSubject).individual,
+            std.meta.activeTag(loaded.subject),
+        );
+        try std.testing.expectEqual(classification, loaded.subject.individual.classification);
+        try std.testing.expectEqualStrings(
+            "INDIVIDUAL TRADE",
+            loaded.subject.individual.trade_name.?,
+        );
+    }
+
+    const legal_profile_id = "tax-profile-v13-legal-trade";
+    var legal = testRevisionWithTin(
+        legal_profile_id,
+        0,
+        "unused",
+        "2026-01-01",
+        "100000000005",
+    );
+    legal.subject = .{ .legal_entity = .{
+        .registered_name = "CANONICAL CORPORATION",
+        .trade_name = "CANONICAL TRADE",
+        .kind = .corporation,
+    } };
+    try store.createProfileWithRevision(.{ .id = legal_profile_id }, legal, .{});
+    var loaded_legal = (try store.getCurrentRevision(
+        allocator,
+        legal_profile_id,
+    )).?;
+    defer loaded_legal.deinit(allocator);
+    try std.testing.expectEqualStrings(
+        "CANONICAL CORPORATION",
+        loaded_legal.subject.legal_entity.registered_name,
+    );
+    try std.testing.expectEqualStrings(
+        "CANONICAL TRADE",
+        loaded_legal.subject.legal_entity.trade_name.?,
+    );
+
+    const compatibility_profile_id = "tax-profile-v13-compatibility-sole";
+    try store.createProfileWithRevision(
+        .{ .id = compatibility_profile_id },
+        testRevisionWithTin(
+            compatibility_profile_id,
+            0,
+            "Compatibility Owner",
+            "2026-01-01",
+            "100000000006",
+        ),
+        .{},
+    );
+    var compatibility = (try store.getCurrentRevision(
+        allocator,
+        compatibility_profile_id,
+    )).?;
+    defer compatibility.deinit(allocator);
+    try std.testing.expectEqual(
+        NaturalPersonClassification.self_employed,
+        compatibility.subject.individual.classification,
+    );
+    try std.testing.expectEqualStrings(
+        "Sample Trade",
+        compatibility.subject.individual.trade_name.?,
+    );
+
+    var legacy_kind_count = try store.prepare(
+        \\SELECT COUNT(*) FROM tax_profile_revisions
+        \\WHERE subject_kind = 'sole_proprietor';
+    );
+    defer legacy_kind_count.deinit();
+    try std.testing.expectEqual(StepResult.row, try legacy_kind_count.step());
+    try std.testing.expectEqual(
+        @as(i64, 0),
+        sqlite.sqlite3_column_int64(legacy_kind_count.raw, 0),
     );
 }
 
@@ -14254,6 +26652,121 @@ fn expectExactDraftHistoriesEqual(
     }
 }
 
+fn revisionStorageRowidForTest(
+    store: *Store,
+    profile_id: []const u8,
+    revision_id: []const u8,
+) !i64 {
+    var statement = try store.prepare(
+        \\SELECT storage_rowid
+        \\FROM tax_profile_revisions
+        \\WHERE profile_id = ? AND id = ?;
+    );
+    defer statement.deinit();
+    try statement.bindText(1, profile_id);
+    try statement.bindText(2, revision_id);
+    if (try statement.step() != .row or
+        sqlite.sqlite3_column_type(statement.raw, 0) != sqlite.SQLITE_INTEGER)
+    {
+        return Error.SqliteFailure;
+    }
+    return sqlite.sqlite3_column_int64(statement.raw, 0);
+}
+
+fn expectLegacyDraftEqualForTest(
+    expected: *const OwnedDraft,
+    actual: *const OwnedDraft,
+) !void {
+    try std.testing.expectEqualStrings(expected.id, actual.id);
+    try std.testing.expectEqualStrings(expected.form_code, actual.form_code);
+    try std.testing.expectEqualStrings(
+        expected.form_revision,
+        actual.form_revision,
+    );
+    try std.testing.expectEqualStrings(expected.period_key, actual.period_key);
+    try std.testing.expectEqualStrings(
+        expected.profile_as_of,
+        actual.profile_as_of,
+    );
+    try std.testing.expectEqualStrings(expected.lifecycle, actual.lifecycle);
+    try std.testing.expectEqualStrings(expected.intent, actual.intent);
+    try std.testing.expectEqualStrings(
+        expected.mapping_revision,
+        actual.mapping_revision,
+    );
+    try expectOptionalStringsEqual(expected.amendment_of, actual.amendment_of);
+
+    try std.testing.expectEqual(expected.bindings.len, actual.bindings.len);
+    for (expected.bindings, actual.bindings) |left, right| {
+        try std.testing.expectEqualStrings(left.role, right.role);
+        try std.testing.expectEqualStrings(left.profile_id, right.profile_id);
+        try std.testing.expectEqualStrings(
+            left.profile_revision_id,
+            right.profile_revision_id,
+        );
+        try std.testing.expectEqual(
+            left.profile_revision_sequence,
+            right.profile_revision_sequence,
+        );
+        try expectOptionalStringsEqual(
+            left.business_activity_id,
+            right.business_activity_id,
+        );
+    }
+
+    try std.testing.expectEqual(expected.snapshots.len, actual.snapshots.len);
+    for (expected.snapshots, actual.snapshots) |left, right| {
+        try std.testing.expectEqualStrings(left.role, right.role);
+        try std.testing.expectEqualStrings(left.field_id, right.field_id);
+        try std.testing.expectEqualStrings(
+            left.reusable_field,
+            right.reusable_field,
+        );
+        try std.testing.expectEqualStrings(left.value_type, right.value_type);
+        try std.testing.expectEqualStrings(left.value_text, right.value_text);
+        try std.testing.expectEqualStrings(left.provenance, right.provenance);
+        try std.testing.expectEqualStrings(
+            left.profile_revision_id,
+            right.profile_revision_id,
+        );
+        try std.testing.expectEqual(
+            left.profile_revision_sequence,
+            right.profile_revision_sequence,
+        );
+        try std.testing.expectEqual(
+            std.meta.activeTag(left.revision_source),
+            std.meta.activeTag(right.revision_source),
+        );
+        switch (left.revision_source) {
+            .manual_entry => {},
+            .imported => |reference| try std.testing.expectEqualStrings(
+                reference,
+                right.revision_source.imported,
+            ),
+            .migrated => |reference| try std.testing.expectEqualStrings(
+                reference,
+                right.revision_source.migrated,
+            ),
+        }
+        try expectOptionalStringsEqual(
+            left.business_activity_id,
+            right.business_activity_id,
+        );
+        try expectOptionalStringsEqual(
+            left.registration_fact_id,
+            right.registration_fact_id,
+        );
+        try std.testing.expectEqual(left.overridden, right.overridden);
+    }
+
+    try std.testing.expectEqual(expected.values.len, actual.values.len);
+    for (expected.values, actual.values) |left, right| {
+        try std.testing.expectEqualStrings(left.field_id, right.field_id);
+        try std.testing.expectEqualStrings(left.value_text, right.value_text);
+        try std.testing.expectEqualStrings(left.provenance, right.provenance);
+    }
+}
+
 fn expectOptionalStringsEqual(
     expected: ?[]const u8,
     actual: ?[]const u8,
@@ -14270,8 +26783,1691 @@ fn expectAllZero(bytes: []const u8) !void {
     for (bytes) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
 }
 
+test "schema v15 backfills exact decisions without changing v14 projections" {
+    const allocator = std.testing.allocator;
+    var store = try openLegacyStoreForTest(14);
+    defer store.close();
+    const profile_id = "tax-profile-v15-backfill";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "V15 Backfill", "2026-01-01"),
+        .{},
+    );
+    const base_forms = [_]FormRegistrationWrite{
+        .{ .form_code = "1701Q", .form_revision = "2018" },
+        .{ .form_code = "2551Q", .form_revision = "2018" },
+    };
+    try store.replaceFormSet(profile_id, 2026, &base_forms);
+    try store.createFormSetInterval(.{
+        .id = "v15-backfill-interval",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .effective_from = "2026-07-01",
+        .effective_until = null,
+        .forms = base_forms[0..1],
+    });
+    const interval_only_profile = "tax-profile-v15-interval-only";
+    try store.createProfileWithRevision(
+        .{ .id = interval_only_profile },
+        testRevisionWithTin(
+            interval_only_profile,
+            0,
+            "Interval Only",
+            "2026-01-01",
+            "987654321000",
+        ),
+        .{},
+    );
+    try store.createFormSetInterval(.{
+        .id = "v15-interval-without-base",
+        .profile_id = interval_only_profile,
+        .tax_year = 2026,
+        .effective_from = "2026-07-01",
+        .effective_until = null,
+        .forms = base_forms[1..2],
+    });
+    try std.testing.expectEqual(@as(u32, 14), try store.schemaVersion());
+    try std.testing.expect(!(try tableExistsForTest(
+        &store,
+        "tax_profile_form_set_decisions",
+    )));
+
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+    var before_change = try store.resolveFormSetDecisionOn(
+        allocator,
+        profile_id,
+        2026,
+        "2551Q",
+        "2018",
+        "2026-06-30",
+    );
+    defer before_change.deinit(allocator);
+    try std.testing.expectEqual(
+        FormSetDecisionState.active,
+        before_change.decision.?.state,
+    );
+    try std.testing.expectEqual(
+        FormSetDecisionSource.manual,
+        before_change.decision.?.source,
+    );
+    var after_change = try store.resolveFormSetDecisionOn(
+        allocator,
+        profile_id,
+        2026,
+        "2551Q",
+        "2018",
+        "2026-07-01",
+    );
+    defer after_change.deinit(allocator);
+    try std.testing.expectEqual(
+        FormSetDecisionState.inactive,
+        after_change.decision.?.state,
+    );
+    try std.testing.expectEqual(FormSetDecisionScope.interval, after_change.decision.?.scope);
+
+    var projection = try store.resolveFormSetOn(
+        allocator,
+        profile_id,
+        "2026-07-01",
+    );
+    defer projection.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), projection.forms.items.len);
+    try std.testing.expectEqualStrings("1701Q", projection.forms.items[0].form_code);
+
+    var history = try store.listFormSetDecisions(
+        allocator,
+        profile_id,
+        2026,
+        "2551Q",
+        "2018",
+    );
+    defer history.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), history.items.len);
+    try std.testing.expectEqualStrings("v15-base", history.items[0].id);
+    try std.testing.expectEqualStrings("v15-interval-1", history.items[1].id);
+
+    var unconfigured_before = try store.resolveFormSetDecisionOn(
+        allocator,
+        interval_only_profile,
+        2026,
+        "2551Q",
+        "2018",
+        "2026-06-30",
+    );
+    defer unconfigured_before.deinit(allocator);
+    try std.testing.expect(unconfigured_before.decision == null);
+    var active_during = try store.resolveFormSetDecisionOn(
+        allocator,
+        interval_only_profile,
+        2026,
+        "2551Q",
+        "2018",
+        "2026-07-01",
+    );
+    defer active_during.deinit(allocator);
+    try std.testing.expectEqual(
+        FormSetDecisionState.active,
+        active_during.decision.?.state,
+    );
+    try std.testing.expectEqual(@as(u32, 1), active_during.decision.?.sequence);
+}
+
+test "exact Forms Set decision API preserves manual authority and review history" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+    const profile_id = "tax-profile-decision-api";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Decision API", "2026-01-01"),
+        .{},
+    );
+    try store.appendFormSetDecision(.{
+        .id = "manual-active",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .form_code = "2551Q",
+        .form_revision = "2018",
+        .expected_current_sequence = 0,
+        .state = .active,
+        .scope = .whole_year,
+        .effective = testPeriod("2026-01-01", null),
+        .source = .manual,
+        .review_state = .confirmed,
+    });
+    try store.appendFormSetDecision(.{
+        .id = "import-inactive",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .form_code = "2551Q",
+        .form_revision = "2018",
+        .expected_current_sequence = 1,
+        .state = .inactive,
+        .scope = .whole_year,
+        .effective = testPeriod("2026-01-01", null),
+        .source = .imported,
+        .evidence_reference = "import:registration.csv#2",
+        .review_state = .review_required,
+    });
+
+    var pending = try store.resolveFormSetDecisionOn(
+        allocator,
+        profile_id,
+        2026,
+        "2551Q",
+        "2018",
+        "2026-08-01",
+    );
+    defer pending.deinit(allocator);
+    try std.testing.expectEqual(FormSetDecisionState.active, pending.decision.?.state);
+    try std.testing.expect(pending.review_required);
+
+    try store.appendFormSetDecision(.{
+        .id = "reject-import",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .form_code = "2551Q",
+        .form_revision = "2018",
+        .expected_current_sequence = 2,
+        .state = .inactive,
+        .scope = .whole_year,
+        .effective = testPeriod("2026-01-01", null),
+        .source = .manual,
+        .review_state = .rejected,
+        .supersedes_id = "import-inactive",
+    });
+    try store.appendFormSetDecision(.{
+        .id = "inactive-q3",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .form_code = "2551Q",
+        .form_revision = "2018",
+        .expected_current_sequence = 3,
+        .state = .inactive,
+        .scope = .interval,
+        .effective = testPeriod("2026-07-01", "2026-09-30"),
+        .source = .manual,
+        .review_state = .confirmed,
+    });
+    var q3 = try store.resolveFormSetDecisionOn(
+        allocator,
+        profile_id,
+        2026,
+        "2551Q",
+        "2018",
+        "2026-08-01",
+    );
+    defer q3.deinit(allocator);
+    try std.testing.expectEqual(FormSetDecisionState.inactive, q3.decision.?.state);
+    try std.testing.expect(!q3.review_required);
+
+    try std.testing.expectError(
+        Error.FormSetDecisionConflict,
+        store.appendFormSetDecision(.{
+            .id = "conflicting-overlap",
+            .profile_id = profile_id,
+            .tax_year = 2026,
+            .form_code = "2551Q",
+            .form_revision = "2018",
+            .expected_current_sequence = 4,
+            .state = .active,
+            .scope = .interval,
+            .effective = testPeriod("2026-08-01", "2026-10-31"),
+            .source = .manual,
+            .review_state = .confirmed,
+        }),
+    );
+    var history = try store.listFormSetDecisions(
+        allocator,
+        profile_id,
+        2026,
+        "2551Q",
+        "2018",
+    );
+    defer history.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 4), history.items.len);
+    try std.testing.expectEqualStrings(
+        "import:registration.csv#2",
+        history.items[1].evidence_reference.?,
+    );
+
+    var other_revision = try store.resolveFormSetDecisionOn(
+        allocator,
+        profile_id,
+        2026,
+        "2551Q",
+        "2024",
+        "2026-08-01",
+    );
+    defer other_revision.deinit(allocator);
+    try std.testing.expect(other_revision.decision == null);
+    try std.testing.expect(!other_revision.review_required);
+}
+
+test "legacy Forms Set writes append manual decisions atomically" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+    const profile_id = "tax-profile-projection-history";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Projection History", "2026-01-01"),
+        .{},
+    );
+    const active = [_]FormRegistrationWrite{.{
+        .form_code = "2551Q",
+        .form_revision = "2018",
+    }};
+    try store.createFormSet(profile_id, 2026, &active);
+    try std.testing.expectError(
+        Error.FormSetAlreadyExists,
+        store.createFormSet(profile_id, 2026, &.{.{
+            .form_code = "1701Q",
+            .form_revision = "2018",
+        }}),
+    );
+    var after_failed_create = try store.listFormSetDecisions(
+        allocator,
+        profile_id,
+        2026,
+        "2551Q",
+        "2018",
+    );
+    defer after_failed_create.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), after_failed_create.items.len);
+
+    try store.updateFormSet(profile_id, 2026, &.{});
+    try store.updateFormSet(profile_id, 2026, &active);
+    var history = try store.listFormSetDecisions(
+        allocator,
+        profile_id,
+        2026,
+        "2551Q",
+        "2018",
+    );
+    defer history.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 3), history.items.len);
+    try std.testing.expectEqual(FormSetDecisionState.active, history.items[0].state);
+    try std.testing.expectEqual(FormSetDecisionState.inactive, history.items[1].state);
+    try std.testing.expectEqual(FormSetDecisionState.active, history.items[2].state);
+    try std.testing.expectEqualStrings(history.items[0].id, history.items[1].supersedes_id.?);
+    try std.testing.expectEqualStrings(history.items[1].id, history.items[2].supersedes_id.?);
+    for (history.items) |item| {
+        try std.testing.expectEqual(FormSetDecisionSource.manual, item.source);
+        try std.testing.expectEqual(FormSetDecisionReviewState.confirmed, item.review_state);
+    }
+    var resolved = try store.resolveFormSetDecisionOn(
+        allocator,
+        profile_id,
+        2026,
+        "2551Q",
+        "2018",
+        "2026-12-31",
+    );
+    defer resolved.deinit(allocator);
+    try std.testing.expectEqual(FormSetDecisionState.active, resolved.decision.?.state);
+}
+
+test "v18 migrates v17 Tax Form Profile copies and persists confirmed review" {
+    const allocator = std.testing.allocator;
+    var store = try openLegacyStoreForTest(17);
+    defer store.close();
+    try std.testing.expectEqual(@as(u32, 17), try store.schemaVersion());
+
+    const profile_id = "tax-form-profile-copy-v18";
+    const activities = [_]BusinessActivityWrite{.{
+        .id = "copy-activity-r1",
+        .anchor_id = "copy-activity",
+        .line_of_business = "Professional services",
+        .effective = testPeriod("2025-01-01", null),
+    }};
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Copy Migration", "2025-01-01"),
+        .{ .business_activities = &activities },
+    );
+
+    const form = form_catalog.findForm("1601C").?;
+    const registration = [_]FormRegistrationWrite{.{
+        .form_code = form.code,
+        .form_revision = form.revision.?,
+    }};
+    try store.replaceFormSet(profile_id, 2025, &registration);
+    try store.replaceFormSet(profile_id, 2026, &registration);
+    try store.replaceFormSet(profile_id, 2027, &registration);
+
+    const source_values = [_]TaxFormProfileSetupValueWrite{.{
+        .semantic_key = .business_activity_anchor_id,
+        .role = .filer,
+        .value = .{ .business_activity_anchor_id = "copy-activity" },
+    }};
+    try store.appendTaxFormProfileRevision(.{
+        .id = "tfp-source-2025",
+        .profile_id = profile_id,
+        .tax_year = 2025,
+        .form_code = form.code,
+        .form_revision = form.revision.?,
+        .sequence = 1,
+        .expected_current_sequence = 0,
+        .effective = testPeriod("2025-01-01", null),
+        .spec_revision = form.tax_form_profile.spec_revision.?,
+        .spec_hash = form.tax_form_profile.spec_hash.?,
+        .review_state = .confirmed,
+        .confirmed_at_unix_seconds = 1_735_689_600,
+        .source = .manual_entry,
+        .values = &source_values,
+    });
+
+    const copied_values = [_]TaxFormProfileSetupValueWrite{.{
+        .semantic_key = .business_activity_anchor_id,
+        .role = .filer,
+        .value = .{ .business_activity_anchor_id = "copy-activity" },
+        .source = .{ .copied_from_revision = "tfp-source-2025" },
+    }};
+    try store.appendTaxFormProfileRevision(.{
+        .id = "tfp-pending-2026",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .form_code = form.code,
+        .form_revision = form.revision.?,
+        .sequence = 1,
+        .expected_current_sequence = 0,
+        .effective = testPeriod("2026-01-01", null),
+        .spec_revision = form.tax_form_profile.spec_revision.?,
+        .spec_hash = form.tax_form_profile.spec_hash.?,
+        .review_state = .requires_review,
+        .source = .{ .copied_from_prior_year = .{
+            .source_tax_year = 2025,
+            .source_form_revision = form.revision.?,
+            .source_spec_revision = form.tax_form_profile.spec_revision.?,
+            .source_spec_hash = form.tax_form_profile.spec_hash.?,
+            .source_revision_id = "tfp-source-2025",
+        } },
+        .values = &copied_values,
+    });
+
+    var rowids_before: [2]i64 = undefined;
+    {
+        var rowids = try store.prepare(
+            \\SELECT rowid
+            \\FROM tax_profile_form_profile_revisions
+            \\WHERE profile_id = ?
+            \\ORDER BY tax_year;
+        );
+        defer rowids.deinit();
+        try rowids.bindText(1, profile_id);
+        for (&rowids_before) |*rowid| {
+            try std.testing.expectEqual(StepResult.row, try rowids.step());
+            rowid.* = sqlite.sqlite3_column_int64(rowids.raw, 0);
+        }
+        try std.testing.expectEqual(StepResult.done, try rowids.step());
+    }
+
+    try store.migrate();
+    try std.testing.expectEqual(
+        latest_schema_version,
+        try store.schemaVersion(),
+    );
+    try std.testing.expect(try store.foreignKeysEnabled());
+    try std.testing.expect(!(try tableExistsForTest(
+        &store,
+        "tax_profile_form_profile_revisions_v17_migration",
+    )));
+
+    {
+        var rowids = try store.prepare(
+            \\SELECT rowid
+            \\FROM tax_profile_form_profile_revisions
+            \\WHERE profile_id = ?
+            \\ORDER BY tax_year;
+        );
+        defer rowids.deinit();
+        try rowids.bindText(1, profile_id);
+        for (rowids_before) |expected| {
+            try std.testing.expectEqual(StepResult.row, try rowids.step());
+            try std.testing.expectEqual(
+                expected,
+                sqlite.sqlite3_column_int64(rowids.raw, 0),
+            );
+        }
+        try std.testing.expectEqual(StepResult.done, try rowids.step());
+    }
+    var pending = try store.listTaxFormProfileRevisions(
+        allocator,
+        profile_id,
+        2026,
+        form.code,
+        form.revision.?,
+    );
+    defer pending.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), pending.items.len);
+    try std.testing.expectEqual(
+        TaxFormProfileReviewState.requires_review,
+        pending.items[0].review_state,
+    );
+    try std.testing.expectEqualStrings(
+        "tfp-source-2025",
+        pending.items[0].source.copied_from_prior_year.source_revision_id,
+    );
+    try std.testing.expectEqualStrings(
+        form.revision.?,
+        pending.items[0].source.copied_from_prior_year.source_form_revision,
+    );
+    try std.testing.expectEqual(
+        form.tax_form_profile.spec_revision.?,
+        pending.items[0].source.copied_from_prior_year.source_spec_revision,
+    );
+    try std.testing.expectEqualStrings(
+        form.tax_form_profile.spec_hash.?,
+        pending.items[0].source.copied_from_prior_year.source_spec_hash,
+    );
+    try std.testing.expectEqual(@as(usize, 1), pending.items[0].values.len);
+
+    try store.appendTaxFormProfileRevision(.{
+        .id = "tfp-confirmed-2027",
+        .profile_id = profile_id,
+        .tax_year = 2027,
+        .form_code = form.code,
+        .form_revision = form.revision.?,
+        .sequence = 1,
+        .expected_current_sequence = 0,
+        .effective = testPeriod("2027-01-01", null),
+        .spec_revision = form.tax_form_profile.spec_revision.?,
+        .spec_hash = form.tax_form_profile.spec_hash.?,
+        .review_state = .confirmed,
+        .confirmed_at_unix_seconds = 1_767_225_600,
+        .source = .{ .copied_from_prior_year = .{
+            .source_tax_year = 2025,
+            .source_form_revision = form.revision.?,
+            .source_spec_revision = form.tax_form_profile.spec_revision.?,
+            .source_spec_hash = form.tax_form_profile.spec_hash.?,
+            .source_revision_id = "tfp-source-2025",
+        } },
+        .values = &copied_values,
+    });
+    var confirmed = try store.listTaxFormProfileRevisions(
+        allocator,
+        profile_id,
+        2027,
+        form.code,
+        form.revision.?,
+    );
+    defer confirmed.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), confirmed.items.len);
+    try std.testing.expectEqual(
+        TaxFormProfileReviewState.confirmed,
+        confirmed.items[0].review_state,
+    );
+    try std.testing.expectEqual(
+        @as(?i64, 1_767_225_600),
+        confirmed.items[0].confirmed_at_unix_seconds,
+    );
+    try std.testing.expectEqual(
+        @as(u16, 2025),
+        confirmed.items[0].source.copied_from_prior_year.source_tax_year,
+    );
+    try std.testing.expectEqualStrings(
+        "tfp-source-2025",
+        confirmed.items[0].source.copied_from_prior_year.source_revision_id,
+    );
+    var resolved = (try store.resolveTaxFormProfileRevisionOn(
+        allocator,
+        profile_id,
+        2027,
+        form.code,
+        form.revision.?,
+        "2027-06-30",
+    )).?;
+    defer resolved.deinit(allocator);
+    try std.testing.expectEqualStrings("tfp-confirmed-2027", resolved.id);
+
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\UPDATE tax_profile_form_profile_revisions
+            \\SET confirmed_at_unix_seconds = 1
+            \\WHERE id = 'tfp-confirmed-2027';
+        ),
+    );
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\DELETE FROM tax_profile_form_profile_revisions
+            \\WHERE id = 'tfp-confirmed-2027';
+        ),
+    );
+    var foreign_key_check = try store.prepare("PRAGMA foreign_key_check;");
+    defer foreign_key_check.deinit();
+    try std.testing.expectEqual(StepResult.done, try foreign_key_check.step());
+}
+
+test "v20 preserves reviewed prior-year copies across form revisions" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+    const profile_id = "tax-form-profile-cross-revision-copy";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Cross Revision Copy", "2025-01-01"),
+        .{},
+    );
+    const activity = [_]RegistrationActivityRevisionWrite{.{
+        .anchor_id = "cross-revision-activity",
+        .metadata = .{
+            .id = "cross-revision-activity-r1",
+            .expected_component_sequence = 0,
+            .effective = testPeriod("2025-01-01", null),
+            .source = .manual_entry,
+            .review_state = .confirmed,
+            .confirmed_at_unix_seconds = 1,
+        },
+        .line_of_business = "Professional services",
+        .atc = "PT010",
+    }};
+    _ = try store.appendRegistrationCommit(.{
+        .profile_id = profile_id,
+        .expected_current_sequence = 0,
+        .activities = &activity,
+    });
+
+    const form = form_catalog.findForm("1601C").?;
+    const old_form_revision = "2017-OLD";
+    try store.replaceFormSet(profile_id, 2025, &.{.{
+        .form_code = form.code,
+        .form_revision = old_form_revision,
+    }});
+    try store.replaceFormSet(profile_id, 2026, &.{.{
+        .form_code = form.code,
+        .form_revision = form.revision.?,
+    }});
+
+    // Simulate a row written by the previous generated catalog. The current
+    // write API correctly rejects an unknown old spec; discovery and reviewed
+    // copying must nevertheless preserve already-persisted history.
+    try store.exec(
+        \\INSERT INTO tax_profile_form_profile_revisions (
+        \\    profile_id, tax_year, form_code, form_revision, id,
+        \\    sequence, effective_from, spec_revision, spec_hash,
+        \\    review_state, confirmed_at_unix_seconds, source_tag
+        \\) VALUES (
+        \\    'tax-form-profile-cross-revision-copy', 2025, '1601C',
+        \\    '2017-OLD', 'cross-revision-source-2025', 1,
+        \\    '2025-01-01', 7, 'old-generated-spec-hash',
+        \\    'confirmed', 1735689600, 'manual_entry'
+        \\);
+        \\INSERT INTO tax_profile_form_profile_values (
+        \\    profile_id, tax_year, form_code, form_revision,
+        \\    revision_id, revision_sequence, semantic_key, role,
+        \\    value_type, anchor_value, source_tag
+        \\) VALUES (
+        \\    'tax-form-profile-cross-revision-copy', 2025, '1601C',
+        \\    '2017-OLD', 'cross-revision-source-2025', 1,
+        \\    'business_activity_anchor_id', 'filer',
+        \\    'business_activity_anchor_id', 'cross-revision-activity',
+        \\    'manual_confirmation'
+        \\);
+    );
+
+    var candidates = try store.listTaxFormProfileRevisionsForForm(
+        allocator,
+        profile_id,
+        2025,
+        form.code,
+    );
+    defer candidates.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), candidates.items.len);
+    try std.testing.expectEqualStrings(
+        old_form_revision,
+        candidates.items[0].form_revision,
+    );
+
+    const mapped_values = [_]TaxFormProfileSetupValueWrite{.{
+        .semantic_key = .business_activity_anchor_id,
+        .role = .filer,
+        .value = .{ .business_activity_anchor_id = "cross-revision-activity" },
+        .source = .{ .copied_from_revision = "cross-revision-source-2025" },
+    }};
+    try store.appendTaxFormProfileRevision(.{
+        .id = "cross-revision-target-2026",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .form_code = form.code,
+        .form_revision = form.revision.?,
+        .sequence = 1,
+        .expected_current_sequence = 0,
+        .effective = testPeriod("2026-01-01", null),
+        .spec_revision = form.tax_form_profile.spec_revision.?,
+        .spec_hash = form.tax_form_profile.spec_hash.?,
+        .review_state = .confirmed,
+        .confirmed_at_unix_seconds = 1_767_225_600,
+        .source = .{ .copied_from_prior_year = .{
+            .source_tax_year = 2025,
+            .source_form_revision = old_form_revision,
+            .source_spec_revision = 7,
+            .source_spec_hash = "old-generated-spec-hash",
+            .source_revision_id = "cross-revision-source-2025",
+        } },
+        .values = &mapped_values,
+    });
+
+    var copied = try store.listTaxFormProfileRevisions(
+        allocator,
+        profile_id,
+        2026,
+        form.code,
+        form.revision.?,
+    );
+    defer copied.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), copied.items.len);
+    const provenance = copied.items[0].source.copied_from_prior_year;
+    try std.testing.expectEqualStrings(
+        old_form_revision,
+        provenance.source_form_revision,
+    );
+    try std.testing.expectEqual(@as(u32, 7), provenance.source_spec_revision);
+    try std.testing.expectEqualStrings(
+        "old-generated-spec-hash",
+        provenance.source_spec_hash,
+    );
+    try std.testing.expectEqualStrings(
+        "cross-revision-source-2025",
+        provenance.source_revision_id,
+    );
+    var foreign_key_check = try store.prepare("PRAGMA foreign_key_check;");
+    defer foreign_key_check.deinit();
+    try std.testing.expectEqual(StepResult.done, try foreign_key_check.step());
+}
+
+test "v17 coarse and v19 exact provenance round trip frozen bindings snapshots and seeds" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+    const profile_id = "draft-provenance-v17-profile";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Draft Provenance", "2026-01-01"),
+        .{},
+    );
+
+    const registered_form = [_]FormRegistrationWrite{.{
+        .form_code = "1701Q",
+        .form_revision = "2018-01-ENCS",
+    }};
+    try store.createFormSet(profile_id, 2026, &registered_form);
+    var decisions = try store.listFormSetDecisions(
+        allocator,
+        profile_id,
+        2026,
+        "1701Q",
+        "2018-01-ENCS",
+    );
+    defer decisions.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), decisions.items.len);
+
+    const activity = [_]RegistrationActivityRevisionWrite{.{
+        .anchor_id = "primary-activity",
+        .metadata = .{
+            .id = "primary-activity-r1",
+            .expected_component_sequence = 0,
+            .effective = testPeriod("2026-01-01", null),
+            .source = .manual_entry,
+            .review_state = .confirmed,
+            .confirmed_at_unix_seconds = 1,
+        },
+        .line_of_business = "Professional services",
+        .atc = "IT010",
+    }};
+    const obligation = [_]RegistrationObligationRevisionWrite{.{
+        .anchor_id = "income-tax-obligation",
+        .metadata = .{
+            .id = "income-tax-obligation-r1",
+            .expected_component_sequence = 0,
+            .effective = testPeriod("2026-01-01", null),
+            .source = .manual_entry,
+            .review_state = .confirmed,
+            .confirmed_at_unix_seconds = 2,
+        },
+        .kind = .registered_income_tax,
+    }};
+    _ = try store.appendRegistrationCommit(.{
+        .profile_id = profile_id,
+        .expected_current_sequence = 0,
+        .activities = &activity,
+        .obligations = &obligation,
+    });
+
+    const year_values = [_]TaxpayerYearSettingValueWrite{
+        .{ .income_tax_rate_election = .graduated },
+        .{ .deduction_method = .optional_standard_deduction },
+    };
+    try store.appendTaxpayerYearRevision(.{
+        .id = "taxpayer-year-r1",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .sequence = 1,
+        .expected_current_sequence = 0,
+        .effective = testPeriod("2026-01-01", "2026-12-31"),
+        .review_state = .confirmed,
+        .confirmed_at_unix_seconds = 3,
+        .source = .manual_entry,
+        .values = &year_values,
+    });
+
+    const form_definition = form_catalog.findForm("1701Q").?;
+    const form_values = [_]TaxFormProfileSetupValueWrite{.{
+        .semantic_key = .business_activity_anchor_id,
+        .role = .filer,
+        .value = .{ .business_activity_anchor_id = "primary-activity" },
+    }};
+    try store.appendTaxFormProfileRevision(.{
+        .id = "form-profile-r1",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .form_code = "1701Q",
+        .form_revision = "2018-01-ENCS",
+        .sequence = 1,
+        .expected_current_sequence = 0,
+        .effective = testPeriod("2026-01-01", null),
+        .spec_revision = form_definition.tax_form_profile.spec_revision.?,
+        .spec_hash = form_definition.tax_form_profile.spec_hash.?,
+        .review_state = .confirmed,
+        .confirmed_at_unix_seconds = 4,
+        .source = .manual_entry,
+        .values = &form_values,
+    });
+
+    try store.createDraft(
+        .{
+            .id = "draft-provenance-v17",
+            .form_code = "1701Q",
+            .form_revision = "2018-01-ENCS",
+            .period_key = "2026-Q2",
+            .profile_as_of = "2026-06-30".*,
+            .mapping_revision = "tax-profile-snapshot-v1",
+        },
+        &.{.{
+            .role = "filer",
+            .profile_id = profile_id,
+            .profile_revision_id = "revision-1",
+            .profile_revision_sequence = 1,
+        }},
+        &.{},
+        &.{},
+    );
+
+    const taxpayer_revisions = [_]DraftProvenanceTaxpayerRevisionWrite{.{
+        .role = .filer,
+        .profile_id = profile_id,
+        .revision_id = "revision-1",
+        .revision_sequence = 1,
+    }};
+    const components = [_]DraftProvenanceComponentWrite{
+        .{ .business_activity = .{
+            .role = .filer,
+            .profile_id = profile_id,
+            .anchor_id = "primary-activity",
+            .revision_id = "primary-activity-r1",
+            .revision_sequence = 1,
+        } },
+        .{ .registration_obligation = .{
+            .role = .filer,
+            .profile_id = profile_id,
+            .anchor_id = "income-tax-obligation",
+            .revision_id = "income-tax-obligation-r1",
+            .revision_sequence = 1,
+        } },
+    };
+    const binary_text = [_]u8{ 'A', 0, 'B', 0xff };
+    const sources = [_]DraftProvenanceSourceSnapshotWrite{
+        .{
+            .key = .{ .taxpayer_fact = .{
+                .role = .filer,
+                .key = .taxpayer_name,
+            } },
+            .copied_value = .{ .text = &binary_text },
+        },
+        .{
+            .key = .{ .taxpayer_year_setting = .{
+                .role = .filer,
+                .key = .income_tax_rate_election,
+            } },
+            .copied_value = .{ .income_tax_rate_election = .graduated },
+        },
+        .{
+            .key = .{ .tax_form_profile_value = .{
+                .role = .filer,
+                .key = .business_activity_anchor_id,
+            } },
+            .copied_value = .{
+                .business_activity_anchor_id = "primary-activity",
+            },
+        },
+        .{
+            .key = .{ .business_activity_fact = .{
+                .role = .filer,
+                .anchor_id = "primary-activity",
+                .key = .line_of_business,
+            } },
+            .copied_value = .{ .text = "Professional services" },
+        },
+        .{
+            .key = .{ .registration_obligation_fact = .{
+                .role = .filer,
+                .anchor_id = "income-tax-obligation",
+                .key = .registration_kind,
+            } },
+            .copied_value = .{ .choice = "registered_income_tax" },
+        },
+    };
+    const seeds = [_]DraftProvenanceTransactionSeedWrite{
+        .{
+            .filing_field = "filing.seed.from-profile",
+            .source_key = .{ .tax_form_profile_value = .{
+                .role = .filer,
+                .key = .special_rate_obligation_anchor_id,
+            } },
+            .source = .{ .tax_form_profile_revision = "form-profile-r1" },
+            .copied_seed_value = .{ .choice = "profile-seed" },
+        },
+        .{
+            .filing_field = "filing.seed.from-catalog",
+            .source_key = .{ .tax_form_profile_value = .{
+                .role = .filer,
+                .key = .spouse_profile_id,
+            } },
+            .source = .{ .catalog_default = .{
+                .revision = "catalog/2026.08.04",
+                .sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            } },
+            .copied_seed_value = .{ .boolean = true },
+        },
+    };
+    const write: DraftProvenanceWrite = .{
+        .draft_id = "draft-provenance-v17",
+        .expected_current_sequence = 0,
+        .owner_profile_id = profile_id,
+        .tax_year = 2026,
+        .form_code = "1701Q",
+        .form_revision = "2018-01-ENCS",
+        .catalog_revision = "catalog/2026.08.04",
+        .catalog_sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        .setup_spec_revision = form_definition.tax_form_profile.spec_revision.?,
+        .setup_spec_hash = form_definition.tax_form_profile.spec_hash.?,
+        .forms_set_decision = .{
+            .id = decisions.items[0].id,
+            .sequence = decisions.items[0].sequence,
+            .source = decisions.items[0].source,
+            .evidence_reference = decisions.items[0].evidence_reference,
+            .applicability_date = "2026-06-30".*,
+        },
+        .taxpayer_revisions = &taxpayer_revisions,
+        .taxpayer_year_revision = .{
+            .profile_id = profile_id,
+            .tax_year = 2026,
+            .revision_id = "taxpayer-year-r1",
+            .revision_sequence = 1,
+        },
+        .tax_form_profile_revision = .{
+            .profile_id = profile_id,
+            .tax_year = 2026,
+            .form_code = "1701Q",
+            .form_revision = "2018-01-ENCS",
+            .revision_id = "form-profile-r1",
+            .revision_sequence = 1,
+            .spec_revision = form_definition.tax_form_profile.spec_revision.?,
+            .spec_hash = form_definition.tax_form_profile.spec_hash.?,
+        },
+        .components = &components,
+        .source_snapshots = &sources,
+        .transaction_seeds = &seeds,
+    };
+    try std.testing.expectEqual(@as(u32, 1), try store.appendDraftProvenance(write));
+    try std.testing.expectError(
+        Error.DraftProvenanceConflict,
+        store.appendDraftProvenance(write),
+    );
+
+    var loaded = try store.getDraftProvenance(
+        allocator,
+        "draft-provenance-v17",
+    );
+    defer loaded.deinit(allocator);
+    const exact = &loaded.exact;
+    try std.testing.expectEqual(@as(u32, 1), exact.sequence);
+    try std.testing.expectEqualStrings(
+        "catalog/2026.08.04",
+        exact.catalog_revision,
+    );
+    try std.testing.expectEqualStrings(
+        decisions.items[0].id,
+        exact.forms_set_decision.id,
+    );
+    try std.testing.expectEqualStrings(
+        "2026-06-30",
+        exact.forms_set_applicability_date,
+    );
+    try std.testing.expectEqual(@as(usize, 1), exact.taxpayer_revisions.len);
+    try std.testing.expect(exact.taxpayer_year_revision != null);
+    try std.testing.expect(exact.tax_form_profile_revision != null);
+    try std.testing.expectEqual(@as(usize, 2), exact.components.len);
+    try std.testing.expectEqual(@as(usize, 5), exact.source_snapshots.len);
+    try std.testing.expectEqualSlices(
+        u8,
+        &binary_text,
+        exact.source_snapshots[0].copied_value.text,
+    );
+    try std.testing.expectEqual(
+        TaxpayerYearIncomeTaxRateElection.graduated,
+        exact.source_snapshots[1].copied_value.income_tax_rate_election,
+    );
+    try std.testing.expectEqual(@as(usize, 2), exact.transaction_seeds.len);
+    try std.testing.expectEqualStrings(
+        "profile-seed",
+        exact.transaction_seeds[0].copied_seed_value.choice,
+    );
+    try std.testing.expect(exact.transaction_seeds[1].copied_seed_value.boolean);
+
+    const manifest = try exact_form_occurrences.editableManifest();
+    const exact_values = try testExactValues(allocator, manifest, 7);
+    defer allocator.free(exact_values);
+    const exact_contexts = try testExactContexts(allocator, manifest);
+    defer allocator.free(exact_contexts);
+    var exact_history = try exact_draft.DraftHistory.initExact1701Q(
+        allocator,
+        try testDraftWorkspaceId(222),
+        .editable_save,
+    );
+    defer exact_history.deinit();
+    const first_snapshot = try exact_history.appendRevision(.create, .{
+        .package_key = exact_history.schema.package_key,
+        .payload_shape = .editable_save,
+        .occurrence_manifest = manifest,
+        .occurrences = exact_values,
+        .profile_snapshot_digest = testSha256(201),
+        .transaction_state_digest = testSha256(202),
+    });
+    const exact_bindings = [_]ExactDraftRoleBindingWrite{.{
+        .role = "filer",
+        .instance_id = profile_id,
+        .profile_id = profile_id,
+        .profile_revision_id = "revision-1",
+        .profile_revision_sequence = 1,
+        // The v16 activity anchor lives only in the typed v19 component
+        // child, never in this legacy profile-revision FK.
+        .business_activity_id = null,
+        .provenance = "frozen exact profile revision",
+    }};
+    const exact_provenance: ExactDraftProvenanceWrite = .{
+        .owner_profile_id = write.owner_profile_id,
+        .tax_year = write.tax_year,
+        .form_code = write.form_code,
+        .form_revision = write.form_revision,
+        .catalog_revision = write.catalog_revision,
+        .catalog_sha256 = write.catalog_sha256,
+        .setup_spec_revision = write.setup_spec_revision,
+        .setup_spec_hash = write.setup_spec_hash,
+        .forms_set_decision = .{
+            .id = write.forms_set_decision.id,
+            .sequence = write.forms_set_decision.sequence,
+            .source = write.forms_set_decision.source,
+            .evidence_reference = write.forms_set_decision.evidence_reference,
+            .applicability_date = "2026-03-31".*,
+        },
+        .taxpayer_revisions = write.taxpayer_revisions,
+        .taxpayer_year_revision = write.taxpayer_year_revision,
+        .tax_form_profile_revision = write.tax_form_profile_revision,
+        .components = write.components,
+        .source_snapshots = write.source_snapshots,
+        .transaction_seeds = write.transaction_seeds,
+    };
+    try store.appendExactDraftRevisionWithProvenance(
+        syntheticPlaintextTestCapability(),
+        .create,
+        .{
+            .filing_key = testFilingKey(profile_id),
+            .profile_as_of = testDate("2026-03-31"),
+            .recorded_at_unix_seconds = 1_775_600_001,
+            .validation_evidence = testExactValidationEvidence(),
+            .snapshot = first_snapshot,
+            .bindings = &exact_bindings,
+            .occurrence_contexts = exact_contexts,
+        },
+        exact_provenance,
+    );
+
+    var loaded_first = try store.getExactDraftRevisionProvenance(
+        syntheticPlaintextTestCapability(),
+        allocator,
+        first_snapshot.draft_identity,
+        first_snapshot.revision,
+    );
+    defer loaded_first.deinit(allocator);
+    try std.testing.expect(loaded_first == .exact);
+    try std.testing.expectEqualStrings(
+        "taxpayer-year-r1",
+        loaded_first.exact.taxpayer_year_revision.?.revision_id,
+    );
+    try std.testing.expectEqual(@as(usize, 2), loaded_first.exact.components.len);
+    try std.testing.expectEqual(
+        TaxpayerYearIncomeTaxRateElection.graduated,
+        loaded_first.exact.source_snapshots[1]
+            .copied_value.income_tax_rate_election,
+    );
+
+    seedTestExactValues(exact_values, manifest, 8);
+    const second_snapshot = try exact_history.appendRevision(
+        .{ .match = first_snapshot.revision },
+        .{
+            .package_key = exact_history.schema.package_key,
+            .payload_shape = .editable_save,
+            .occurrence_manifest = manifest,
+            .occurrences = exact_values,
+            .profile_snapshot_digest = testSha256(203),
+            .transaction_state_digest = testSha256(204),
+        },
+    );
+    try store.appendExactDraftRevisionWithProvenance(
+        syntheticPlaintextTestCapability(),
+        .{ .match = first_snapshot.revision },
+        .{
+            .filing_key = testFilingKey(profile_id),
+            .profile_as_of = testDate("2026-03-31"),
+            .recorded_at_unix_seconds = 1_775_600_002,
+            .validation_evidence = testExactValidationEvidence(),
+            .snapshot = second_snapshot,
+            .bindings = &exact_bindings,
+            .occurrence_contexts = exact_contexts,
+        },
+        exact_provenance,
+    );
+    var loaded_second = try store.getExactDraftRevisionProvenance(
+        syntheticPlaintextTestCapability(),
+        allocator,
+        second_snapshot.draft_identity,
+        second_snapshot.revision,
+    );
+    defer loaded_second.deinit(allocator);
+    try std.testing.expect(loaded_second == .exact);
+    try std.testing.expect(
+        loaded_first.exact.provenance_digest.eql(
+            &loaded_second.exact.provenance_digest,
+        ),
+    );
+
+    var changed_seeds = seeds;
+    changed_seeds[1].source = .{ .catalog_default = .{
+        .revision = "catalog/2026.08.05",
+        .sha256 = write.catalog_sha256,
+    } };
+    var changed_provenance = exact_provenance;
+    changed_provenance.catalog_revision = "catalog/2026.08.05";
+    changed_provenance.transaction_seeds = &changed_seeds;
+    seedTestExactValues(exact_values, manifest, 9);
+    const third_snapshot = try exact_history.appendRevision(
+        .{ .match = second_snapshot.revision },
+        .{
+            .package_key = exact_history.schema.package_key,
+            .payload_shape = .editable_save,
+            .occurrence_manifest = manifest,
+            .occurrences = exact_values,
+            .profile_snapshot_digest = testSha256(205),
+            .transaction_state_digest = testSha256(206),
+        },
+    );
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.appendExactDraftRevisionWithProvenance(
+            syntheticPlaintextTestCapability(),
+            .{ .match = second_snapshot.revision },
+            .{
+                .filing_key = testFilingKey(profile_id),
+                .profile_as_of = testDate("2026-03-31"),
+                .recorded_at_unix_seconds = 1_775_600_003,
+                .validation_evidence = testExactValidationEvidence(),
+                .snapshot = third_snapshot,
+                .bindings = &exact_bindings,
+                .occurrence_contexts = exact_contexts,
+            },
+            changed_provenance,
+        ),
+    );
+    var persisted_history = (try store.getExactDraftHistory(
+        syntheticPlaintextTestCapability(),
+        allocator,
+        first_snapshot.draft_identity,
+    )).?;
+    defer persisted_history.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), persisted_history.revisions.len);
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\UPDATE tax_exact_draft_revision_provenance
+            \\SET catalog_revision = catalog_revision;
+        ),
+    );
+
+    const legacy_identity = try persistTestExactRevision(
+        &store,
+        allocator,
+        profile_id,
+        223,
+        .editable_save,
+    );
+    var legacy = try store.getExactDraftRevisionProvenance(
+        syntheticPlaintextTestCapability(),
+        allocator,
+        legacy_identity,
+        .{ .value = 1 },
+    );
+    defer legacy.deinit(allocator);
+    try std.testing.expect(legacy == .provenance_legacy_absent);
+}
+
+test "v17 migration leaves existing draft bytes and provenance explicitly legacy absent" {
+    const allocator = std.testing.allocator;
+    var store = try openLegacyStoreForTest(14);
+    defer store.close();
+    const profile_id = "draft-provenance-legacy-profile";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Legacy Draft", "2026-01-01"),
+        .{},
+    );
+    try store.createDraft(
+        .{
+            .id = "draft-provenance-legacy",
+            .form_code = "2551Q",
+            .form_revision = "2018-01-ENCS",
+            .period_key = "2026-Q1",
+            .profile_as_of = "2026-03-31".*,
+            .mapping_revision = "legacy-byte-contract",
+        },
+        &.{.{
+            .role = "filer",
+            .profile_id = profile_id,
+            .profile_revision_id = "revision-1",
+            .profile_revision_sequence = 1,
+        }},
+        &.{},
+        &.{.{
+            .field_id = "legacy.transaction.value",
+            .value_text = "001.2300",
+        }},
+    );
+    var before = (try store.getDraft(
+        allocator,
+        "draft-provenance-legacy",
+    )).?;
+    defer before.deinit(allocator);
+
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+    var provenance = try store.getDraftProvenance(
+        allocator,
+        "draft-provenance-legacy",
+    );
+    defer provenance.deinit(allocator);
+    try std.testing.expect(
+        provenance == .provenance_legacy_absent,
+    );
+    var after = (try store.getDraft(
+        allocator,
+        "draft-provenance-legacy",
+    )).?;
+    defer after.deinit(allocator);
+    try std.testing.expectEqualStrings(before.id, after.id);
+    try std.testing.expectEqualStrings(before.mapping_revision, after.mapping_revision);
+    try std.testing.expectEqualStrings(
+        before.values[0].value_text,
+        after.values[0].value_text,
+    );
+}
+
+test "atomic coarse draft provenance rolls back parent and remains single-shot" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+    const profile_id = "atomic-draft-provenance-profile";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Atomic Provenance", "2026-01-01"),
+        .{},
+    );
+    try store.createFormSet(profile_id, 2026, &.{.{
+        .form_code = "2551Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+    var decisions = try store.listFormSetDecisions(
+        allocator,
+        profile_id,
+        2026,
+        "2551Q",
+        "2018-01-ENCS",
+    );
+    defer decisions.deinit(allocator);
+    const definition = form_catalog.findForm("2551Q").?;
+    const taxpayers = [_]DraftProvenanceTaxpayerRevisionWrite{.{
+        .role = .filer,
+        .profile_id = profile_id,
+        .revision_id = "revision-1",
+        .revision_sequence = 1,
+    }};
+    const draft: DraftWrite = .{
+        .id = "atomic-draft-provenance",
+        .form_code = "2551Q",
+        .form_revision = "2018-01-ENCS",
+        .period_key = "2026-Q1",
+        .profile_as_of = "2026-03-31".*,
+        .mapping_revision = "tax-profile-snapshot-v1",
+    };
+    const bindings = [_]RoleBindingWrite{.{
+        .role = "filer",
+        .profile_id = profile_id,
+        .profile_revision_id = "revision-1",
+        .profile_revision_sequence = 1,
+    }};
+    var provenance: DraftProvenanceWrite = .{
+        .draft_id = draft.id,
+        .expected_current_sequence = 0,
+        .owner_profile_id = profile_id,
+        .tax_year = 2026,
+        .form_code = draft.form_code,
+        .form_revision = draft.form_revision,
+        .catalog_revision = form_catalog.catalog_revision,
+        .catalog_sha256 = form_catalog.catalog_sha256,
+        .setup_spec_revision = definition.tax_form_profile.spec_revision.?,
+        .setup_spec_hash = definition.tax_form_profile.spec_hash.?,
+        .forms_set_decision = .{
+            .id = "missing-forms-set-decision",
+            .sequence = 1,
+            .source = .manual,
+            .applicability_date = "2026-03-31".*,
+        },
+        .taxpayer_revisions = &taxpayers,
+    };
+
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.createDraftWithProvenance(
+            draft,
+            &bindings,
+            &.{},
+            &.{},
+            provenance,
+        ),
+    );
+    try std.testing.expect((try store.getDraft(
+        allocator,
+        draft.id,
+    )) == null);
+    try std.testing.expectError(
+        Error.NotFound,
+        store.getDraftProvenance(allocator, draft.id),
+    );
+
+    provenance.forms_set_decision.id = decisions.items[0].id;
+    try std.testing.expectEqual(
+        @as(u32, 1),
+        try store.createDraftWithProvenance(
+            draft,
+            &bindings,
+            &.{},
+            &.{},
+            provenance,
+        ),
+    );
+    var loaded = try store.getDraftProvenance(allocator, draft.id);
+    defer loaded.deinit(allocator);
+    try std.testing.expect(loaded == .exact);
+    try std.testing.expectEqual(@as(u32, 1), loaded.exact.sequence);
+
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.createDraftWithProvenance(
+            draft,
+            &bindings,
+            &.{},
+            &.{},
+            provenance,
+        ),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 1),
+        try store.draftProvenanceSequence(draft.id),
+    );
+}
+
+test "v16 registration backfill preserves exact facts and ambiguous text for review" {
+    const allocator = std.testing.allocator;
+    var store = try openLegacyStoreForTest(14);
+    defer store.close();
+    const profile_id = "registration-v16-migration";
+    const activities = [_]BusinessActivityWrite{.{
+        .id = "legacy-activity",
+        .anchor_id = "stable-activity",
+        .line_of_business = "Professional services",
+        .atc = "IT010",
+        .effective = testPeriod("2026-01-01", null),
+    }};
+    const facts = [_]RegistrationFactWrite{
+        .{
+            .id = "legacy-tax-type",
+            .anchor_id = "stable-tax-type",
+            .effective = testPeriod("2026-01-01", null),
+            .value = .{ .tax_type = "VAT" },
+        },
+        .{
+            .id = "legacy-gwa",
+            .anchor_id = "stable-gwa",
+            .effective = testPeriod("2026-01-01", null),
+            .value = .{ .government_withholding_agent = .yes },
+            .ordinal = 1,
+        },
+        .{
+            .id = "legacy-special",
+            .anchor_id = "stable-special",
+            .effective = testPeriod("2026-01-01", null),
+            .value = .{ .special_rate_basis = "Treaty article 7" },
+            .ordinal = 2,
+        },
+    };
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Registration Migration", "2026-01-01"),
+        .{
+            .business_activities = &activities,
+            .registration_facts = &facts,
+        },
+    );
+
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+    var history = try store.listRegistrationHistory(allocator, profile_id);
+    defer history.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 1), history.stream_sequence);
+    try std.testing.expectEqual(@as(usize, 1), history.activities.len);
+    try std.testing.expectEqual(
+        RegistrationRecordReviewState.confirmed,
+        history.activities[0].metadata.review_state,
+    );
+    try std.testing.expectEqualStrings(
+        "stable-activity",
+        history.activities[0].anchor_id,
+    );
+    try std.testing.expectEqualStrings(
+        "legacy-activity",
+        history.activities[0].metadata.legacy_component_id.?,
+    );
+    try std.testing.expectEqual(@as(usize, 1), history.obligations.len);
+    try std.testing.expectEqual(
+        RegistrationObligationKind.unknown_requires_review,
+        history.obligations[0].kind,
+    );
+    try std.testing.expectEqual(
+        RegistrationRecordReviewState.requires_review,
+        history.obligations[0].metadata.review_state,
+    );
+    try std.testing.expectEqualStrings(
+        "VAT",
+        history.obligations[0].value_text.?,
+    );
+    try std.testing.expectEqual(@as(usize, 1), history.agent_designations.len);
+    try std.testing.expectEqual(
+        RegistrationAgentDesignation.government_withholding_agent,
+        history.agent_designations[0].value,
+    );
+    try std.testing.expectEqual(
+        RegistrationRecordReviewState.confirmed,
+        history.agent_designations[0].metadata.review_state,
+    );
+    try std.testing.expectEqual(@as(usize, 1), history.special_bases.len);
+    try std.testing.expectEqual(
+        RegistrationSpecialBasisKind.unknown_requires_review,
+        history.special_bases[0].kind,
+    );
+    try std.testing.expectEqualStrings(
+        "Treaty article 7",
+        history.special_bases[0].value_text,
+    );
+
+    var legacy = (try store.getCurrentRevision(allocator, profile_id)).?;
+    defer legacy.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), legacy.business_activities.len);
+    try std.testing.expectEqual(@as(usize, 3), legacy.registration_facts.len);
+    try std.testing.expectEqualStrings(
+        "VAT",
+        legacy.registration_facts[0].value.tax_type,
+    );
+}
+
+test "registration stream rejects stale cross-owner and conflicting commits atomically" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+    const first_profile = "registration-owner-one";
+    const second_profile = "registration-owner-two";
+    try store.createProfileWithRevision(
+        .{ .id = first_profile },
+        testRevisionWithTin(
+            first_profile,
+            0,
+            "Registration Owner One",
+            "2026-01-01",
+            "123456789000",
+        ),
+        .{},
+    );
+    try store.createProfileWithRevision(
+        .{ .id = second_profile },
+        testRevisionWithTin(
+            second_profile,
+            0,
+            "Registration Owner Two",
+            "2026-01-01",
+            "987654321000",
+        ),
+        .{},
+    );
+    const activity = [_]RegistrationActivityRevisionWrite{.{
+        .anchor_id = "stable-primary",
+        .metadata = .{
+            .id = "owner-one-activity-v1",
+            .expected_component_sequence = 0,
+            .effective = testPeriod("2026-01-01", null),
+            .source = .manual_entry,
+            .review_state = .confirmed,
+            .confirmed_at_unix_seconds = 1,
+        },
+        .line_of_business = "Consulting",
+    }};
+    const vat = [_]RegistrationObligationRevisionWrite{.{
+        .anchor_id = "vat",
+        .metadata = .{
+            .id = "owner-one-vat-v1",
+            .expected_component_sequence = 0,
+            .effective = testPeriod("2026-01-01", null),
+            .source = .manual_entry,
+            .review_state = .confirmed,
+            .confirmed_at_unix_seconds = 2,
+        },
+        .kind = .vat,
+    }};
+    _ = try store.appendRegistrationCommit(.{
+        .profile_id = first_profile,
+        .expected_current_sequence = 0,
+        .activities = &activity,
+        .obligations = &vat,
+    });
+
+    const stale = [_]RegistrationActivityRevisionWrite{.{
+        .anchor_id = "second",
+        .metadata = .{
+            .id = "stale-registration-row",
+            .expected_component_sequence = 0,
+            .effective = testPeriod("2026-01-01", null),
+            .source = .manual_entry,
+            .review_state = .confirmed,
+            .confirmed_at_unix_seconds = 3,
+        },
+        .line_of_business = "Stale",
+    }};
+    try std.testing.expectError(
+        Error.RegistrationStreamConflict,
+        store.appendRegistrationCommit(.{
+            .profile_id = first_profile,
+            .expected_current_sequence = 0,
+            .activities = &stale,
+        }),
+    );
+
+    const percentage = [_]RegistrationObligationRevisionWrite{.{
+        .anchor_id = "percentage",
+        .metadata = .{
+            .id = "owner-one-percentage-v1",
+            .expected_component_sequence = 0,
+            .effective = testPeriod("2026-03-01", null),
+            .source = .manual_entry,
+            .review_state = .confirmed,
+            .confirmed_at_unix_seconds = 4,
+        },
+        .kind = .percentage_tax,
+    }};
+    try std.testing.expectError(
+        Error.RegistrationObligationConflict,
+        store.appendRegistrationCommit(.{
+            .profile_id = first_profile,
+            .expected_current_sequence = 1,
+            .obligations = &percentage,
+        }),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 1),
+        try store.registrationStreamSequence(first_profile),
+    );
+    var after_conflict = try store.listRegistrationHistory(
+        allocator,
+        first_profile,
+    );
+    defer after_conflict.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), after_conflict.obligations.len);
+
+    const cross_owner = [_]RegistrationActivityRevisionWrite{.{
+        .anchor_id = "stable-primary",
+        .metadata = .{
+            .id = "owner-two-forged-v1",
+            .expected_component_sequence = 0,
+            .effective = testPeriod("2026-01-01", null),
+            .source = .manual_entry,
+            .review_state = .confirmed,
+            .confirmed_at_unix_seconds = 5,
+            .supersedes_id = "owner-one-activity-v1",
+        },
+        .line_of_business = "Forged cross owner",
+    }};
+    try std.testing.expectError(
+        Error.RegistrationComponentConflict,
+        store.appendRegistrationCommit(.{
+            .profile_id = second_profile,
+            .expected_current_sequence = 0,
+            .activities = &cross_owner,
+        }),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 0),
+        try store.registrationStreamSequence(second_profile),
+    );
+}
+
+test "classification revisions do not erase independent registration history" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+    const profile_id = "registration-classification";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Classification Test", "2026-01-01"),
+        .{},
+    );
+    const activity = [_]RegistrationActivityRevisionWrite{.{
+        .anchor_id = "preserved-activity",
+        .metadata = .{
+            .id = "preserved-activity-v1",
+            .expected_component_sequence = 0,
+            .effective = testPeriod("2026-01-01", null),
+            .source = .manual_entry,
+            .review_state = .confirmed,
+            .confirmed_at_unix_seconds = 1,
+        },
+        .line_of_business = "Preserved consulting",
+    }};
+    _ = try store.appendRegistrationCommit(.{
+        .profile_id = profile_id,
+        .expected_current_sequence = 0,
+        .activities = &activity,
+    });
+
+    var classification = testRevision(
+        profile_id,
+        1,
+        "Classification Test",
+        "2026-08-01",
+    );
+    classification.subject = .{ .individual = .{
+        .name = "Classification Test",
+        .classification = .pure_compensation,
+    } };
+    try store.appendRevision(classification, .{});
+
+    var history = try store.listRegistrationHistory(allocator, profile_id);
+    defer history.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 1), history.stream_sequence);
+    try std.testing.expectEqual(@as(usize, 1), history.activities.len);
+    try std.testing.expectEqualStrings(
+        "Preserved consulting",
+        history.activities[0].line_of_business,
+    );
+}
+
+fn v14PreservedRowidsForTest(store: *Store) ![8]i64 {
+    var statement = try store.prepare(
+        \\SELECT
+        \\  (SELECT rowid FROM tax_profile_revisions
+        \\   WHERE profile_id = 'tax-profile-v14-preserved'),
+        \\  (SELECT rowid FROM tax_profile_business_activity_anchors
+        \\   WHERE profile_id = 'tax-profile-v14-preserved'),
+        \\  (SELECT rowid FROM tax_profile_registration_fact_anchors
+        \\   WHERE profile_id = 'tax-profile-v14-preserved'),
+        \\  (SELECT rowid FROM tax_profile_cor_documents
+        \\   WHERE id = 'cor-v14-preserved'),
+        \\  (SELECT rowid FROM tax_form_drafts
+        \\   WHERE id = 'draft-v14-preserved'),
+        \\  (SELECT rowid FROM tax_form_draft_role_bindings
+        \\   WHERE draft_id = 'draft-v14-preserved'),
+        \\  (SELECT rowid FROM tax_form_draft_snapshot_fields
+        \\   WHERE draft_id = 'draft-v14-preserved'),
+        \\  (SELECT rowid FROM tax_form_draft_values
+        \\   WHERE draft_id = 'draft-v14-preserved');
+    );
+    defer statement.deinit();
+    if (try statement.step() != .row) return Error.SqliteFailure;
+    var rowids: [8]i64 = undefined;
+    for (&rowids, 0..) |*rowid, column| {
+        if (sqlite.sqlite3_column_type(statement.raw, @intCast(column)) !=
+            sqlite.SQLITE_INTEGER)
+        {
+            return Error.SqliteFailure;
+        }
+        rowid.* = sqlite.sqlite3_column_int64(
+            statement.raw,
+            @intCast(column),
+        );
+    }
+    return rowids;
+}
+
 fn openLegacyStoreForTest(version: u32) !Store {
-    std.debug.assert(version >= 1 and version <= 9);
+    std.debug.assert(version >= 1 and version <= 17);
     var raw: ?*sqlite.sqlite3 = null;
     const flags = sqlite.SQLITE_OPEN_READWRITE |
         sqlite.SQLITE_OPEN_CREATE |
@@ -14305,6 +28501,17 @@ fn openLegacyStoreForTest(version: u32) !Store {
     if (version >= 7) try store.exec(schema_v7);
     if (version >= 8) try store.exec(schema_v8);
     if (version >= 9) try store.exec(schema_v9);
+    if (version >= 10) try store.exec(schema_v10);
+    if (version >= 11) try store.exec(schema_v11);
+    if (version >= 12) {
+        try store.validateLegacyComponentAnchorHistories();
+        try store.exec(schema_v12);
+    }
+    if (version >= 13) try store.exec(schema_v13);
+    if (version >= 14) try store.exec(schema_v14);
+    if (version >= 15) try store.exec(schema_v15);
+    if (version >= 16) try store.exec(schema_v16);
+    if (version >= 17) try store.exec(schema_v17);
     var set_version = try store.prepare(
         \\INSERT INTO app_component_migrations(component, version)
         \\VALUES ('tax_profile', ?);

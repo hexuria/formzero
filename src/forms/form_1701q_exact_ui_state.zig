@@ -27,6 +27,7 @@ const form = @import("form_1701q.zig");
 const field = @import("../tax_profile/field.zig");
 const model = @import("../tax_profile/model.zig");
 const projection = @import("../tax_profile/projection.zig");
+const year_settings = @import("../tax_profile/taxpayer_year_settings.zig");
 const occurrence = @import("../form_engine/occurrence.zig");
 const draft = @import("../form_engine/draft.zig");
 const form_1701q_2018 = @import("../form_engine/forms/form_1701q_2018/mod.zig");
@@ -94,6 +95,8 @@ pub const Error =
         ReopenArtifactMismatch,
         PersistedControlValueMismatch,
         CommitValueOutsideKeyPressDomain,
+        AnnualFilerElectionMismatch,
+        AnnualFilerElectionLocked,
     };
 
 pub const Quarter = enum(u2) {
@@ -125,6 +128,43 @@ pub const FilingContext = struct {
         };
         return model.Date.init(self.tax_year, month, day) catch unreachable;
     }
+};
+
+/// The exact Item 16/16A projection of one confirmed filer Taxpayer-Year
+/// election. The union deliberately makes unsupported combinations
+/// unrepresentable: graduated rates require one deduction method, while the
+/// eight-percent election carries no deduction method.
+pub const AnnualFilerElection = union(enum) {
+    graduated: year_settings.DeductionMethod,
+    eight_percent,
+
+    pub const FromTaxpayerYearError = error{
+        MissingDeductionMethodForGraduatedRate,
+        DeductionMethodNotAllowedWithEightPercent,
+    };
+
+    pub fn fromTaxpayerYear(
+        income_tax_rate: year_settings.IncomeTaxRateElection,
+        deduction_method: ?year_settings.DeductionMethod,
+    ) FromTaxpayerYearError!AnnualFilerElection {
+        return switch (income_tax_rate) {
+            .graduated => .{ .graduated = deduction_method orelse
+                return error.MissingDeductionMethodForGraduatedRate },
+            .eight_percent => if (deduction_method == null)
+                .eight_percent
+            else
+                error.DeductionMethodNotAllowedWithEightPercent,
+        };
+    }
+};
+
+pub const AnnualFilerElectionBinding = enum {
+    /// Item 16/16A were applied through their exact click chains, then locked.
+    applied_and_locked,
+    /// A non-editing state already matched and was locked without mutation.
+    validated_and_locked,
+    /// The same lock was already present and still matches exactly.
+    already_locked,
 };
 
 /// Immutable validation inputs that are not derivable from plaintext form
@@ -259,6 +299,7 @@ pub const RadioBehavior = union(enum) {
 
 pub const ValueSource = enum {
     profile_projection,
+    taxpayer_year_setting,
     explicit_filing_context,
     hta_markup_default,
     evidence_needed_empty,
@@ -371,6 +412,7 @@ pub const State = struct {
     core: CoreState,
     interaction_runtime: interaction.Runtime,
     spouse_profile_present: bool,
+    annual_filer_election: ?AnnualFilerElection = null,
     validation_state: ValidationState = .none,
     candidate: ?workflow.ArtifactCandidate = null,
     control_revealed: [control_count]bool =
@@ -599,6 +641,63 @@ pub const State = struct {
         return self.spouse_profile_present;
     }
 
+    /// Applies the confirmed filer Taxpayer-Year election while Editing, or
+    /// validates an already calculated/candidate state without rewriting it.
+    /// Either successful path installs a lock for filer Item 16/16A. The
+    /// spouse controls are outside this contract and are never read or
+    /// written by it.
+    ///
+    /// Persistence should call this boundary immediately before copying the
+    /// candidate snapshot. A mismatch fails closed and leaves both candidate
+    /// and histories untouched.
+    pub fn applyOrValidateAnnualFilerElection(
+        self: *Self,
+        expected: AnnualFilerElection,
+    ) Error!AnnualFilerElectionBinding {
+        if (self.annual_filer_election) |locked| {
+            if (!std.meta.eql(locked, expected)) {
+                return error.AnnualFilerElectionLocked;
+            }
+            try self.validateAnnualFilerElection(expected);
+            return .already_locked;
+        }
+
+        if (self.core == .editing) {
+            var next = self.editingCopy();
+            errdefer next.deinit();
+            var next_runtime = self.interaction_runtime;
+            try applyAnnualFilerElectionTo(
+                &next,
+                &next_runtime,
+                self.spouse_profile_present,
+                expected,
+            );
+            self.installEditing(&next);
+            self.interaction_runtime = next_runtime;
+            self.annual_filer_election = expected;
+            return .applied_and_locked;
+        }
+
+        try self.validateAnnualFilerElection(expected);
+        self.annual_filer_election = expected;
+        return .validated_and_locked;
+    }
+
+    /// Read-only pre-persistence assertion for callers that do not want to
+    /// install a lock. Exact equality includes both unchecked Item 16A radios
+    /// for the eight-percent election.
+    pub fn validateAnnualFilerElection(
+        self: *const Self,
+        expected: AnnualFilerElection,
+    ) Error!void {
+        if (!try annualFilerElectionMatches(
+            self.transactionState(),
+            expected,
+        )) {
+            return error.AnnualFilerElectionMismatch;
+        }
+    }
+
     pub fn phase(self: *const Self) Phase {
         if (self.candidate) |*candidate| {
             return switch (candidate.shape) {
@@ -646,7 +745,9 @@ pub const State = struct {
                     seed.id,
                 ) catch unreachable,
                 .origin = slot.origin,
-                .read_only = !isUiEditable(slot.origin, seed.id),
+                .read_only = !isUiEditable(slot.origin, seed.id) or
+                    (self.annual_filer_election != null and
+                        isAnnualFilerElectionControl(seed.id)),
                 .radio_behavior = if (seed.kind == .radio)
                     radioBehavior(seed.id)
                 else
@@ -969,6 +1070,11 @@ pub const State = struct {
         if (!isUiEditable(slot.origin, control_id)) {
             return error.ForbiddenEditOrigin;
         }
+        if (self.annual_filer_election != null and
+            isAnnualFilerElectionControl(control_id))
+        {
+            return error.AnnualFilerElectionLocked;
+        }
         _ = radioBehavior(control_id) orelse
             return error.UnreviewedRadioBehavior;
         if (try self.interaction_runtime.isDisabled(control_id)) {
@@ -985,6 +1091,22 @@ pub const State = struct {
                 .spouse_profile_present = self.spouse_profile_present,
             },
         );
+        if (self.annual_filer_election) |expected| {
+            if (canMutateAnnualFilerElection(control_id)) {
+                try applyAnnualFilerElectionTo(
+                    &next,
+                    &next_runtime,
+                    self.spouse_profile_present,
+                    expected,
+                );
+            }
+            if (!try annualFilerElectionMatches(
+                &next.transaction_state,
+                expected,
+            )) {
+                return error.AnnualFilerElectionMismatch;
+            }
+        }
         self.installEditing(&next);
         self.interaction_runtime = next_runtime;
         self.user_edited[index] = true;
@@ -992,6 +1114,9 @@ pub const State = struct {
 
     pub fn calculate(self: *Self) Error!void {
         if (self.core != .editing) return error.InvalidPhase;
+        if (self.annual_filer_election) |expected| {
+            try self.validateAnnualFilerElection(expected);
+        }
         var next: workflow.Calculated = undefined;
         try self.core.editing.calculateInto(&next);
         defer next.deinit();
@@ -1431,6 +1556,13 @@ pub const State = struct {
     }
 
     fn valueSource(self: *const Self, index: usize) ValueSource {
+        if (self.annual_filer_election != null and
+            isAnnualFilerElectionControl(
+                self.transactionState().slots[index].id,
+            ))
+        {
+            return .taxpayer_year_setting;
+        }
         if (self.user_edited[index]) return .user_edit;
         const slot = &self.transactionState().slots[index];
         return switch (slot.origin) {
@@ -2042,6 +2174,95 @@ const spouse_deduction_radios = [_][]const u8{
     "frm1701q:optSpouseMethod:_1",
     "frm1701q:optSpouseMethod:_2",
 };
+
+fn isAnnualFilerElectionControl(control_id: []const u8) bool {
+    for (filer_tax_rate_radios) |candidate| {
+        if (std.mem.eql(u8, candidate, control_id)) return true;
+    }
+    for (filer_deduction_radios) |candidate| {
+        if (std.mem.eql(u8, candidate, control_id)) return true;
+    }
+    return false;
+}
+
+fn canMutateAnnualFilerElection(control_id: []const u8) bool {
+    if (isAnnualFilerElectionControl(control_id)) return true;
+    for (filer_type_radios) |candidate| {
+        if (std.mem.eql(u8, candidate, control_id)) return true;
+    }
+    for (filer_atc_radios) |candidate| {
+        if (std.mem.eql(u8, candidate, control_id)) return true;
+    }
+    return false;
+}
+
+fn applyAnnualFilerElectionTo(
+    editing: *workflow.Editing,
+    interaction_runtime: *interaction.Runtime,
+    spouse_profile_present: bool,
+    expected: AnnualFilerElection,
+) Error!void {
+    const rate_control = switch (expected) {
+        .graduated => filer_tax_rate_radios[0],
+        .eight_percent => filer_tax_rate_radios[1],
+    };
+    _ = try interaction_runtime.click(
+        &editing.transaction_state,
+        rate_control,
+        .{ .spouse_profile_present = spouse_profile_present },
+    );
+    switch (expected) {
+        .graduated => |method| {
+            const method_control = switch (method) {
+                .itemized_deduction => filer_deduction_radios[0],
+                .optional_standard_deduction => filer_deduction_radios[1],
+            };
+            _ = try interaction_runtime.click(
+                &editing.transaction_state,
+                method_control,
+                .{ .spouse_profile_present = spouse_profile_present },
+            );
+        },
+        .eight_percent => {},
+    }
+    if (!try annualFilerElectionMatches(
+        &editing.transaction_state,
+        expected,
+    )) {
+        return error.AnnualFilerElectionMismatch;
+    }
+}
+
+fn annualFilerElectionMatches(
+    state: *const transaction.State,
+    expected: AnnualFilerElection,
+) Error!bool {
+    const graduated = try state.checked(
+        .transaction,
+        filer_tax_rate_radios[0],
+    );
+    const eight_percent = try state.checked(
+        .transaction,
+        filer_tax_rate_radios[1],
+    );
+    const itemized = try state.checked(
+        .transaction,
+        filer_deduction_radios[0],
+    );
+    const optional_standard = try state.checked(
+        .transaction,
+        filer_deduction_radios[1],
+    );
+    return switch (expected) {
+        .graduated => |method| graduated and !eight_percent and
+            switch (method) {
+                .itemized_deduction => itemized and !optional_standard,
+                .optional_standard_deduction => !itemized and optional_standard,
+            },
+        .eight_percent => !graduated and eight_percent and
+            !itemized and !optional_standard,
+    };
+}
 
 fn radioBehavior(control_id: []const u8) ?RadioBehavior {
     inline for (std.meta.fields(RadioGroup)) |group_field| {
@@ -3450,6 +3671,187 @@ test "exact UI adapter: Final Copy requires full success and remains a plaintext
     );
     try std.testing.expectEqual(workflow.Exactness.candidate, summary.exactness);
     try std.testing.expectEqual(@as(usize, 1), state.finalRevisionCount());
+}
+
+test "exact UI adapter: annual filer election has no unsupported combination" {
+    try std.testing.expect(std.meta.eql(
+        AnnualFilerElection{ .graduated = .itemized_deduction },
+        try AnnualFilerElection.fromTaxpayerYear(
+            .graduated,
+            .itemized_deduction,
+        ),
+    ));
+    try std.testing.expect(std.meta.eql(
+        AnnualFilerElection{
+            .graduated = .optional_standard_deduction,
+        },
+        try AnnualFilerElection.fromTaxpayerYear(
+            .graduated,
+            .optional_standard_deduction,
+        ),
+    ));
+    try std.testing.expect(std.meta.eql(
+        AnnualFilerElection.eight_percent,
+        try AnnualFilerElection.fromTaxpayerYear(.eight_percent, null),
+    ));
+    try std.testing.expectError(
+        error.MissingDeductionMethodForGraduatedRate,
+        AnnualFilerElection.fromTaxpayerYear(.graduated, null),
+    );
+    try std.testing.expectError(
+        error.DeductionMethodNotAllowedWithEightPercent,
+        AnnualFilerElection.fromTaxpayerYear(
+            .eight_percent,
+            .itemized_deduction,
+        ),
+    );
+}
+
+test "exact UI adapter: confirmed annual filer election applies and locks only filer Item 16 and 16A" {
+    const context: FilingContext = .{
+        .tax_year = 2025,
+        .quarter = .first,
+        .amended = false,
+    };
+    var state: State = undefined;
+    try initTestState(&state, true, context, 0x31);
+    defer state.deinit();
+
+    try state.setRadio("frm1701q:optType_1", true);
+    try state.setRadio("frm1701q:optATC_1", true);
+    try state.setRadio("frm1701q:optSpouseType_1", true);
+    try state.setRadio("frm1701q:optSpouseType_1", true);
+    try state.setRadio("frm1701q:optSpouseATC_1", true);
+    try state.setRadio("frm1701q:optSpouseTaxRate_1", true);
+    try state.setRadio("frm1701q:optSpouseMethod:_2", true);
+
+    const spouse_before = [_]bool{
+        try checkedValue(&state, "frm1701q:optSpouseTaxRate_1"),
+        try checkedValue(&state, "frm1701q:optSpouseTaxRate_2"),
+        try checkedValue(&state, "frm1701q:optSpouseMethod:_1"),
+        try checkedValue(&state, "frm1701q:optSpouseMethod:_2"),
+    };
+    const expected: AnnualFilerElection = .{
+        .graduated = .itemized_deduction,
+    };
+    try std.testing.expectEqual(
+        AnnualFilerElectionBinding.applied_and_locked,
+        try state.applyOrValidateAnnualFilerElection(expected),
+    );
+
+    try std.testing.expect(try checkedValue(
+        &state,
+        "frm1701q:optTaxRate_1",
+    ));
+    try std.testing.expect(!(try checkedValue(
+        &state,
+        "frm1701q:optTaxRate_2",
+    )));
+    try std.testing.expect(try checkedValue(
+        &state,
+        "frm1701q:optMethodOfDeduction:_1",
+    ));
+    try std.testing.expect(!(try checkedValue(
+        &state,
+        "frm1701q:optMethodOfDeduction:_2",
+    )));
+    const spouse_after = [_]bool{
+        try checkedValue(&state, "frm1701q:optSpouseTaxRate_1"),
+        try checkedValue(&state, "frm1701q:optSpouseTaxRate_2"),
+        try checkedValue(&state, "frm1701q:optSpouseMethod:_1"),
+        try checkedValue(&state, "frm1701q:optSpouseMethod:_2"),
+    };
+    try std.testing.expectEqual(spouse_before, spouse_after);
+
+    const filer_rate = try state.control("frm1701q:optTaxRate_1");
+    try std.testing.expect(filer_rate.read_only);
+    try std.testing.expectEqual(
+        ValueSource.taxpayer_year_setting,
+        filer_rate.value_source,
+    );
+    try std.testing.expectError(
+        error.AnnualFilerElectionLocked,
+        state.setRadio("frm1701q:optTaxRate_2", true),
+    );
+    try std.testing.expectEqual(
+        AnnualFilerElectionBinding.already_locked,
+        try state.applyOrValidateAnnualFilerElection(expected),
+    );
+
+    // ATC 4's exact handler requires the eight-percent branch. Re-applying
+    // the locked graduated election is disabled, so the incompatible ATC
+    // change fails atomically and leaves the old controls intact.
+    try std.testing.expectError(
+        error.ControlDisabled,
+        state.setRadio("frm1701q:optATC_4", true),
+    );
+    try std.testing.expect(try checkedValue(
+        &state,
+        "frm1701q:optATC_1",
+    ));
+    try state.validateAnnualFilerElection(expected);
+}
+
+test "exact UI adapter: eight-percent annual election clears deduction and remains save-valid" {
+    const context: FilingContext = .{
+        .tax_year = 2025,
+        .quarter = .first,
+        .amended = false,
+    };
+    var state: State = undefined;
+    try initTestState(&state, false, context, 0x32);
+    defer state.deinit();
+
+    try state.setRadio("frm1701q:optType_1", true);
+    try state.setRadio("frm1701q:optATC_4", true);
+    try std.testing.expectEqual(
+        AnnualFilerElectionBinding.applied_and_locked,
+        try state.applyOrValidateAnnualFilerElection(.eight_percent),
+    );
+    try state.validateAnnualFilerElection(.eight_percent);
+    try std.testing.expect(!(try checkedValue(
+        &state,
+        "frm1701q:optMethodOfDeduction:_1",
+    )));
+    try std.testing.expect(!(try checkedValue(
+        &state,
+        "frm1701q:optMethodOfDeduction:_2",
+    )));
+    try state.calculate();
+    try expectSavePassed(&state, .not_evaluated);
+}
+
+test "exact UI adapter: pre-persistence annual mismatch preserves candidate" {
+    const context: FilingContext = .{
+        .tax_year = 2025,
+        .quarter = .first,
+        .amended = false,
+    };
+    var state: State = undefined;
+    try initTestState(&state, false, context, 0x33);
+    defer state.deinit();
+    try selectRequiredElections(&state, false);
+    try state.calculate();
+    try expectSavePassed(&state, .not_evaluated);
+    try state.generateEditableCandidate(.create);
+    const before = try state.candidateSummary();
+
+    try std.testing.expectError(
+        error.AnnualFilerElectionMismatch,
+        state.applyOrValidateAnnualFilerElection(.eight_percent),
+    );
+    try std.testing.expectEqual(Phase.editable_candidate, state.phase());
+    try std.testing.expectEqual(@as(usize, 1), state.editableRevisionCount());
+    const after = try state.candidateSummary();
+    try std.testing.expectEqualSlices(u8, &before.sha256, &after.sha256);
+
+    try std.testing.expectEqual(
+        AnnualFilerElectionBinding.validated_and_locked,
+        try state.applyOrValidateAnnualFilerElection(.{
+            .graduated = .itemized_deduction,
+        }),
+    );
+    try std.testing.expectEqual(Phase.editable_candidate, state.phase());
 }
 
 test "exact UI adapter: exposes no secret retention, encryption, transport, or I/O API" {

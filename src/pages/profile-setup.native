@@ -5,6 +5,13 @@
   </column>
 </template>
 
+<template name="profile-read-value" args="label value">
+  <column gap="4">
+    <text size="sm" foreground="text_muted">{label}</text>
+    <text wrap="true">{value}</text>
+  </column>
+</template>
+
 <template name="profile-setup-year-combobox-body">
   <column>
     <select
@@ -211,7 +218,8 @@
           radius="xl"
           icon="chevron-left"
           label="{profileBackLabel}"
-          on-press="cancel_profile_edit">
+          disabled="{profileInlineBackDisabled}"
+          on-press="go_back">
         </button>
         <column grow="1" gap="6">
           <text size="heading">{profileEditorTitle}</text>
@@ -244,6 +252,19 @@
       </button>
     </tabs>
 
+    <if test="{profileDirtyNavigationVisible}">
+      <card padding="0">
+        <column padding="16" gap="10">
+          <text><span weight="bold">{profileDirtyNavigationTitle}</span></text>
+          <text wrap="true" foreground="text_muted">{profileDirtyNavigationBody}</text>
+          <row gap="8">
+            <button height="44" variant="primary" autofocus="true" on-press="profile_keep_editing">Stay and keep editing</button>
+            <button height="44" variant="outline" on-press="profile_discard_navigation">Discard and continue</button>
+          </row>
+        </column>
+      </card>
+    </if>
+
     <if test="{profileCompletionVisible}">
       <card padding="0">
         <row padding="12" gap="10" cross="center">
@@ -255,6 +276,83 @@
 
     <if test="{profileTaxActive}">
       <column gap="24">
+        <if test="{profileTaxViewing}">
+          <column gap="20">
+            <if test="{constrainedLayout}">
+              <column gap="10">
+                <column gap="4">
+                  <text><span weight="bold">Saved tax profile</span></text>
+                  <text wrap="true" foreground="text_muted">These are the reusable taxpayer details currently on file.</text>
+                </column>
+                <button height="44" variant="primary" on-press="edit_tax_profile">Edit Tax Profile</button>
+              </column>
+            </if>
+            <else>
+              <row gap="12" cross="center">
+                <column grow="1" gap="4">
+                  <text><span weight="bold">Saved tax profile</span></text>
+                  <text wrap="true" foreground="text_muted">These are the reusable taxpayer details currently on file.</text>
+                </column>
+                <button height="44" variant="primary" on-press="edit_tax_profile">Edit Tax Profile</button>
+              </row>
+            </else>
+
+            <if test="{profileFactsSummaryVisible}">
+              <card padding="0">
+                <column padding="14" gap="6">
+                  <text wrap="true" foreground="text_muted">{profileFactsSummaryLabel}</text>
+                </column>
+              </card>
+            </if>
+
+            <card padding="0">
+              <column padding="18" gap="16">
+                <column gap="4">
+                  <text><span weight="bold">Identity and contact</span></text>
+                  <text wrap="true" foreground="text_muted">Base facts shared by the taxpayer's forms.</text>
+                </column>
+                <grid columns="{profileReadColumns}" gap="16">
+                  <use template="profile-read-value" label="Profile label (only in this app)" value="{profileLabelDisplayValue}"/>
+                  <use template="profile-read-value" label="Taxpayer Identification Number (TIN)" value="{profileTinDisplayValue}"/>
+                  <use template="profile-read-value" label="Revenue District Office (RDO) code" value="{profileRdoDisplayValue}"/>
+                  <use template="profile-read-value" label="Taxpayer subject kind" value="{profileSubjectKindLabel}"/>
+                  <if test="{profileNaturalPersonClassificationVisible}">
+                    <use template="profile-read-value" label="Taxpayer classification" value="{profileNaturalPersonClassificationLabel}"/>
+                  </if>
+                  <use template="profile-read-value" label="Taxpayer or registered name" value="{profileNameDisplayValue}"/>
+                  <if test="{profileTradeNameVisible}">
+                    <use template="profile-read-value" label="Trade name" value="{profileTradeNameDisplayValue}"/>
+                  </if>
+                  <use template="profile-read-value" label="Registered address" value="{profileAddressDisplayValue}"/>
+                  <use template="profile-read-value" label="ZIP code" value="{profileZipDisplayValue}"/>
+                  <use template="profile-read-value" label="Contact number" value="{profilePhoneDisplayValue}"/>
+                  <use template="profile-read-value" label="Registered email address" value="{profileEmailDisplayValue}"/>
+                </grid>
+              </column>
+            </card>
+
+            <if test="{profilePersonalFieldsVisible}">
+              <card padding="0">
+                <column padding="18" gap="16">
+                  <text><span weight="bold">Individual details</span></text>
+                  <grid columns="{profileReadColumns}" gap="16">
+                    <use template="profile-read-value" label="Birth date" value="{profileBirthDateDisplayValue}"/>
+                    <use template="profile-read-value" label="Citizenship" value="{profileCitizenshipDisplayValue}"/>
+                    <use template="profile-read-value" label="Foreign tax number" value="{profileForeignTaxNumberDisplayValue}"/>
+                  </grid>
+                </column>
+              </card>
+            </if>
+
+            <card padding="0">
+              <column padding="18" gap="8">
+                <text><span weight="bold">Effective date</span></text>
+                <use template="profile-read-value" label="Details effective from" value="{profileEffectiveFromDisplayValue}"/>
+              </column>
+            </card>
+          </column>
+        </if>
+        <else>
         <if test="{profileBranchMode}">
           <card padding="0">
             <column padding="14" gap="6">
@@ -276,29 +374,6 @@
           </card>
         </if>
 
-        <if test="{profileMissingFactsVisible}">
-          <card padding="0">
-            <column padding="14" gap="10">
-              <text><span weight="bold">{profileMissingFactsTitle}</span></text>
-              <text wrap="true" foreground="text_muted">
-                These details are shared. Fill each one once here and every form
-                that needs it is covered.
-              </text>
-              <column gap="8">
-                <for each="profileMissingFactRows" key="id" as="missing">
-                  <row gap="10" cross="start">
-                    <icon name="alert" foreground="warning" width="18" height="18"/>
-                    <column grow="1" gap="2">
-                      <text wrap="true">{missing.fieldLabel}</text>
-                      <text wrap="true" size="sm" foreground="text_muted">Used by {missing.usedByLabel}</text>
-                    </column>
-                  </row>
-                </for>
-              </column>
-            </column>
-          </card>
-        </if>
-
         <column gap="16">
             <column gap="4">
               <text><span weight="bold">Identity and registration</span></text>
@@ -307,6 +382,16 @@
                 profile revision.
               </text>
             </column>
+
+            <use template="profile-field" label="Profile label (only in this app)">
+              <input
+                height="44"
+                text="{profileLabelValue}"
+                placeholder="Defaults to the taxpayer or registered name"
+                label="Profile label (only in this app)"
+                on-input="profile_label_input"/>
+              <text wrap="true" foreground="text_muted">This label identifies the profile locally. It is never filed and does not replace the legal name.</text>
+            </use>
 
             <if test="{constrainedLayout}">
               <column gap="12">
@@ -368,7 +453,6 @@
                       anchor-alignment="stretch"
                       on-dismiss="close_profile_subject_picker">
                       <menu-item height="44" disabled="{profileBranchMode}" selected="{profileIndividualSelected}" on-press="profile_subject_individual">Individual</menu-item>
-                      <menu-item height="44" disabled="{profileBranchMode}" selected="{profileSoleProprietorSelected}" on-press="profile_subject_sole_proprietor">Sole proprietor</menu-item>
                       <menu-item height="44" disabled="{profileBranchMode}" selected="{profileCorporationSelected}" on-press="profile_subject_corporation">Corporation</menu-item>
                       <menu-item height="44" disabled="{profileBranchMode}" selected="{profilePartnershipSelected}" on-press="profile_subject_partnership">Partnership</menu-item>
                       <menu-item height="44" disabled="{profileBranchMode}" selected="{profileEstateSelected}" on-press="profile_subject_estate">Estate</menu-item>
@@ -382,7 +466,6 @@
                 <column gap="8">
                   <row gap="8">
                     <button height="44" variant="outline" selected="{profileIndividualSelected}" disabled="{profileBranchMode}" on-press="profile_subject_individual">Individual</button>
-                    <button height="44" variant="outline" selected="{profileSoleProprietorSelected}" disabled="{profileBranchMode}" on-press="profile_subject_sole_proprietor">Sole proprietor</button>
                     <button height="44" variant="outline" selected="{profileCorporationSelected}" disabled="{profileBranchMode}" on-press="profile_subject_corporation">Corporation</button>
                     <button height="44" variant="outline" selected="{profilePartnershipSelected}" disabled="{profileBranchMode}" on-press="profile_subject_partnership">Partnership</button>
                   </row>
@@ -394,6 +477,33 @@
                 </column>
               </else>
             </column>
+
+            <if test="{profileNaturalPersonClassificationVisible}">
+              <column gap="8">
+                <text>Taxpayer classification</text>
+                <text wrap="true" foreground="text_muted">
+                  Individual is the legal taxpayer kind. Classification records
+                  whether this person earns compensation, business/professional
+                  income, or both.
+                </text>
+                <if test="{constrainedLayout}">
+                  <column gap="8">
+                    <button height="44" variant="outline" selected="{profileClassificationUnknownSelected}" on-press="profile_classification_unknown">Needs review</button>
+                    <button height="44" variant="outline" selected="{profilePureCompensationSelected}" on-press="profile_classification_pure_compensation">Purely compensation</button>
+                    <button height="44" variant="outline" selected="{profileSelfEmployedSelected}" on-press="profile_classification_self_employed">Self-employed / professional</button>
+                    <button height="44" variant="outline" selected="{profileMixedIncomeSelected}" on-press="profile_classification_mixed_income">Mixed income</button>
+                  </column>
+                </if>
+                <else>
+                  <row gap="8">
+                    <button height="44" variant="outline" selected="{profileClassificationUnknownSelected}" on-press="profile_classification_unknown">Needs review</button>
+                    <button height="44" variant="outline" selected="{profilePureCompensationSelected}" on-press="profile_classification_pure_compensation">Purely compensation</button>
+                    <button height="44" variant="outline" selected="{profileSelfEmployedSelected}" on-press="profile_classification_self_employed">Self-employed / professional</button>
+                    <button height="44" variant="outline" selected="{profileMixedIncomeSelected}" on-press="profile_classification_mixed_income">Mixed income</button>
+                  </row>
+                </else>
+              </column>
+            </if>
 
             <use template="profile-field" label="Taxpayer or registered name">
               <input
@@ -450,7 +560,8 @@
             </use>
         </column>
 
-        <column gap="16">
+        <if test="{profilePersonalFieldsVisible}">
+          <column gap="16">
             <column gap="4">
               <text><span weight="bold">Individual capabilities</span></text>
               <text wrap="true" foreground="text_muted">
@@ -502,52 +613,8 @@
                 autofocus="{profileForeignTaxNumberAutofocus}"
                 on-input="profile_foreign_tax_number_input"/>
             </use>
-        </column>
-
-        <column gap="16">
-            <column gap="4">
-              <text><span weight="bold">Business registration</span></text>
-              <text wrap="true" foreground="text_muted">
-                Line of business and ATC compose one named activity. Tax type,
-                withholding-agent status, and special-rate basis are independent
-                registration facts. Transaction schedules remain on the form.
-              </text>
-            </column>
-            <use template="profile-field" label="Line of business">
-              <input height="44" text="{profileBusinessLineValue}" placeholder="Line of business" label="Line of business" autofocus="{profileBusinessLineAutofocus}" on-input="profile_business_line_input"/>
-            </use>
-            <if test="{constrainedLayout}">
-              <column gap="12">
-                <use template="profile-field" label="Alphanumeric Tax Code (ATC)">
-                  <input height="44" text="{profileAtcValue}" placeholder="PT010" label="Alphanumeric Tax Code (ATC)" autofocus="{profileAtcAutofocus}" on-input="profile_atc_input"/>
-                </use>
-                <use template="profile-field" label="Registered tax type">
-                  <input height="44" text="{profileTaxTypeValue}" placeholder="Percentage tax" label="Registered tax type" autofocus="{profileTaxTypeAutofocus}" on-input="profile_tax_type_input"/>
-                </use>
-              </column>
-              </if>
-              <else>
-                <row gap="12">
-                  <use template="profile-field" label="Alphanumeric Tax Code (ATC)" grow="1">
-                    <input height="44" text="{profileAtcValue}" placeholder="PT010" label="Alphanumeric Tax Code (ATC)" autofocus="{profileAtcAutofocus}" on-input="profile_atc_input"/>
-                  </use>
-                  <use template="profile-field" label="Registered tax type" grow="1">
-                    <input height="44" text="{profileTaxTypeValue}" placeholder="Percentage tax" label="Registered tax type" autofocus="{profileTaxTypeAutofocus}" on-input="profile_tax_type_input"/>
-                  </use>
-                </row>
-              </else>
-            <column gap="8">
-              <text foreground="text_muted">Government withholding agent</text>
-              <row gap="8">
-                <button height="44" variant="outline" selected="{profileGwaUnsetSelected}" on-press="profile_gwa_unset">Not recorded</button>
-                <button height="44" variant="outline" selected="{profileGwaNoSelected}" on-press="profile_gwa_no">No</button>
-                <button height="44" variant="outline" selected="{profileGwaYesSelected}" on-press="profile_gwa_yes">Yes</button>
-              </row>
-            </column>
-            <use template="profile-field" label="Special-rate basis">
-              <input height="44" text="{profileSpecialRateBasisValue}" placeholder="Treaty article, special law, or registration basis" label="Special-rate basis" on-input="profile_special_rate_basis_input"/>
-            </use>
-        </column>
+          </column>
+        </if>
 
         <column gap="16">
             <column gap="4">
@@ -622,6 +689,7 @@
               </column>
             </if>
         </column>
+        </else>
       </column>
     </if>
 
@@ -662,6 +730,42 @@
           </card>
         </if>
         <else>
+          <if test="{regLoadFail}">
+            <card padding="0"><column padding="16" gap="10"><text><span weight="bold">Registration unavailable</span></text><button height="44" variant="outline" on-press="reg_retry">Try again</button></column></card>
+          </if>
+          <if test="{regContent}">
+            <card padding="0">
+              <column padding="16" gap="14">
+                <column gap="4"><text><span weight="bold">Registration</span></text><text wrap="true" foreground="text_muted">Reusable, effective-dated activities and tax obligations.</text></column>
+                <if test="{regEditing}"><column gap="8"><button height="44" variant="primary" disabled="{regSaveDisabled}" on-press="reg_save">Save Registration</button><button height="44" variant="outline" disabled="{regCancelDisabled}" on-press="reg_cancel">Cancel</button></column></if>
+                <else><if test="{regEditVisible}"><button height="44" variant="outline" on-press="reg_edit">Edit Registration</button></if></else>
+                <if test="{regErrVisible}"><text wrap="true" foreground="destructive">{regErrText}</text></if>
+                <if test="{regConflict}"><card padding="0"><column padding="12" gap="8"><text><span weight="bold">Newer revision saved</span></text><button height="44" variant="outline" on-press="reg_conflict_accept">Keep my draft</button><button height="44" variant="outline" on-press="reg_conflict_reload">Reload saved</button></column></card></if>
+                <if test="{regActVisible}">
+                  <column gap="8"><row gap="8" cross="center"><text grow="1"><span weight="bold">Activities</span></text><if test="{regEditing}"><button height="44" variant="outline" disabled="{regAddActDisabled}" on-press="reg_add_act">Add activity</button></if></row>
+                    <if test="{regActEmpty}"><text foreground="text_muted">No activity recorded.</text></if>
+                    <for each="regActRows" key="id" as="activity"><card padding="0"><column padding="12" gap="6"><text><span weight="bold">{activity.lineOfBusiness}</span></text><text foreground="text_muted">ATC: {activity.atcLabel} - {activity.effectiveLabel}</text><if test="{regEditing}"><row gap="8"><button height="44" variant="outline" on-press="reg_edit_act:{activity.id}">Edit</button><button height="44" variant="ghost" on-press="reg_remove_act:{activity.id}">Remove</button></row></if></column></card></for>
+                  </column>
+                </if>
+                <if test="{regObVisible}">
+                  <column gap="8"><row gap="8" cross="center"><text grow="1"><span weight="bold">Tax obligations</span></text><if test="{regEditing}"><button height="44" variant="outline" disabled="{regAddObDisabled}" on-press="reg_add_ob">Add obligation</button></if></row>
+                    <if test="{regObEmpty}"><text foreground="text_muted">None recorded.</text></if>
+                    <for each="regObRows" key="id" as="obligation"><card padding="0"><column padding="12" gap="6"><text><span weight="bold">{obligation.kindLabel}</span></text><text foreground="text_muted">{obligation.effectiveLabel}</text><if test="{regEditing}"><row gap="8"><button height="44" variant="outline" on-press="reg_edit_ob:{obligation.id}">Edit</button><button height="44" variant="ghost" on-press="reg_remove_ob:{obligation.id}">Remove</button></row></if></column></card></for>
+                  </column>
+                </if>
+                <if test="{regFactsVisible}"><column gap="8"><text><span weight="bold">Other confirmed registration facts</span></text><grid columns="{profileReadColumns}" gap="8"><for each="regFactRows" key="id" as="fact"><use template="profile-read-value" label="{fact.label}" value="{fact.value}"/></for></grid></column></if>
+                <if test="{regReview}"><text wrap="true" foreground="warning">{regReviewLabel}</text></if>
+                <if test="{regDialog}">
+                  <card padding="0"><column padding="14" gap="10"><text><span weight="bold">{regDialogTitle}</span></text>
+                    <if test="{regActivityDialog}"><input height="44" text="{regLine}" placeholder="Line of business" label="Line of business" on-input="reg_line_input"/><input height="44" text="{regAtcValue}" placeholder="Optional ATC, for example PT010" label="Alphanumeric Tax Code" on-input="reg_atc_input"/></if>
+                    <else><grid columns="{profileReadColumns}" gap="8"><button height="44" variant="outline" selected="{regIncome}" on-press="reg_kind_income_tax">Income tax</button><button height="44" variant="outline" selected="{regVat}" on-press="reg_kind_vat">VAT</button><button height="44" variant="outline" selected="{regPct}" on-press="reg_kind_percentage_tax">Percentage tax</button><button height="44" variant="outline" selected="{regWhComp}" on-press="reg_kind_wh_comp">Withholding - compensation</button><button height="44" variant="outline" selected="{regWhExpanded}" on-press="reg_kind_wh_expanded">Withholding - expanded</button><button height="44" variant="outline" selected="{regWhFinal}" on-press="reg_kind_wh_final">Withholding - final</button><button height="44" variant="outline" selected="{regWhOther}" on-press="reg_kind_wh_other">Other withholding</button></grid><if test="{regOtherVisible}"><input height="44" text="{regOtherValue}" placeholder="Registered withholding type" label="Other withholding type" on-input="reg_other_input"/></if></else>
+                    <input height="44" text="{regFrom}" placeholder="YYYY-MM-DD" label="Effective from" on-input="reg_from_input"/><input height="44" text="{regUntil}" placeholder="Optional YYYY-MM-DD" label="Effective until" on-input="reg_until_input"/>
+                    <row gap="8"><button height="44" variant="outline" on-press="reg_dialog_cancel">Cancel</button><button height="44" variant="primary" on-press="reg_dialog_save">Apply</button></row>
+                  </column></card>
+                </if>
+              </column>
+            </card>
+          </if>
           <use template="profile-setup-cor-card"/>
           <if test="{profileCorReviewOpen}">
             <use template="profile-setup-cor-review"/>
@@ -782,6 +886,19 @@
             </card>
           </if>
 
+          <if test="{profileSetupBrowseVisible}">
+            <column gap="16">
+              <row main="end">
+                <button
+                  height="44"
+                  variant="outline"
+                  icon="settings"
+                  on-press="profile_forms_manage">Manage Forms</button>
+              </row>
+              <!-- @include-template taxpayer-form-library-section -->
+            </column>
+          </if>
+
           <!--
             The actions sit above the catalog, not after it. Fifty-one form
             cards do not paginate while managing, so a footer button would be
@@ -819,6 +936,9 @@
             <if test="{profileSetupZeroFormsHelperVisible}">
               <text wrap="true" foreground="text_muted">{profileSetupZeroFormsHelperText}</text>
             </if>
+            <if test="{profileSetupDeactivationWarningVisible}">
+              <card padding="0"><column padding="12" gap="6"><text><span weight="bold">Confirm deactivation on Save</span></text><text wrap="true" foreground="text_muted">{profileSetupDeactivationWarningText}</text></column></card>
+            </if>
             <if test="{profileFormsHeaderStacked}">
               <column gap="10">
                 <button
@@ -830,6 +950,7 @@
                 <button
                   height="44"
                   variant="outline"
+                  disabled="{profileFormsCancelDisabled}"
                   on-press="profile_forms_cancel">Cancel</button>
               </column>
             </if>
@@ -838,6 +959,7 @@
                 <button
                   height="44"
                   variant="outline"
+                  disabled="{profileFormsCancelDisabled}"
                   on-press="profile_forms_cancel">Cancel</button>
                 <button
                   height="44"
@@ -925,10 +1047,10 @@
       </column>
     </if>
 
-    <if test="{profileTaxActive or profileEmailActive}">
+    <if test="{profileEditorActionsVisible}">
       <if test="{constrainedLayout}">
       <column gap="10">
-        <button height="44" variant="outline" on-press="cancel_profile_edit">Cancel</button>
+        <button height="44" variant="outline" disabled="{profileCancelDisabled}" on-press="cancel_profile_edit">Cancel</button>
         <button
           height="44"
           variant="primary"
@@ -941,7 +1063,7 @@
     </if>
     <else>
       <row main="end" gap="12">
-        <button height="44" variant="outline" on-press="cancel_profile_edit">Cancel</button>
+        <button height="44" variant="outline" disabled="{profileCancelDisabled}" on-press="cancel_profile_edit">Cancel</button>
         <button
           height="44"
           variant="primary"

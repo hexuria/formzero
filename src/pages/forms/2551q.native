@@ -70,23 +70,8 @@
     </column>
     <column gap="4">
       <text foreground="text_muted">13 Income-tax-rate election</text>
-      <input text="{percentageTaxElection}" placeholder="Graduated / 8 percent" disabled="true" />
-      <row gap="8">
-        <button
-          variant="outline"
-          selected="{percentageTaxElectionGraduatedSelected}"
-          disabled="{not percentageTaxEditable}"
-          on-press="percentage_tax_election_graduated">
-          Graduated
-        </button>
-        <button
-          variant="outline"
-          selected="{percentageTaxElectionEightPercentSelected}"
-          disabled="{not percentageTaxEditable}"
-          on-press="percentage_tax_election_eight_percent">
-          8 percent
-        </button>
-      </row>
+      <input height="44" text="{percentageTaxElection}" placeholder="Set in Taxpayer-Year Settings" disabled="true" />
+      <text wrap="true" foreground="text_muted">Saved in this taxpayer's Taxpayer-Year Settings for the selected year.</text>
     </column>
   </grid>
 </template>

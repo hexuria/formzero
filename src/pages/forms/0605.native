@@ -16,6 +16,9 @@
     <!-- @include-template form-field-bound label="12 Line of Business / Occupation" v="{formFilerLineOfBusiness}" ph="Business or occupation" -->
     <!-- @include-template form-field-bound label="13 Taxpayer Name" v="{formFilerTaxpayerName}" ph="Registered taxpayer name" -->
     <!-- @include-template form-field-bound label="15 Registered Address" v="{formFilerRegisteredAddress}" ph="Registered address" -->
+    <!-- @include-template form-field-bound label="ZIP Code" v="{formFilerZipCode}" ph="-" -->
+    <!-- @include-template form-field-bound label="Contact Number" v="{formFilerContactNumber}" ph="-" -->
+    <!-- @include-template form-field-bound label="Email Address" v="{formFilerEmailAddress}" ph="-" -->
     <!-- @include-template form-field label="18 Type of Payment" ph="Select payment type" -->
   </grid>
 </template>

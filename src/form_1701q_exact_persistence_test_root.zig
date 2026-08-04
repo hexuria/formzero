@@ -5,4 +5,5 @@
 
 test "exact 1701Q persistence adapter remains in its SQLite-linked root" {
     _ = @import("forms/form_1701q_exact_persistence.zig");
+    _ = @import("forms/form_1701q_exact_runtime.zig");
 }

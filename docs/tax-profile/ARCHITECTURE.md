@@ -1,5 +1,12 @@
 # Tax-profile architecture
 
+> Current execution contract (2026-08-04):
+> [Tax Profile and Registration audit](TAX_PROFILE_AND_REGISTRATION_AUDIT_2026-08-04.md)
+> and [Tax Profile and Tax Form Profile execution plan](TAX_PROFILE_AND_FORM_PROFILE_EXECUTION_PLAN_2026-08-04.md).
+> Those documents supersede older guidance that rejected typed, year-scoped
+> Tax Form Profiles. This file remains authoritative for immutable taxpayer
+> revisions, owned projections, and draft snapshots.
+
 ## Purpose
 
 A tax profile is the reusable union of taxpayer facts found across the form

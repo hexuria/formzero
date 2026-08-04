@@ -180,7 +180,8 @@ pub const TaxFormLibraryRow = struct {
     selected: bool,
     launch_disabled: bool,
     launch_assessment: form_ui.LaunchAssessment = .{},
-    period_cells: [12]TaxFormLibraryPeriodCell = undefined,
+    period_cells: [12]TaxFormLibraryPeriodCell =
+        [_]TaxFormLibraryPeriodCell{.{}} ** 12,
     period_cell_count: u8 = 0,
     period1: TaxFormLibraryPeriodCell = .{},
     period2: TaxFormLibraryPeriodCell = .{},
@@ -197,6 +198,11 @@ pub const TaxFormLibraryRow = struct {
     period_summary: []const u8 = "",
     period_grid_columns: u8 = 4,
     manage_status: profile_ui.ManagedFormStatus = .inactive,
+    tax_form_profile_status: []const u8 = "",
+    tax_form_profile_action: []const u8 = "",
+    tax_form_profile_action_visible: bool = false,
+    tax_form_profile_action_disabled: bool = true,
+    activation_label: []const u8 = "Active in selected tax year",
 
     pub fn key(self: *const TaxFormLibraryRow) canvas.UiKey {
         return canvas.uiKey(self.id);
@@ -225,6 +231,16 @@ pub const TaxFormLibraryRow = struct {
             "Editor available"
         else
             "Calendar only";
+    }
+
+    /// Editor availability is deliberately independent from artifact
+    /// qualification. A form can open in the app without its official print,
+    /// validation, submission, or filing gates having passed.
+    pub fn fileability(self: *const TaxFormLibraryRow) []const u8 {
+        return if (self.definition.status == .static_layout)
+            "Not qualified"
+        else
+            "No artifact";
     }
 
     pub fn cadenceLabel(self: *const TaxFormLibraryRow) []const u8 {
@@ -311,6 +327,10 @@ pub const TaxFormLibraryRow = struct {
         return if (self.active) "Active" else "Inactive";
     }
 
+    pub fn activationLabel(self: *const TaxFormLibraryRow) []const u8 {
+        return self.activation_label;
+    }
+
     pub fn editorAvailable(self: *const TaxFormLibraryRow) bool {
         return self.definition.status == .static_layout;
     }
@@ -382,6 +402,22 @@ pub const TaxFormLibraryRow = struct {
 
     pub fn launchDisabled(self: *const TaxFormLibraryRow) bool {
         return self.launch_disabled;
+    }
+
+    pub fn taxFormProfileStatus(self: *const TaxFormLibraryRow) []const u8 {
+        return self.tax_form_profile_status;
+    }
+
+    pub fn taxFormProfileAction(self: *const TaxFormLibraryRow) []const u8 {
+        return self.tax_form_profile_action;
+    }
+
+    pub fn taxFormProfileActionVisible(self: *const TaxFormLibraryRow) bool {
+        return self.tax_form_profile_action_visible;
+    }
+
+    pub fn taxFormProfileActionDisabled(self: *const TaxFormLibraryRow) bool {
+        return self.tax_form_profile_action_disabled;
     }
 };
 
@@ -478,7 +514,6 @@ pub const LibraryOnDemandFilterRow = struct {
     }
 };
 
-
 pub fn filingLifecycleLabel(lifecycle: []const u8) []const u8 {
     if (std.mem.eql(u8, lifecycle, "editing") or
         std.mem.eql(u8, lifecycle, "prepared")) return "Draft";
@@ -500,7 +535,6 @@ pub fn filingLifecycleTone(lifecycle: []const u8) []const u8 {
         std.mem.eql(u8, lifecycle, "queued")) return "secondary";
     return "outline";
 }
-
 
 pub fn compactPeriodStatus(label: []const u8) []const u8 {
     // Period tiles are intentionally compact (four columns even on a phone),
@@ -528,7 +562,6 @@ pub fn periodStatusColor(label: []const u8) []const u8 {
     // branching over every possible colour to reach the same text element.
     return "text_muted";
 }
-
 
 pub fn firstSelectedMonth(mask: u16) u8 {
     for (1..13) |month| {
@@ -645,4 +678,32 @@ test "manage mode uses its own mask and leaves browse selections alone" {
     try std.testing.expectEqual(@as(u8, 0b1110), state.manage_cadence_mask);
     try std.testing.expectEqual(@as(u8, 0b1111), state.browse_cadence_mask);
     try std.testing.expectEqual(@as(u16, 0b11), state.month_mask);
+}
+
+test "editor capability never implies filing qualification" {
+    const editor = form_catalog.findForm("2551Q") orelse return error.TestUnexpectedResult;
+    const row: TaxFormLibraryRow = .{
+        .id = 0,
+        .definition = editor,
+        .active = true,
+        .selected = false,
+        .launch_disabled = false,
+    };
+    try std.testing.expectEqualStrings("Editor available", row.capability());
+    try std.testing.expectEqualStrings(
+        "Not qualified",
+        row.fileability(),
+    );
+
+    const calendar = form_catalog.findForm("1905") orelse
+        return error.TestUnexpectedResult;
+    const calendar_row: TaxFormLibraryRow = .{
+        .id = 1,
+        .definition = calendar,
+        .active = true,
+        .selected = false,
+        .launch_disabled = true,
+    };
+    try std.testing.expectEqualStrings("Calendar only", calendar_row.capability());
+    try std.testing.expectEqualStrings("No artifact", calendar_row.fileability());
 }

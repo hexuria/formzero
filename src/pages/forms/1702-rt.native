@@ -7,6 +7,9 @@
     <!-- @include-template form-field-bound label="RDO Code" v="{formFilerRdo}" ph="RDO" -->
     <!-- @include-template form-field-bound label="Registered Name" v="{formFilerRegisteredName}" ph="Corporation name" -->
     <!-- @include-template form-field-bound label="Registered Address" v="{formFilerRegisteredAddress}" ph="Registered address" -->
+    <!-- @include-template form-field-bound label="ZIP Code" v="{formFilerZipCode}" ph="-" -->
+    <!-- @include-template form-field-bound label="Contact Number" v="{formFilerContactNumber}" ph="-" -->
+    <!-- @include-template form-field-bound label="Email Address" v="{formFilerEmailAddress}" ph="-" -->
     <!-- @include-template form-field-bound label="Line of Business" v="{formFilerLineOfBusiness}" ph="Business activity" -->
     <!-- @include-template form-field label="Tax Relief / Special Law" ph="Relief details" -->
   </grid>
