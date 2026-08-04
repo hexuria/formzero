@@ -33,7 +33,7 @@ const sqlite = @cImport({
     @cInclude("sqlite3.h");
 });
 
-pub const latest_schema_version: u32 = 8;
+pub const latest_schema_version: u32 = 9;
 const migration_component = "tax_profile";
 pub const storage_classification =
     repository_opening.legacy_plaintext_repository_classification;
@@ -76,6 +76,8 @@ pub const Error = error{
     DraftWorkspaceLimitExceeded,
     DuplicateCanonicalTin,
     FormSetAlreadyExists,
+    FormSetIntervalOutsideYear,
+    FormSetIntervalOverlap,
     IdentityCorrectionConflict,
     InconsistentIdentityHistory,
     InvalidDate,
@@ -723,6 +725,18 @@ pub const OwnedTaxpayerIdentityAnchor = struct {
         freeOptional(allocator, self.identity_correction_id);
         self.* = undefined;
     }
+};
+
+/// One mid-year Forms Set change: the forms that apply from `effective_from`
+/// through `effective_until` (or the rest of the year when null) within one
+/// profile's tax year.
+pub const FormSetIntervalWrite = struct {
+    id: []const u8,
+    profile_id: []const u8,
+    tax_year: i32,
+    effective_from: []const u8,
+    effective_until: ?[]const u8 = null,
+    forms: []const FormRegistrationWrite,
 };
 
 pub const CorDocumentWrite = struct {
@@ -1386,6 +1400,17 @@ pub const Store = struct {
             var version = try self.prepare(
                 \\UPDATE app_component_migrations
                 \\SET version = 8, updated_at = unixepoch()
+                \\WHERE component = ?;
+            );
+            defer version.deinit();
+            try version.bindText(1, migration_component);
+            try version.expectDone();
+        }
+        if (current < 9) {
+            try self.exec(schema_v9);
+            var version = try self.prepare(
+                \\UPDATE app_component_migrations
+                \\SET version = 9, updated_at = unixepoch()
                 \\WHERE component = ?;
             );
             defer version.deinit();
@@ -2469,6 +2494,193 @@ pub const Store = struct {
             try items.append(allocator, item);
         }
         return .{ .items = try items.toOwnedSlice(allocator) };
+    }
+
+    /// Records a mid-year Forms Set change as an append-only interval
+    /// revision layered over the year's base set.
+    ///
+    /// The interval must lie inside its tax year, and active intervals for
+    /// one profile-year may not overlap: two sets both claiming July would
+    /// leave a filing on a July date with no single answer to "which forms
+    /// apply". An open `effective_until` means "through the end of that
+    /// year". Nothing here touches the per-year tables, so every existing
+    /// year-level behaviour is preserved by construction.
+    pub fn createFormSetInterval(
+        self: *Store,
+        value: FormSetIntervalWrite,
+    ) !void {
+        try validateIdText(value.id);
+        try validateOpaqueText(value.profile_id);
+        try validateTaxYear(value.tax_year);
+        try validateDate(value.effective_from);
+        if (value.effective_until) |until| {
+            try validateDate(until);
+            if (std.mem.order(u8, until, value.effective_from) == .lt) {
+                return Error.InvalidDate;
+            }
+        }
+        for (value.forms) |form| {
+            try requireValue(form.form_code);
+            try requireValue(form.form_revision);
+        }
+        // ISO dates compare lexicographically, so the year bound is a prefix
+        // check against the interval's own tax year.
+        var year_text: [4]u8 = undefined;
+        _ = std.fmt.bufPrint(&year_text, "{d:0>4}", .{
+            @as(u32, @intCast(value.tax_year)),
+        }) catch return Error.InvalidValue;
+        if (!std.mem.startsWith(u8, value.effective_from, &year_text)) {
+            return Error.FormSetIntervalOutsideYear;
+        }
+        if (value.effective_until) |until| {
+            if (!std.mem.startsWith(u8, until, &year_text)) {
+                return Error.FormSetIntervalOutsideYear;
+            }
+        }
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        if (!(try self.profileExists(value.profile_id))) {
+            return Error.NotFound;
+        }
+        // Overlap and sequence are decided inside the immediate transaction
+        // so two writers cannot both claim the same span. An open until is
+        // year-end for comparison purposes.
+        var year_end: [10]u8 = undefined;
+        _ = std.fmt.bufPrint(&year_end, "{s}-12-31", .{&year_text}) catch
+            return Error.InvalidValue;
+        var overlap = try self.prepare(
+            \\SELECT 1 FROM tax_profile_form_set_interval_revisions
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\  AND effective_from <= ?
+            \\  AND ? <= COALESCE(effective_until, ?)
+            \\LIMIT 1;
+        );
+        defer overlap.deinit();
+        try overlap.bindText(1, value.profile_id);
+        try overlap.bindInt64(2, value.tax_year);
+        try overlap.bindText(3, value.effective_until orelse &year_end);
+        try overlap.bindText(4, value.effective_from);
+        try overlap.bindText(5, &year_end);
+        if (try overlap.step() == .row) {
+            return Error.FormSetIntervalOverlap;
+        }
+
+        var sequence = try self.prepare(
+            \\SELECT COALESCE(MAX(sequence), 0) + 1
+            \\FROM tax_profile_form_set_interval_revisions
+            \\WHERE profile_id = ? AND tax_year = ?;
+        );
+        defer sequence.deinit();
+        try sequence.bindText(1, value.profile_id);
+        try sequence.bindInt64(2, value.tax_year);
+        if (try sequence.step() != .row) return Error.SqliteFailure;
+        const next_sequence = sqlite.sqlite3_column_int64(sequence.raw, 0);
+
+        var parent = try self.prepare(
+            \\INSERT INTO tax_profile_form_set_interval_revisions (
+            \\    id, profile_id, tax_year, sequence,
+            \\    effective_from, effective_until
+            \\) VALUES (?, ?, ?, ?, ?, ?);
+        );
+        defer parent.deinit();
+        try parent.bindText(1, value.id);
+        try parent.bindText(2, value.profile_id);
+        try parent.bindInt64(3, value.tax_year);
+        try parent.bindInt64(4, next_sequence);
+        try parent.bindText(5, value.effective_from);
+        try parent.bindOptionalText(6, value.effective_until);
+        try parent.expectDone();
+
+        var add = try self.prepare(
+            \\INSERT INTO tax_profile_form_set_interval_entries (
+            \\    revision_id, form_code, form_revision
+            \\) VALUES (?, ?, ?);
+        );
+        defer add.deinit();
+        for (value.forms) |form| {
+            try add.bindText(1, value.id);
+            try add.bindText(2, form.form_code);
+            try add.bindText(3, form.form_revision);
+            try add.expectDone();
+            try add.reset();
+        }
+
+        try self.commit();
+        committed = true;
+    }
+
+    /// Resolves the Forms Set effective on a specific date: the
+    /// highest-sequence interval revision covering that date wins, and a date
+    /// no interval covers falls back to the year's base set — so a year with
+    /// no recorded mid-year change behaves exactly as it always has.
+    pub fn resolveFormSetOn(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        date: []const u8,
+    ) !ResolvedFormSet {
+        try validateOpaqueText(profile_id);
+        try validateDate(date);
+        const tax_year = std.fmt.parseInt(i32, date[0..4], 10) catch
+            return Error.InvalidDate;
+
+        var revision = try self.prepare(
+            \\SELECT id FROM tax_profile_form_set_interval_revisions
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\  AND effective_from <= ?
+            \\  AND (effective_until IS NULL OR ? <= effective_until)
+            \\ORDER BY sequence DESC
+            \\LIMIT 1;
+        );
+        defer revision.deinit();
+        try revision.bindText(1, profile_id);
+        try revision.bindInt64(2, tax_year);
+        try revision.bindText(3, date);
+        try revision.bindText(4, date);
+        if (try revision.step() == .done) {
+            return self.resolveFormSet(allocator, profile_id, tax_year);
+        }
+        const revision_id = columnText(revision.raw, 0) orelse
+            return Error.SqliteFailure;
+        var revision_id_storage: [64]u8 = undefined;
+        if (revision_id.len > revision_id_storage.len) {
+            return Error.InvalidValue;
+        }
+        @memcpy(revision_id_storage[0..revision_id.len], revision_id);
+        const owned_revision_id = revision_id_storage[0..revision_id.len];
+
+        var entries = try self.prepare(
+            \\SELECT form_code, form_revision
+            \\FROM tax_profile_form_set_interval_entries
+            \\WHERE revision_id = ?
+            \\ORDER BY form_code COLLATE NOCASE, form_revision;
+        );
+        defer entries.deinit();
+        try entries.bindText(1, owned_revision_id);
+
+        var items: std.ArrayList(OwnedFormRegistration) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+        while (try entries.step() == .row) {
+            const form_code = try dupColumn(allocator, entries.raw, 0);
+            errdefer allocator.free(form_code);
+            const form_revision = try dupColumn(allocator, entries.raw, 1);
+            errdefer allocator.free(form_revision);
+            try items.append(allocator, .{
+                .form_code = form_code,
+                .form_revision = form_revision,
+            });
+        }
+        return .{
+            .state = if (items.items.len == 0) .active_empty else .active_nonempty,
+            .legacy_reset_allowed = false,
+            .forms = .{ .items = try items.toOwnedSlice(allocator) },
+        };
     }
 
     /// Finds taxpayers whose name contains the query, or whose canonical TIN
@@ -9027,6 +9239,62 @@ const schema_v8 =
     \\    ON tax_profile_cor_documents(profile_id, attached_at DESC);
 ;
 
+/// Mid-year Forms Set changes, layered over the per-year tables rather than
+/// replacing them.
+///
+/// The architecture doc is explicit that the working per-year persistence
+/// should not be rewritten until the revised state model exists, so these
+/// revisions are additive: the year row remains the base, and a revision
+/// whose effective interval covers a queried date supersedes it from that
+/// date. Rows are append-only like every other effective-dated record here;
+/// overlap of active intervals within one profile-year is rejected in the
+/// write transaction because SQLite cannot express that constraint
+/// declaratively.
+const schema_v9 =
+    \\CREATE TABLE tax_profile_form_set_interval_revisions (
+    \\    id TEXT PRIMARY KEY
+    \\        CHECK (length(id) BETWEEN 1 AND 64 AND id = trim(id)),
+    \\    profile_id TEXT NOT NULL
+    \\        REFERENCES tax_profiles(id) ON DELETE CASCADE,
+    \\    tax_year INTEGER NOT NULL CHECK (tax_year BETWEEN 1 AND 9999),
+    \\    sequence INTEGER NOT NULL CHECK (
+    \\        sequence > 0 AND sequence <= 4294967295
+    \\    ),
+    \\    effective_from TEXT NOT NULL,
+    \\    effective_until TEXT,
+    \\    confirmed_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    UNIQUE (profile_id, tax_year, sequence),
+    \\    CHECK (
+    \\        effective_until IS NULL OR effective_from <= effective_until
+    \\    )
+    \\);
+    \\CREATE INDEX tax_profile_form_set_interval_revisions_year_idx
+    \\    ON tax_profile_form_set_interval_revisions(
+    \\        profile_id, tax_year, sequence
+    \\    );
+    \\
+    \\CREATE TABLE tax_profile_form_set_interval_entries (
+    \\    revision_id TEXT NOT NULL
+    \\        REFERENCES tax_profile_form_set_interval_revisions(id)
+    \\        ON DELETE CASCADE,
+    \\    form_code TEXT NOT NULL CHECK (length(trim(form_code)) > 0),
+    \\    form_revision TEXT NOT NULL
+    \\        CHECK (length(trim(form_revision)) > 0),
+    \\    PRIMARY KEY (revision_id, form_code, form_revision)
+    \\);
+    \\
+    \\CREATE TRIGGER tax_profile_form_set_interval_revisions_immutable
+    \\BEFORE UPDATE ON tax_profile_form_set_interval_revisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'form set interval revisions are append-only');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_set_interval_entries_immutable
+    \\BEFORE UPDATE ON tax_profile_form_set_interval_entries
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'form set interval entries are append-only');
+    \\END;
+;
+
 test "tax profile migration is namespaced idempotent and preserves user_version" {
     var store = try Store.openMemory(std.testing.allocator);
     defer store.close();
@@ -9676,6 +9944,135 @@ test "listing a taxpayer reports its corrected TIN, not the superseded one" {
     defer profiles.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 1), profiles.items.len);
     try std.testing.expectEqualStrings("987654321000", profiles.items[0].tin);
+}
+
+test "a mid-year forms change supersedes the year set only within its dates" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    const profile_id = "tax-profile-interval";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Interval Taxpayer", "2026-01-01"),
+        .{},
+    );
+    try store.createFormSet(profile_id, 2026, &.{.{
+        .form_code = "2551Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+
+    // VAT registration begins July 1: a different set applies from that date.
+    try store.createFormSetInterval(.{
+        .id = "interval-vat-2026",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .effective_from = "2026-07-01",
+        .forms = &.{.{
+            .form_code = "2550Q",
+            .form_revision = "2024-04-ENCS",
+        }},
+    });
+
+    // Before the change, the year's base set answers.
+    var june = try store.resolveFormSetOn(allocator, profile_id, "2026-06-30");
+    defer june.deinit(allocator);
+    try std.testing.expectEqual(FormSetState.active_nonempty, june.state);
+    try std.testing.expectEqualStrings("2551Q", june.forms.items[0].form_code);
+
+    // From the change onward, the interval answers — through year end,
+    // because its until is open.
+    var july = try store.resolveFormSetOn(allocator, profile_id, "2026-07-01");
+    defer july.deinit(allocator);
+    try std.testing.expectEqualStrings("2550Q", july.forms.items[0].form_code);
+    var december = try store.resolveFormSetOn(allocator, profile_id, "2026-12-31");
+    defer december.deinit(allocator);
+    try std.testing.expectEqualStrings("2550Q", december.forms.items[0].form_code);
+
+    // Another year is untouched by this year's interval.
+    var next_year = try store.resolveFormSetOn(allocator, profile_id, "2027-07-01");
+    defer next_year.deinit(allocator);
+    try std.testing.expectEqual(FormSetState.needs_configuration, next_year.state);
+
+    // The per-year API keeps its exact contract.
+    var yearly = try store.resolveFormSet(allocator, profile_id, 2026);
+    defer yearly.deinit(allocator);
+    try std.testing.expectEqualStrings("2551Q", yearly.forms.items[0].form_code);
+}
+
+test "two active form set intervals cannot claim the same day" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    const profile_id = "tax-profile-interval-overlap";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Overlap Taxpayer", "2026-01-01"),
+        .{},
+    );
+
+    try store.createFormSetInterval(.{
+        .id = "interval-open",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .effective_from = "2026-07-01",
+        .forms = &.{.{ .form_code = "2550Q", .form_revision = "2024-04-ENCS" }},
+    });
+
+    // An open interval runs through year end, so a later start still collides.
+    try std.testing.expectError(
+        Error.FormSetIntervalOverlap,
+        store.createFormSetInterval(.{
+            .id = "interval-colliding",
+            .profile_id = profile_id,
+            .tax_year = 2026,
+            .effective_from = "2026-10-01",
+            .forms = &.{.{ .form_code = "2551Q", .form_revision = "2018-01-ENCS" }},
+        }),
+    );
+    // Bounded and disjoint is fine.
+    try store.createFormSetInterval(.{
+        .id = "interval-early",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .effective_from = "2026-02-01",
+        .effective_until = "2026-03-31",
+        .forms = &.{},
+    });
+    // A rejected write left nothing behind.
+    var rows = try store.prepare(
+        \\SELECT COUNT(*) FROM tax_profile_form_set_interval_revisions
+        \\WHERE profile_id = 'tax-profile-interval-overlap';
+    );
+    defer rows.deinit();
+    try std.testing.expectEqual(StepResult.row, try rows.step());
+    try std.testing.expectEqual(
+        @as(i64, 2),
+        sqlite.sqlite3_column_int64(rows.raw, 0),
+    );
+
+    // An interval cannot claim dates outside its own tax year.
+    try std.testing.expectError(
+        Error.FormSetIntervalOutsideYear,
+        store.createFormSetInterval(.{
+            .id = "interval-wrong-year",
+            .profile_id = profile_id,
+            .tax_year = 2026,
+            .effective_from = "2027-01-01",
+            .forms = &.{},
+        }),
+    );
+
+    // Rows are append-only, like every effective-dated record here.
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\UPDATE tax_profile_form_set_interval_revisions
+            \\SET effective_from = '2026-01-01'
+            \\WHERE id = 'interval-open';
+        ),
+    );
 }
 
 test "one canonical TIN cannot be held by two taxpayers" {
