@@ -1494,3 +1494,59 @@ false. Recorded here so nobody re-opens them from the earlier text.
   that every read path is owner-scoped, not adding the column.
 - **Machine extraction (E4/E5)** and **mid-year Forms Set intervals (G5)** are
   unchanged from §22.
+
+---
+
+## 24. Reachability, mid-year intervals, and the owner-scoping audit (2026-08-04)
+
+Three items executed under ratified decisions: display cap 1024 with store-backed
+search (active-only); additive append-only interval revisions for G5; owner scoping
+audited to the standard "cross-profile reads must be owner-scoped, keyed reads are
+capability-scoped", with TIN uniqueness defined per-owner.
+
+### Landed
+
+- **Every taxpayer is findable** (`e47beba`). The sidebar's display bound rose to
+  1024 and stopped being a reachability ceiling: search queries the store (name,
+  case-insensitive; TIN by digits however punctuated, against the identity anchor),
+  so a taxpayer past the bound is found by typing. Searching narrows the view
+  without moving the selection, truncation is announced by a persistent line, and
+  the model-side re-filter is gone — it disagreed with the store about punctuation.
+- **Mid-year Forms Set changes have a domain** (`f11ff50`, gap G5 closed at the
+  store layer). Append-only `tax_profile_form_set_interval_revisions` + entries
+  (schema v9) layer over the untouched per-year tables. `resolveFormSetOn(date)`
+  takes the highest-sequence interval covering the date and falls back to the
+  year's base set; overlapping active intervals are rejected in the write
+  transaction; an interval is confined to its tax year; an open `effective_until`
+  means the rest of the year. **No UI reads intervals yet, deliberately** — no
+  copy anywhere promises mid-year effectivity, and none may until a surface exists
+  to record and review these changes.
+
+### The owner-scoping audit (G4) — result: enforced at the write layer
+
+Every cross-profile read was classified:
+
+| Read path | Class | Owner predicate? |
+|---|---|---|
+| `listProfiles`, `searchProfiles` | cross-profile scan | none — see below |
+| `findProfileWithCanonicalTin`, `canonicalTinIsTaken` | cross-profile scan | none — see below |
+| `resolveFormSet`, `getRevision*`, `profileExists`, per-profile queries | keyed by opaque profile id | capability-scoped by the id itself |
+| on-demand occurrence counters | cross-profile | explicitly owner-validated (pre-existing) |
+
+The scans carry no owner predicate **because a foreign-owned row is
+unconstructible**, enforced since schema v6 by three guards, all now pinned by
+tests: profiles cannot be inserted with a NULL or foreign owner
+(`tax_profiles_owner_insert_guard`), a profile's owner is immutable
+(`tax_profiles_owner_update_guard`), and the owner table admits exactly one row
+(`singleton INTEGER PRIMARY KEY CHECK (singleton = 1)`). A read filter that can
+never exclude a row is dead SQL no test can exercise, so it was deliberately not
+added.
+
+**Per-owner TIN uniqueness** (ratified) therefore holds today by identity: with a
+provably singular owner, the unqualified anchor scan *is* the per-owner check.
+
+**The multi-owner contract**: any future migration that relaxes these triggers
+must, in the same change, add owner qualification to `listProfiles`,
+`searchProfiles`, `findProfileWithCanonicalTin`, and `canonicalTinIsTaken` — this
+table is the checklist. G4 is closed for the single-owner design; it reopens only
+with that migration.

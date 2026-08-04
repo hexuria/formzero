@@ -9348,6 +9348,47 @@ test "local owner is opaque stable and attached to new profiles" {
     );
 }
 
+test "owner scoping is enforced where rows are written, not where they are read" {
+    var store = try Store.openMemory(std.testing.allocator);
+    defer store.close();
+
+    const profile_id = "tax-profile-owner-guards";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Guarded Owner", "2026-01-01"),
+        .{},
+    );
+
+    // A profile's owner is immutable: re-pointing a row at another owner is
+    // the write that would make unscoped reads leak, and it cannot happen.
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\UPDATE tax_profiles
+            \\SET owner_id = 'ffffffffffffffffffffffffffffffff'
+            \\WHERE id = 'tax-profile-owner-guards';
+        ),
+    );
+
+    // And there is no second owner to point at: the owner table admits one
+    // row, by primary-key check.
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\INSERT INTO tax_profile_local_owner(singleton, id)
+            \\VALUES (2, 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+        ),
+    );
+
+    // Together with the insert guard (tested above), every profile row
+    // provably belongs to the singleton local owner — which is why the
+    // cross-profile reads (listing, search, TIN uniqueness) carry no owner
+    // predicate: a filter that can never exclude a row is dead code that a
+    // test cannot exercise. A future multi-owner migration that relaxes
+    // these triggers must add owner qualification to those reads in the
+    // same change.
+}
+
 test "on-demand occurrence allocation is scoped monotonic and legacy aware" {
     const allocator = std.testing.allocator;
     var store = try Store.openMemory(allocator);
