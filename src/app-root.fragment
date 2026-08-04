@@ -1,7 +1,3 @@
-<!--
-  Editable application root.
-  scripts/flatten-native.mjs appends this fragment after every template.
--->
 <stack grow="1">
   <if test="{shellVisible}">
     <use
@@ -71,17 +67,26 @@
   </if>
 
   <if test="{contentPage == 'taxpayer_dashboard'}">
+    <if test="{profileDeadlineDialogOpen}">
+      <column grow="1" padding="16" main="center" cross="center" label="Dismiss dialog" on-press="profile_deadline_close_dialog">
+        <dialog width="{profileDeadlineDialogWidth}" on-dismiss="profile_deadline_close_dialog">
+          <use template="profile-deadline-dialog-content"/>
+        </dialog>
+      </column>
+    </if>
     <if test="{profileFormInfoDialogOpen}">
-      <dialog width="{profileFormInfoDialogWidth}" on-dismiss="profile_forms_close_info">
-        <use
-          template="taxpayer-form-info-content"
-          code="{profileFormInfoCode}"
-          title="{profileFormInfoTitle}"
-          category="{profileFormInfoCategory}"
-          cadence="{profileFormInfoCadence}"
-          capability="{profileFormInfoCapability}"
-          revision="{profileFormInfoRevision}"/>
-      </dialog>
+      <column grow="1" padding="16" main="center" cross="center" label="Dismiss dialog" on-press="profile_forms_close_info">
+        <dialog width="{profileFormInfoDialogWidth}" on-dismiss="profile_forms_close_info">
+          <use
+            template="taxpayer-form-info-content"
+            code="{profileFormInfoCode}"
+            title="{profileFormInfoTitle}"
+            category="{profileFormInfoCategory}"
+            cadence="{profileFormInfoCadence}"
+            capability="{profileFormInfoCapability}"
+            revision="{profileFormInfoRevision}"/>
+        </dialog>
+      </column>
     </if>
   </if>
 

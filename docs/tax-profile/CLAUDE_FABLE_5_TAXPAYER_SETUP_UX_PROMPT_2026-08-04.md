@@ -107,8 +107,8 @@ Read at least these files before designing:
 - `src/forms/spec.zig`
 - `src/forms/generated/catalog.zig`
 
-Read this paused plan only to understand nearby responsive calendar work; do
-not continue or redesign that calendar in this assignment:
+Read this separate Codex-owned plan only to understand nearby responsive
+calendar work; do not modify or execute that calendar plan in this assignment:
 
 - `docs/calendar/PROFILE_CALENDAR_REMEDIATION_EXECUTION_PLAN_2026-08-04.md`
 
@@ -584,8 +584,8 @@ Your design must explicitly walk through these scenarios:
 
 ## Non-goals and safety boundaries
 
-- Do not redesign the global calendar or resume the paused profile-calendar
-  remediation plan.
+- Do not redesign the global calendar or modify the separate Codex-owned
+  profile-calendar remediation plan.
 - Do not generate implementation code.
 - Do not edit generated `src/app.native`.
 - Do not collapse profile facts, Forms Set membership, filing transaction

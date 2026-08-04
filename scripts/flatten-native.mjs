@@ -27,6 +27,7 @@ const sourceGroups = [
       "src/pages/global-dashboard.fragment",
       "src/pages/taxpayer-dashboard.native",
       "src/pages/profile-setup.native",
+      "src/pages/taxpayer-dashboard-page.native",
       "src/pages/import-data.native",
       "src/pages/background-tasks.native",
       "src/pages/tax-calendar.native",
@@ -69,11 +70,15 @@ const sourceGroups = [
 
 const sourceFiles = sourceGroups.flatMap((group) => group.files);
 const generatedTemplateIncludes = new Set([
+  "d-s",
   "multi-select-combobox",
+  "profile-calendar-multi-select-combobox",
   "tax-profile-form-context",
+  "taxpayer-calendar-section",
   "taxpayer-form-library-section",
   "form-field",
   "form-field-bound",
+  "profile-setup-content",
 ]);
 
 function normalizeFragment(source) {

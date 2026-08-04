@@ -9,7 +9,7 @@
 const std = @import("std");
 const catalog = @import("generated/catalog.zig");
 
-pub const Error = error{InvalidYear, InvalidMonth, InvalidQuarter, InvalidOccurrence};
+pub const Error = error{ InvalidYear, InvalidMonth, InvalidQuarter, InvalidOccurrence };
 pub const key_capacity: usize = 16;
 
 pub const FilingPeriod = union(enum) {
@@ -163,8 +163,16 @@ pub const FilingPeriod = union(enum) {
             return error.InvalidYear;
         const period = switch (form_cadence) {
             .monthly => blk: {
-                if (text.len != 8 or text[5] != 'M') return error.InvalidMonth;
-                const parsed_month = std.fmt.parseInt(u8, text[6..8], 10) catch
+                const month_text = if (text.len == 8 and text[5] == 'M')
+                    text[6..8]
+                else if (text.len == 7)
+                    // Legacy recurring drafts stored monthly periods as
+                    // `YYYY-MM`. Accept them at the boundary; `key()` always
+                    // writes the canonical `YYYY-M01` representation.
+                    text[5..7]
+                else
+                    return error.InvalidMonth;
+                const parsed_month = std.fmt.parseInt(u8, month_text, 10) catch
                     return error.InvalidMonth;
                 break :blk FilingPeriod{ .monthly = .{
                     .tax_year = tax_year,
@@ -264,4 +272,42 @@ test "period keys round trip by cadence" {
         const parsed = try FilingPeriod.parseKey(value.cadence(), key);
         try std.testing.expect(value.eql(parsed));
     }
+}
+
+test "legacy monthly keys parse and canonicalize" {
+    const parsed = try FilingPeriod.parseKey(.monthly, "2026-01");
+    try std.testing.expect(parsed.eql(.{ .monthly = .{
+        .tax_year = 2026,
+        .month = 1,
+    } }));
+
+    var buffer: [key_capacity]u8 = undefined;
+    try std.testing.expectEqualStrings("2026-M01", try parsed.key(&buffer));
+}
+
+test "period key parser rejects malformed and out of range values" {
+    try std.testing.expectError(
+        error.InvalidMonth,
+        FilingPeriod.parseKey(.monthly, "2026-M1"),
+    );
+    try std.testing.expectError(
+        error.InvalidMonth,
+        FilingPeriod.parseKey(.monthly, "2026-00"),
+    );
+    try std.testing.expectError(
+        error.InvalidMonth,
+        FilingPeriod.parseKey(.monthly, "2026-13"),
+    );
+    try std.testing.expectError(
+        error.InvalidQuarter,
+        FilingPeriod.parseKey(.quarterly, "2026-Q5"),
+    );
+    try std.testing.expectError(
+        error.InvalidOccurrence,
+        FilingPeriod.parseKey(.on_demand, "2026-O000"),
+    );
+    try std.testing.expectError(
+        error.InvalidYear,
+        FilingPeriod.parseKey(.annual, "0000-A"),
+    );
 }

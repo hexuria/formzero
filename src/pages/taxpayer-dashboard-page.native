@@ -1,0 +1,50 @@
+<template name="taxpayer-dashboard-page">
+  <scroll grow="1" global-key="page-taxpayer-dashboard" label="Taxpayer dashboard content">
+  <column padding="{taxpayerDashboardPagePadding}" gap="24">
+    <if test="{constrainedLayout}">
+      <row gap="12" cross="center">
+        <avatar label="{selectedTaxpayerName}">{selectedTaxpayerInitials}</avatar>
+        <column grow="1" gap="5">
+          <text size="heading" wrap="true">{selectedTaxpayerName}</text>
+          <text wrap="true" foreground="text_muted">TIN: {selectedTaxpayerTin}</text>
+          <text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear} - {selectedTaxpayerTaxType}</text>
+        </column>
+      </row>
+    </if>
+    <else>
+      <row gap="16" cross="center">
+        <avatar label="{selectedTaxpayerName}">{selectedTaxpayerInitials}</avatar>
+        <column grow="1" gap="6">
+          <text size="heading">{selectedTaxpayerName}</text>
+          <text wrap="true" foreground="text_muted">{selectedTaxpayerSummary}</text>
+        </column>
+      </row>
+    </else>
+
+    <if test="{constrainedLayout}">
+      <tabs gap="4" label="Dashboard view">
+        <button height="44" variant="ghost" selected="{dashboardCalendarActive}" on-press="show_dashboard_calendar">Calendar</button>
+        <button height="44" variant="ghost" selected="{dashboardFormsActive}" on-press="show_dashboard_forms">Forms</button>
+        <button height="44" variant="ghost" selected="{dashboardProfileSettingsActive}" on-press="show_dashboard_profile_settings">Profile</button>
+      </tabs>
+    </if>
+    <else>
+      <tabs gap="4" label="Dashboard view">
+        <button variant="ghost" icon="app:calendar" selected="{dashboardCalendarActive}" on-press="show_dashboard_calendar">Calendar</button>
+        <button variant="ghost" icon="folder-open" selected="{dashboardFormsActive}" on-press="show_dashboard_forms">Tax Form Library</button>
+        <button variant="ghost" icon="settings" selected="{dashboardProfileSettingsActive}" on-press="show_dashboard_profile_settings">Profile Settings</button>
+      </tabs>
+    </else>
+
+    <if test="{dashboardCalendarActive}">
+      <!-- @include-template taxpayer-calendar-section -->
+    </if>
+    <if test="{dashboardFormsActive}">
+      <!-- @include-template taxpayer-form-library-section -->
+    </if>
+    <if test="{dashboardProfileSettingsActive}">
+      <!-- @include-template profile-setup-content -->
+    </if>
+  </column>
+  </scroll>
+</template>
