@@ -1,7 +1,7 @@
 # Tax Profile and Tax Form Profile Ownership Matrix
 
-Date: 2026-08-04  
-Status: ownership implementation present and covered by final workflow acceptance  
+Date: 2026-08-04
+Status: ownership implementation present and covered by final workflow acceptance
 Scope: exhaustive exact-ID metadata for all 325 Native inputs across the 10 supported editor revisions
 
 ## Decision
