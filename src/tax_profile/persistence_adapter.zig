@@ -159,6 +159,54 @@ pub fn appendRevision(
     try store.appendRevision(rows.revision, rows.components());
 }
 
+/// Appends a revision carrying the durable key to the reviewed COR document
+/// it was accepted from. The link is persistence provenance, not a profile
+/// fact, so the domain model never sees it.
+pub fn appendRevisionLinked(
+    store: *persistence.Store,
+    allocator: std.mem.Allocator,
+    revision: *const model.ProfileRevision,
+    expected_current_sequence: u32,
+    cor_document_id: []const u8,
+) !void {
+    var rows = try toWriteRows(
+        allocator,
+        revision,
+        expected_current_sequence,
+    );
+    defer rows.deinit(allocator);
+    rows.revision.cor_document_id = cor_document_id;
+    try store.appendRevision(rows.revision, rows.components());
+}
+
+/// One reviewed COR decision as one store transaction: the linked revision
+/// and the year's forms both land or neither does.
+pub fn applyCorReview(
+    store: *persistence.Store,
+    allocator: std.mem.Allocator,
+    revision: *const model.ProfileRevision,
+    expected_current_sequence: u32,
+    cor_document_id: []const u8,
+    forms_tax_year: i32,
+    forms: []const persistence.FormRegistrationWrite,
+    forms_mode: persistence.FormSetApplyMode,
+) !void {
+    var rows = try toWriteRows(
+        allocator,
+        revision,
+        expected_current_sequence,
+    );
+    defer rows.deinit(allocator);
+    rows.revision.cor_document_id = cor_document_id;
+    try store.applyCorReview(
+        rows.revision,
+        rows.components(),
+        forms_tax_year,
+        forms,
+        forms_mode,
+    );
+}
+
 pub fn toDomain(
     allocator: std.mem.Allocator,
     rows: *const persistence.OwnedProfileRevision,

@@ -10,7 +10,9 @@
 //! random workspaces can share a canonical filing business key, while every
 //! schema-bound revision, named profile binding, and ordered value occurrence
 //! remains an immutable historical snapshot. Schema v7 adds owner-scoped,
-//! transactional counters for unique on-demand filing occurrences.
+//! transactional counters for unique on-demand filing occurrences. Schema
+//! v10 gives imported revisions a durable key to the COR document they were
+//! accepted from.
 
 const std = @import("std");
 const profile_field = @import("field.zig");
@@ -33,7 +35,7 @@ const sqlite = @cImport({
     @cInclude("sqlite3.h");
 });
 
-pub const latest_schema_version: u32 = 9;
+pub const latest_schema_version: u32 = 10;
 const migration_component = "tax_profile";
 pub const storage_classification =
     repository_opening.legacy_plaintext_repository_classification;
@@ -240,6 +242,10 @@ pub const RevisionWrite = struct {
     identity: IdentityWrite,
     contact: ContactWrite,
     subject: SubjectWrite,
+    /// Durable key to the reviewed COR document this revision was accepted
+    /// from. Only an `.imported` revision may carry one; the readable
+    /// free-text reference in `source` stays alongside it.
+    cor_document_id: ?[]const u8 = null,
 };
 
 pub const BusinessActivityWrite = struct {
@@ -324,6 +330,10 @@ pub const FormRegistrationWrite = struct {
     form_code: []const u8,
     form_revision: []const u8,
 };
+
+/// Whether a COR apply's forms half creates the year or updates an existing
+/// one — the same distinction the standalone save path draws.
+pub const FormSetApplyMode = enum { create, update };
 
 pub const FormSetState = enum {
     needs_configuration,
@@ -1417,6 +1427,17 @@ pub const Store = struct {
             try version.bindText(1, migration_component);
             try version.expectDone();
         }
+        if (current < 10) {
+            try self.exec(schema_v10);
+            var version = try self.prepare(
+                \\UPDATE app_component_migrations
+                \\SET version = 10, updated_at = unixepoch()
+                \\WHERE component = ?;
+            );
+            defer version.deinit();
+            try version.bindText(1, migration_component);
+            try version.expectDone();
+        }
         try self.commit();
         committed = true;
     }
@@ -1673,6 +1694,17 @@ pub const Store = struct {
         var committed = false;
         errdefer if (!committed) self.rollbackNoFail();
 
+        try self.appendRevisionInTx(value, components);
+
+        try self.commit();
+        committed = true;
+    }
+
+    fn appendRevisionInTx(
+        self: *Store,
+        value: RevisionWrite,
+        components: RevisionComponentsWrite,
+    ) !void {
         const current = try self.currentRevisionSequence(value.profile_id);
         const observed_sequence: u32 = current orelse 0;
         if (current == null and !(try self.profileExists(value.profile_id))) {
@@ -1713,9 +1745,68 @@ pub const Store = struct {
         if (sqlite.sqlite3_changes(try self.handle()) != 1) {
             return Error.RevisionConflict;
         }
+    }
+
+    /// One reviewed COR decision is one commit: the accepted profile facts
+    /// and the accepted forms both land or neither does (spec §11, "Apply is
+    /// one transaction").
+    pub fn applyCorReview(
+        self: *Store,
+        revision: RevisionWrite,
+        components: RevisionComponentsWrite,
+        forms_tax_year: i32,
+        forms: []const FormRegistrationWrite,
+        forms_mode: FormSetApplyMode,
+    ) !void {
+        try validateRevision(revision, components);
+        try validateTaxYear(forms_tax_year);
+        for (forms) |form| {
+            try requireValue(form.form_code);
+            try requireValue(form.form_revision);
+        }
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        try self.appendRevisionInTx(revision, components);
+        switch (forms_mode) {
+            .create => try self.createFormSetInTx(
+                revision.profile_id,
+                forms_tax_year,
+                forms,
+            ),
+            .update => try self.updateFormSetInTx(
+                revision.profile_id,
+                forms_tax_year,
+                forms,
+            ),
+        }
 
         try self.commit();
         committed = true;
+    }
+
+    /// The durable COR document behind one revision, or null when the
+    /// revision was recorded without one (including every pre-v10 revision).
+    pub fn corDocumentIdForRevision(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        revision_id: []const u8,
+    ) !?[]u8 {
+        try validateOpaqueText(profile_id);
+        try validateIdText(revision_id);
+        var statement = try self.prepare(
+            \\SELECT cor_document_id FROM tax_profile_revisions
+            \\WHERE profile_id = ? AND id = ?;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindText(2, revision_id);
+        if (try statement.step() == .done) return Error.NotFound;
+        if (columnText(statement.raw, 0) == null) return null;
+        return try dupColumn(allocator, statement.raw, 0);
     }
 
     pub fn getIdentityAnchor(
@@ -2232,7 +2323,24 @@ pub const Store = struct {
             .sole_proprietor => |proprietor| proprietor.person,
             .legal_entity => null,
         };
-        var insert = try self.prepare(
+        // Migration tests replay writes against pre-v10 schemas, so the
+        // column list must match what the open store actually has.
+        const link_supported = try self.schemaVersion() >= 10;
+        if (value.cor_document_id != null and !link_supported) {
+            return Error.InvalidValue;
+        }
+        const insert_sql: []const u8 = if (link_supported)
+            \\INSERT INTO tax_profile_revisions (
+            \\    id, profile_id, sequence, effective_from, effective_until,
+            \\    source_tag, source_reference, tin, rdo_code,
+            \\    registered_address, zip_code, contact_number, email_address,
+            \\    subject_kind, taxpayer_name, registered_name,
+            \\    date_of_birth, citizenship, foreign_tax_number,
+            \\    cor_document_id
+            \\) VALUES (
+            \\    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            \\);
+        else
             \\INSERT INTO tax_profile_revisions (
             \\    id, profile_id, sequence, effective_from, effective_until,
             \\    source_tag, source_reference, tin, rdo_code,
@@ -2242,7 +2350,8 @@ pub const Store = struct {
             \\) VALUES (
             \\    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             \\);
-        );
+        ;
+        var insert = try self.prepare(insert_sql);
         defer insert.deinit();
         try insert.bindText(1, value.id);
         try insert.bindText(2, value.profile_id);
@@ -2278,6 +2387,9 @@ pub const Store = struct {
             19,
             if (individual) |person| person.foreign_tax_number else null,
         );
+        if (link_supported) {
+            try insert.bindOptionalText(20, value.cor_document_id);
+        }
         try insert.expectDone();
 
         var add_activity = try self.prepare(
@@ -2789,6 +2901,18 @@ pub const Store = struct {
         var committed = false;
         errdefer if (!committed) self.rollbackNoFail();
 
+        try self.replaceFormSetInTx(profile_id, tax_year, forms);
+
+        try self.commit();
+        committed = true;
+    }
+
+    fn replaceFormSetInTx(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: i32,
+        forms: []const FormRegistrationWrite,
+    ) !void {
         var configure = try self.prepare(
             \\INSERT INTO tax_profile_form_sets(profile_id, tax_year, state)
             \\VALUES (?, ?, ?)
@@ -2828,9 +2952,6 @@ pub const Store = struct {
             try add.expectDone();
             try add.reset();
         }
-
-        try self.commit();
-        committed = true;
     }
 
     /// Creates a yearly Forms Set without allowing an existing year to be
@@ -2853,6 +2974,18 @@ pub const Store = struct {
         var committed = false;
         errdefer if (!committed) self.rollbackNoFail();
 
+        try self.createFormSetInTx(profile_id, tax_year, forms);
+
+        try self.commit();
+        committed = true;
+    }
+
+    fn createFormSetInTx(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: i32,
+        forms: []const FormRegistrationWrite,
+    ) !void {
         var parent = try self.prepare(
             \\INSERT INTO tax_profile_form_sets(profile_id, tax_year, state)
             \\VALUES (?, ?, ?);
@@ -2883,9 +3016,6 @@ pub const Store = struct {
             try add.expectDone();
             try add.reset();
         }
-
-        try self.commit();
-        committed = true;
     }
 
     /// Updates an existing yearly Forms Set. Missing years are rejected so
@@ -2898,6 +3028,27 @@ pub const Store = struct {
     ) !void {
         try validateOpaqueText(profile_id);
         try validateTaxYear(tax_year);
+        for (forms) |form| {
+            try requireValue(form.form_code);
+            try requireValue(form.form_revision);
+        }
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        try self.updateFormSetInTx(profile_id, tax_year, forms);
+
+        try self.commit();
+        committed = true;
+    }
+
+    fn updateFormSetInTx(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: i32,
+        forms: []const FormRegistrationWrite,
+    ) !void {
         var exists = try self.prepare(
             \\SELECT 1 FROM tax_profile_form_sets
             \\WHERE profile_id = ? AND tax_year = ?;
@@ -2906,7 +3057,7 @@ pub const Store = struct {
         try exists.bindText(1, profile_id);
         try exists.bindInt64(2, tax_year);
         if (try exists.step() == .done) return Error.NotFound;
-        try self.replaceFormSet(profile_id, tax_year, forms);
+        try self.replaceFormSetInTx(profile_id, tax_year, forms);
     }
 
     /// Lists only explicit yearly parent rows, newest tax year first.
@@ -6799,6 +6950,12 @@ fn validateRevision(
         .imported => |reference| try requireValue(reference),
         .migrated => |reference| try requireValue(reference),
     }
+    if (value.cor_document_id) |document_id| {
+        try validateIdText(document_id);
+        if (std.meta.activeTag(value.source) != .imported) {
+            return Error.InvalidValue;
+        }
+    }
     _ = profile_field.Tin.parse(value.identity.tin) catch
         return Error.InvalidValue;
     try requireValue(value.identity.rdo_code);
@@ -9295,6 +9452,39 @@ const schema_v9 =
     \\END;
 ;
 
+/// A revision accepted from a reviewed COR keeps a durable key to the exact
+/// evidence row, alongside the readable free-text source reference. RESTRICT
+/// makes cited evidence undeletable for as long as the revision exists —
+/// which, for append-only revisions, is forever. The guard trigger exists
+/// because a foreign key alone cannot say the document must belong to the
+/// same taxpayer, nor that only imported revisions may cite one.
+const schema_v10 =
+    \\ALTER TABLE tax_profile_revisions
+    \\    ADD COLUMN cor_document_id TEXT
+    \\        REFERENCES tax_profile_cor_documents(id)
+    \\        ON DELETE RESTRICT;
+    \\
+    \\CREATE INDEX tax_profile_revisions_cor_document_idx
+    \\    ON tax_profile_revisions(cor_document_id)
+    \\    WHERE cor_document_id IS NOT NULL;
+    \\
+    \\CREATE TRIGGER tax_profile_revision_cor_document_guard
+    \\BEFORE INSERT ON tax_profile_revisions
+    \\WHEN NEW.cor_document_id IS NOT NULL AND (
+    \\    NEW.source_tag <> 'imported' OR NOT EXISTS (
+    \\        SELECT 1 FROM tax_profile_cor_documents
+    \\        WHERE id = NEW.cor_document_id
+    \\          AND profile_id = NEW.profile_id
+    \\    )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(
+    \\        ABORT,
+    \\        'cor link must cite this taxpayer''s imported document'
+    \\    );
+    \\END;
+;
+
 test "tax profile migration is namespaced idempotent and preserves user_version" {
     var store = try Store.openMemory(std.testing.allocator);
     defer store.close();
@@ -11455,7 +11645,7 @@ test "file store reopens with revisions Forms Set and drafts intact" {
 }
 
 test "latest schema migrates every prior version idempotently and keeps legacy drafts" {
-    for ([_]u32{ 1, 2, 3, 4, 5, 6 }) |legacy_version| {
+    for ([_]u32{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }) |legacy_version| {
         var store = try openLegacyStoreForTest(legacy_version);
         defer store.close();
         try std.testing.expectEqual(
@@ -11497,6 +11687,201 @@ test "latest schema migrates every prior version idempotently and keeps legacy d
             try store.schemaVersion(),
         );
     }
+}
+
+fn revisionCountForTest(store: *Store, profile_id: []const u8) !i64 {
+    var count = try store.prepare(
+        \\SELECT COUNT(*) FROM tax_profile_revisions WHERE profile_id = ?;
+    );
+    defer count.deinit();
+    try count.bindText(1, profile_id);
+    try std.testing.expectEqual(StepResult.row, try count.step());
+    return sqlite.sqlite3_column_int64(count.raw, 0);
+}
+
+fn testCorDocument(
+    id: []const u8,
+    profile_id: []const u8,
+) CorDocumentWrite {
+    return .{
+        .id = id,
+        .profile_id = profile_id,
+        .file_path = "/tmp/cor.pdf",
+        .file_name = "cor.pdf",
+        .sha256 = "a" ** 64,
+        .byte_size = 1234,
+    };
+}
+
+test "a COR review decision commits the revision and the forms together or not at all" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+    const profile_id = "tax-profile-cor-atomic";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Atomic Person", "2026-01-01"),
+        .{},
+    );
+    try store.attachCorDocument(testCorDocument("cor-doc-atomic", profile_id));
+    const forms = [_]FormRegistrationWrite{
+        .{ .form_code = "2551Q", .form_revision = "2018" },
+    };
+
+    // The injected failure: the year already exists, so the forms half of a
+    // create-mode apply must fail — and take the revision half with it.
+    try store.createFormSet(profile_id, 2026, &.{});
+    var second = testRevision(profile_id, 1, "Atomic Person Two", "2026-02-01");
+    second.cor_document_id = "cor-doc-atomic";
+    try std.testing.expectError(
+        Error.FormSetAlreadyExists,
+        store.applyCorReview(second, .{}, 2026, &forms, .create),
+    );
+    try std.testing.expectEqual(
+        @as(i64, 1),
+        try revisionCountForTest(&store, profile_id),
+    );
+
+    // Update mode against the existing year succeeds as one commit.
+    try store.applyCorReview(second, .{}, 2026, &forms, .update);
+    try std.testing.expectEqual(
+        @as(i64, 2),
+        try revisionCountForTest(&store, profile_id),
+    );
+    var resolved = try store.resolveFormSet(allocator, profile_id, 2026);
+    defer resolved.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), resolved.forms.items.len);
+    try std.testing.expectEqualStrings(
+        "2551Q",
+        resolved.forms.items[0].form_code,
+    );
+    const linked = (try store.corDocumentIdForRevision(
+        allocator,
+        profile_id,
+        "revision-2",
+    )).?;
+    defer allocator.free(linked);
+    try std.testing.expectEqualStrings("cor-doc-atomic", linked);
+
+    // A missing year in update mode also takes the revision half with it.
+    var third = testRevision(profile_id, 2, "Atomic Person Three", "2026-03-01");
+    third.cor_document_id = "cor-doc-atomic";
+    try std.testing.expectError(
+        Error.NotFound,
+        store.applyCorReview(third, .{}, 2027, &forms, .update),
+    );
+    try std.testing.expectEqual(
+        @as(i64, 2),
+        try revisionCountForTest(&store, profile_id),
+    );
+}
+
+test "a revision's COR link cites this taxpayer's imported document and pins it" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+    const first_id = "tax-profile-cor-link-a";
+    const other_id = "tax-profile-cor-link-b";
+    try store.createProfileWithRevision(
+        .{ .id = first_id },
+        testRevision(first_id, 0, "Linked Person", "2026-01-01"),
+        .{},
+    );
+    try store.createProfileWithRevision(
+        .{ .id = other_id },
+        testRevisionWithTin(other_id, 0, "Other Person", "2026-01-01", "987654321000"),
+        .{},
+    );
+    try store.attachCorDocument(testCorDocument("cor-doc-own", first_id));
+    try store.attachCorDocument(testCorDocument("cor-doc-foreign", other_id));
+
+    // Another taxpayer's document is refused by the guard trigger.
+    var wrong_owner = testRevision(first_id, 1, "Linked Person Two", "2026-02-01");
+    wrong_owner.cor_document_id = "cor-doc-foreign";
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.appendRevision(wrong_owner, .{}),
+    );
+
+    // A link without an imported source never reaches SQL.
+    var manual = testRevision(first_id, 1, "Linked Person Two", "2026-02-01");
+    manual.source = .manual_entry;
+    manual.cor_document_id = "cor-doc-own";
+    try std.testing.expectError(
+        Error.InvalidValue,
+        store.appendRevision(manual, .{}),
+    );
+
+    // A cited document is pinned by the RESTRICT foreign key; an uncited one
+    // stays deletable — the spec's conditional-deletion semantics.
+    var linked = testRevision(first_id, 1, "Linked Person Two", "2026-02-01");
+    linked.cor_document_id = "cor-doc-own";
+    try store.appendRevision(linked, .{});
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\DELETE FROM tax_profile_cor_documents WHERE id = 'cor-doc-own';
+        ),
+    );
+    try store.attachCorDocument(testCorDocument("cor-doc-uncited", first_id));
+    try store.exec(
+        \\DELETE FROM tax_profile_cor_documents WHERE id = 'cor-doc-uncited';
+    );
+    const found = (try store.corDocumentIdForRevision(
+        allocator,
+        first_id,
+        "revision-2",
+    )).?;
+    defer allocator.free(found);
+    try std.testing.expectEqualStrings("cor-doc-own", found);
+}
+
+test "schema v10 adds the COR link to v9 stores without touching history" {
+    const allocator = std.testing.allocator;
+    var store = try openLegacyStoreForTest(9);
+    defer store.close();
+    const profile_id = "tax-profile-v9-link";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Legacy Nine", "2026-01-01"),
+        .{},
+    );
+    try store.attachCorDocument(testCorDocument("cor-doc-v9", profile_id));
+
+    // Before the migration the column does not exist and a linked write is
+    // refused rather than silently dropped.
+    var early = testRevision(profile_id, 1, "Legacy Nine Two", "2026-02-01");
+    early.cor_document_id = "cor-doc-v9";
+    try std.testing.expectError(
+        Error.InvalidValue,
+        store.appendRevision(early, .{}),
+    );
+
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+    const pre_existing = try store.corDocumentIdForRevision(
+        allocator,
+        profile_id,
+        "revision-1",
+    );
+    try std.testing.expectEqual(@as(?[]u8, null), pre_existing);
+    try store.appendRevision(early, .{});
+    const linked = (try store.corDocumentIdForRevision(
+        allocator,
+        profile_id,
+        "revision-2",
+    )).?;
+    defer allocator.free(linked);
+    try std.testing.expectEqualStrings("cor-doc-v9", linked);
+
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+    var foreign_key_check = try store.prepare("PRAGMA foreign_key_check;");
+    defer foreign_key_check.deinit();
+    try std.testing.expectEqual(
+        StepResult.done,
+        try foreign_key_check.step(),
+    );
 }
 
 test "schema v4 rejects future versions and rolls back a failed migration" {
@@ -13755,7 +14140,7 @@ fn expectAllZero(bytes: []const u8) !void {
 }
 
 fn openLegacyStoreForTest(version: u32) !Store {
-    std.debug.assert(version >= 1 and version <= 6);
+    std.debug.assert(version >= 1 and version <= 9);
     var raw: ?*sqlite.sqlite3 = null;
     const flags = sqlite.SQLITE_OPEN_READWRITE |
         sqlite.SQLITE_OPEN_CREATE |
@@ -13786,6 +14171,9 @@ fn openLegacyStoreForTest(version: u32) !Store {
     if (version >= 4) try store.exec(schema_v4);
     if (version >= 5) try store.exec(schema_v5);
     if (version >= 6) try store.exec(schema_v6);
+    if (version >= 7) try store.exec(schema_v7);
+    if (version >= 8) try store.exec(schema_v8);
+    if (version >= 9) try store.exec(schema_v9);
     var set_version = try store.prepare(
         \\INSERT INTO app_component_migrations(component, version)
         \\VALUES ('tax_profile', ?);
