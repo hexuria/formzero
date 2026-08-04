@@ -1,79 +1,31 @@
 <template name="form-0605-grid-1" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">2 Year Ended month (independent)</text>
-      <input placeholder="MM / YYYY" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">4 Due Date (MM/DD/YYYY)</text>
-      <input placeholder="MM / DD / YYYY" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">5 Number of Sheets Attached</text>
-      <input placeholder="Enter number" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">6 ATC - only source-proven pairs</text>
-      <input text="{formFilerAtc}" placeholder="Select ATC" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">8 Tax Type - only source-proven pairs</text>
-      <input text="{formFilerTaxType}" placeholder="Select tax type" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">17 Manner of Payment</text>
-      <input placeholder="Select manner" />
-    </column>
+    <!-- @include-template form-field label="2 Year Ended month (independent)" ph="MM / YYYY" -->
+    <!-- @include-template form-field label="4 Due Date (MM/DD/YYYY)" ph="MM / DD / YYYY" -->
+    <!-- @include-template form-field label="5 Number of Sheets Attached" ph="Enter number" -->
+    <!-- @include-template form-field-bound label="6 ATC - only source-proven pairs" v="{formFilerAtc}" ph="Select ATC" -->
+    <!-- @include-template form-field-bound label="8 Tax Type - only source-proven pairs" v="{formFilerTaxType}" ph="Select tax type" -->
+    <!-- @include-template form-field label="17 Manner of Payment" ph="Select manner" -->
   </grid>
 </template>
 
 <template name="form-0605-grid-2" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">9 TIN</text>
-      <input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">10 RDO Code</text>
-      <input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">12 Line of Business / Occupation</text>
-      <input text="{formFilerLineOfBusiness}" placeholder="Business or occupation" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">13 Taxpayer Name</text>
-      <input text="{formFilerTaxpayerName}" placeholder="Registered taxpayer name" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">15 Registered Address</text>
-      <input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">18 Type of Payment</text>
-      <input placeholder="Select payment type" />
-    </column>
+    <!-- @include-template form-field-bound label="9 TIN" v="{formFilerTin}" ph="000-000-000-000" -->
+    <!-- @include-template form-field-bound label="10 RDO Code" v="{formFilerRdo}" ph="RDO" -->
+    <!-- @include-template form-field-bound label="12 Line of Business / Occupation" v="{formFilerLineOfBusiness}" ph="Business or occupation" -->
+    <!-- @include-template form-field-bound label="13 Taxpayer Name" v="{formFilerTaxpayerName}" ph="Registered taxpayer name" -->
+    <!-- @include-template form-field-bound label="15 Registered Address" v="{formFilerRegisteredAddress}" ph="Registered address" -->
+    <!-- @include-template form-field label="18 Type of Payment" ph="Select payment type" -->
   </grid>
 </template>
 
 <template name="form-0605-grid-3" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">19 Basic Tax / Deposit / Advance Payment</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">20A Surcharge (manual)</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">20B Interest (manual)</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">20C Compromise (manual)</text>
-      <input placeholder="Enter amount" />
-    </column>
+    <!-- @include-template form-field label="19 Basic Tax / Deposit / Advance Payment" ph="Enter amount" -->
+    <!-- @include-template form-field label="20A Surcharge (manual)" ph="Enter amount" -->
+    <!-- @include-template form-field label="20B Interest (manual)" ph="Enter amount" -->
+    <!-- @include-template form-field label="20C Compromise (manual)" ph="Enter amount" -->
   </grid>
 </template>
 
@@ -293,10 +245,7 @@
       <card>
         <column padding="20" gap="12">
           <text size="heading">ITEM 22 - SIGNATURE DETAILS</text>
-          <column gap="4">
-            <text foreground="text_muted">22A Taxpayer / Authorized Representative</text>
-            <input placeholder="Name and capacity" />
-          </column>
+          <!-- @include-template form-field label="22A Taxpayer / Authorized Representative" ph="Name and capacity" -->
         </column>
       </card>
 

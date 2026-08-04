@@ -256,6 +256,50 @@ pub const ProfileRevision = struct {
         return self.effective.contains(on);
     }
 
+    /// True when two revisions record the same taxpayer facts.
+    ///
+    /// Identity — which revision this is, and where it sits in the sequence —
+    /// is excluded: the question is whether appending would record anything.
+    /// Everything a reader of history would call a change is included, the
+    /// source among them, because "manual entry" becoming "imported from a
+    /// COR" is a real difference in what the record claims.
+    ///
+    /// Comparison runs on parsed values, so text that differs only in
+    /// formatting a field normalizes away is equal here.
+    pub fn contentEquals(
+        self: *const ProfileRevision,
+        other: *const ProfileRevision,
+    ) bool {
+        if (!self.effective.eql(other.effective)) return false;
+        if (!revisionSourceEquals(self.source, other.source)) return false;
+        if (!self.identity.tin.eql(&other.identity.tin)) return false;
+        if (!self.identity.rdo_code.eql(&other.identity.rdo_code)) return false;
+        if (!contactEquals(&self.contact, &other.contact)) return false;
+        if (!subjectEquals(&self.subject, &other.subject)) return false;
+
+        if (self.business_activities.len != other.business_activities.len) {
+            return false;
+        }
+        for (self.business_activities, other.business_activities) |left, right| {
+            if (!left.id.eql(&right.id)) return false;
+            if (!left.line_of_business.eql(&right.line_of_business)) return false;
+            if (!optionalFieldEquals(left.atc, right.atc)) return false;
+            if (!left.effective.eql(right.effective)) return false;
+        }
+
+        if (self.registration_facts.len != other.registration_facts.len) {
+            return false;
+        }
+        for (self.registration_facts, other.registration_facts) |left, right| {
+            if (!left.id.eql(&right.id)) return false;
+            if (!left.effective.eql(right.effective)) return false;
+            if (!registrationFactValueEquals(left.value, right.value)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     pub fn businessActivity(
         self: *const ProfileRevision,
         id: BusinessActivityId,
@@ -301,6 +345,94 @@ pub const ProfileRevision = struct {
         return null;
     }
 };
+
+fn optionalFieldEquals(left: anytype, right: @TypeOf(left)) bool {
+    if (left) |*value| {
+        const other = &(right orelse return false);
+        return value.eql(other);
+    }
+    return right == null;
+}
+
+fn revisionSourceEquals(left: RevisionSource, right: RevisionSource) bool {
+    return switch (left) {
+        .manual_entry => right == .manual_entry,
+        .imported => |reference| switch (right) {
+            .imported => |other| reference.eql(&other),
+            else => false,
+        },
+        .migrated => |reference| switch (right) {
+            .migrated => |other| reference.eql(&other),
+            else => false,
+        },
+    };
+}
+
+fn contactEquals(
+    left: *const RegisteredContact,
+    right: *const RegisteredContact,
+) bool {
+    if (!left.address.eql(&right.address)) return false;
+    if (!optionalFieldEquals(left.zip_code, right.zip_code)) return false;
+    if (!optionalFieldEquals(left.contact_number, right.contact_number)) {
+        return false;
+    }
+    return optionalFieldEquals(left.email_address, right.email_address);
+}
+
+fn individualEquals(left: *const Individual, right: *const Individual) bool {
+    if (!left.name.eql(&right.name)) return false;
+    if (left.date_of_birth) |value| {
+        const other = right.date_of_birth orelse return false;
+        if (!value.eql(other)) return false;
+    } else if (right.date_of_birth != null) return false;
+    if (!optionalFieldEquals(left.citizenship, right.citizenship)) return false;
+    return optionalFieldEquals(
+        left.foreign_tax_number,
+        right.foreign_tax_number,
+    );
+}
+
+fn subjectEquals(left: *const Subject, right: *const Subject) bool {
+    return switch (left.*) {
+        .individual => |*person| switch (right.*) {
+            .individual => |*other| individualEquals(person, other),
+            else => false,
+        },
+        .sole_proprietor => |*proprietor| switch (right.*) {
+            .sole_proprietor => |*other| individualEquals(
+                &proprietor.person,
+                &other.person,
+            ) and optionalFieldEquals(proprietor.trade_name, other.trade_name),
+            else => false,
+        },
+        .legal_entity => |*entity| switch (right.*) {
+            .legal_entity => |*other| entity.kind == other.kind and
+                entity.registered_name.eql(&other.registered_name),
+            else => false,
+        },
+    };
+}
+
+fn registrationFactValueEquals(
+    left: RegistrationFactValue,
+    right: RegistrationFactValue,
+) bool {
+    return switch (left) {
+        .tax_type => |value| switch (right) {
+            .tax_type => |other| value.eql(&other),
+            else => false,
+        },
+        .government_withholding_agent => |value| switch (right) {
+            .government_withholding_agent => |other| value == other,
+            else => false,
+        },
+        .special_rate_basis => |value| switch (right) {
+            .special_rate_basis => |other| value.eql(&other),
+            else => false,
+        },
+    };
+}
 
 pub const HistoryError = RevisionError || error{
     EmptyHistory,
@@ -466,6 +598,88 @@ test "retroactive overlap resolves to the highest effective sequence" {
         @as(u32, 2),
         corrected.sequence,
     );
+}
+
+test "content comparison ignores identity and sees every recorded fact" {
+    const period = try EffectivePeriod.init(
+        try Date.parseIso("2026-01-01"),
+        null,
+    );
+    const first = try exampleRevision("revision-1", 1, period, &.{});
+    // A different revision id and sequence is not a difference in content:
+    // the question is whether appending would record anything.
+    var second = try exampleRevision("revision-2", 7, period, &.{});
+    try std.testing.expect(first.contentEquals(&second));
+    try std.testing.expect(second.contentEquals(&first));
+
+    // The same TIN written differently parses to the same canonical value.
+    second.identity.tin = try field.Tin.parse("123456789000");
+    try std.testing.expect(first.contentEquals(&second));
+
+    second.identity.tin = try field.Tin.parse("987-654-321-000");
+    try std.testing.expect(!first.contentEquals(&second));
+    second.identity.tin = first.identity.tin;
+
+    second.contact.email_address = null;
+    try std.testing.expect(!first.contentEquals(&second));
+    second.contact.email_address = first.contact.email_address;
+    try std.testing.expect(first.contentEquals(&second));
+
+    // The source is part of the record: where a fact came from is a claim.
+    second.source = .{ .imported = try field.SourceReference.parse("COR") };
+    try std.testing.expect(!first.contentEquals(&second));
+    second.source = first.source;
+
+    second.effective = try EffectivePeriod.init(
+        try Date.parseIso("2026-07-01"),
+        null,
+    );
+    try std.testing.expect(!first.contentEquals(&second));
+    second.effective = first.effective;
+
+    second.subject = .{ .individual = .{
+        .name = try field.TaxpayerName.parse("MARIA SANTOS"),
+    } };
+    try std.testing.expect(!first.contentEquals(&second));
+    second.subject = first.subject;
+
+    const activities = [_]BusinessActivity{.{
+        .id = try BusinessActivityId.parse("activity-retail"),
+        .line_of_business = try field.LineOfBusiness.parse("Retail"),
+        .atc = try field.Atc.parse("PT010"),
+        .effective = period,
+    }};
+    second.business_activities = &activities;
+    try std.testing.expect(!first.contentEquals(&second));
+
+    const facts = [_]RegistrationFact{.{
+        .id = try RegistrationFactId.parse("tax-type"),
+        .effective = period,
+        .value = .{ .tax_type = try field.TaxType.parse("Percentage Tax") },
+    }};
+    var third = try exampleRevision("revision-3", 3, period, &activities);
+    third.registration_facts = &facts;
+    var fourth = try exampleRevision("revision-4", 4, period, &activities);
+    try std.testing.expect(!third.contentEquals(&fourth));
+    fourth.registration_facts = &facts;
+    try std.testing.expect(third.contentEquals(&fourth));
+}
+
+test "an effective period equals only an identical one" {
+    const from = try Date.parseIso("2026-01-01");
+    const open = try EffectivePeriod.init(from, null);
+    const closed = try EffectivePeriod.init(
+        from,
+        try Date.parseIso("2026-12-31"),
+    );
+    try std.testing.expect(open.eql(try EffectivePeriod.init(from, null)));
+    // An open period never equals a closed one, in either direction.
+    try std.testing.expect(!open.eql(closed));
+    try std.testing.expect(!closed.eql(open));
+    try std.testing.expect(!open.eql(try EffectivePeriod.init(
+        try Date.parseIso("2026-02-01"),
+        null,
+    )));
 }
 
 test "registration facts are cohesive and cannot overlap by kind" {

@@ -107,6 +107,17 @@ pub const EffectivePeriod = struct {
         }
         return true;
     }
+
+    /// Same first day and same end, where an open period equals only another
+    /// open one.
+    pub fn eql(self: EffectivePeriod, other: EffectivePeriod) bool {
+        if (!self.from.eql(other.from)) return false;
+        if (self.until) |left| {
+            const right = other.until orelse return false;
+            return left.eql(right);
+        }
+        return other.until == null;
+    }
 };
 
 fn isLeapYear(year: u16) bool {

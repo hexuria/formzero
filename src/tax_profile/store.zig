@@ -10,7 +10,9 @@
 //! random workspaces can share a canonical filing business key, while every
 //! schema-bound revision, named profile binding, and ordered value occurrence
 //! remains an immutable historical snapshot. Schema v7 adds owner-scoped,
-//! transactional counters for unique on-demand filing occurrences.
+//! transactional counters for unique on-demand filing occurrences. Schema
+//! v10 gives imported revisions a durable key to the COR document they were
+//! accepted from.
 
 const std = @import("std");
 const profile_field = @import("field.zig");
@@ -33,7 +35,7 @@ const sqlite = @cImport({
     @cInclude("sqlite3.h");
 });
 
-pub const latest_schema_version: u32 = 7;
+pub const latest_schema_version: u32 = 10;
 const migration_component = "tax_profile";
 pub const storage_classification =
     repository_opening.legacy_plaintext_repository_classification;
@@ -74,7 +76,10 @@ pub const Error = error{
     DraftSchemaMismatch,
     DraftStaleRevision,
     DraftWorkspaceLimitExceeded,
+    DuplicateCanonicalTin,
     FormSetAlreadyExists,
+    FormSetIntervalOutsideYear,
+    FormSetIntervalOverlap,
     IdentityCorrectionConflict,
     InconsistentIdentityHistory,
     InvalidDate,
@@ -237,6 +242,10 @@ pub const RevisionWrite = struct {
     identity: IdentityWrite,
     contact: ContactWrite,
     subject: SubjectWrite,
+    /// Durable key to the reviewed COR document this revision was accepted
+    /// from. Only an `.imported` revision may carry one; the readable
+    /// free-text reference in `source` stays alongside it.
+    cor_document_id: ?[]const u8 = null,
 };
 
 pub const BusinessActivityWrite = struct {
@@ -322,6 +331,10 @@ pub const FormRegistrationWrite = struct {
     form_revision: []const u8,
 };
 
+/// Whether a COR apply's forms half creates the year or updates an existing
+/// one — the same distinction the standalone save path draws.
+pub const FormSetApplyMode = enum { create, update };
+
 pub const FormSetState = enum {
     needs_configuration,
     legacy_catalog_default,
@@ -347,6 +360,27 @@ pub const FormSetSummaryList = struct {
 
     pub fn deinit(
         self: *FormSetSummaryList,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.items);
+        self.* = undefined;
+    }
+};
+
+/// One recorded mid-year Forms Set change, summarized for review. Dates are
+/// by value so callers can cache rows without owning allocations.
+pub const FormSetIntervalSummary = struct {
+    sequence: u32,
+    effective_from: DateText,
+    effective_until: ?DateText,
+    form_count: usize,
+};
+
+pub const FormSetIntervalSummaryList = struct {
+    items: []FormSetIntervalSummary,
+
+    pub fn deinit(
+        self: *FormSetIntervalSummaryList,
         allocator: std.mem.Allocator,
     ) void {
         allocator.free(self.items);
@@ -720,6 +754,65 @@ pub const OwnedTaxpayerIdentityAnchor = struct {
         allocator.free(self.canonical_tin);
         freeOptional(allocator, self.established_from_revision_id);
         freeOptional(allocator, self.identity_correction_id);
+        self.* = undefined;
+    }
+};
+
+/// One mid-year Forms Set change: the forms that apply from `effective_from`
+/// through `effective_until` (or the rest of the year when null) within one
+/// profile's tax year.
+pub const FormSetIntervalWrite = struct {
+    id: []const u8,
+    profile_id: []const u8,
+    tax_year: i32,
+    effective_from: []const u8,
+    effective_until: ?[]const u8 = null,
+    forms: []const FormRegistrationWrite,
+};
+
+pub const CorDocumentWrite = struct {
+    id: []const u8,
+    profile_id: []const u8,
+    file_path: []const u8,
+    file_name: []const u8,
+    sha256: []const u8,
+    byte_size: u64,
+};
+
+pub const OwnedCorDocument = struct {
+    id: []u8,
+    profile_id: []u8,
+    file_path: []u8,
+    file_name: []u8,
+    sha256: []u8,
+    byte_size: u64,
+    attached_at_unix_seconds: i64,
+
+    pub fn deinit(self: *OwnedCorDocument, allocator: std.mem.Allocator) void {
+        allocator.free(self.id);
+        allocator.free(self.profile_id);
+        allocator.free(self.file_path);
+        allocator.free(self.file_name);
+        allocator.free(self.sha256);
+        self.* = undefined;
+    }
+};
+
+/// The taxpayer that already holds a canonical TIN, named well enough to send
+/// the user there instead of letting them register it twice. Archived owners
+/// are reported too: a TIN identifies one taxpayer for life and is never
+/// reassigned, so archiving cannot free it for a different taxpayer.
+pub const OwnedCanonicalTinOwner = struct {
+    profile_id: []u8,
+    status: ProfileStatus,
+    display_name: ?[]u8,
+
+    pub fn deinit(
+        self: *OwnedCanonicalTinOwner,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.profile_id);
+        freeOptional(allocator, self.display_name);
         self.* = undefined;
     }
 };
@@ -1333,6 +1426,39 @@ pub const Store = struct {
             try version.bindText(1, migration_component);
             try version.expectDone();
         }
+        if (current < 8) {
+            try self.exec(schema_v8);
+            var version = try self.prepare(
+                \\UPDATE app_component_migrations
+                \\SET version = 8, updated_at = unixepoch()
+                \\WHERE component = ?;
+            );
+            defer version.deinit();
+            try version.bindText(1, migration_component);
+            try version.expectDone();
+        }
+        if (current < 9) {
+            try self.exec(schema_v9);
+            var version = try self.prepare(
+                \\UPDATE app_component_migrations
+                \\SET version = 9, updated_at = unixepoch()
+                \\WHERE component = ?;
+            );
+            defer version.deinit();
+            try version.bindText(1, migration_component);
+            try version.expectDone();
+        }
+        if (current < 10) {
+            try self.exec(schema_v10);
+            var version = try self.prepare(
+                \\UPDATE app_component_migrations
+                \\SET version = 10, updated_at = unixepoch()
+                \\WHERE component = ?;
+            );
+            defer version.deinit();
+            try version.bindText(1, migration_component);
+            try version.expectDone();
+        }
         try self.commit();
         committed = true;
     }
@@ -1519,6 +1645,16 @@ pub const Store = struct {
         var committed = false;
         errdefer if (!committed) self.rollbackNoFail();
 
+        // Inside the immediate transaction so a second window cannot register
+        // the same taxpayer between this check and the insert. Identity
+        // anchors only exist from v3, and migrations replay creates against
+        // older schemas, so skip the check where the table cannot be queried.
+        if (try self.schemaVersion() >= 3 and
+            try self.canonicalTinIsTaken(revision.identity.tin, null))
+        {
+            return Error.DuplicateCanonicalTin;
+        }
+
         const profile_sql: []const u8 = if (try self.schemaVersion() >= 6)
             "INSERT INTO tax_profiles(id, status, owner_id) VALUES (?, ?, (SELECT id FROM tax_profile_local_owner WHERE singleton = 1));"
         else
@@ -1579,6 +1715,17 @@ pub const Store = struct {
         var committed = false;
         errdefer if (!committed) self.rollbackNoFail();
 
+        try self.appendRevisionInTx(value, components);
+
+        try self.commit();
+        committed = true;
+    }
+
+    fn appendRevisionInTx(
+        self: *Store,
+        value: RevisionWrite,
+        components: RevisionComponentsWrite,
+    ) !void {
         const current = try self.currentRevisionSequence(value.profile_id);
         const observed_sequence: u32 = current orelse 0;
         if (current == null and !(try self.profileExists(value.profile_id))) {
@@ -1619,9 +1766,68 @@ pub const Store = struct {
         if (sqlite.sqlite3_changes(try self.handle()) != 1) {
             return Error.RevisionConflict;
         }
+    }
+
+    /// One reviewed COR decision is one commit: the accepted profile facts
+    /// and the accepted forms both land or neither does (spec §11, "Apply is
+    /// one transaction").
+    pub fn applyCorReview(
+        self: *Store,
+        revision: RevisionWrite,
+        components: RevisionComponentsWrite,
+        forms_tax_year: i32,
+        forms: []const FormRegistrationWrite,
+        forms_mode: FormSetApplyMode,
+    ) !void {
+        try validateRevision(revision, components);
+        try validateTaxYear(forms_tax_year);
+        for (forms) |form| {
+            try requireValue(form.form_code);
+            try requireValue(form.form_revision);
+        }
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        try self.appendRevisionInTx(revision, components);
+        switch (forms_mode) {
+            .create => try self.createFormSetInTx(
+                revision.profile_id,
+                forms_tax_year,
+                forms,
+            ),
+            .update => try self.updateFormSetInTx(
+                revision.profile_id,
+                forms_tax_year,
+                forms,
+            ),
+        }
 
         try self.commit();
         committed = true;
+    }
+
+    /// The durable COR document behind one revision, or null when the
+    /// revision was recorded without one (including every pre-v10 revision).
+    pub fn corDocumentIdForRevision(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        revision_id: []const u8,
+    ) !?[]u8 {
+        try validateOpaqueText(profile_id);
+        try validateIdText(revision_id);
+        var statement = try self.prepare(
+            \\SELECT cor_document_id FROM tax_profile_revisions
+            \\WHERE profile_id = ? AND id = ?;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindText(2, revision_id);
+        if (try statement.step() == .done) return Error.NotFound;
+        if (columnText(statement.raw, 0) == null) return null;
+        return try dupColumn(allocator, statement.raw, 0);
     }
 
     pub fn getIdentityAnchor(
@@ -1643,6 +1849,139 @@ pub const Store = struct {
         try statement.bindText(1, profile_id);
         if (try statement.step() == .done) return null;
         return try readIdentityAnchor(allocator, statement.raw);
+    }
+
+    /// Finds the taxpayer whose current identity anchor already holds this
+    /// canonical TIN, across every status.
+    ///
+    /// A TIN is issued once to one taxpayer and is never reassigned, so two
+    /// profiles sharing one would make their filings, evidence, and history
+    /// impossible to tell apart afterwards. Archived profiles are included
+    /// deliberately: archiving is not deletion, and its filings still refer to
+    /// that taxpayer.
+    pub fn findProfileWithCanonicalTin(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        canonical_tin: []const u8,
+        exclude_profile_id: ?[]const u8,
+    ) !?OwnedCanonicalTinOwner {
+        const tin = profile_field.Tin.parse(canonical_tin) catch
+            return Error.InvalidValue;
+        if (exclude_profile_id) |value| try validateOpaqueText(value);
+
+        var statement = try self.prepare(
+            \\SELECT anchor.profile_id, profile.status,
+            \\       COALESCE(revision.taxpayer_name, revision.registered_name)
+            \\FROM tax_profile_identity_anchors AS anchor
+            \\JOIN tax_profiles AS profile ON profile.id = anchor.profile_id
+            \\LEFT JOIN tax_profile_revisions AS revision
+            \\  ON revision.profile_id = profile.id
+            \\ AND revision.id = profile.current_revision_id
+            \\WHERE anchor.canonical_tin = ?
+            \\  AND anchor.sequence = (
+            \\      SELECT MAX(sequence)
+            \\      FROM tax_profile_identity_anchors
+            \\      WHERE profile_id = anchor.profile_id
+            \\  )
+            \\  AND (? IS NULL OR anchor.profile_id <> ?)
+            \\ORDER BY anchor.profile_id
+            \\LIMIT 1;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, tin.asDigits());
+        try statement.bindOptionalText(2, exclude_profile_id);
+        try statement.bindOptionalText(3, exclude_profile_id);
+        if (try statement.step() == .done) return null;
+
+        const profile_id = try dupColumn(allocator, statement.raw, 0);
+        errdefer allocator.free(profile_id);
+        const status_text = columnText(statement.raw, 1) orelse
+            return Error.SqliteFailure;
+        const status = std.meta.stringToEnum(ProfileStatus, status_text) orelse
+            return Error.InvalidValue;
+        const display_name = try dupOptionalColumn(allocator, statement.raw, 2);
+        return .{
+            .profile_id = profile_id,
+            .status = status,
+            .display_name = display_name,
+        };
+    }
+
+    /// Records a COR reference for a taxpayer. Attaching an updated document
+    /// keeps the earlier rows: evidence is a history, not a slot.
+    pub fn attachCorDocument(self: *Store, value: CorDocumentWrite) !void {
+        try validateIdText(value.id);
+        try validateOpaqueText(value.profile_id);
+        try requireValue(value.file_path);
+        try requireValue(value.file_name);
+        if (value.sha256.len != 64) return Error.InvalidValue;
+        for (value.sha256) |byte| {
+            if (!std.ascii.isHex(byte) or std.ascii.isUpper(byte)) {
+                return Error.InvalidValue;
+            }
+        }
+        if (value.byte_size == 0) return Error.InvalidValue;
+        if (value.byte_size > std.math.maxInt(i64)) return Error.InvalidValue;
+
+        var statement = try self.prepare(
+            \\INSERT INTO tax_profile_cor_documents (
+            \\    id, profile_id, file_path, file_name, sha256, byte_size
+            \\) VALUES (?, ?, ?, ?, ?, ?);
+        );
+        defer statement.deinit();
+        try statement.bindText(1, value.id);
+        try statement.bindText(2, value.profile_id);
+        try statement.bindText(3, value.file_path);
+        try statement.bindText(4, value.file_name);
+        try statement.bindText(5, value.sha256);
+        try statement.bindInt64(6, @intCast(value.byte_size));
+        try statement.expectDone();
+    }
+
+    /// The most recently attached COR for a taxpayer, or null when none is on
+    /// file.
+    pub fn getLatestCorDocument(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+    ) !?OwnedCorDocument {
+        try validateOpaqueText(profile_id);
+        var statement = try self.prepare(
+            \\SELECT id, profile_id, file_path, file_name, sha256,
+            \\       byte_size, attached_at
+            \\FROM tax_profile_cor_documents
+            \\WHERE profile_id = ?
+            \\ORDER BY attached_at DESC, rowid DESC
+            \\LIMIT 1;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        if (try statement.step() == .done) return null;
+
+        const id = try dupColumn(allocator, statement.raw, 0);
+        errdefer allocator.free(id);
+        const owner = try dupColumn(allocator, statement.raw, 1);
+        errdefer allocator.free(owner);
+        const file_path = try dupColumn(allocator, statement.raw, 2);
+        errdefer allocator.free(file_path);
+        const file_name = try dupColumn(allocator, statement.raw, 3);
+        errdefer allocator.free(file_name);
+        const digest = try dupColumn(allocator, statement.raw, 4);
+        errdefer allocator.free(digest);
+        const size = sqlite.sqlite3_column_int64(statement.raw, 5);
+        if (size <= 0) return Error.InvalidValue;
+        return .{
+            .id = id,
+            .profile_id = owner,
+            .file_path = file_path,
+            .file_name = file_name,
+            .sha256 = digest,
+            .byte_size = @intCast(size),
+            .attached_at_unix_seconds = sqlite.sqlite3_column_int64(
+                statement.raw,
+                6,
+            ),
+        };
     }
 
     pub fn getIdentityAnchorAtSequence(
@@ -1708,6 +2047,14 @@ pub const Store = struct {
             current.legal_person_class == value.new_legal_person_class)
         {
             return Error.NoIdentityCorrection;
+        }
+        // A correction may not move this taxpayer onto a TIN another taxpayer
+        // already holds; that would merge two identities by side effect.
+        if (!same_tin and try self.canonicalTinIsTaken(
+            new_tin.asDigits(),
+            value.profile_id,
+        )) {
+            return Error.DuplicateCanonicalTin;
         }
         const next_sequence = current.sequence + 1;
 
@@ -1997,7 +2344,24 @@ pub const Store = struct {
             .sole_proprietor => |proprietor| proprietor.person,
             .legal_entity => null,
         };
-        var insert = try self.prepare(
+        // Migration tests replay writes against pre-v10 schemas, so the
+        // column list must match what the open store actually has.
+        const link_supported = try self.schemaVersion() >= 10;
+        if (value.cor_document_id != null and !link_supported) {
+            return Error.InvalidValue;
+        }
+        const insert_sql: []const u8 = if (link_supported)
+            \\INSERT INTO tax_profile_revisions (
+            \\    id, profile_id, sequence, effective_from, effective_until,
+            \\    source_tag, source_reference, tin, rdo_code,
+            \\    registered_address, zip_code, contact_number, email_address,
+            \\    subject_kind, taxpayer_name, registered_name,
+            \\    date_of_birth, citizenship, foreign_tax_number,
+            \\    cor_document_id
+            \\) VALUES (
+            \\    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            \\);
+        else
             \\INSERT INTO tax_profile_revisions (
             \\    id, profile_id, sequence, effective_from, effective_until,
             \\    source_tag, source_reference, tin, rdo_code,
@@ -2007,7 +2371,8 @@ pub const Store = struct {
             \\) VALUES (
             \\    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             \\);
-        );
+        ;
+        var insert = try self.prepare(insert_sql);
         defer insert.deinit();
         try insert.bindText(1, value.id);
         try insert.bindText(2, value.profile_id);
@@ -2043,6 +2408,9 @@ pub const Store = struct {
             19,
             if (individual) |person| person.foreign_tax_number else null,
         );
+        if (link_supported) {
+            try insert.bindOptionalText(20, value.cor_document_id);
+        }
         try insert.expectDone();
 
         var add_activity = try self.prepare(
@@ -2215,13 +2583,28 @@ pub const Store = struct {
         allocator: std.mem.Allocator,
         include_archived: bool,
     ) !ProfileSummaryList {
+        // The identity anchor is the authority on a taxpayer's canonical TIN,
+        // not the current revision. An audited correction writes a new anchor
+        // and deliberately appends no revision, so reading the revision's TIN
+        // would keep reporting the identifier that was corrected away - and
+        // anything keyed on it, such as grouping a head office with its
+        // branches, would follow the superseded value. The join is outer and
+        // the value coalesced so a profile carrying no anchor row still lists
+        // with the TIN it has, rather than vanishing from the sidebar.
         var statement = try self.prepare(
             \\SELECT p.id, p.status, p.current_revision_id, r.sequence,
             \\       COALESCE(r.taxpayer_name, r.registered_name),
-            \\       r.tin, r.subject_kind
+            \\       COALESCE(anchor.canonical_tin, r.tin), r.subject_kind
             \\FROM tax_profiles AS p
             \\JOIN tax_profile_revisions AS r
             \\  ON r.profile_id = p.id AND r.id = p.current_revision_id
+            \\LEFT JOIN tax_profile_identity_anchors AS anchor
+            \\  ON anchor.profile_id = p.id
+            \\ AND anchor.sequence = (
+            \\     SELECT MAX(sequence)
+            \\     FROM tax_profile_identity_anchors
+            \\     WHERE profile_id = p.id
+            \\ )
             \\WHERE (? = 1 OR p.status = 'active')
             \\ORDER BY COALESCE(
             \\    r.taxpayer_name, r.registered_name
@@ -2229,6 +2612,280 @@ pub const Store = struct {
         );
         defer statement.deinit();
         try statement.bindBool(1, include_archived);
+
+        var items: std.ArrayList(OwnedProfileSummary) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+        while (try statement.step() == .row) {
+            const item = try readProfileSummary(allocator, statement.raw);
+            errdefer {
+                var owned = item;
+                owned.deinit(allocator);
+            }
+            try items.append(allocator, item);
+        }
+        return .{ .items = try items.toOwnedSlice(allocator) };
+    }
+
+    /// Records a mid-year Forms Set change as an append-only interval
+    /// revision layered over the year's base set.
+    ///
+    /// The interval must lie inside its tax year, and active intervals for
+    /// one profile-year may not overlap: two sets both claiming July would
+    /// leave a filing on a July date with no single answer to "which forms
+    /// apply". An open `effective_until` means "through the end of that
+    /// year". Nothing here touches the per-year tables, so every existing
+    /// year-level behaviour is preserved by construction.
+    pub fn createFormSetInterval(
+        self: *Store,
+        value: FormSetIntervalWrite,
+    ) !void {
+        try validateIdText(value.id);
+        try validateOpaqueText(value.profile_id);
+        try validateTaxYear(value.tax_year);
+        try validateDate(value.effective_from);
+        if (value.effective_until) |until| {
+            try validateDate(until);
+            if (std.mem.order(u8, until, value.effective_from) == .lt) {
+                return Error.InvalidDate;
+            }
+        }
+        for (value.forms) |form| {
+            try requireValue(form.form_code);
+            try requireValue(form.form_revision);
+        }
+        // ISO dates compare lexicographically, so the year bound is a prefix
+        // check against the interval's own tax year.
+        var year_text: [4]u8 = undefined;
+        _ = std.fmt.bufPrint(&year_text, "{d:0>4}", .{
+            @as(u32, @intCast(value.tax_year)),
+        }) catch return Error.InvalidValue;
+        if (!std.mem.startsWith(u8, value.effective_from, &year_text)) {
+            return Error.FormSetIntervalOutsideYear;
+        }
+        if (value.effective_until) |until| {
+            if (!std.mem.startsWith(u8, until, &year_text)) {
+                return Error.FormSetIntervalOutsideYear;
+            }
+        }
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        if (!(try self.profileExists(value.profile_id))) {
+            return Error.NotFound;
+        }
+        // Overlap and sequence are decided inside the immediate transaction
+        // so two writers cannot both claim the same span. An open until is
+        // year-end for comparison purposes.
+        var year_end: [10]u8 = undefined;
+        _ = std.fmt.bufPrint(&year_end, "{s}-12-31", .{&year_text}) catch
+            return Error.InvalidValue;
+        var overlap = try self.prepare(
+            \\SELECT 1 FROM tax_profile_form_set_interval_revisions
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\  AND effective_from <= ?
+            \\  AND ? <= COALESCE(effective_until, ?)
+            \\LIMIT 1;
+        );
+        defer overlap.deinit();
+        try overlap.bindText(1, value.profile_id);
+        try overlap.bindInt64(2, value.tax_year);
+        try overlap.bindText(3, value.effective_until orelse &year_end);
+        try overlap.bindText(4, value.effective_from);
+        try overlap.bindText(5, &year_end);
+        if (try overlap.step() == .row) {
+            return Error.FormSetIntervalOverlap;
+        }
+
+        var sequence = try self.prepare(
+            \\SELECT COALESCE(MAX(sequence), 0) + 1
+            \\FROM tax_profile_form_set_interval_revisions
+            \\WHERE profile_id = ? AND tax_year = ?;
+        );
+        defer sequence.deinit();
+        try sequence.bindText(1, value.profile_id);
+        try sequence.bindInt64(2, value.tax_year);
+        if (try sequence.step() != .row) return Error.SqliteFailure;
+        const next_sequence = sqlite.sqlite3_column_int64(sequence.raw, 0);
+
+        var parent = try self.prepare(
+            \\INSERT INTO tax_profile_form_set_interval_revisions (
+            \\    id, profile_id, tax_year, sequence,
+            \\    effective_from, effective_until
+            \\) VALUES (?, ?, ?, ?, ?, ?);
+        );
+        defer parent.deinit();
+        try parent.bindText(1, value.id);
+        try parent.bindText(2, value.profile_id);
+        try parent.bindInt64(3, value.tax_year);
+        try parent.bindInt64(4, next_sequence);
+        try parent.bindText(5, value.effective_from);
+        try parent.bindOptionalText(6, value.effective_until);
+        try parent.expectDone();
+
+        var add = try self.prepare(
+            \\INSERT INTO tax_profile_form_set_interval_entries (
+            \\    revision_id, form_code, form_revision
+            \\) VALUES (?, ?, ?);
+        );
+        defer add.deinit();
+        for (value.forms) |form| {
+            try add.bindText(1, value.id);
+            try add.bindText(2, form.form_code);
+            try add.bindText(3, form.form_revision);
+            try add.expectDone();
+            try add.reset();
+        }
+
+        try self.commit();
+        committed = true;
+    }
+
+    /// Resolves the Forms Set effective on a specific date: the
+    /// highest-sequence interval revision covering that date wins, and a date
+    /// no interval covers falls back to the year's base set — so a year with
+    /// no recorded mid-year change behaves exactly as it always has.
+    pub fn resolveFormSetOn(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        date: []const u8,
+    ) !ResolvedFormSet {
+        try validateOpaqueText(profile_id);
+        try validateDate(date);
+        const tax_year = std.fmt.parseInt(i32, date[0..4], 10) catch
+            return Error.InvalidDate;
+
+        var revision = try self.prepare(
+            \\SELECT id FROM tax_profile_form_set_interval_revisions
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\  AND effective_from <= ?
+            \\  AND (effective_until IS NULL OR ? <= effective_until)
+            \\ORDER BY sequence DESC
+            \\LIMIT 1;
+        );
+        defer revision.deinit();
+        try revision.bindText(1, profile_id);
+        try revision.bindInt64(2, tax_year);
+        try revision.bindText(3, date);
+        try revision.bindText(4, date);
+        if (try revision.step() == .done) {
+            return self.resolveFormSet(allocator, profile_id, tax_year);
+        }
+        const revision_id = columnText(revision.raw, 0) orelse
+            return Error.SqliteFailure;
+        var revision_id_storage: [64]u8 = undefined;
+        if (revision_id.len > revision_id_storage.len) {
+            return Error.InvalidValue;
+        }
+        @memcpy(revision_id_storage[0..revision_id.len], revision_id);
+        const owned_revision_id = revision_id_storage[0..revision_id.len];
+
+        var entries = try self.prepare(
+            \\SELECT form_code, form_revision
+            \\FROM tax_profile_form_set_interval_entries
+            \\WHERE revision_id = ?
+            \\ORDER BY form_code COLLATE NOCASE, form_revision;
+        );
+        defer entries.deinit();
+        try entries.bindText(1, owned_revision_id);
+
+        var items: std.ArrayList(OwnedFormRegistration) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+        while (try entries.step() == .row) {
+            const form_code = try dupColumn(allocator, entries.raw, 0);
+            errdefer allocator.free(form_code);
+            const form_revision = try dupColumn(allocator, entries.raw, 1);
+            errdefer allocator.free(form_revision);
+            try items.append(allocator, .{
+                .form_code = form_code,
+                .form_revision = form_revision,
+            });
+        }
+        return .{
+            .state = if (items.items.len == 0) .active_empty else .active_nonempty,
+            .legacy_reset_allowed = false,
+            .forms = .{ .items = try items.toOwnedSlice(allocator) },
+        };
+    }
+
+    /// Finds taxpayers whose name contains the query, or whose canonical TIN
+    /// contains the query's digits, across the whole store.
+    ///
+    /// This exists because the sidebar holds a bounded number of rows: a
+    /// taxpayer past that bound must still be findable by typing, otherwise
+    /// the bound is a silent ceiling on who exists. TIN matching runs against
+    /// the identity anchor, the same authority the listing reads, so a
+    /// corrected TIN is found under its corrected value.
+    pub fn searchProfiles(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        raw_query: []const u8,
+        include_archived: bool,
+    ) !ProfileSummaryList {
+        const query = std.mem.trim(u8, raw_query, " \t\r\n");
+        if (query.len == 0) return self.listProfiles(allocator, include_archived);
+
+        // The query is user text inside a LIKE pattern, so its wildcard
+        // characters must match themselves.
+        var name_pattern_storage: [256]u8 = undefined;
+        const name_pattern = likeContainsPattern(
+            query,
+            &name_pattern_storage,
+        ) orelse return .{ .items = try allocator.alloc(OwnedProfileSummary, 0) };
+
+        // Digits in the query may be a TIN fragment however it was punctuated.
+        var digits_storage: [32]u8 = undefined;
+        var digits_len: usize = 0;
+        for (query) |byte| {
+            if (!std.ascii.isDigit(byte)) continue;
+            if (digits_len == digits_storage.len) break;
+            digits_storage[digits_len] = byte;
+            digits_len += 1;
+        }
+        var tin_pattern_storage: [40]u8 = undefined;
+        const tin_pattern: ?[]const u8 = if (digits_len >= 3)
+            likeContainsPattern(digits_storage[0..digits_len], &tin_pattern_storage)
+        else
+            null;
+
+        var statement = try self.prepare(
+            \\SELECT p.id, p.status, p.current_revision_id, r.sequence,
+            \\       COALESCE(r.taxpayer_name, r.registered_name),
+            \\       COALESCE(anchor.canonical_tin, r.tin), r.subject_kind
+            \\FROM tax_profiles AS p
+            \\JOIN tax_profile_revisions AS r
+            \\  ON r.profile_id = p.id AND r.id = p.current_revision_id
+            \\LEFT JOIN tax_profile_identity_anchors AS anchor
+            \\  ON anchor.profile_id = p.id
+            \\ AND anchor.sequence = (
+            \\     SELECT MAX(sequence)
+            \\     FROM tax_profile_identity_anchors
+            \\     WHERE profile_id = p.id
+            \\ )
+            \\WHERE (? = 1 OR p.status = 'active')
+            \\  AND (
+            \\      COALESCE(r.taxpayer_name, r.registered_name)
+            \\          LIKE ? ESCAPE '\'
+            \\      OR (? IS NOT NULL AND
+            \\          COALESCE(anchor.canonical_tin, r.tin) LIKE ? ESCAPE '\')
+            \\  )
+            \\ORDER BY COALESCE(
+            \\    r.taxpayer_name, r.registered_name
+            \\) COLLATE NOCASE, p.id;
+        );
+        defer statement.deinit();
+        try statement.bindBool(1, include_archived);
+        try statement.bindText(2, name_pattern);
+        try statement.bindOptionalText(3, tin_pattern);
+        try statement.bindOptionalText(4, tin_pattern);
 
         var items: std.ArrayList(OwnedProfileSummary) = .empty;
         errdefer {
@@ -2265,6 +2922,18 @@ pub const Store = struct {
         var committed = false;
         errdefer if (!committed) self.rollbackNoFail();
 
+        try self.replaceFormSetInTx(profile_id, tax_year, forms);
+
+        try self.commit();
+        committed = true;
+    }
+
+    fn replaceFormSetInTx(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: i32,
+        forms: []const FormRegistrationWrite,
+    ) !void {
         var configure = try self.prepare(
             \\INSERT INTO tax_profile_form_sets(profile_id, tax_year, state)
             \\VALUES (?, ?, ?)
@@ -2304,9 +2973,6 @@ pub const Store = struct {
             try add.expectDone();
             try add.reset();
         }
-
-        try self.commit();
-        committed = true;
     }
 
     /// Creates a yearly Forms Set without allowing an existing year to be
@@ -2329,6 +2995,18 @@ pub const Store = struct {
         var committed = false;
         errdefer if (!committed) self.rollbackNoFail();
 
+        try self.createFormSetInTx(profile_id, tax_year, forms);
+
+        try self.commit();
+        committed = true;
+    }
+
+    fn createFormSetInTx(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: i32,
+        forms: []const FormRegistrationWrite,
+    ) !void {
         var parent = try self.prepare(
             \\INSERT INTO tax_profile_form_sets(profile_id, tax_year, state)
             \\VALUES (?, ?, ?);
@@ -2359,9 +3037,6 @@ pub const Store = struct {
             try add.expectDone();
             try add.reset();
         }
-
-        try self.commit();
-        committed = true;
     }
 
     /// Updates an existing yearly Forms Set. Missing years are rejected so
@@ -2374,6 +3049,27 @@ pub const Store = struct {
     ) !void {
         try validateOpaqueText(profile_id);
         try validateTaxYear(tax_year);
+        for (forms) |form| {
+            try requireValue(form.form_code);
+            try requireValue(form.form_revision);
+        }
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        try self.updateFormSetInTx(profile_id, tax_year, forms);
+
+        try self.commit();
+        committed = true;
+    }
+
+    fn updateFormSetInTx(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: i32,
+        forms: []const FormRegistrationWrite,
+    ) !void {
         var exists = try self.prepare(
             \\SELECT 1 FROM tax_profile_form_sets
             \\WHERE profile_id = ? AND tax_year = ?;
@@ -2382,7 +3078,7 @@ pub const Store = struct {
         try exists.bindText(1, profile_id);
         try exists.bindInt64(2, tax_year);
         if (try exists.step() == .done) return Error.NotFound;
-        try self.replaceFormSet(profile_id, tax_year, forms);
+        try self.replaceFormSetInTx(profile_id, tax_year, forms);
     }
 
     /// Lists only explicit yearly parent rows, newest tax year first.
@@ -2418,6 +3114,60 @@ pub const Store = struct {
                 .tax_year = @intCast(sqlite.sqlite3_column_int64(statement.raw, 0)),
                 .state = state,
                 .active_form_count = @intCast(count),
+            });
+        }
+        return .{ .items = try items.toOwnedSlice(allocator) };
+    }
+
+    /// A year's recorded mid-year changes, oldest first. Dates were validated
+    /// on write, so a malformed column is corruption, not input.
+    pub fn listFormSetIntervals(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        tax_year: i32,
+    ) !FormSetIntervalSummaryList {
+        try validateOpaqueText(profile_id);
+        try validateTaxYear(tax_year);
+        var statement = try self.prepare(
+            \\SELECT r.sequence, r.effective_from, r.effective_until,
+            \\       COUNT(e.form_code)
+            \\FROM tax_profile_form_set_interval_revisions AS r
+            \\LEFT JOIN tax_profile_form_set_interval_entries AS e
+            \\  ON e.revision_id = r.id
+            \\WHERE r.profile_id = ? AND r.tax_year = ?
+            \\GROUP BY r.id
+            \\ORDER BY r.effective_from, r.sequence;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindInt64(2, tax_year);
+
+        var items: std.ArrayList(FormSetIntervalSummary) = .empty;
+        errdefer items.deinit(allocator);
+        while (try statement.step() == .row) {
+            const sequence = sqlite.sqlite3_column_int64(statement.raw, 0);
+            if (sequence < 1 or sequence > std.math.maxInt(u32)) {
+                return Error.InvalidValue;
+            }
+            const from_text = columnText(statement.raw, 1) orelse
+                return Error.InvalidValue;
+            if (from_text.len != 10) return Error.InvalidValue;
+            var from: DateText = undefined;
+            @memcpy(&from, from_text);
+            var until: ?DateText = null;
+            if (columnText(statement.raw, 2)) |until_text| {
+                if (until_text.len != 10) return Error.InvalidValue;
+                until = undefined;
+                @memcpy(&until.?, until_text);
+            }
+            const count = sqlite.sqlite3_column_int64(statement.raw, 3);
+            if (count < 0) return Error.InvalidValue;
+            try items.append(allocator, .{
+                .sequence = @intCast(sequence),
+                .effective_from = from,
+                .effective_until = until,
+                .form_count = @intCast(count),
             });
         }
         return .{ .items = try items.toOwnedSlice(allocator) };
@@ -4580,6 +5330,35 @@ pub const Store = struct {
         }
     }
 
+    /// Allocation-free form of `findProfileWithCanonicalTin` for use inside a
+    /// write transaction, where the caller only needs to know whether the TIN
+    /// is spoken for and must not risk an allocator failure mid-transaction.
+    fn canonicalTinIsTaken(
+        self: *Store,
+        canonical_tin: []const u8,
+        exclude_profile_id: ?[]const u8,
+    ) !bool {
+        const tin = profile_field.Tin.parse(canonical_tin) catch
+            return Error.InvalidValue;
+        var statement = try self.prepare(
+            \\SELECT 1
+            \\FROM tax_profile_identity_anchors AS anchor
+            \\WHERE anchor.canonical_tin = ?
+            \\  AND anchor.sequence = (
+            \\      SELECT MAX(sequence)
+            \\      FROM tax_profile_identity_anchors
+            \\      WHERE profile_id = anchor.profile_id
+            \\  )
+            \\  AND (? IS NULL OR anchor.profile_id <> ?)
+            \\LIMIT 1;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, tin.asDigits());
+        try statement.bindOptionalText(2, exclude_profile_id);
+        try statement.bindOptionalText(3, exclude_profile_id);
+        return try statement.step() == .row;
+    }
+
     fn currentAnchorSnapshot(
         self: *Store,
         profile_id: []const u8,
@@ -5927,6 +6706,32 @@ fn dupBlobColumnCapped(
     );
 }
 
+/// Builds a `%text%` LIKE pattern with the query's own wildcard characters
+/// escaped, so user text matches itself. Null when the escaped pattern would
+/// not fit the caller's buffer — an over-long query simply matches nothing.
+fn likeContainsPattern(text: []const u8, storage: []u8) ?[]const u8 {
+    var length: usize = 0;
+    if (storage.len < 2) return null;
+    storage[length] = '%';
+    length += 1;
+    for (text) |byte| {
+        if (byte == '%' or byte == '_' or byte == '\\') {
+            if (length + 2 > storage.len) return null;
+            storage[length] = '\\';
+            storage[length + 1] = byte;
+            length += 2;
+            continue;
+        }
+        if (length + 1 > storage.len) return null;
+        storage[length] = byte;
+        length += 1;
+    }
+    if (length + 1 > storage.len) return null;
+    storage[length] = '%';
+    length += 1;
+    return storage[0..length];
+}
+
 fn dupColumn(
     allocator: std.mem.Allocator,
     row: *sqlite.sqlite3_stmt,
@@ -6219,6 +7024,12 @@ fn validateRevision(
         .manual_entry => {},
         .imported => |reference| try requireValue(reference),
         .migrated => |reference| try requireValue(reference),
+    }
+    if (value.cor_document_id) |document_id| {
+        try validateIdText(document_id);
+        if (std.meta.activeTag(value.source) != .imported) {
+            return Error.InvalidValue;
+        }
     }
     _ = profile_field.Tin.parse(value.identity.tin) catch
         return Error.InvalidValue;
@@ -8632,6 +9443,123 @@ const schema_v7 =
     \\END;
 ;
 
+/// Certificate of Registration evidence, stored as a reference to the user's
+/// own file rather than a copy of it.
+///
+/// A reference holds strictly less sensitive data than the profile tables
+/// already do, so it needs no key custody to be honest. The hash is what makes
+/// the reference trustworthy: the file lives in a directory the user controls,
+/// and comparing the digest is how the interface can say the document moved or
+/// changed instead of quietly showing a stale name. Taking an encrypted copy
+/// is a later migration, and it is the copy — not this — that the key-custody
+/// gate governs.
+const schema_v8 =
+    \\CREATE TABLE tax_profile_cor_documents (
+    \\    id TEXT PRIMARY KEY
+    \\        CHECK (length(id) BETWEEN 1 AND 64 AND id = trim(id)),
+    \\    profile_id TEXT NOT NULL
+    \\        REFERENCES tax_profiles(id) ON DELETE CASCADE,
+    \\    file_path TEXT NOT NULL CHECK (length(trim(file_path)) > 0),
+    \\    file_name TEXT NOT NULL CHECK (length(trim(file_name)) > 0),
+    \\    sha256 TEXT NOT NULL CHECK (
+    \\        length(sha256) = 64 AND sha256 NOT GLOB '*[^0-9a-f]*'
+    \\    ),
+    \\    byte_size INTEGER NOT NULL CHECK (byte_size > 0),
+    \\    attached_at INTEGER NOT NULL DEFAULT (unixepoch())
+    \\);
+    \\CREATE INDEX tax_profile_cor_documents_profile_idx
+    \\    ON tax_profile_cor_documents(profile_id, attached_at DESC);
+;
+
+/// Mid-year Forms Set changes, layered over the per-year tables rather than
+/// replacing them.
+///
+/// The architecture doc is explicit that the working per-year persistence
+/// should not be rewritten until the revised state model exists, so these
+/// revisions are additive: the year row remains the base, and a revision
+/// whose effective interval covers a queried date supersedes it from that
+/// date. Rows are append-only like every other effective-dated record here;
+/// overlap of active intervals within one profile-year is rejected in the
+/// write transaction because SQLite cannot express that constraint
+/// declaratively.
+const schema_v9 =
+    \\CREATE TABLE tax_profile_form_set_interval_revisions (
+    \\    id TEXT PRIMARY KEY
+    \\        CHECK (length(id) BETWEEN 1 AND 64 AND id = trim(id)),
+    \\    profile_id TEXT NOT NULL
+    \\        REFERENCES tax_profiles(id) ON DELETE CASCADE,
+    \\    tax_year INTEGER NOT NULL CHECK (tax_year BETWEEN 1 AND 9999),
+    \\    sequence INTEGER NOT NULL CHECK (
+    \\        sequence > 0 AND sequence <= 4294967295
+    \\    ),
+    \\    effective_from TEXT NOT NULL,
+    \\    effective_until TEXT,
+    \\    confirmed_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    UNIQUE (profile_id, tax_year, sequence),
+    \\    CHECK (
+    \\        effective_until IS NULL OR effective_from <= effective_until
+    \\    )
+    \\);
+    \\CREATE INDEX tax_profile_form_set_interval_revisions_year_idx
+    \\    ON tax_profile_form_set_interval_revisions(
+    \\        profile_id, tax_year, sequence
+    \\    );
+    \\
+    \\CREATE TABLE tax_profile_form_set_interval_entries (
+    \\    revision_id TEXT NOT NULL
+    \\        REFERENCES tax_profile_form_set_interval_revisions(id)
+    \\        ON DELETE CASCADE,
+    \\    form_code TEXT NOT NULL CHECK (length(trim(form_code)) > 0),
+    \\    form_revision TEXT NOT NULL
+    \\        CHECK (length(trim(form_revision)) > 0),
+    \\    PRIMARY KEY (revision_id, form_code, form_revision)
+    \\);
+    \\
+    \\CREATE TRIGGER tax_profile_form_set_interval_revisions_immutable
+    \\BEFORE UPDATE ON tax_profile_form_set_interval_revisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'form set interval revisions are append-only');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_set_interval_entries_immutable
+    \\BEFORE UPDATE ON tax_profile_form_set_interval_entries
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'form set interval entries are append-only');
+    \\END;
+;
+
+/// A revision accepted from a reviewed COR keeps a durable key to the exact
+/// evidence row, alongside the readable free-text source reference. RESTRICT
+/// makes cited evidence undeletable for as long as the revision exists —
+/// which, for append-only revisions, is forever. The guard trigger exists
+/// because a foreign key alone cannot say the document must belong to the
+/// same taxpayer, nor that only imported revisions may cite one.
+const schema_v10 =
+    \\ALTER TABLE tax_profile_revisions
+    \\    ADD COLUMN cor_document_id TEXT
+    \\        REFERENCES tax_profile_cor_documents(id)
+    \\        ON DELETE RESTRICT;
+    \\
+    \\CREATE INDEX tax_profile_revisions_cor_document_idx
+    \\    ON tax_profile_revisions(cor_document_id)
+    \\    WHERE cor_document_id IS NOT NULL;
+    \\
+    \\CREATE TRIGGER tax_profile_revision_cor_document_guard
+    \\BEFORE INSERT ON tax_profile_revisions
+    \\WHEN NEW.cor_document_id IS NOT NULL AND (
+    \\    NEW.source_tag <> 'imported' OR NOT EXISTS (
+    \\        SELECT 1 FROM tax_profile_cor_documents
+    \\        WHERE id = NEW.cor_document_id
+    \\          AND profile_id = NEW.profile_id
+    \\    )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(
+    \\        ABORT,
+    \\        'cor link must cite this taxpayer''s imported document'
+    \\    );
+    \\END;
+;
+
 test "tax profile migration is namespaced idempotent and preserves user_version" {
     var store = try Store.openMemory(std.testing.allocator);
     defer store.close();
@@ -8683,6 +9611,47 @@ test "local owner is opaque stable and attached to new profiles" {
             \\        'ffffffffffffffffffffffffffffffff');
         ),
     );
+}
+
+test "owner scoping is enforced where rows are written, not where they are read" {
+    var store = try Store.openMemory(std.testing.allocator);
+    defer store.close();
+
+    const profile_id = "tax-profile-owner-guards";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Guarded Owner", "2026-01-01"),
+        .{},
+    );
+
+    // A profile's owner is immutable: re-pointing a row at another owner is
+    // the write that would make unscoped reads leak, and it cannot happen.
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\UPDATE tax_profiles
+            \\SET owner_id = 'ffffffffffffffffffffffffffffffff'
+            \\WHERE id = 'tax-profile-owner-guards';
+        ),
+    );
+
+    // And there is no second owner to point at: the owner table admits one
+    // row, by primary-key check.
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\INSERT INTO tax_profile_local_owner(singleton, id)
+            \\VALUES (2, 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+        ),
+    );
+
+    // Together with the insert guard (tested above), every profile row
+    // provably belongs to the singleton local owner — which is why the
+    // cross-profile reads (listing, search, TIN uniqueness) carry no owner
+    // predicate: a filter that can never exclude a row is dead code that a
+    // test cannot exercise. A future multi-owner migration that relaxes
+    // these triggers must add owner qualification to those reads in the
+    // same change.
 }
 
 test "on-demand occurrence allocation is scoped monotonic and legacy aware" {
@@ -9249,6 +10218,355 @@ test "civil status revisions resolve future single to married transition" {
             \\);
         ),
     );
+}
+
+test "listing a taxpayer reports its corrected TIN, not the superseded one" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    try store.createProfileWithRevision(
+        .{ .id = "tax-profile-corrected" },
+        testRevision("tax-profile-corrected", 0, "Corrected Person", "2026-01-01"),
+        .{},
+    );
+
+    // An audited correction records a new identity anchor and deliberately
+    // appends no revision: a correction is not an ordinary edit of the
+    // taxpayer's details. Listing must still follow the identity.
+    _ = try store.recordIdentityCorrection(.{
+        .id = "identity-correction-listing",
+        .profile_id = "tax-profile-corrected",
+        .expected_anchor_sequence = 1,
+        .new_canonical_tin = "987-654-321-000",
+        .new_legal_person_class = .natural_person,
+        .reason = "clerical correction confirmed by source record",
+        .actor_reference = "operator:test-reviewer",
+        .recorded_at_unix_seconds = 1_785_369_600,
+        .provenance = "synthetic reviewed identity source",
+    });
+
+    var profiles = try store.listProfiles(allocator, false);
+    defer profiles.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), profiles.items.len);
+    try std.testing.expectEqualStrings("987654321000", profiles.items[0].tin);
+}
+
+test "a mid-year forms change supersedes the year set only within its dates" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    const profile_id = "tax-profile-interval";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Interval Taxpayer", "2026-01-01"),
+        .{},
+    );
+    try store.createFormSet(profile_id, 2026, &.{.{
+        .form_code = "2551Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+
+    // VAT registration begins July 1: a different set applies from that date.
+    try store.createFormSetInterval(.{
+        .id = "interval-vat-2026",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .effective_from = "2026-07-01",
+        .forms = &.{.{
+            .form_code = "2550Q",
+            .form_revision = "2024-04-ENCS",
+        }},
+    });
+
+    // Before the change, the year's base set answers.
+    var june = try store.resolveFormSetOn(allocator, profile_id, "2026-06-30");
+    defer june.deinit(allocator);
+    try std.testing.expectEqual(FormSetState.active_nonempty, june.state);
+    try std.testing.expectEqualStrings("2551Q", june.forms.items[0].form_code);
+
+    // From the change onward, the interval answers — through year end,
+    // because its until is open.
+    var july = try store.resolveFormSetOn(allocator, profile_id, "2026-07-01");
+    defer july.deinit(allocator);
+    try std.testing.expectEqualStrings("2550Q", july.forms.items[0].form_code);
+    var december = try store.resolveFormSetOn(allocator, profile_id, "2026-12-31");
+    defer december.deinit(allocator);
+    try std.testing.expectEqualStrings("2550Q", december.forms.items[0].form_code);
+
+    // Another year is untouched by this year's interval.
+    var next_year = try store.resolveFormSetOn(allocator, profile_id, "2027-07-01");
+    defer next_year.deinit(allocator);
+    try std.testing.expectEqual(FormSetState.needs_configuration, next_year.state);
+
+    // The per-year API keeps its exact contract.
+    var yearly = try store.resolveFormSet(allocator, profile_id, 2026);
+    defer yearly.deinit(allocator);
+    try std.testing.expectEqualStrings("2551Q", yearly.forms.items[0].form_code);
+}
+
+test "a year's recorded changes list oldest first with their form counts" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    const profile_id = "tax-profile-interval-listing";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Listing Taxpayer", "2026-01-01"),
+        .{},
+    );
+    try store.createFormSetInterval(.{
+        .id = "interval-late",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .effective_from = "2026-08-01",
+        .effective_until = "2026-09-30",
+        .forms = &.{
+            .{ .form_code = "2550Q", .form_revision = "2024-04-ENCS" },
+            .{ .form_code = "2551Q", .form_revision = "2018-01-ENCS" },
+        },
+    });
+    try store.createFormSetInterval(.{
+        .id = "interval-early",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .effective_from = "2026-02-01",
+        .effective_until = "2026-03-31",
+        .forms = &.{},
+    });
+
+    var listed = try store.listFormSetIntervals(allocator, profile_id, 2026);
+    defer listed.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), listed.items.len);
+    try std.testing.expectEqualStrings(
+        "2026-02-01",
+        &listed.items[0].effective_from,
+    );
+    try std.testing.expectEqualStrings(
+        "2026-03-31",
+        &listed.items[0].effective_until.?,
+    );
+    try std.testing.expectEqual(@as(usize, 0), listed.items[0].form_count);
+    try std.testing.expectEqualStrings(
+        "2026-08-01",
+        &listed.items[1].effective_from,
+    );
+    try std.testing.expectEqual(@as(usize, 2), listed.items[1].form_count);
+    try std.testing.expect(listed.items[1].sequence > 0);
+
+    // Another year and another taxpayer both list empty.
+    var other_year = try store.listFormSetIntervals(allocator, profile_id, 2025);
+    defer other_year.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), other_year.items.len);
+}
+
+test "two active form set intervals cannot claim the same day" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    const profile_id = "tax-profile-interval-overlap";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Overlap Taxpayer", "2026-01-01"),
+        .{},
+    );
+
+    try store.createFormSetInterval(.{
+        .id = "interval-open",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .effective_from = "2026-07-01",
+        .forms = &.{.{ .form_code = "2550Q", .form_revision = "2024-04-ENCS" }},
+    });
+
+    // An open interval runs through year end, so a later start still collides.
+    try std.testing.expectError(
+        Error.FormSetIntervalOverlap,
+        store.createFormSetInterval(.{
+            .id = "interval-colliding",
+            .profile_id = profile_id,
+            .tax_year = 2026,
+            .effective_from = "2026-10-01",
+            .forms = &.{.{ .form_code = "2551Q", .form_revision = "2018-01-ENCS" }},
+        }),
+    );
+    // Bounded and disjoint is fine.
+    try store.createFormSetInterval(.{
+        .id = "interval-early",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .effective_from = "2026-02-01",
+        .effective_until = "2026-03-31",
+        .forms = &.{},
+    });
+    // A rejected write left nothing behind.
+    var rows = try store.prepare(
+        \\SELECT COUNT(*) FROM tax_profile_form_set_interval_revisions
+        \\WHERE profile_id = 'tax-profile-interval-overlap';
+    );
+    defer rows.deinit();
+    try std.testing.expectEqual(StepResult.row, try rows.step());
+    try std.testing.expectEqual(
+        @as(i64, 2),
+        sqlite.sqlite3_column_int64(rows.raw, 0),
+    );
+
+    // An interval cannot claim dates outside its own tax year.
+    try std.testing.expectError(
+        Error.FormSetIntervalOutsideYear,
+        store.createFormSetInterval(.{
+            .id = "interval-wrong-year",
+            .profile_id = profile_id,
+            .tax_year = 2026,
+            .effective_from = "2027-01-01",
+            .forms = &.{},
+        }),
+    );
+
+    // Rows are append-only, like every effective-dated record here.
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\UPDATE tax_profile_form_set_interval_revisions
+            \\SET effective_from = '2026-01-01'
+            \\WHERE id = 'interval-open';
+        ),
+    );
+}
+
+test "one canonical TIN cannot be held by two taxpayers" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    try store.createProfileWithRevision(
+        .{ .id = "tax-profile-first" },
+        testRevision("tax-profile-first", 0, "First Taxpayer", "2026-01-01"),
+        .{},
+    );
+    try std.testing.expectError(
+        Error.DuplicateCanonicalTin,
+        store.createProfileWithRevision(
+            .{ .id = "tax-profile-second" },
+            testRevision("tax-profile-second", 0, "Second", "2026-01-01"),
+            .{},
+        ),
+    );
+
+    // The refused profile left nothing behind.
+    var profiles = try store.listProfiles(allocator, true);
+    defer profiles.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), profiles.items.len);
+
+    // Archiving does not release the TIN: it still identifies that taxpayer.
+    try store.setProfileStatus("tax-profile-first", .archived);
+    try std.testing.expectError(
+        Error.DuplicateCanonicalTin,
+        store.createProfileWithRevision(
+            .{ .id = "tax-profile-third" },
+            testRevision("tax-profile-third", 0, "Third", "2026-01-01"),
+            .{},
+        ),
+    );
+
+    var owner = (try store.findProfileWithCanonicalTin(
+        allocator,
+        "123-456-789-000",
+        null,
+    )).?;
+    defer owner.deinit(allocator);
+    try std.testing.expectEqualStrings("tax-profile-first", owner.profile_id);
+    try std.testing.expectEqual(ProfileStatus.archived, owner.status);
+    try std.testing.expectEqualStrings("First Taxpayer", owner.display_name.?);
+
+    // Excluding the holder is how a correction asks "is it free for me?".
+    try std.testing.expect((try store.findProfileWithCanonicalTin(
+        allocator,
+        "123-456-789-000",
+        "tax-profile-first",
+    )) == null);
+}
+
+test "a correction cannot move a taxpayer onto an occupied TIN" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    try store.createProfileWithRevision(
+        .{ .id = "tax-profile-holder" },
+        testRevision("tax-profile-holder", 0, "Holder", "2026-01-01"),
+        .{},
+    );
+    try store.createProfileWithRevision(
+        .{ .id = "tax-profile-mover" },
+        testRevisionWithTin(
+            "tax-profile-mover",
+            0,
+            "Mover",
+            "2026-01-01",
+            "987654321000",
+        ),
+        .{},
+    );
+
+    // Correcting onto the holder's TIN would merge two identities by side
+    // effect, so it is refused even though it is an audited path.
+    try std.testing.expectError(
+        Error.DuplicateCanonicalTin,
+        store.recordIdentityCorrection(.{
+            .id = "identity-correction-collide",
+            .profile_id = "tax-profile-mover",
+            .expected_anchor_sequence = 1,
+            .new_canonical_tin = "123-456-789-000",
+            .new_legal_person_class = .natural_person,
+            .reason = "clerical correction confirmed by source record",
+            .actor_reference = "operator:test-reviewer",
+            .recorded_at_unix_seconds = 1_785_369_600,
+            .provenance = "synthetic reviewed identity source",
+        }),
+    );
+
+    // The mover keeps its own identity, unchanged.
+    var anchor = (try store.getIdentityAnchor(
+        allocator,
+        "tax-profile-mover",
+    )).?;
+    defer anchor.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 1), anchor.sequence);
+    try std.testing.expectEqualStrings("987654321000", anchor.canonical_tin);
+
+    // A correction onto a free TIN still succeeds, and moves the ownership.
+    try std.testing.expectEqual(
+        @as(u32, 2),
+        try store.recordIdentityCorrection(.{
+            .id = "identity-correction-free",
+            .profile_id = "tax-profile-mover",
+            .expected_anchor_sequence = 1,
+            .new_canonical_tin = "555-666-777-000",
+            .new_legal_person_class = .natural_person,
+            .reason = "clerical correction confirmed by source record",
+            .actor_reference = "operator:test-reviewer",
+            .recorded_at_unix_seconds = 1_785_369_600,
+            .provenance = "synthetic reviewed identity source",
+        }),
+    );
+    var moved = (try store.findProfileWithCanonicalTin(
+        allocator,
+        "555666777000",
+        null,
+    )).?;
+    defer moved.deinit(allocator);
+    try std.testing.expectEqualStrings("tax-profile-mover", moved.profile_id);
+
+    // The TIN it vacated is free again for the taxpayer it truly belongs to.
+    try std.testing.expect((try store.findProfileWithCanonicalTin(
+        allocator,
+        "987654321000",
+        null,
+    )) == null);
 }
 
 test "identity correction is audited and failed event rolls back anchor" {
@@ -10028,7 +11346,13 @@ test "draft role bindings are named and snapshots survive profile revision chang
     }};
     try store.createProfileWithRevision(
         .{ .id = employee_id },
-        testRevision(employee_id, 0, "Juan Dela Cruz", "2026-01-01"),
+        testRevisionWithTin(
+            employee_id,
+            0,
+            "Juan Dela Cruz",
+            "2026-01-01",
+            "987654321000",
+        ),
         .{
             .business_activities = &employee_activities,
             .registration_facts = &employee_facts,
@@ -10196,7 +11520,13 @@ test "draft role bindings are named and snapshots survive profile revision chang
     );
 
     try store.appendRevision(
-        testRevision(employee_id, 1, "Juan Dela Cruz Updated", "2027-01-01"),
+        testRevisionWithTin(
+            employee_id,
+            1,
+            "Juan Dela Cruz Updated",
+            "2027-01-01",
+            "987654321000",
+        ),
         .{},
     );
     var after_revision = (try store.getDraft(allocator, draft_id)).?;
@@ -10446,7 +11776,7 @@ test "file store reopens with revisions Forms Set and drafts intact" {
 }
 
 test "latest schema migrates every prior version idempotently and keeps legacy drafts" {
-    for ([_]u32{ 1, 2, 3, 4, 5, 6 }) |legacy_version| {
+    for ([_]u32{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }) |legacy_version| {
         var store = try openLegacyStoreForTest(legacy_version);
         defer store.close();
         try std.testing.expectEqual(
@@ -10488,6 +11818,201 @@ test "latest schema migrates every prior version idempotently and keeps legacy d
             try store.schemaVersion(),
         );
     }
+}
+
+fn revisionCountForTest(store: *Store, profile_id: []const u8) !i64 {
+    var count = try store.prepare(
+        \\SELECT COUNT(*) FROM tax_profile_revisions WHERE profile_id = ?;
+    );
+    defer count.deinit();
+    try count.bindText(1, profile_id);
+    try std.testing.expectEqual(StepResult.row, try count.step());
+    return sqlite.sqlite3_column_int64(count.raw, 0);
+}
+
+fn testCorDocument(
+    id: []const u8,
+    profile_id: []const u8,
+) CorDocumentWrite {
+    return .{
+        .id = id,
+        .profile_id = profile_id,
+        .file_path = "/tmp/cor.pdf",
+        .file_name = "cor.pdf",
+        .sha256 = "a" ** 64,
+        .byte_size = 1234,
+    };
+}
+
+test "a COR review decision commits the revision and the forms together or not at all" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+    const profile_id = "tax-profile-cor-atomic";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Atomic Person", "2026-01-01"),
+        .{},
+    );
+    try store.attachCorDocument(testCorDocument("cor-doc-atomic", profile_id));
+    const forms = [_]FormRegistrationWrite{
+        .{ .form_code = "2551Q", .form_revision = "2018" },
+    };
+
+    // The injected failure: the year already exists, so the forms half of a
+    // create-mode apply must fail — and take the revision half with it.
+    try store.createFormSet(profile_id, 2026, &.{});
+    var second = testRevision(profile_id, 1, "Atomic Person Two", "2026-02-01");
+    second.cor_document_id = "cor-doc-atomic";
+    try std.testing.expectError(
+        Error.FormSetAlreadyExists,
+        store.applyCorReview(second, .{}, 2026, &forms, .create),
+    );
+    try std.testing.expectEqual(
+        @as(i64, 1),
+        try revisionCountForTest(&store, profile_id),
+    );
+
+    // Update mode against the existing year succeeds as one commit.
+    try store.applyCorReview(second, .{}, 2026, &forms, .update);
+    try std.testing.expectEqual(
+        @as(i64, 2),
+        try revisionCountForTest(&store, profile_id),
+    );
+    var resolved = try store.resolveFormSet(allocator, profile_id, 2026);
+    defer resolved.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), resolved.forms.items.len);
+    try std.testing.expectEqualStrings(
+        "2551Q",
+        resolved.forms.items[0].form_code,
+    );
+    const linked = (try store.corDocumentIdForRevision(
+        allocator,
+        profile_id,
+        "revision-2",
+    )).?;
+    defer allocator.free(linked);
+    try std.testing.expectEqualStrings("cor-doc-atomic", linked);
+
+    // A missing year in update mode also takes the revision half with it.
+    var third = testRevision(profile_id, 2, "Atomic Person Three", "2026-03-01");
+    third.cor_document_id = "cor-doc-atomic";
+    try std.testing.expectError(
+        Error.NotFound,
+        store.applyCorReview(third, .{}, 2027, &forms, .update),
+    );
+    try std.testing.expectEqual(
+        @as(i64, 2),
+        try revisionCountForTest(&store, profile_id),
+    );
+}
+
+test "a revision's COR link cites this taxpayer's imported document and pins it" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+    const first_id = "tax-profile-cor-link-a";
+    const other_id = "tax-profile-cor-link-b";
+    try store.createProfileWithRevision(
+        .{ .id = first_id },
+        testRevision(first_id, 0, "Linked Person", "2026-01-01"),
+        .{},
+    );
+    try store.createProfileWithRevision(
+        .{ .id = other_id },
+        testRevisionWithTin(other_id, 0, "Other Person", "2026-01-01", "987654321000"),
+        .{},
+    );
+    try store.attachCorDocument(testCorDocument("cor-doc-own", first_id));
+    try store.attachCorDocument(testCorDocument("cor-doc-foreign", other_id));
+
+    // Another taxpayer's document is refused by the guard trigger.
+    var wrong_owner = testRevision(first_id, 1, "Linked Person Two", "2026-02-01");
+    wrong_owner.cor_document_id = "cor-doc-foreign";
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.appendRevision(wrong_owner, .{}),
+    );
+
+    // A link without an imported source never reaches SQL.
+    var manual = testRevision(first_id, 1, "Linked Person Two", "2026-02-01");
+    manual.source = .manual_entry;
+    manual.cor_document_id = "cor-doc-own";
+    try std.testing.expectError(
+        Error.InvalidValue,
+        store.appendRevision(manual, .{}),
+    );
+
+    // A cited document is pinned by the RESTRICT foreign key; an uncited one
+    // stays deletable — the spec's conditional-deletion semantics.
+    var linked = testRevision(first_id, 1, "Linked Person Two", "2026-02-01");
+    linked.cor_document_id = "cor-doc-own";
+    try store.appendRevision(linked, .{});
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\DELETE FROM tax_profile_cor_documents WHERE id = 'cor-doc-own';
+        ),
+    );
+    try store.attachCorDocument(testCorDocument("cor-doc-uncited", first_id));
+    try store.exec(
+        \\DELETE FROM tax_profile_cor_documents WHERE id = 'cor-doc-uncited';
+    );
+    const found = (try store.corDocumentIdForRevision(
+        allocator,
+        first_id,
+        "revision-2",
+    )).?;
+    defer allocator.free(found);
+    try std.testing.expectEqualStrings("cor-doc-own", found);
+}
+
+test "schema v10 adds the COR link to v9 stores without touching history" {
+    const allocator = std.testing.allocator;
+    var store = try openLegacyStoreForTest(9);
+    defer store.close();
+    const profile_id = "tax-profile-v9-link";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Legacy Nine", "2026-01-01"),
+        .{},
+    );
+    try store.attachCorDocument(testCorDocument("cor-doc-v9", profile_id));
+
+    // Before the migration the column does not exist and a linked write is
+    // refused rather than silently dropped.
+    var early = testRevision(profile_id, 1, "Legacy Nine Two", "2026-02-01");
+    early.cor_document_id = "cor-doc-v9";
+    try std.testing.expectError(
+        Error.InvalidValue,
+        store.appendRevision(early, .{}),
+    );
+
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+    const pre_existing = try store.corDocumentIdForRevision(
+        allocator,
+        profile_id,
+        "revision-1",
+    );
+    try std.testing.expectEqual(@as(?[]u8, null), pre_existing);
+    try store.appendRevision(early, .{});
+    const linked = (try store.corDocumentIdForRevision(
+        allocator,
+        profile_id,
+        "revision-2",
+    )).?;
+    defer allocator.free(linked);
+    try std.testing.expectEqualStrings("cor-doc-v9", linked);
+
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+    var foreign_key_check = try store.prepare("PRAGMA foreign_key_check;");
+    defer foreign_key_check.deinit();
+    try std.testing.expectEqual(
+        StepResult.done,
+        try foreign_key_check.step(),
+    );
 }
 
 test "schema v4 rejects future versions and rolls back a failed migration" {
@@ -12746,7 +14271,7 @@ fn expectAllZero(bytes: []const u8) !void {
 }
 
 fn openLegacyStoreForTest(version: u32) !Store {
-    std.debug.assert(version >= 1 and version <= 6);
+    std.debug.assert(version >= 1 and version <= 9);
     var raw: ?*sqlite.sqlite3 = null;
     const flags = sqlite.SQLITE_OPEN_READWRITE |
         sqlite.SQLITE_OPEN_CREATE |
@@ -12777,6 +14302,9 @@ fn openLegacyStoreForTest(version: u32) !Store {
     if (version >= 4) try store.exec(schema_v4);
     if (version >= 5) try store.exec(schema_v5);
     if (version >= 6) try store.exec(schema_v6);
+    if (version >= 7) try store.exec(schema_v7);
+    if (version >= 8) try store.exec(schema_v8);
+    if (version >= 9) try store.exec(schema_v9);
     var set_version = try store.prepare(
         \\INSERT INTO app_component_migrations(component, version)
         \\VALUES ('tax_profile', ?);
@@ -12793,6 +14321,24 @@ fn testRevision(
     display_name: []const u8,
     effective_from: []const u8,
 ) RevisionWrite {
+    return testRevisionWithTin(
+        profile_id,
+        expected_current_sequence,
+        display_name,
+        effective_from,
+        "123456789000",
+    );
+}
+
+/// A fixture for stores that hold more than one taxpayer: each needs its own
+/// canonical TIN, because one TIN identifies exactly one taxpayer.
+fn testRevisionWithTin(
+    profile_id: []const u8,
+    expected_current_sequence: u32,
+    display_name: []const u8,
+    effective_from: []const u8,
+    tin: []const u8,
+) RevisionWrite {
     return .{
         .id = switch (expected_current_sequence) {
             0 => "revision-1",
@@ -12806,7 +14352,7 @@ fn testRevision(
         .effective = testPeriod(effective_from, null),
         .source = .{ .imported = "test fixture" },
         .identity = .{
-            .tin = "123456789000",
+            .tin = tin,
             .rdo_code = "040",
         },
         .contact = .{

@@ -1,261 +1,114 @@
 <template name="form-1701-grid-1" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Taxable Year</text>
-      <input text="{formFilingYear}" placeholder="YYYY" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Amended Return?</text>
-      <input placeholder="No" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Number of Sheets Attached</text>
-      <input placeholder="Enter number" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">TIN</text>
-      <input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">RDO Code</text>
-      <input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Taxpayer Name</text>
-      <input text="{formFilerTaxpayerName}" placeholder="Registered name" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Registered Address</text>
-      <input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">ZIP Code</text>
-      <input text="{formFilerZipCode}" placeholder="ZIP code" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Date of Birth</text>
-      <input text="{formFilerDateOfBirth}" placeholder="MM / DD / YYYY" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Email Address</text>
-      <input text="{formFilerEmailAddress}" placeholder="name@example.com" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Citizenship</text>
-      <input text="{formFilerCitizenship}" placeholder="Citizenship" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Foreign Tax Number</text>
-      <input text="{formFilerForeignTaxNumber}" placeholder="Foreign tax number" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Contact Number</text>
-      <input text="{formFilerContactNumber}" placeholder="Contact number" disabled="true" />
-    </column>
+    <!-- @include-template form-field-bound label="Taxable Year" v="{formFilingYear}" ph="YYYY" -->
+    <!-- @include-template form-field label="Amended Return?" ph="No" -->
+    <!-- @include-template form-field label="Number of Sheets Attached" ph="Enter number" -->
+    <!-- @include-template form-field-bound label="TIN" v="{formFilerTin}" ph="000-000-000-000" -->
+    <!-- @include-template form-field-bound label="RDO Code" v="{formFilerRdo}" ph="RDO" -->
+    <!-- @include-template form-field-bound label="Taxpayer Name" v="{formFilerTaxpayerName}" ph="Registered name" -->
+    <!-- @include-template form-field-bound label="Registered Address" v="{formFilerRegisteredAddress}" ph="Registered address" -->
+    <!-- @include-template form-field-bound label="ZIP Code" v="{formFilerZipCode}" ph="ZIP code" -->
+    <!-- @include-template form-field-bound label="Date of Birth" v="{formFilerDateOfBirth}" ph="MM / DD / YYYY" -->
+    <!-- @include-template form-field-bound label="Email Address" v="{formFilerEmailAddress}" ph="name@example.com" -->
+    <!-- @include-template form-field-bound label="Citizenship" v="{formFilerCitizenship}" ph="Citizenship" -->
+    <!-- @include-template form-field-bound label="Foreign Tax Number" v="{formFilerForeignTaxNumber}" ph="Foreign tax number" -->
+    <!-- @include-template form-field-bound label="Contact Number" v="{formFilerContactNumber}" ph="Contact number" -->
   </grid>
 </template>
 
 <template name="form-1701-grid-2" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Spouse TIN</text>
-      <input text="{formSpouseTin}" placeholder="000-000-000-000" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Spouse RDO Code</text>
-      <input text="{formSpouseRdo}" placeholder="RDO" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Spouse Name</text>
-      <input text="{formSpouseName}" placeholder="Registered spouse name" disabled="true" />
-    </column>
+    <!-- @include-template form-field-bound label="Spouse TIN" v="{formSpouseTin}" ph="000-000-000-000" -->
+    <!-- @include-template form-field-bound label="Spouse RDO Code" v="{formSpouseRdo}" ph="RDO" -->
+    <!-- @include-template form-field-bound label="Spouse Name" v="{formSpouseName}" ph="Registered spouse name" -->
   </grid>
 </template>
 
 <template name="form-1701-grid-3" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Taxable Compensation Income</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Income Tax Due</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Tax Withheld on Compensation</text>
-      <input placeholder="Enter amount" />
-    </column>
+    <!-- @include-template form-field label="Taxable Compensation Income" ph="Enter amount" -->
+    <!-- @include-template form-field label="Income Tax Due" ph="Enter amount" -->
+    <!-- @include-template form-field label="Tax Withheld on Compensation" ph="Enter amount" -->
   </grid>
 </template>
 
 <template name="form-1701-grid-4" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Sales / Revenues / Receipts / Fees</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Returns, Allowances and Discounts</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Cost of Sales / Services</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Gross Income</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Allowable Deductions</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Net Taxable Income</text>
-      <input placeholder="Enter amount" />
-    </column>
+    <!-- @include-template form-field label="Sales / Revenues / Receipts / Fees" ph="Enter amount" -->
+    <!-- @include-template form-field label="Returns, Allowances and Discounts" ph="Enter amount" -->
+    <!-- @include-template form-field label="Cost of Sales / Services" ph="Enter amount" -->
+    <!-- @include-template form-field label="Gross Income" ph="Enter amount" -->
+    <!-- @include-template form-field label="Allowable Deductions" ph="Enter amount" -->
+    <!-- @include-template form-field label="Net Taxable Income" ph="Enter amount" -->
   </grid>
 </template>
 
 <template name="form-1701-grid-5" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Other Taxable Income Description</text>
-      <input placeholder="Specify source" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Other Taxable Income Amount</text>
-      <input placeholder="Enter amount" />
-    </column>
+    <!-- @include-template form-field label="Other Taxable Income Description" ph="Specify source" -->
+    <!-- @include-template form-field label="Other Taxable Income Amount" ph="Enter amount" -->
   </grid>
 </template>
 
 <template name="form-1701-grid-6" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Salaries, Wages and Benefits</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Rent, Repairs and Utilities</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Other Ordinary Deductions</text>
-      <input placeholder="Enter amount" />
-    </column>
+    <!-- @include-template form-field label="Salaries, Wages and Benefits" ph="Enter amount" -->
+    <!-- @include-template form-field label="Rent, Repairs and Utilities" ph="Enter amount" -->
+    <!-- @include-template form-field label="Other Ordinary Deductions" ph="Enter amount" -->
   </grid>
 </template>
 
 <template name="form-1701-grid-7" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Tax on Compensation Income</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Tax on Business / Profession Income</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Total Income Tax Due</text>
-      <input placeholder="Enter amount" />
-    </column>
+    <!-- @include-template form-field label="Tax on Compensation Income" ph="Enter amount" -->
+    <!-- @include-template form-field label="Tax on Business / Profession Income" ph="Enter amount" -->
+    <!-- @include-template form-field label="Total Income Tax Due" ph="Enter amount" -->
   </grid>
 </template>
 
 <template name="form-1701-grid-8" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Quarterly Income Tax Payments</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Creditable Tax Withheld (BIR Form 2307)</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Tax Withheld on Compensation</text>
-      <input placeholder="Enter amount" />
-    </column>
+    <!-- @include-template form-field label="Quarterly Income Tax Payments" ph="Enter amount" -->
+    <!-- @include-template form-field label="Creditable Tax Withheld (BIR Form 2307)" ph="Enter amount" -->
+    <!-- @include-template form-field label="Tax Withheld on Compensation" ph="Enter amount" -->
   </grid>
 </template>
 
 <template name="form-1701-grid-9" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Other Tax Credit Description</text>
-      <input placeholder="Specify credit" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Other Tax Credit Amount</text>
-      <input placeholder="Enter amount" />
-    </column>
+    <!-- @include-template form-field label="Other Tax Credit Description" ph="Specify credit" -->
+    <!-- @include-template form-field label="Other Tax Credit Amount" ph="Enter amount" -->
   </grid>
 </template>
 
 <template name="form-1701-grid-10" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Tax Relief / Special Rate</text>
-      <input placeholder="Relief code or basis" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Tax Relief Amount</text>
-      <input placeholder="Enter amount" />
-    </column>
+    <!-- @include-template form-field label="Tax Relief / Special Rate" ph="Relief code or basis" -->
+    <!-- @include-template form-field label="Tax Relief Amount" ph="Enter amount" -->
   </grid>
 </template>
 
 <template name="form-1701-grid-11" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Net Income per Books</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Add: Non-Deductible Expenses</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Less: Non-Taxable Income</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Taxable Net Income</text>
-      <input placeholder="Enter amount" />
-    </column>
+    <!-- @include-template form-field label="Net Income per Books" ph="Enter amount" -->
+    <!-- @include-template form-field label="Add: Non-Deductible Expenses" ph="Enter amount" -->
+    <!-- @include-template form-field label="Less: Non-Taxable Income" ph="Enter amount" -->
+    <!-- @include-template form-field label="Taxable Net Income" ph="Enter amount" -->
   </grid>
 </template>
 
 <template name="form-1701-grid-12" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Tax Due</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Less: Total Tax Credits / Payments</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Penalties</text>
-      <input placeholder="Enter amount" />
-    </column>
+    <!-- @include-template form-field label="Tax Due" ph="Enter amount" -->
+    <!-- @include-template form-field label="Less: Total Tax Credits / Payments" ph="Enter amount" -->
+    <!-- @include-template form-field label="Penalties" ph="Enter amount" -->
   </grid>
 </template>
 
 <template name="form-1701-grid-13" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">32 Overpayment Disposition</text>
-      <input placeholder="Refund / Tax Credit / Carry Over" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">33 Required Attachments</text>
-      <input placeholder="Attachment summary" />
-    </column>
+    <!-- @include-template form-field label="32 Overpayment Disposition" ph="Refund / Tax Credit / Carry Over" -->
+    <!-- @include-template form-field label="33 Required Attachments" ph="Attachment summary" -->
   </grid>
 </template>
 

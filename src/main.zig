@@ -59,6 +59,8 @@ pub const LibraryPeriodFilter = library_view.LibraryPeriodFilter;
 pub const TaxFormLibraryPeriodCell = library_view.TaxFormLibraryPeriodCell;
 pub const TaxFormLibraryRow = library_view.TaxFormLibraryRow;
 pub const LibraryOnDemandFilterRow = library_view.LibraryOnDemandFilterRow;
+pub const LibraryCategoryFilterRow = library_view.LibraryCategoryFilterRow;
+pub const LibraryMonthFilterRow = library_view.LibraryMonthFilterRow;
 
 const taxCategoryLabel = library_view.taxCategoryLabel;
 const filingLifecycleLabel = library_view.filingLifecycleLabel;
@@ -99,6 +101,29 @@ pub const app_icons = [_]canvas.icons.Entry{
 const canvas_label = "main-canvas";
 const window_width: f32 = 1225;
 const window_height: f32 = 768;
+/// Bounds the yearly setup combobox: every configured year plus the current
+/// year, a short recent window, and one typed year.
+const max_setup_year_options: usize = profile_ui.max_form_set_summaries + 8;
+/// Unconfigured years offered without typing. Older years remain reachable by
+/// typing a full year.
+const setup_year_recent_window: i32 = 5;
+
+/// Keeps the setup year list sorted newest-first without duplicates. The list
+/// is short and bounded, so an insertion walk is cheaper than a sort plus a
+/// separate dedupe pass.
+fn insertYearDescending(list: []i32, count: *usize, year: i32) void {
+    if (count.* == list.len) return;
+    var index: usize = 0;
+    while (index < count.*) : (index += 1) {
+        if (list[index] == year) return;
+        if (list[index] < year) break;
+    }
+    var shift = count.*;
+    while (shift > index) : (shift -= 1) list[shift] = list[shift - 1];
+    list[index] = year;
+    count.* += 1;
+}
+
 const phone_breakpoint: f32 = 600;
 const compact_shell_breakpoint: f32 = 768;
 const rail_shell_breakpoint: f32 = 1320;
@@ -198,7 +223,6 @@ pub const DashboardSection = enum {
 pub const ProfileSetupSection = enum {
     tax_profile,
     tax_forms,
-    certificate,
     email,
 };
 
@@ -838,6 +862,42 @@ pub const ProfileCalendarDeadlineRow = struct {
     }
 };
 
+pub const ProfileSetupChangeRow = struct {
+    id: u64,
+    effective_from: [10]u8,
+    form_count: usize,
+    covers_today: bool,
+
+    pub fn rangeLabel(
+        self: *const ProfileSetupChangeRow,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "From {s}",
+            .{&self.effective_from},
+        ) catch "Recorded change";
+    }
+
+    pub fn formsLabel(
+        self: *const ProfileSetupChangeRow,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "{d} active {s}",
+            .{
+                self.form_count,
+                if (self.form_count == 1) "form" else "forms",
+            },
+        ) catch "Forms unavailable";
+    }
+
+    pub fn todayBadgeVisible(self: *const ProfileSetupChangeRow) bool {
+        return self.covers_today;
+    }
+};
+
 pub const ProfileFormSetRow = struct {
     id: u64,
     tax_year: i32,
@@ -887,6 +947,138 @@ pub const ProfileCalendarYearOption = struct {
 
     pub fn accessibleLabel(self: *const ProfileCalendarYearOption) []const u8 {
         return if (self.selected) "Selected tax year" else "Select tax year";
+    }
+};
+
+/// One row of the yearly setup combobox. Configured and unconfigured years
+/// differ by icon and by their own words, never by color alone.
+pub const ProfileSetupYearOption = struct {
+    id: u64,
+    year: i32,
+    selected: bool,
+    configured: bool,
+    active_form_count: usize,
+
+    pub fn label(self: *const ProfileSetupYearOption) i32 {
+        return self.year;
+    }
+
+    pub fn missing(self: *const ProfileSetupYearOption) bool {
+        return !self.configured;
+    }
+
+    pub fn metaLabel(
+        self: *const ProfileSetupYearOption,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (!self.configured) {
+            return std.fmt.allocPrint(
+                arena,
+                "Set up forms for {d}",
+                .{self.year},
+            ) catch "Set up forms";
+        }
+        return activeFormCountLabel(arena, self.active_form_count);
+    }
+
+    /// A configured year and one that still needs setup are told apart by
+    /// their own words, never by color alone.
+    pub fn rowLabel(
+        self: *const ProfileSetupYearOption,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "{d} · {s}",
+            .{ self.year, self.metaLabel(arena) },
+        ) catch "Tax year";
+    }
+
+    pub fn accessibleLabel(
+        self: *const ProfileSetupYearOption,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (!self.configured) {
+            return std.fmt.allocPrint(
+                arena,
+                "{d}, not set up. Set up forms for {d}",
+                .{ self.year, self.year },
+            ) catch "Not set up";
+        }
+        return std.fmt.allocPrint(
+            arena,
+            "{d}, configured, {s}",
+            .{ self.year, activeFormCountLabel(arena, self.active_form_count) },
+        ) catch "Configured";
+    }
+};
+
+/// A configured year offered as the starting point for a year being set up.
+pub const ProfileSetupSourceOption = struct {
+    id: u64,
+    year: i32,
+    active_form_count: usize,
+    selected: bool,
+
+    pub fn label(self: *const ProfileSetupSourceOption) i32 {
+        return self.year;
+    }
+
+    pub fn metaLabel(
+        self: *const ProfileSetupSourceOption,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return activeFormCountLabel(arena, self.active_form_count);
+    }
+
+    pub fn rowLabel(
+        self: *const ProfileSetupSourceOption,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "{d} · {s}",
+            .{ self.year, activeFormCountLabel(arena, self.active_form_count) },
+        ) catch "Tax year";
+    }
+
+    pub fn accessibleLabel(
+        self: *const ProfileSetupSourceOption,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "Use setup from {d}, {s}",
+            .{ self.year, activeFormCountLabel(arena, self.active_form_count) },
+        ) catch "Use this year's setup";
+    }
+};
+
+fn activeFormCountLabel(
+    arena: std.mem.Allocator,
+    count: usize,
+) []const u8 {
+    if (count == 0) return "No active forms";
+    if (count == 1) return "1 active form";
+    return std.fmt.allocPrint(arena, "{d} active forms", .{count}) catch
+        "Active forms";
+}
+
+/// One taxpayer detail that an active form requires and the profile does not
+/// have yet, named alongside every active form that consumes it. Showing where
+/// a detail is used is what makes it obvious the fix belongs to the taxpayer,
+/// not to one form.
+pub const ProfileMissingFactRow = struct {
+    id: usize,
+    field_label: []const u8,
+    used_by: []const u8,
+
+    pub fn fieldLabel(self: *const ProfileMissingFactRow) []const u8 {
+        return self.field_label;
+    }
+
+    pub fn usedByLabel(self: *const ProfileMissingFactRow) []const u8 {
+        return self.used_by;
     }
 };
 
@@ -1000,6 +1192,12 @@ pub const Model = struct {
     profileCalendarSelectedDate: ?calendar_domain.Date = null,
     profileCalendarYearPickerVisible: bool = false,
     profileCalendarYearQuery: canvas.TextBuffer(16) = .{},
+    profileSetupYearPickerVisible: bool = false,
+    profileSetupYearQuery: canvas.TextBuffer(4) = .{},
+    profileSetupSourcePickerVisible: bool = false,
+    profileSetupYearsExpanded: bool = false,
+    profileSetupChangesExpanded: bool = false,
+    profileAdvancedExpanded: bool = false,
     profileDeadlineProjectionGeneration: u32 = 0,
     profileDeadlineActionMenuId: ?u64 = null,
     profileDeadlineAdjustmentId: ?u64 = null,
@@ -1044,6 +1242,12 @@ pub const Model = struct {
         "pendingProfileFormLaunch",
         "profileCalendarYearPickerVisible",
         "profileCalendarYearQuery",
+        "profileSetupYearPickerVisible",
+        "profileSetupYearQuery",
+        "profileSetupSourcePickerVisible",
+        "profileSetupYearsExpanded",
+        "profileSetupChangesExpanded",
+        "profileAdvancedExpanded",
         "profileDeadlineProjectionGeneration",
         "profileDeadlineActionMenuId",
         "profileDeadlineAdjustmentId",
@@ -1531,26 +1735,25 @@ pub const Model = struct {
         return self.taxProfiles.rows();
     }
 
+    /// Registrations of one taxpayer are listed together, head office first,
+    /// so a branch reads as part of that taxpayer rather than as an unrelated
+    /// entry that happens to share a name. Ordering is presentation only: each
+    /// row keeps its own slot, and selection is unaffected.
+    ///
+    /// No filtering happens here: the loaded rows already ARE the search
+    /// result, answered by the store. Re-filtering the text would disagree
+    /// with the store about punctuation — a TIN typed as bare digits matches
+    /// there but not against the dashed display text.
     pub fn visibleProfileRows(
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const profile_ui.ProfileRow {
         const all = self.taxProfiles.rows();
-        const query = self.sidebarProfileSearchBuffer.text();
-        if (query.len == 0) return all;
-
         const rows = arena.alloc(profile_ui.ProfileRow, all.len) catch return &.{};
-        var count: usize = 0;
-        for (all) |row| {
-            if (!multi_select.containsAsciiInsensitive(row.nameLabel(), query) and
-                !multi_select.containsAsciiInsensitive(row.tinLabel(arena), query))
-            {
-                continue;
-            }
-            rows[count] = row;
-            count += 1;
-        }
-        return rows[0..count];
+        @memcpy(rows[0..all.len], all);
+        const visible = rows[0..all.len];
+        std.mem.sort(profile_ui.ProfileRow, visible, {}, profileRowPrecedes);
+        return visible;
     }
 
     pub fn visibleProfileRowsEmpty(
@@ -1561,15 +1764,26 @@ pub const Model = struct {
     }
 
     pub fn profileRowsEmptyTitle(self: *const Model) []const u8 {
-        if (self.taxProfiles.rowsEmpty()) return "No tax profiles yet";
-        return "No matching profiles";
+        // With store-backed search, an empty row set during a query means no
+        // taxpayer matched — not that none exist.
+        if (self.taxProfiles.sidebarQuery().len != 0) return "No matching profiles";
+        return "No tax profiles yet";
     }
 
     pub fn profileRowsEmptyMessage(self: *const Model) []const u8 {
-        if (self.taxProfiles.rowsEmpty()) {
-            return "Add a profile once, then reuse its qualified fields on recurring forms.";
+        if (self.taxProfiles.sidebarQuery().len != 0) {
+            return "Try a taxpayer name or TIN, or clear the search field.";
         }
-        return "Try a taxpayer name or TIN, or clear the search field.";
+        return "Add a profile once, then reuse its qualified fields on recurring forms.";
+    }
+
+    pub fn profileListTruncatedVisible(self: *const Model) bool {
+        return self.taxProfiles.profileListTruncated();
+    }
+
+    pub fn profileListTruncatedLabel(self: *const Model) []const u8 {
+        _ = self;
+        return "Showing the first 1024 taxpayers. Search finds the rest.";
     }
 
     pub fn selectedTaxpayerRdo(self: *const Model) []const u8 {
@@ -1594,6 +1808,26 @@ pub const Model = struct {
 
     pub fn selectedTaxpayerInitials(self: *const Model) []const u8 {
         return self.taxProfiles.selectedInitials();
+    }
+
+    pub fn selectedTaxpayerTaxType(self: *const Model) []const u8 {
+        return self.taxProfiles.selectedTaxTypeLabel();
+    }
+
+    pub fn selectedTaxpayerSummary(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "TIN: {s} - Type: {s} - Tax Year {d} - {s}",
+            .{
+                self.taxProfiles.selectedTin(),
+                self.taxProfiles.selectedKindLabel(),
+                self.calendar.selected_year,
+                self.taxProfiles.selectedTaxTypeLabel(),
+            },
+        ) catch "Taxpayer details unavailable";
     }
 
     pub fn selectedTaxpayerCalendarKey(self: *const Model) []const u8 {
@@ -1755,19 +1989,56 @@ pub const Model = struct {
     }
 
     pub fn formFilerRegisteredAddress(self: *const Model) []const u8 {
-        return self.formProfiles.filerText(.registered_address);
+        return self.filerContactText(.registered_address);
     }
 
     pub fn formFilerZipCode(self: *const Model) []const u8 {
-        return self.formProfiles.filerText(.zip_code);
+        return self.filerContactText(.zip_code);
+    }
+
+    /// A filing shows the contact detail it was given, falling back to the one
+    /// the taxpayer's profile supplied when the draft was composed.
+    fn filerContactText(
+        self: *const Model,
+        contact_field: percentage_tax_ui.FilingContactField,
+    ) []const u8 {
+        if (self.percentageTax.contactOverridden(contact_field)) {
+            return self.percentageTax.contactOverrideText(contact_field);
+        }
+        return self.formProfiles.filerText(contact_field.reusable());
     }
 
     pub fn formFilerContactNumber(self: *const Model) []const u8 {
-        return self.formProfiles.filerText(.contact_number);
+        return self.filerContactText(.contact_number);
+    }
+
+    pub fn formFilingContactEditable(self: *const Model) bool {
+        return self.percentageTax.editable;
+    }
+
+    /// Says where the contact details on this filing came from. Provenance is
+    /// text, not a colour, because it is the fact that matters.
+    pub fn formFilingContactProvenance(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const changed = self.percentageTax.overriddenContactCount();
+        if (changed == 0) return "From profile";
+        if (changed == 1) return "1 contact detail changed for this filing";
+        return std.fmt.allocPrint(
+            arena,
+            "{d} contact details changed for this filing",
+            .{changed},
+        ) catch "Changed for this filing";
+    }
+
+    pub fn formFilingContactResetDisabled(self: *const Model) bool {
+        return self.percentageTax.overriddenContactCount() == 0 or
+            !self.percentageTax.editable;
     }
 
     pub fn formFilerEmailAddress(self: *const Model) []const u8 {
-        return self.formProfiles.filerText(.email_address);
+        return self.filerContactText(.email_address);
     }
 
     pub fn formFilerDateOfBirth(
@@ -2786,15 +3057,702 @@ pub const Model = struct {
         return self.taxProfiles.source_reference.text();
     }
 
-    pub fn profileTaxYearValue(self: *const Model) []const u8 {
+
+    fn profileSetupTypedYear(self: *const Model) ?i32 {
+        const query = self.profileSetupYearQuery.text();
+        if (query.len != 4) return null;
+        return std.fmt.parseInt(i32, query, 10) catch null;
+    }
+
+    fn profileSetupConfiguredCount(self: *const Model, year: i32) ?usize {
+        for (self.taxProfiles.formSetSummaries()) |summary| {
+            if (summary.tax_year == year) return summary.active_form_count;
+        }
+        return null;
+    }
+
+    pub fn profileSetupYearLabel(self: *const Model) []const u8 {
         return self.taxProfiles.tax_year.text();
     }
 
-    pub fn profileFormsAddYearDisabled(self: *const Model) bool {
-        if (self.taxProfiles.editing_new) return true;
-        const year = self.taxProfiles.formSetYearInput() orelse return false;
-        return year > self.calendarToday.year or
-            self.taxProfiles.hasExplicitFormSet(year);
+    pub fn profileSetupYearPickerOpen(self: *const Model) bool {
+        return self.profileSetupYearPickerVisible;
+    }
+
+    pub fn profileSetupYearQueryValue(self: *const Model) []const u8 {
+        return self.profileSetupYearQuery.text();
+    }
+
+    /// Rows for the yearly setup combobox: the current year first, then every
+    /// other configured year and a short recent window, descending. Older
+    /// years stay reachable by typing rather than filling the list with
+    /// decades of empty history.
+    pub fn profileSetupYearOptions(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const ProfileSetupYearOption {
+        const maximum = self.taxProfiles.maximumSetupYear();
+        var years: [max_setup_year_options]i32 = undefined;
+        var count: usize = 0;
+
+        insertYearDescending(&years, &count, maximum);
+        for (self.taxProfiles.formSetSummaries()) |summary| {
+            if (summary.tax_year > maximum) continue;
+            insertYearDescending(&years, &count, summary.tax_year);
+        }
+        var recent = maximum - 1;
+        while (recent >= maximum - setup_year_recent_window and
+            recent >= profile_ui.minimum_setup_year) : (recent -= 1)
+        {
+            insertYearDescending(&years, &count, recent);
+        }
+        if (self.profileSetupTypedYear()) |typed| {
+            if (typed >= profile_ui.minimum_setup_year and typed <= maximum) {
+                insertYearDescending(&years, &count, typed);
+            }
+        }
+
+        const query = self.profileSetupYearQuery.text();
+        const selected = self.taxProfiles.workspaceYear();
+        const rows = arena.alloc(ProfileSetupYearOption, count) catch return &.{};
+        var emitted: usize = 0;
+        for (years[0..count]) |year| {
+            var text: [16]u8 = undefined;
+            const rendered = std.fmt.bufPrint(&text, "{d}", .{year}) catch continue;
+            if (query.len != 0 and
+                !std.mem.startsWith(u8, rendered, query)) continue;
+            const configured = self.profileSetupConfiguredCount(year);
+            rows[emitted] = .{
+                .id = @intCast(year),
+                .year = year,
+                .selected = selected != null and selected.? == year,
+                .configured = configured != null,
+                .active_form_count = configured orelse 0,
+            };
+            emitted += 1;
+        }
+        return rows[0..emitted];
+    }
+
+    pub fn profileSetupYearHelperVisible(self: *const Model) bool {
+        const typed = self.profileSetupTypedYear() orelse return false;
+        return typed > self.taxProfiles.maximumSetupYear() or
+            typed < profile_ui.minimum_setup_year;
+    }
+
+    pub fn profileSetupYearHelperText(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const typed = self.profileSetupTypedYear() orelse return "";
+        const maximum = self.taxProfiles.maximumSetupYear();
+        if (typed > maximum) {
+            return std.fmt.allocPrint(
+                arena,
+                "{d} hasn't started. You can set up years through {d}.",
+                .{ typed, maximum },
+            ) catch "That year has not started yet.";
+        }
+        return std.fmt.allocPrint(
+            arena,
+            "Years before {d} aren't supported.",
+            .{profile_ui.minimum_setup_year},
+        ) catch "That year is not supported.";
+    }
+
+    pub fn profileSetupDraftChoiceVisible(self: *const Model) bool {
+        return self.taxProfiles.year_workspace == .draft_choice;
+    }
+
+    pub fn profileSetupDraftBannerVisible(self: *const Model) bool {
+        return self.taxProfiles.year_workspace.isDraft();
+    }
+
+    pub fn profileSetupSeededVisible(self: *const Model) bool {
+        return self.taxProfiles.year_workspace == .draft_seeded;
+    }
+
+    pub fn profileSetupManagerVisible(self: *const Model) bool {
+        return switch (self.taxProfiles.year_workspace) {
+            .viewing, .draft_empty, .draft_seeded => true,
+            .draft_choice, .conflict, .open_failed => false,
+        };
+    }
+
+    pub fn profileSetupConflictVisible(self: *const Model) bool {
+        return self.taxProfiles.year_workspace == .conflict;
+    }
+
+    pub fn profileSetupOpenFailedVisible(self: *const Model) bool {
+        return self.taxProfiles.year_workspace == .open_failed;
+    }
+
+    pub fn profileSetupPendingSwitchVisible(self: *const Model) bool {
+        return self.taxProfiles.pendingYearSwitch() != null;
+    }
+
+    pub fn profileSetupPendingSwitchTitle(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const year = self.taxProfiles.workspaceYear() orelse
+            return "Unsaved changes";
+        return std.fmt.allocPrint(
+            arena,
+            "Unsaved changes for {d}",
+            .{year},
+        ) catch "Unsaved changes";
+    }
+
+    pub fn profileSetupPendingSwitchBody(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "You have {d} unsaved changes. Switching years won't save them.",
+            .{self.taxProfiles.changedFormCount()},
+        ) catch "Switching years will not save your changes.";
+    }
+
+    pub fn profileSetupStatusLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const workspace = self.taxProfiles.year_workspace;
+        const year = self.taxProfiles.workspaceYear();
+        if (workspace == .open_failed) {
+            if (year) |value| {
+                return std.fmt.allocPrint(
+                    arena,
+                    "Couldn't open {d}. Nothing was changed.",
+                    .{value},
+                ) catch "That year could not be opened.";
+            }
+            return "That year could not be opened.";
+        }
+        const base: []const u8 = if (workspace.isDraft())
+            "Not set up"
+        else switch (self.taxProfiles.form_set_state) {
+            .needs_configuration => "Not set up",
+            .legacy_catalog_default => "Original catalog default",
+            .active_empty => "Configured · no active forms",
+            .active_nonempty => std.fmt.allocPrint(
+                arena,
+                "Configured · {s}",
+                .{activeFormCountLabel(arena, self.taxProfiles.activeFormCount())},
+            ) catch "Configured",
+        };
+        const changed = self.taxProfiles.changedFormCount();
+        if (changed == 0) return base;
+        return std.fmt.allocPrint(
+            arena,
+            "{s} · {d} unsaved changes",
+            .{ base, changed },
+        ) catch base;
+    }
+
+    pub fn profileSetupDraftTitle(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const year = self.taxProfiles.workspaceYear() orelse
+            return "Nothing is saved yet";
+        return std.fmt.allocPrint(
+            arena,
+            "Setting up {d} — nothing is saved yet",
+            .{year},
+        ) catch "Nothing is saved yet";
+    }
+
+    pub fn profileSetupSeedAvailable(self: *const Model) bool {
+        return self.taxProfiles.recommendedSeedYear() != null;
+    }
+
+    pub fn profileSetupSeedLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const source = self.taxProfiles.recommendedSeedYear() orelse
+            return "Use another year's setup";
+        return std.fmt.allocPrint(
+            arena,
+            "Use setup from {d}",
+            .{source},
+        ) catch "Use another year's setup";
+    }
+
+    pub fn profileSetupSeedYear(self: *const Model) i32 {
+        return self.taxProfiles.recommendedSeedYear() orelse 0;
+    }
+
+    pub fn profileSetupSourceLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const source = self.taxProfiles.draftSourceYear() orelse
+            return "Starting from another year";
+        return std.fmt.allocPrint(
+            arena,
+            "Starting from {d}",
+            .{source},
+        ) catch "Starting from another year";
+    }
+
+    pub fn profileSetupSourceSummary(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "{d} forms copied · you can change anything before saving",
+            .{self.taxProfiles.stagedFormCount()},
+        ) catch "Forms copied. You can change anything before saving.";
+    }
+
+    /// Explains that facts are referenced by date rather than duplicated,
+    /// without exposing revision vocabulary.
+    pub fn profileSetupInheritanceNote(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const year = self.taxProfiles.workspaceYear() orelse
+            return "Your taxpayer details aren't copied between years.";
+        return std.fmt.allocPrint(
+            arena,
+            "Your taxpayer details aren't copied — this year uses whatever was true during {d}.",
+            .{year},
+        ) catch "Your taxpayer details aren't copied between years.";
+    }
+
+    pub fn profileSetupSourcePickerOpen(self: *const Model) bool {
+        return self.profileSetupSourcePickerVisible;
+    }
+
+    pub fn profileSetupSourceOptions(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const ProfileSetupSourceOption {
+        const summaries = self.taxProfiles.formSetSummaries();
+        const target = self.taxProfiles.workspaceYear();
+        const rows = arena.alloc(ProfileSetupSourceOption, summaries.len) catch
+            return &.{};
+        var count: usize = 0;
+        for (summaries) |summary| {
+            if (target != null and summary.tax_year == target.?) continue;
+            rows[count] = .{
+                .id = @intCast(summary.tax_year),
+                .year = summary.tax_year,
+                .active_form_count = summary.active_form_count,
+                .selected = self.taxProfiles.draftSourceYear() == summary.tax_year,
+            };
+            count += 1;
+        }
+        return rows[0..count];
+    }
+
+    pub fn profileSetupPrimaryLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (self.taxProfiles.applyScopeFromDate()) {
+            const change_year = self.taxProfiles.workspaceYear() orelse
+                return "Record mid-year change";
+            return std.fmt.allocPrint(
+                arena,
+                "Record change for {d}",
+                .{change_year},
+            ) catch "Record mid-year change";
+        }
+        if (!self.taxProfiles.year_workspace.isDraft()) return "Save changes";
+        const year = self.taxProfiles.workspaceYear() orelse return "Save setup";
+        return std.fmt.allocPrint(
+            arena,
+            "Save setup for {d}",
+            .{year},
+        ) catch "Save setup";
+    }
+
+    pub fn profileSetupPrimaryDisabled(self: *const Model) bool {
+        return switch (self.taxProfiles.year_workspace) {
+            .draft_choice, .conflict, .open_failed => true,
+            .draft_empty, .draft_seeded => false,
+            // From-a-date deliberately ignores formsDirty: recording the
+            // current membership taking effect on a date is a real event.
+            .viewing => if (self.taxProfiles.applyScopeFromDate())
+                self.taxProfiles.changeDateEmpty()
+            else
+                !self.taxProfiles.formsDirty(),
+        };
+    }
+
+    /// Shown beside Save when a save would deliberately configure no forms, so
+    /// an explicit empty year is never an accident. A recorded change has its
+    /// own copy; this one talks about the year and would be wrong there.
+    pub fn profileSetupZeroFormsHelperVisible(self: *const Model) bool {
+        return self.profileSetupManagerVisible() and
+            self.taxProfiles.stagedFormCount() == 0 and
+            !self.taxProfiles.applyScopeFromDate() and
+            !self.profileSetupPrimaryDisabled();
+    }
+
+    pub fn profileSetupZeroFormsHelperText(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const year = self.taxProfiles.workspaceYear() orelse
+            return "Saving with no forms keeps this year configured but empty.";
+        return std.fmt.allocPrint(
+            arena,
+            "Saving with no forms keeps {d} configured but empty — no forms in the library and no deadlines on the calendar.",
+            .{year},
+        ) catch "Saving with no forms keeps this year configured but empty.";
+    }
+
+    pub fn profileSetupConflictTitle(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const year = self.taxProfiles.workspaceYear() orelse
+            return "This year was set up in another window.";
+        return std.fmt.allocPrint(
+            arena,
+            "{d} was set up in another window while you were working.",
+            .{year},
+        ) catch "This year was set up in another window.";
+    }
+
+    pub fn profileSetupConflictReviewLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const year = self.taxProfiles.workspaceYear() orelse
+            return "Review the saved setup";
+        return std.fmt.allocPrint(
+            arena,
+            "Review saved {d} setup",
+            .{year},
+        ) catch "Review the saved setup";
+    }
+
+    pub fn profileSetupYearsExpandedVisible(self: *const Model) bool {
+        return self.profileSetupYearsExpanded;
+    }
+
+    /// The when-does-this-apply control belongs to a configured year only:
+    /// a draft has no base setup for a recorded change to layer over.
+    pub fn profileSetupScopeVisible(self: *const Model) bool {
+        return self.profileSetupManagerVisible() and
+            self.taxProfiles.year_workspace == .viewing;
+    }
+
+    pub fn profileSetupScopeWholeYearSelected(self: *const Model) bool {
+        return !self.taxProfiles.applyScopeFromDate();
+    }
+
+    pub fn profileSetupScopeFromDateSelected(self: *const Model) bool {
+        return self.taxProfiles.applyScopeFromDate();
+    }
+
+    pub fn profileSetupScopeDateVisible(self: *const Model) bool {
+        return self.profileSetupScopeVisible() and
+            self.taxProfiles.applyScopeFromDate();
+    }
+
+    pub fn profileSetupChangeDateValue(self: *const Model) []const u8 {
+        return self.taxProfiles.changeDateText();
+    }
+
+    pub fn profileSetupChangesVisible(self: *const Model) bool {
+        return self.profileSetupManagerVisible() and
+            self.taxProfiles.year_workspace == .viewing and
+            self.taxProfiles.formSetIntervals().len > 0;
+    }
+
+    pub fn profileSetupChangesDisclosureLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "Mid-year changes ({d})",
+            .{self.taxProfiles.formSetIntervals().len},
+        ) catch "Mid-year changes";
+    }
+
+    pub fn profileSetupChangesExpandedVisible(self: *const Model) bool {
+        return self.profileSetupChangesExpanded;
+    }
+
+    pub fn profileSetupChangeRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const ProfileSetupChangeRow {
+        const intervals = self.taxProfiles.formSetIntervals();
+        const rows = arena.alloc(ProfileSetupChangeRow, intervals.len) catch
+            return &.{};
+        const today = self.taxProfiles.default_effective_from.text();
+        for (intervals, 0..) |*interval, index| {
+            // "Covers today" is a plain range check against the boot date,
+            // not date-scoped resolution — nothing downstream reads it. An
+            // open range ends with its own year, so the year must match too.
+            const same_year = today.len == 10 and
+                std.mem.eql(u8, today[0..4], interval.effective_from[0..4]);
+            const started = same_year and
+                std.mem.order(u8, today, &interval.effective_from) != .lt;
+            const still_running = if (interval.effective_until) |*until|
+                std.mem.order(u8, today, until) != .gt
+            else
+                true;
+            rows[index] = .{
+                .id = interval.sequence,
+                .effective_from = interval.effective_from,
+                .form_count = interval.form_count,
+                .covers_today = started and still_running,
+            };
+        }
+        return rows;
+    }
+
+    pub fn profileSetupYearsDisclosureLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "All configured years ({d})",
+            .{self.taxProfiles.formSetSummaries().len},
+        ) catch "All configured years";
+    }
+
+    pub fn profileSetupYearsDisclosureVisible(self: *const Model) bool {
+        return self.taxProfiles.formSetSummaries().len != 0;
+    }
+
+    pub fn profileFactsSummaryVisible(self: *const Model) bool {
+        return !self.taxProfiles.editing_new and
+            self.taxProfiles.factsSummaryAvailable();
+    }
+
+    /// States which taxpayer details a year uses, in plain language. Carry
+    /// forward is reported from the history itself, so an unchanged year never
+    /// needs a duplicate record to look complete.
+    pub fn profileFactsSummaryLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const year = self.taxProfiles.factsSummaryYear();
+        if (self.taxProfiles.factsMissingForYear()) {
+            return std.fmt.allocPrint(
+                arena,
+                "No taxpayer details exist for {d} yet.",
+                .{year},
+            ) catch "No taxpayer details exist for that year yet.";
+        }
+        if (self.taxProfiles.factsChangedDuringYear()) {
+            return std.fmt.allocPrint(
+                arena,
+                "Details changed during {d}. Earlier filings keep the details they were prepared with.",
+                .{year},
+            ) catch "Details changed during this year.";
+        }
+        const effective = friendlyDateLabel(
+            arena,
+            self.taxProfiles.factsEffectiveFrom(),
+        );
+        if (self.taxProfiles.factsSameAsPriorYear()) {
+            return std.fmt.allocPrint(
+                arena,
+                "Using details effective {s} · No changes from {d}",
+                .{ effective, year - 1 },
+            ) catch "No changes from the previous year.";
+        }
+        return std.fmt.allocPrint(
+            arena,
+            "Using details effective {s}",
+            .{effective},
+        ) catch "Using the details on file.";
+    }
+
+    pub fn profileFactsMissingVisible(self: *const Model) bool {
+        return self.taxProfiles.factsMissingForYear();
+    }
+
+    pub fn profileChangeControlsVisible(self: *const Model) bool {
+        return !self.taxProfiles.editing_new and
+            self.taxProfiles.selectedProfileId() != null;
+    }
+
+    pub fn profileRecordChangeSelected(self: *const Model) bool {
+        return self.taxProfiles.changeIntent() == .record_change;
+    }
+
+    pub fn profileFixMistakeSelected(self: *const Model) bool {
+        return self.taxProfiles.changeIntent() == .fix_mistake;
+    }
+
+    pub fn profileEffectiveDateLabel(self: *const Model) []const u8 {
+        return if (self.taxProfiles.changeIntent() == .fix_mistake)
+            "Which period was recorded wrong?"
+        else
+            "When did this take effect?";
+    }
+
+    pub fn profileEffectiveDateHelp(self: *const Model) []const u8 {
+        return if (self.taxProfiles.changeIntent() == .fix_mistake)
+            "This replaces what's shown for that period. Forms you already prepared keep the values they were prepared with."
+        else
+            "Earlier periods keep their old details.";
+    }
+
+    pub fn profileAdvancedExpandedVisible(self: *const Model) bool {
+        return self.profileAdvancedExpanded;
+    }
+
+    pub fn profileIdentityLockNote(self: *const Model) []const u8 {
+        _ = self;
+        return "Identity doesn't change with ordinary updates. A different kind of taxpayer needs its own profile.";
+    }
+
+    pub fn profileBranchMode(self: *const Model) bool {
+        return self.taxProfiles.branchMode();
+    }
+
+    pub fn profileCanAddBranch(self: *const Model) bool {
+        return self.taxProfiles.canAddBranch();
+    }
+
+    pub fn profileAddBranchLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (!self.taxProfiles.canAddBranch()) return "Add branch";
+        return std.fmt.allocPrint(
+            arena,
+            "Add branch of {s}",
+            .{self.taxProfiles.selectedName()},
+        ) catch "Add branch";
+    }
+
+    pub fn profileBranchBannerTitle(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "New branch of {s}",
+            .{self.taxProfiles.branchSourceName()},
+        ) catch "New branch";
+    }
+
+    pub fn profileBranchBannerBody(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "Keep the nine-digit TIN {s} and add this branch's code. Its RDO, address, and registration details start blank because they often differ — review them before saving.",
+            .{self.taxProfiles.branchSourceRoot()},
+        ) catch "Keep the nine-digit TIN and add this branch's code.";
+    }
+
+    /// Active forms for the year on screen. A form the taxpayer does not file
+    /// must never demand a detail, which is what kept the old surface from
+    /// asking for all 16 canonical facts at once.
+    fn activeFormRequiresKey(
+        definition: *const form_catalog.FormDefinition,
+        key: profile_fields.ReusableField,
+    ) bool {
+        for (definition.fields) |item| {
+            const profile_key = item.profile_key orelse continue;
+            if (item.profile_presence != .required) continue;
+            const parsed = std.meta.stringToEnum(
+                profile_fields.ReusableField,
+                profile_key,
+            ) orelse continue;
+            if (parsed == key) return true;
+        }
+        return false;
+    }
+
+    fn activeFormsUsingKey(
+        self: *const Model,
+        arena: std.mem.Allocator,
+        key: profile_fields.ReusableField,
+    ) []const u8 {
+        var list: std.ArrayList(u8) = .empty;
+        for (&form_catalog.forms) |*definition| {
+            if (!self.taxProfiles.formAvailable(
+                self.calendar.selected_year,
+                definition.code,
+            )) continue;
+            if (!activeFormRequiresKey(definition, key)) continue;
+            if (list.items.len != 0) list.appendSlice(arena, ", ") catch break;
+            list.appendSlice(arena, definition.code) catch break;
+        }
+        return list.items;
+    }
+
+    /// Every required detail an active form is missing, listed once with the
+    /// forms that need it. The user fixes one shared editor rather than
+    /// maintaining a taxpayer profile per form.
+    pub fn profileMissingFactRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const ProfileMissingFactRow {
+        if (self.taxProfiles.editing_new) return &.{};
+        const keys = std.meta.tags(profile_fields.ReusableField);
+        const rows = arena.alloc(ProfileMissingFactRow, keys.len) catch
+            return &.{};
+        var count: usize = 0;
+        for (keys) |key| {
+            if (self.taxProfiles.reusableValueText(key).len != 0) continue;
+            const used_by = self.activeFormsUsingKey(arena, key);
+            if (used_by.len == 0) continue;
+            rows[count] = .{
+                .id = count,
+                .field_label = profile_ui.reusableFieldLabel(key),
+                .used_by = used_by,
+            };
+            count += 1;
+        }
+        return rows[0..count];
+    }
+
+    pub fn profileMissingFactsVisible(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) bool {
+        return self.profileMissingFactRows(arena).len != 0;
+    }
+
+    pub fn profileMissingFactsTitle(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const count = self.profileMissingFactRows(arena).len;
+        if (count == 1) return "1 detail is missing for your active forms";
+        return std.fmt.allocPrint(
+            arena,
+            "{d} details are missing for your active forms",
+            .{count},
+        ) catch "Details are missing for your active forms";
+    }
+
+    pub fn profileBranchCopyNote(self: *const Model) []const u8 {
+        _ = self;
+        return "Copied once: name, contact number, and email. Never copied: COR files, filings, drafts, payments, and email settings. Later head-office changes don't update this branch.";
+    }
+
+    pub fn profileFactsMissingHelpText(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "Record what was true in {d} — today's details won't be copied backward.",
+            .{self.taxProfiles.factsSummaryYear()},
+        ) catch "Record what was true then; today's details are not copied backward.";
     }
 
     pub fn profileFormSetRows(
@@ -2815,20 +3773,37 @@ pub const Model = struct {
         return rows;
     }
 
-    pub fn profileFormSetRowsEmpty(self: *const Model) bool {
-        return self.taxProfiles.formSetSummaries().len == 0;
+
+    /// True only while a surface that hosts the yearly setup workspace is on
+    /// screen. Since the calendar remediation, that is three places: the
+    /// Profile Settings page's Registration & Forms section, the same
+    /// section inside the taxpayer dashboard's inline Profile tab, and the
+    /// dashboard's Forms tab, which its edit-year flow made a manager
+    /// surface. The dashboard calendar tab stays browse-only; staged work is
+    /// kept in state either way, so leaving and returning loses nothing.
+    fn yearWorkspaceContextActive(self: *const Model) bool {
+        if (self.page == .profile_setup) {
+            return self.profileSetupSection == .tax_forms;
+        }
+        if (self.page != .taxpayer_dashboard) return false;
+        return switch (self.dashboardSection) {
+            .forms => true,
+            .profile_settings => self.profileSetupSection == .tax_forms,
+            .calendar => false,
+        };
+    }
+
+    fn formsManageMode(self: *const Model) bool {
+        return self.taxProfiles.managing_forms and
+            self.yearWorkspaceContextActive();
     }
 
     pub fn managingProfileForms(self: *const Model) bool {
-        return self.taxProfiles.managing_forms;
+        return self.formsManageMode();
     }
 
     pub fn browsingProfileForms(self: *const Model) bool {
-        return !self.taxProfiles.managing_forms;
-    }
-
-    pub fn profileFormsSaveDisabled(self: *const Model) bool {
-        return !self.taxProfiles.formsDirty();
+        return !self.formsManageMode();
     }
 
     pub fn profileFormsSearchValue(self: *const Model) []const u8 {
@@ -2839,7 +3814,7 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
-        if (self.taxProfiles.managing_forms) {
+        if (self.formsManageMode()) {
             return std.fmt.allocPrint(
                 arena,
                 "{d} selected · {d} unsaved changes",
@@ -2856,22 +3831,11 @@ pub const Model = struct {
         ) catch "Forms Set unavailable";
     }
 
-    pub fn profileFormsStagedCountLabel(
-        self: *const Model,
-        arena: std.mem.Allocator,
-    ) []const u8 {
-        return std.fmt.allocPrint(
-            arena,
-            "{d} selected for tax year {d}",
-            .{ self.taxProfiles.stagedFormCount(), self.calendar.selected_year },
-        ) catch "Selected forms";
-    }
-
     pub fn profileFormsYearLabel(
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
-        if (self.taxProfiles.managing_forms) {
+        if (self.formsManageMode()) {
             return self.taxProfiles.tax_year.text();
         }
         return std.fmt.allocPrint(
@@ -2895,14 +3859,14 @@ pub const Model = struct {
     }
 
     pub fn profileFormsHeading(self: *const Model) []const u8 {
-        return if (self.taxProfiles.managing_forms)
+        return if (self.formsManageMode())
             "Manage active forms"
         else
             "Tax Form Library";
     }
 
     pub fn profileFormsModeDescription(self: *const Model) []const u8 {
-        return if (self.taxProfiles.managing_forms)
+        return if (self.formsManageMode())
             "Choose which forms apply to this taxpayer. Changes stay staged until Save."
         else
             "Choose a month, quarter, annual return, or on-demand filing to open that exact workspace.";
@@ -3020,7 +3984,7 @@ pub const Model = struct {
     }
 
     pub fn profileFormInfoDialogOpen(self: *const Model) bool {
-        return !self.taxProfiles.managing_forms and
+        return !self.formsManageMode() and
             self.profileFormInfoDefinition() != null;
     }
 
@@ -3097,7 +4061,7 @@ pub const Model = struct {
     }
 
     fn currentProfileFormsCadenceMask(self: *const Model) u8 {
-        return if (self.taxProfiles.managing_forms)
+        return if (self.formsManageMode())
             self.libraryFilter.manage_cadence_mask
         else
             self.libraryFilter.browse_cadence_mask;
@@ -3140,13 +4104,13 @@ pub const Model = struct {
     }
 
     fn profileFormsAllMonthsSelected(self: *const Model) bool {
-        return !self.taxProfiles.managing_forms and
+        return !self.formsManageMode() and
             self.profileFormsCadenceMonthlySelected() and
             self.libraryFilter.month_mask == 0;
     }
 
     fn profileFormsAllQuartersSelected(self: *const Model) bool {
-        return !self.taxProfiles.managing_forms and
+        return !self.formsManageMode() and
             self.profileFormsCadenceQuarterlySelected() and
             self.libraryFilter.quarter_mask == 0;
     }
@@ -3205,110 +4169,33 @@ pub const Model = struct {
         return self.profileFormsMonthSelected(12);
     }
 
-    pub fn profileFormsMonth1Selected(self: *const Model) bool {
-        return self.profileFormsJanuarySelected();
-    }
-
-    pub fn profileFormsMonth2Selected(self: *const Model) bool {
-        return self.profileFormsFebruarySelected();
-    }
-
-    pub fn profileFormsMonth3Selected(self: *const Model) bool {
-        return self.profileFormsMarchSelected();
-    }
-
-    pub fn profileFormsMonth4Selected(self: *const Model) bool {
-        return self.profileFormsAprilSelected();
-    }
-
-    pub fn profileFormsMonth5Selected(self: *const Model) bool {
-        return self.profileFormsMaySelected();
-    }
-
-    pub fn profileFormsMonth6Selected(self: *const Model) bool {
-        return self.profileFormsJuneSelected();
-    }
-
-    pub fn profileFormsMonth7Selected(self: *const Model) bool {
-        return self.profileFormsJulySelected();
-    }
-
-    pub fn profileFormsMonth8Selected(self: *const Model) bool {
-        return self.profileFormsAugustSelected();
-    }
-
-    pub fn profileFormsMonth9Selected(self: *const Model) bool {
-        return self.profileFormsSeptemberSelected();
-    }
-
-    pub fn profileFormsMonth10Selected(self: *const Model) bool {
-        return self.profileFormsOctoberSelected();
-    }
-
-    pub fn profileFormsMonth11Selected(self: *const Model) bool {
-        return self.profileFormsNovemberSelected();
-    }
-
-    pub fn profileFormsMonth12Selected(self: *const Model) bool {
-        return self.profileFormsDecemberSelected();
-    }
-
+    /// One row per month, carrying its own label, accessible name, and
+    /// selected state. Twelve near-identical markup blocks and twenty-four
+    /// accessors collapse into this.
     fn profileFormsPeriodButtonVariant(selected: bool) []const u8 {
         return if (selected) "primary" else "outline";
-    }
-
-    pub fn profileFormsMonth1Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth1Selected());
-    }
-
-    pub fn profileFormsMonth2Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth2Selected());
-    }
-
-    pub fn profileFormsMonth3Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth3Selected());
-    }
-
-    pub fn profileFormsMonth4Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth4Selected());
-    }
-
-    pub fn profileFormsMonth5Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth5Selected());
-    }
-
-    pub fn profileFormsMonth6Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth6Selected());
-    }
-
-    pub fn profileFormsMonth7Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth7Selected());
-    }
-
-    pub fn profileFormsMonth8Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth8Selected());
-    }
-
-    pub fn profileFormsMonth9Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth9Selected());
-    }
-
-    pub fn profileFormsMonth10Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth10Selected());
-    }
-
-    pub fn profileFormsMonth11Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth11Selected());
-    }
-
-    pub fn profileFormsMonth12Variant(self: *const Model) []const u8 {
-        return profileFormsPeriodButtonVariant(self.profileFormsMonth12Selected());
     }
 
     fn profileFormsQuarterSelected(self: *const Model, quarter: u8) bool {
         if (quarter < 1 or quarter > 4) return false;
         return self.libraryFilter.quarter_mask &
             (@as(u8, 1) << @intCast(quarter - 1)) != 0;
+    }
+
+    pub fn profileFormsMonthOptions(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const LibraryMonthFilterRow {
+        const rows = arena.alloc(LibraryMonthFilterRow, 12) catch return &.{};
+        for (0..12) |index| {
+            const month: u8 = @intCast(index + 1);
+            rows[index] = .{
+                .id = index,
+                .month = month,
+                .selected = self.profileFormsMonthSelected(month),
+            };
+        }
+        return rows;
     }
 
     pub fn profileFormsQuarterOneSelected(self: *const Model) bool {
@@ -3367,44 +4254,24 @@ pub const Model = struct {
             (@as(u16, 1) << @intCast(@intFromEnum(category))) != 0;
     }
 
-    pub fn profileFormsCategoryPaymentSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.payment);
-    }
-
-    pub fn profileFormsCategoryRegistrationSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.registration);
-    }
-
-    pub fn profileFormsCategoryWithholdingSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.withholding_tax);
-    }
-
-    pub fn profileFormsCategoryIncomeSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.income_tax);
-    }
-
-    pub fn profileFormsCategoryVatSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.value_added_tax);
-    }
-
-    pub fn profileFormsCategoryPercentageSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.percentage_tax);
-    }
-
-    pub fn profileFormsCategoryDstSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.documentary_stamp_tax);
-    }
-
-    pub fn profileFormsCategoryExciseSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.excise_tax);
-    }
-
-    pub fn profileFormsCategoryCapitalGainsSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.capital_gains_tax);
-    }
-
-    pub fn profileFormsCategoryEstateDonorsSelected(self: *const Model) bool {
-        return self.profileFormsCategorySelected(.estate_and_donors_tax);
+    /// One row per tax category, driven by the catalog enum rather than ten
+    /// hand-written accessors and ten messages that had to stay in step with
+    /// it. Adding a category to the catalog now adds its filter for free.
+    pub fn profileFormsCategoryOptions(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const LibraryCategoryFilterRow {
+        const categories = std.meta.tags(form_catalog.TaxCategory);
+        const rows = arena.alloc(LibraryCategoryFilterRow, categories.len) catch
+            return &.{};
+        for (categories, 0..) |category, index| {
+            rows[index] = .{
+                .id = index,
+                .label = taxCategoryLabel(category),
+                .selected = self.profileFormsCategorySelected(category),
+            };
+        }
+        return rows;
     }
 
     pub fn profileOnDemandFilterRows(
@@ -3445,7 +4312,7 @@ pub const Model = struct {
     }
 
     pub fn profileFormsFilterSummaryLabel(self: *const Model) []const u8 {
-        if (!self.taxProfiles.managing_forms) {
+        if (!self.formsManageMode()) {
             if (self.libraryFilter.browse_cadence_mask == 0b1111 and
                 self.libraryFilter.month_mask == 0 and
                 self.libraryFilter.quarter_mask == 0 and
@@ -3478,7 +4345,7 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
-        if (self.taxProfiles.managing_forms) {
+        if (self.formsManageMode()) {
             return self.profileFormsFilterSummaryLabel();
         }
         if (self.libraryFilter.browse_cadence_mask == 0b1111 and
@@ -3554,7 +4421,7 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
-        if (!self.taxProfiles.managing_forms) {
+        if (!self.formsManageMode()) {
             if (self.libraryFilter.browse_cadence_mask == 0b1111 and
                 self.libraryFilter.month_mask == 0 and
                 self.libraryFilter.quarter_mask == 0 and
@@ -3807,14 +4674,14 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const TaxFormLibraryRow {
-        return if (self.taxProfiles.managing_forms)
+        return if (self.formsManageMode())
             self.profileManageFormRows(arena)
         else
             self.profileBrowseFormRows(arena);
     }
 
     pub fn profileFormsShowMoreVisible(self: *const Model) bool {
-        if (self.taxProfiles.managing_forms) return false;
+        if (self.formsManageMode()) return false;
         var count: usize = 0;
         for (&form_catalog.forms, 0..) |*definition, index| {
             if (self.browseFormMatches(definition, index)) count += 1;
@@ -3827,7 +4694,7 @@ pub const Model = struct {
     }
 
     pub fn profileFormsHasPreviousRows(self: *const Model) bool {
-        return !self.taxProfiles.managing_forms and
+        return !self.formsManageMode() and
             self.libraryFilter.page_offset != 0;
     }
 
@@ -3873,7 +4740,7 @@ pub const Model = struct {
     }
 
     pub fn profileBrowseActiveEmpty(self: *const Model) bool {
-        if (self.taxProfiles.managing_forms) return false;
+        if (self.formsManageMode()) return false;
         for (&form_catalog.forms) |*definition| {
             if (self.taxProfiles.formAvailable(
                 self.calendar.selected_year,
@@ -3903,8 +4770,251 @@ pub const Model = struct {
         return self.profileSetupSection == .tax_forms;
     }
 
-    pub fn profileCertificateActive(self: *const Model) bool {
-        return self.profileSetupSection == .certificate;
+    /// What the COR card says about the referenced document.
+    ///
+    /// The reference is re-checked when the taxpayer loads, so the card can
+    /// report that the file moved or changed rather than showing a name that
+    /// no longer stands for anything.
+    pub fn profileCorStatusLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (self.taxProfiles.editing_new) {
+            return "Save this taxpayer first, then attach its COR.";
+        }
+        const name = self.taxProfiles.corFileName();
+        return switch (self.taxProfiles.corEvidenceState()) {
+            .none => "No COR on file. Attach it to check your details against it.",
+            .on_file => std.fmt.allocPrint(
+                arena,
+                "{s} · attached {s}",
+                .{ name, friendlyUnixDateLabel(
+                    arena,
+                    self.taxProfiles.corAttachedAt(),
+                ) },
+            ) catch name,
+            .moved => std.fmt.allocPrint(
+                arena,
+                "{s} was moved or deleted since you attached it.",
+                .{name},
+            ) catch "That document was moved or deleted.",
+            .changed => std.fmt.allocPrint(
+                arena,
+                "{s} changed since you attached it.",
+                .{name},
+            ) catch "That document changed since you attached it.",
+        };
+    }
+
+    pub fn profileCorActionLabel(self: *const Model) []const u8 {
+        return if (self.taxProfiles.corEvidenceState() == .none)
+            "Attach COR"
+        else
+            "Attach updated COR";
+    }
+
+    pub fn profileCorUploadDisabled(self: *const Model) bool {
+        // A document belongs to a saved taxpayer.
+        return self.taxProfiles.editing_new or
+            self.taxProfiles.selectedProfileId() == null;
+    }
+
+    pub fn profileCorReviewAvailable(self: *const Model) bool {
+        return !self.taxProfiles.corReviewOpen() and
+            self.taxProfiles.corEvidenceState() != .none;
+    }
+
+    pub fn profileCorReviewOpen(self: *const Model) bool {
+        return self.taxProfiles.corReviewOpen();
+    }
+
+    pub fn profileCorReviewTinValue(self: *const Model) []const u8 {
+        return self.taxProfiles.cor_review_tin.text();
+    }
+
+    pub fn profileCorMismatchVisible(self: *const Model) bool {
+        return self.taxProfiles.corReviewOpen() and
+            self.taxProfiles.corReviewTinMatch() == .mismatched;
+    }
+
+    /// States whose COR this is, in masked form. A refusal has to be specific
+    /// enough to act on without printing an identifier in full.
+    pub fn profileCorMismatchLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        var stated_buffer: [24]u8 = undefined;
+        var current_buffer: [24]u8 = undefined;
+        const stated = profile_fields.Tin.parse(
+            self.taxProfiles.cor_review_tin.text(),
+        ) catch return "That TIN is not a valid taxpayer identification number.";
+        const current = profile_fields.Tin.parse(
+            self.taxProfiles.tin.text(),
+        ) catch return "This COR belongs to a different taxpayer.";
+        return std.fmt.allocPrint(
+            arena,
+            "This COR belongs to TIN {s}, not this taxpayer ({s}).",
+            .{
+                stated.writeMasked(&stated_buffer) catch "***",
+                current.writeMasked(&current_buffer) catch "***",
+            },
+        ) catch "This COR belongs to a different taxpayer.";
+    }
+
+    /// Each reviewed detail names itself and what the taxpayer has on file,
+    /// so the user can see what accepting it would change before they do.
+    fn profileCorCandidateLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+        candidate: profile_ui.CorCandidateField,
+    ) []const u8 {
+        const key = candidate.reusable();
+        const current = self.taxProfiles.reusableValueText(key);
+        const name = profile_ui.reusableFieldLabel(key);
+        if (current.len == 0) {
+            return std.fmt.allocPrint(
+                arena,
+                "{s} - not recorded yet",
+                .{name},
+            ) catch name;
+        }
+        return std.fmt.allocPrint(
+            arena,
+            "{s} - on file: {s}",
+            .{ name, current },
+        ) catch name;
+    }
+
+    pub fn profileCorRdoLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return self.profileCorCandidateLabel(arena, .rdo_code);
+    }
+
+    pub fn profileCorRdoValue(self: *const Model) []const u8 {
+        return self.taxProfiles.corReviewValue(
+            @intFromEnum(profile_ui.CorCandidateField.rdo_code),
+        );
+    }
+
+    pub fn profileCorRdoAccepted(self: *const Model) bool {
+        return self.taxProfiles.corReviewAccepted(
+            @intFromEnum(profile_ui.CorCandidateField.rdo_code),
+        );
+    }
+
+    pub fn profileCorNameLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return self.profileCorCandidateLabel(arena, .taxpayer_name);
+    }
+
+    pub fn profileCorNameValue(self: *const Model) []const u8 {
+        return self.taxProfiles.corReviewValue(
+            @intFromEnum(profile_ui.CorCandidateField.taxpayer_name),
+        );
+    }
+
+    pub fn profileCorNameAccepted(self: *const Model) bool {
+        return self.taxProfiles.corReviewAccepted(
+            @intFromEnum(profile_ui.CorCandidateField.taxpayer_name),
+        );
+    }
+
+    pub fn profileCorAddressLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return self.profileCorCandidateLabel(arena, .registered_address);
+    }
+
+    pub fn profileCorAddressValue(self: *const Model) []const u8 {
+        return self.taxProfiles.corReviewValue(
+            @intFromEnum(profile_ui.CorCandidateField.registered_address),
+        );
+    }
+
+    pub fn profileCorAddressAccepted(self: *const Model) bool {
+        return self.taxProfiles.corReviewAccepted(
+            @intFromEnum(profile_ui.CorCandidateField.registered_address),
+        );
+    }
+
+    pub fn profileCorZipLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return self.profileCorCandidateLabel(arena, .zip_code);
+    }
+
+    pub fn profileCorZipValue(self: *const Model) []const u8 {
+        return self.taxProfiles.corReviewValue(
+            @intFromEnum(profile_ui.CorCandidateField.zip_code),
+        );
+    }
+
+    pub fn profileCorZipAccepted(self: *const Model) bool {
+        return self.taxProfiles.corReviewAccepted(
+            @intFromEnum(profile_ui.CorCandidateField.zip_code),
+        );
+    }
+
+    pub fn profileCorTaxTypeLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return self.profileCorCandidateLabel(arena, .tax_type);
+    }
+
+    pub fn profileCorTaxTypeValue(self: *const Model) []const u8 {
+        return self.taxProfiles.corReviewValue(
+            @intFromEnum(profile_ui.CorCandidateField.tax_type),
+        );
+    }
+
+    pub fn profileCorTaxTypeAccepted(self: *const Model) bool {
+        return self.taxProfiles.corReviewAccepted(
+            @intFromEnum(profile_ui.CorCandidateField.tax_type),
+        );
+    }
+
+    pub fn profileCorApplyFormsSelected(self: *const Model) bool {
+        return self.taxProfiles.corReviewApplyForms();
+    }
+
+    pub fn profileCorApplyDisabled(self: *const Model) bool {
+        return self.taxProfiles.corReviewApplyBlocked();
+    }
+
+    pub fn profileCorApplyLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const details = self.taxProfiles.corReviewAcceptedCount();
+        const forms: usize = if (self.taxProfiles.corReviewApplyForms())
+            self.taxProfiles.stagedFormCount()
+        else
+            0;
+        return std.fmt.allocPrint(
+            arena,
+            "Apply {d} detail changes and {d} forms",
+            .{ details, forms },
+        ) catch "Apply";
+    }
+
+    pub fn profileCorApplyFormsLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const year = self.taxProfiles.workspaceYear() orelse
+            return "Also apply the forms selected for this year";
+        return std.fmt.allocPrint(
+            arena,
+            "Also apply the forms selected for {d}",
+            .{year},
+        ) catch "Also apply the selected forms";
     }
 
     pub fn profileEmailActive(self: *const Model) bool {
@@ -5635,6 +6745,155 @@ fn resetProfileFormsPage(model: *Model) void {
     model.libraryFilter.resetPage();
 }
 
+fn toggleCorAccepted(
+    model: *Model,
+    field_key: profile_ui.CorCandidateField,
+) void {
+    model.taxProfiles.toggleCorReviewAccepted(@intFromEnum(field_key));
+}
+
+fn applyCorValue(
+    model: *Model,
+    field_key: profile_ui.CorCandidateField,
+    edit: canvas.TextInputEvent,
+) void {
+    model.taxProfiles.cor_review_values[@intFromEnum(field_key)].apply(edit);
+}
+
+/// Asks the platform for a document and attaches it as COR evidence.
+///
+/// The dialog is a synchronous platform service reached through the effects
+/// channel's bound services, which is how a modal file picker works natively:
+/// it blocks until the user chooses or cancels, and there is nothing to wait
+/// for afterwards. Effects are absent in tests, where this is a no-op.
+fn attachCorDocument(model: *Model, fx: ?*Effects) void {
+    const effects = fx orelse return;
+    const services = effects.services orelse {
+        model.taxProfiles.reportFormLaunchFailure(
+            "Choosing a file is not available on this system.",
+        );
+        return;
+    };
+    var paths: [native_sdk.platform.max_dialog_paths_bytes]u8 = undefined;
+    const result = services.showOpenDialog(.{
+        .title = "Choose your Certificate of Registration",
+        .filters = &.{.{
+            .name = "Certificate of Registration",
+            .extensions = &.{ "pdf", "png", "jpg", "jpeg" },
+        }},
+    }, &paths) catch {
+        model.taxProfiles.reportFormLaunchFailure(
+            "The file chooser could not be opened.",
+        );
+        return;
+    };
+    // Cancelling is an ordinary outcome, not a failure to report.
+    if (result.count == 0) return;
+    // Multiple selection is off, so the result is one path; a newline would
+    // only appear if that ever changed, and the first entry is still correct.
+    const chosen = std.mem.sliceTo(result.paths, '\n');
+    if (chosen.len == 0) return;
+    _ = model.taxProfiles.attachCorDocument(chosen);
+}
+
+/// Groups registrations by their shared nine-digit TIN, head office before its
+/// branches, then by branch code. Rows without a parsable TIN keep a stable
+/// position at the end rather than interleaving unpredictably.
+fn profileRowPrecedes(
+    _: void,
+    left: profile_ui.ProfileRow,
+    right: profile_ui.ProfileRow,
+) bool {
+    const left_root = left.tinRoot();
+    const right_root = right.tinRoot();
+    if (left_root.len != right_root.len) return left_root.len > right_root.len;
+    const root_order = std.mem.order(u8, left_root, right_root);
+    if (root_order != .eq) return root_order == .lt;
+    if (left.isBranch() != right.isBranch()) return !left.isBranch();
+    const branch_order = std.mem.order(u8, left.branchCode(), right.branchCode());
+    if (branch_order != .eq) return branch_order == .lt;
+    return left.slot < right.slot;
+}
+
+const month_names = [_][]const u8{
+    "January",   "February", "March",    "April",
+    "May",       "June",     "July",     "August",
+    "September", "October",  "November", "December",
+};
+
+/// Renders a Unix timestamp the way the interface speaks. Days are computed
+/// from the epoch directly: the value is a recorded instant, not a date the
+/// user typed, so there is nothing to parse.
+fn friendlyUnixDateLabel(arena: std.mem.Allocator, unix_seconds: i64) []const u8 {
+    if (unix_seconds <= 0) return "an unknown date";
+    const days: i64 = @divFloor(unix_seconds, std.time.s_per_day);
+    const epoch_day: std.time.epoch.EpochDay = .{ .day = @intCast(days) };
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const month_index = month_day.month.numeric() - 1;
+    if (month_index >= month_names.len) return "an unknown date";
+    return std.fmt.allocPrint(arena, "{s} {d}, {d}", .{
+        month_names[month_index],
+        month_day.day_index + 1,
+        year_day.year,
+    }) catch "an unknown date";
+}
+
+/// Renders an ISO date the way the interface speaks: "July 1, 2026". Falls
+/// back to the stored text rather than inventing a date it cannot parse.
+fn friendlyDateLabel(arena: std.mem.Allocator, iso: []const u8) []const u8 {
+    if (iso.len != 10) return iso;
+    const year = std.fmt.parseInt(u16, iso[0..4], 10) catch return iso;
+    const month = std.fmt.parseInt(u8, iso[5..7], 10) catch return iso;
+    const day = std.fmt.parseInt(u8, iso[8..10], 10) catch return iso;
+    if (month < 1 or month > 12) return iso;
+    return std.fmt.allocPrint(
+        arena,
+        "{s} {d}, {d}",
+        .{ month_names[month - 1], day, year },
+    ) catch iso;
+}
+
+/// Mirrors one text edit and then keeps only digits, so the year filter can
+/// never hold arbitrary text no matter how the bytes arrived (typing, paste,
+/// or an input method).
+fn applyDigitsOnly(buffer: anytype, edit: canvas.TextInputEvent) void {
+    buffer.apply(edit);
+    const current = buffer.text();
+    var digits: [8]u8 = undefined;
+    var count: usize = 0;
+    for (current) |byte| {
+        if (!std.ascii.isDigit(byte)) continue;
+        if (count == digits.len) break;
+        digits[count] = byte;
+        count += 1;
+    }
+    if (count != current.len) buffer.set(digits[0..count]);
+}
+
+fn openProfileSetupYear(model: *Model, year: i32) void {
+    if (!model.taxProfiles.openYearWorkspace(year)) return;
+    model.libraryFilter.filter_picker_visible = false;
+    model.libraryFilter.period_picker_visible = false;
+    model.libraryFilter.info_index = null;
+    model.libraryFilter.manage_cadence_mask = 0b1111;
+    model.libraryFilter.category_mask = 0;
+    resetProfileFormsPage(model);
+}
+
+/// Opens the yearly setup workspace when its section becomes visible, so the
+/// user always lands on a concrete year instead of an empty surface with no
+/// visible next step.
+fn ensureYearWorkspaceOpen(model: *Model) void {
+    if (model.taxProfiles.editing_new) return;
+    if (model.taxProfiles.selectedProfileId() == null) return;
+    if (model.taxProfiles.managing_forms and
+        model.taxProfiles.year_workspace != .open_failed) return;
+    const maximum = model.taxProfiles.maximumSetupYear();
+    const year = model.taxProfiles.workspaceYear() orelse maximum;
+    openProfileSetupYear(model, if (year > maximum) maximum else year);
+}
+
 fn toggleLibraryCadence(model: *Model, bit: u8) void {
     model.libraryFilter.toggleCadence(bit, model.taxProfiles.managing_forms);
 }
@@ -5681,6 +6940,14 @@ fn toggleLibraryQuarter(model: *Model, quarter: u8) void {
         }
     }
     resetProfileFormsPage(model);
+}
+
+/// Toggles the category at a row index. The index comes from the rendered
+/// row list, so it is validated against the enum rather than cast blindly.
+fn toggleLibraryCategoryAt(model: *Model, index: usize) void {
+    const categories = std.meta.tags(form_catalog.TaxCategory);
+    if (index >= categories.len) return;
+    toggleLibraryCategory(model, categories[index]);
 }
 
 fn toggleLibraryCategory(
@@ -6203,7 +7470,29 @@ pub const Msg = union(enum) {
     show_dashboard_profile_settings,
     show_profile_tax,
     show_profile_tax_forms,
-    show_profile_certificate,
+    profile_cor_upload,
+    profile_cor_begin_review,
+    profile_cor_cancel_review,
+    profile_cor_tin_input: canvas.TextInputEvent,
+    // on-input requires a bare TextInputEvent payload, so each reviewed
+    // detail needs its own tag rather than one carrying an index.
+    profile_cor_rdo_input: canvas.TextInputEvent,
+    profile_cor_name_input: canvas.TextInputEvent,
+    profile_cor_address_input: canvas.TextInputEvent,
+    profile_cor_zip_input: canvas.TextInputEvent,
+    profile_cor_tax_type_input: canvas.TextInputEvent,
+    profile_cor_toggle_rdo,
+    profile_cor_toggle_name,
+    profile_cor_toggle_address,
+    profile_cor_toggle_zip,
+    profile_cor_toggle_tax_type,
+    profile_cor_toggle_apply_forms,
+    profile_cor_apply,
+    form_filing_address_input: canvas.TextInputEvent,
+    form_filing_zip_input: canvas.TextInputEvent,
+    form_filing_contact_input: canvas.TextInputEvent,
+    form_filing_email_input: canvas.TextInputEvent,
+    form_filing_use_profile_contacts,
     show_profile_email,
     profile_subject_individual,
     profile_subject_sole_proprietor,
@@ -6238,14 +7527,33 @@ pub const Msg = union(enum) {
     profile_effective_from_input: canvas.TextInputEvent,
     profile_effective_until_input: canvas.TextInputEvent,
     profile_source_reference_input: canvas.TextInputEvent,
-    profile_tax_year_input: canvas.TextInputEvent,
-    profile_forms_add_year,
-    profile_forms_edit_year: i32,
+    profile_setup_toggle_year_picker,
+    profile_setup_close_year_picker,
+    profile_setup_year_query: canvas.TextInputEvent,
+    profile_setup_select_year: i32,
+    profile_setup_retry_year,
+    profile_setup_draft_empty,
+    profile_setup_draft_seed: i32,
+    profile_setup_toggle_source_picker,
+    profile_setup_close_source_picker,
+    profile_setup_save,
+    profile_setup_conflict_review,
+    profile_setup_conflict_discard,
+    profile_setup_confirm_year_switch,
+    profile_setup_cancel_year_switch,
+    profile_setup_toggle_years_disclosure,
+    profile_setup_apply_whole_year,
+    profile_setup_apply_from_date,
+    profile_setup_change_date_input: canvas.TextInputEvent,
+    profile_setup_toggle_changes_disclosure,
+    profile_record_change,
+    profile_fix_mistake,
+    profile_toggle_advanced,
+    add_branch_profile,
     profile_forms_search_input: canvas.TextInputEvent,
     toggle_profile_form: usize,
     profile_forms_select_all,
     profile_forms_clear_all,
-    profile_forms_save,
     profile_forms_cancel,
     profile_forms_reset_legacy,
     profile_forms_toggle_filter_active,
@@ -6261,32 +7569,12 @@ pub const Msg = union(enum) {
     profile_forms_toggle_cadence_quarterly,
     profile_forms_toggle_cadence_annual,
     profile_forms_toggle_cadence_on_demand,
-    profile_forms_toggle_month_1,
-    profile_forms_toggle_month_2,
-    profile_forms_toggle_month_3,
-    profile_forms_toggle_month_4,
-    profile_forms_toggle_month_5,
-    profile_forms_toggle_month_6,
-    profile_forms_toggle_month_7,
-    profile_forms_toggle_month_8,
-    profile_forms_toggle_month_9,
-    profile_forms_toggle_month_10,
-    profile_forms_toggle_month_11,
-    profile_forms_toggle_month_12,
+    profile_forms_toggle_month: u8,
     profile_forms_toggle_quarter_1,
     profile_forms_toggle_quarter_2,
     profile_forms_toggle_quarter_3,
     profile_forms_toggle_quarter_4,
-    profile_forms_toggle_category_payment,
-    profile_forms_toggle_category_registration,
-    profile_forms_toggle_category_withholding,
-    profile_forms_toggle_category_income,
-    profile_forms_toggle_category_vat,
-    profile_forms_toggle_category_percentage,
-    profile_forms_toggle_category_dst,
-    profile_forms_toggle_category_excise,
-    profile_forms_toggle_category_capital_gains,
-    profile_forms_toggle_category_estate_donors,
+    profile_forms_toggle_category: usize,
     profile_forms_toggle_on_demand_form: usize,
     profile_forms_show_previous,
     profile_forms_show_more,
@@ -6886,8 +8174,54 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.dashboardSection = .profile_settings;
         },
         .show_profile_tax => model.profileSetupSection = .tax_profile,
-        .show_profile_tax_forms => model.profileSetupSection = .tax_forms,
-        .show_profile_certificate => model.profileSetupSection = .certificate,
+        .show_profile_tax_forms => {
+            model.profileSetupSection = .tax_forms;
+            model.profileSetupYearPickerVisible = false;
+            model.profileSetupSourcePickerVisible = false;
+            model.profileSetupYearQuery.clear();
+            ensureYearWorkspaceOpen(model);
+        },
+        .profile_cor_upload => attachCorDocument(model, fx),
+        .profile_cor_begin_review => _ = model.taxProfiles.beginCorReview(),
+        .profile_cor_cancel_review => model.taxProfiles.cancelCorReview(),
+        .profile_cor_tin_input => |edit| {
+            model.taxProfiles.cor_review_tin.apply(edit);
+        },
+        .profile_cor_rdo_input => |edit| applyCorValue(model, .rdo_code, edit),
+        .profile_cor_name_input => |edit| applyCorValue(model, .taxpayer_name, edit),
+        .profile_cor_address_input => |edit| applyCorValue(model, .registered_address, edit),
+        .profile_cor_zip_input => |edit| applyCorValue(model, .zip_code, edit),
+        .profile_cor_tax_type_input => |edit| applyCorValue(model, .tax_type, edit),
+        .profile_cor_toggle_rdo => toggleCorAccepted(model, .rdo_code),
+        .profile_cor_toggle_name => toggleCorAccepted(model, .taxpayer_name),
+        .profile_cor_toggle_address => toggleCorAccepted(model, .registered_address),
+        .profile_cor_toggle_zip => toggleCorAccepted(model, .zip_code),
+        .profile_cor_toggle_tax_type => toggleCorAccepted(model, .tax_type),
+        .profile_cor_toggle_apply_forms => {
+            model.taxProfiles.toggleCorReviewApplyForms();
+        },
+        .form_filing_address_input => |edit| {
+            model.percentageTax.setContactOverride(.registered_address, edit);
+        },
+        .form_filing_zip_input => |edit| {
+            model.percentageTax.setContactOverride(.zip_code, edit);
+        },
+        .form_filing_contact_input => |edit| {
+            model.percentageTax.setContactOverride(.contact_number, edit);
+        },
+        .form_filing_email_input => |edit| {
+            model.percentageTax.setContactOverride(.email_address, edit);
+        },
+        .form_filing_use_profile_contacts => {
+            model.percentageTax.useProfileContactValues();
+        },
+        .profile_cor_apply => {
+            if (model.taxProfiles.applyCorReview()) {
+                resetProfileFormsPage(model);
+                refreshSelectedProfileFormSet(model);
+                refreshSelectedProfileCalendar(model);
+            }
+        },
         .show_profile_email => model.profileSetupSection = .email,
         .toggle_profile_subject_picker => {
             model.profileSubjectPickerVisible =
@@ -6942,35 +8276,111 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .profile_gwa_yes => {
             model.taxProfiles.setGovernmentWithholdingAgent(.yes);
         },
-        .profile_forms_add_year => {
-            const year = model.taxProfiles.formSetYearInput() orelse {
-                model.taxProfiles.reportFormLaunchFailure("Enter a valid tax year from 1 to 9999.");
-                return;
-            };
-            if (year > model.calendarToday.year) {
-                model.taxProfiles.reportFormLaunchFailure("A yearly Forms Set cannot be created for a future tax year.");
-                return;
-            }
-            if (model.taxProfiles.hasExplicitFormSet(year)) {
-                model.taxProfiles.reportFormLaunchFailure("That tax year already has a Forms Set. Use Edit forms on its yearly card.");
-                return;
-            }
-            if (!model.taxProfiles.beginManageFormsForYear(year, true)) return;
-            model.libraryFilter.filter_picker_visible = false;
-            model.libraryFilter.period_picker_visible = false;
-            model.libraryFilter.info_index = null;
-            model.libraryFilter.manage_cadence_mask = 0b1111;
-            model.libraryFilter.category_mask = 0;
+        .profile_setup_toggle_year_picker => {
+            model.profileSetupYearPickerVisible =
+                !model.profileSetupYearPickerVisible;
+            model.profileSetupYearQuery.clear();
+            model.profileSetupSourcePickerVisible = false;
+        },
+        .profile_setup_close_year_picker => {
+            model.profileSetupYearPickerVisible = false;
+            model.profileSetupYearQuery.clear();
+        },
+        .profile_setup_year_query => |edit| {
+            applyDigitsOnly(&model.profileSetupYearQuery, edit);
+        },
+        .profile_setup_select_year => |year| {
+            model.profileSetupYearPickerVisible = false;
+            model.profileSetupYearQuery.clear();
+            model.profileSetupSourcePickerVisible = false;
+            openProfileSetupYear(model, year);
+        },
+        .profile_setup_retry_year => {
+            const year = model.taxProfiles.workspaceYear() orelse
+                model.taxProfiles.maximumSetupYear();
+            openProfileSetupYear(model, year);
+        },
+        .profile_setup_draft_empty => {
+            _ = model.taxProfiles.chooseDraftEmpty();
             resetProfileFormsPage(model);
         },
-        .profile_forms_edit_year => |year| {
-            if (!model.taxProfiles.beginManageFormsForYear(year, false)) return;
-            model.libraryFilter.filter_picker_visible = false;
-            model.libraryFilter.period_picker_visible = false;
-            model.libraryFilter.info_index = null;
-            model.libraryFilter.manage_cadence_mask = 0b1111;
-            model.libraryFilter.category_mask = 0;
+        .profile_setup_draft_seed => |source| {
+            model.profileSetupSourcePickerVisible = false;
+            _ = model.taxProfiles.chooseDraftSeed(source);
             resetProfileFormsPage(model);
+        },
+        .profile_setup_toggle_source_picker => {
+            model.profileSetupSourcePickerVisible =
+                !model.profileSetupSourcePickerVisible;
+        },
+        .profile_setup_close_source_picker => {
+            model.profileSetupSourcePickerVisible = false;
+        },
+        .profile_setup_save => {
+            const recorded_change = model.taxProfiles.applyScopeFromDate();
+            if (model.taxProfiles.saveYearWorkspace()) {
+                model.libraryFilter.filter_picker_visible = false;
+                resetProfileFormsPage(model);
+                refreshSelectedProfileFormSet(model);
+                refreshSelectedProfileCalendar(model);
+                // A just-recorded change must be visible without a click, or
+                // the catalog snapping back reads as a lost save.
+                if (recorded_change) model.profileSetupChangesExpanded = true;
+            }
+        },
+        .profile_setup_conflict_review => {
+            _ = model.taxProfiles.reviewConflictingYear();
+            resetProfileFormsPage(model);
+        },
+        .profile_setup_conflict_discard => {
+            if (model.taxProfiles.discardConflictingDraft()) {
+                resetProfileFormsPage(model);
+                refreshSelectedProfileFormSet(model);
+                refreshSelectedProfileCalendar(model);
+            }
+        },
+        .profile_setup_confirm_year_switch => {
+            _ = model.taxProfiles.confirmPendingYearSwitch();
+            resetProfileFormsPage(model);
+        },
+        .profile_setup_cancel_year_switch => {
+            model.taxProfiles.cancelPendingYearSwitch();
+        },
+        .profile_setup_toggle_years_disclosure => {
+            model.profileSetupYearsExpanded = !model.profileSetupYearsExpanded;
+        },
+        .profile_setup_apply_whole_year => {
+            model.taxProfiles.chooseApplyWholeYear();
+        },
+        .profile_setup_apply_from_date => {
+            model.taxProfiles.chooseApplyFromDate();
+        },
+        .profile_setup_change_date_input => |edit| {
+            model.taxProfiles.change_effective_from.apply(edit);
+        },
+        .profile_setup_toggle_changes_disclosure => {
+            model.profileSetupChangesExpanded = !model.profileSetupChangesExpanded;
+        },
+        .add_branch_profile => {
+            if (rejectExact1701QContextChange(model)) {
+                reconcileExact1701QTaxpayerSelection(model);
+                navigate(model, .form_1701q);
+                return;
+            }
+            if (!model.taxProfiles.beginAddBranch()) {
+                openProfileEditor(model);
+                return;
+            }
+            model.profileSetupSection = .tax_profile;
+            model.profileCompletionTarget = null;
+            model.profileCompletionFormIndex = null;
+            model.pendingProfileFormLaunch = null;
+            openProfileEditor(model);
+        },
+        .profile_record_change => model.taxProfiles.beginRecordChange(),
+        .profile_fix_mistake => model.taxProfiles.beginFixMistake(),
+        .profile_toggle_advanced => {
+            model.profileAdvancedExpanded = !model.profileAdvancedExpanded;
         },
         .profile_forms_search_input => |edit| {
             model.taxProfiles.applyFormsQuery(edit);
@@ -6982,16 +8392,8 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .profile_forms_select_all => model.taxProfiles.selectAllStagedForms(),
         .profile_forms_clear_all => model.taxProfiles.clearAllStagedForms(),
-        .profile_forms_save => {
-            if (model.taxProfiles.saveManagedForms()) {
-                model.libraryFilter.filter_picker_visible = false;
-                resetProfileFormsPage(model);
-                refreshSelectedProfileFormSet(model);
-                refreshSelectedProfileCalendar(model);
-            }
-        },
         .profile_forms_cancel => {
-            model.taxProfiles.cancelManageForms();
+            model.taxProfiles.cancelYearWorkspaceEdits();
             model.libraryFilter.filter_picker_visible = false;
             resetProfileFormsPage(model);
         },
@@ -7059,32 +8461,12 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .profile_forms_toggle_cadence_quarterly => toggleLibraryCadence(model, 0b0010),
         .profile_forms_toggle_cadence_annual => toggleLibraryCadence(model, 0b0100),
         .profile_forms_toggle_cadence_on_demand => toggleLibraryCadence(model, 0b1000),
-        .profile_forms_toggle_month_1 => toggleLibraryMonth(model, 1),
-        .profile_forms_toggle_month_2 => toggleLibraryMonth(model, 2),
-        .profile_forms_toggle_month_3 => toggleLibraryMonth(model, 3),
-        .profile_forms_toggle_month_4 => toggleLibraryMonth(model, 4),
-        .profile_forms_toggle_month_5 => toggleLibraryMonth(model, 5),
-        .profile_forms_toggle_month_6 => toggleLibraryMonth(model, 6),
-        .profile_forms_toggle_month_7 => toggleLibraryMonth(model, 7),
-        .profile_forms_toggle_month_8 => toggleLibraryMonth(model, 8),
-        .profile_forms_toggle_month_9 => toggleLibraryMonth(model, 9),
-        .profile_forms_toggle_month_10 => toggleLibraryMonth(model, 10),
-        .profile_forms_toggle_month_11 => toggleLibraryMonth(model, 11),
-        .profile_forms_toggle_month_12 => toggleLibraryMonth(model, 12),
+        .profile_forms_toggle_month => |month| toggleLibraryMonth(model, month),
         .profile_forms_toggle_quarter_1 => toggleLibraryQuarter(model, 1),
         .profile_forms_toggle_quarter_2 => toggleLibraryQuarter(model, 2),
         .profile_forms_toggle_quarter_3 => toggleLibraryQuarter(model, 3),
         .profile_forms_toggle_quarter_4 => toggleLibraryQuarter(model, 4),
-        .profile_forms_toggle_category_payment => toggleLibraryCategory(model, .payment),
-        .profile_forms_toggle_category_registration => toggleLibraryCategory(model, .registration),
-        .profile_forms_toggle_category_withholding => toggleLibraryCategory(model, .withholding_tax),
-        .profile_forms_toggle_category_income => toggleLibraryCategory(model, .income_tax),
-        .profile_forms_toggle_category_vat => toggleLibraryCategory(model, .value_added_tax),
-        .profile_forms_toggle_category_percentage => toggleLibraryCategory(model, .percentage_tax),
-        .profile_forms_toggle_category_dst => toggleLibraryCategory(model, .documentary_stamp_tax),
-        .profile_forms_toggle_category_excise => toggleLibraryCategory(model, .excise_tax),
-        .profile_forms_toggle_category_capital_gains => toggleLibraryCategory(model, .capital_gains_tax),
-        .profile_forms_toggle_category_estate_donors => toggleLibraryCategory(model, .estate_and_donors_tax),
+        .profile_forms_toggle_category => |index| toggleLibraryCategoryAt(model, index),
         .profile_forms_toggle_on_demand_form => |index| toggleLibraryOnDemandForm(model, index),
         .profile_forms_show_previous => {
             model.libraryFilter.page_offset -|= model.libraryFilter.visible_limit;
@@ -7200,11 +8582,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .profile_source_reference_input => |edit| {
             model.taxProfiles.source_reference.apply(edit);
             model.taxProfiles.captureInputTruncation();
-        },
-        .profile_tax_year_input => |edit| {
-            model.taxProfiles.tax_year.apply(edit);
-            model.taxProfiles.captureInputTruncation();
-            model.taxProfiles.taxYearInputChanged();
         },
         .save_profile => {
             const inline_profile_settings =
@@ -7543,6 +8920,11 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .sidebar_profile_search_changed => |edit| {
             model.sidebarProfileSearchBuffer.apply(edit);
+            // The store answers the search, so a taxpayer past the display
+            // bound is still found by typing.
+            model.taxProfiles.setSidebarQuery(
+                model.sidebarProfileSearchBuffer.text(),
+            );
         },
         .viewport_class_changed => |viewport_class| {
             const class_changed = model.viewportClass != viewport_class;
@@ -9442,6 +10824,10 @@ pub fn main(init: std.process.Init) !void {
     canvas.icons.registerAppIcons(&app_icons);
     defer canvas.icons.registerAppIcons(&.{});
 
+    // Message handlers need an I/O handle to hash an attached COR; this is
+    // the only place one exists.
+    profile_ui.publishIo(init.io);
+
     const app_dirs = native_sdk.app_dirs;
     const platform = app_dirs.currentPlatform();
     const environment = native_sdk.debug.envFromMap(init.environ_map);
@@ -9949,9 +11335,9 @@ test "tax form library grouped filters summarize and stay open while toggling" {
     update(&model, .profile_forms_toggle_filter_picker);
     try std.testing.expect(model.profileFormsFilterPickerOpen());
 
-    update(&model, .profile_forms_toggle_month_1);
+    update(&model, .{ .profile_forms_toggle_month = 1 });
     try std.testing.expect(model.profileFormsFilterPickerOpen());
-    try std.testing.expect(model.profileFormsMonth1Selected());
+    try std.testing.expect(model.profileFormsJanuarySelected());
     try std.testing.expect(model.profileFormsCadenceMonthlySelected());
     try std.testing.expect(!model.profileFormsCadenceQuarterlySelected());
     try std.testing.expect(!model.profileFormsAllMonthsSelected());
@@ -9965,7 +11351,7 @@ test "tax form library grouped filters summarize and stay open while toggling" {
     );
 
     update(&model, .profile_forms_toggle_quarter_2);
-    try std.testing.expect(model.profileFormsMonth1Selected());
+    try std.testing.expect(model.profileFormsJanuarySelected());
     try std.testing.expect(model.profileFormsQuarter2Selected());
     try std.testing.expect(model.profileFormsCadenceMonthlySelected());
     try std.testing.expect(model.profileFormsCadenceQuarterlySelected());
@@ -9976,7 +11362,7 @@ test "tax form library grouped filters summarize and stay open while toggling" {
 
     update(&model, .profile_forms_toggle_cadence_monthly);
     try std.testing.expect(!model.profileFormsCadenceMonthlySelected());
-    try std.testing.expect(!model.profileFormsMonth1Selected());
+    try std.testing.expect(!model.profileFormsJanuarySelected());
 
     update(&model, .profile_forms_close_filter_picker);
     try std.testing.expect(!model.profileFormsFilterPickerOpen());
@@ -9989,7 +11375,7 @@ test "tax form library grouped filters summarize and stay open while toggling" {
         "All active filings",
         model.profileFormsFilterSummaryLabel(),
     );
-    try std.testing.expect(!model.profileFormsMonth1Selected());
+    try std.testing.expect(!model.profileFormsJanuarySelected());
     try std.testing.expect(!model.profileFormsQuarter2Selected());
     try std.testing.expectEqual(@as(u64, 0), model.libraryFilter.on_demand_mask);
     try std.testing.expectEqualStrings("", model.taxProfiles.formsQuery());
@@ -10001,20 +11387,20 @@ test "tax form library last period selection never widens another cadence" {
     const arena = arena_state.allocator();
     var model = Model{};
 
-    update(&model, .profile_forms_toggle_month_1);
+    update(&model, .{ .profile_forms_toggle_month = 1 });
     try std.testing.expect(model.profileFormsCadenceMonthlyLocked());
-    update(&model, .profile_forms_toggle_month_1);
+    update(&model, .{ .profile_forms_toggle_month = 1 });
     try std.testing.expect(model.profileFormsAllMonthsSelected());
     try std.testing.expectEqualStrings(
         "All months",
         model.profileFormsFilterDisplayLabel(arena),
     );
 
-    update(&model, .profile_forms_toggle_month_1);
+    update(&model, .{ .profile_forms_toggle_month = 1 });
     update(&model, .profile_forms_toggle_quarter_2);
     try std.testing.expect(!model.profileFormsCadenceMonthlyLocked());
     try std.testing.expect(!model.profileFormsCadenceQuarterlyLocked());
-    update(&model, .profile_forms_toggle_month_1);
+    update(&model, .{ .profile_forms_toggle_month = 1 });
     try std.testing.expect(!model.profileFormsCadenceMonthlySelected());
     try std.testing.expect(model.profileFormsCadenceQuarterlySelected());
     try std.testing.expect(model.profileFormsQuarter2Selected());
@@ -10161,7 +11547,13 @@ test "tax form library capability checkboxes partition the catalog" {
     );
 
     update(&model, .profile_forms_reset_filters);
-    update(&model, .profile_forms_toggle_category_income);
+    // Rows are ordered by the catalog enum, so income tax is at its index.
+    const income_index = std.mem.indexOfScalar(
+        form_catalog.TaxCategory,
+        std.meta.tags(form_catalog.TaxCategory),
+        .income_tax,
+    ).?;
+    update(&model, .{ .profile_forms_toggle_category = income_index });
     const income_rows = model.profileManageFormRows(arena);
     try std.testing.expect(income_rows.len > 0);
     for (income_rows) |*row| {
@@ -10419,9 +11811,9 @@ test "tax form library composes status type and search over staged forms" {
     try std.testing.expectEqualStrings("Quarter 2", model.profileFormsPeriodFilterLabel());
 
     update(&model, .profile_forms_period_all);
-    try std.testing.expect(
-        model.taxProfiles.beginManageFormsForYear(2026, false),
-    );
+    model.page = .profile_setup;
+    update(&model, .show_profile_tax_forms);
+    update(&model, .{ .profile_setup_select_year = 2026 });
     resetProfileFormsPage(&model);
     try std.testing.expect(model.taxProfiles.managing_forms);
     try std.testing.expectEqual(
@@ -10444,7 +11836,16 @@ test "tax form library composes status type and search over staged forms" {
     try std.testing.expectEqual(@as(usize, 1), staged_rows.len);
     try std.testing.expectEqualStrings("1905", staged_rows[0].code());
 
+    // Cancel reverts the staged change without leaving the year, so the
+    // manager stays open on the same year with its saved membership restored.
     update(&model, .profile_forms_cancel);
+    try std.testing.expect(model.taxProfiles.managing_forms);
+    try std.testing.expect(!model.taxProfiles.formsDirty());
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        model.taxProfiles.activeFormCount(),
+    );
+    update(&model, .profile_forms_toggle_filter_inactive);
     try std.testing.expectEqual(@as(usize, 2), model.profileFormRows(arena).len);
 }
 
@@ -10463,7 +11864,7 @@ test "tax form filter picker closes when its dashboard context changes" {
     update(&model, .show_dashboard_forms);
     update(&model, .profile_forms_toggle_filter_picker);
     try std.testing.expect(model.profileFormsFilterPickerOpen());
-    update(&model, .profile_forms_toggle_month_1);
+    update(&model, .{ .profile_forms_toggle_month = 1 });
     try std.testing.expectEqualStrings(
         "Browse filters applied",
         model.profileFormsFilterSummaryLabel(),
@@ -11371,8 +12772,10 @@ test "2551Q app wiring saves and resumes exact profile and transaction data" {
         saved_id.asSlice(),
     )).?;
     defer draft.deinit(allocator);
+    // Transaction fields only: this filing states no contact detail of its own.
     try std.testing.expectEqual(
-        @as(usize, percentage_tax_ui.max_draft_values),
+        @as(usize, percentage_tax_ui.max_draft_values -
+            percentage_tax_ui.filing_contact_field_count),
         draft.values.len,
     );
     var found_external_rate = false;
@@ -11465,6 +12868,9 @@ test "1701Q opens exact state and coarse draft persistence stays disabled" {
     try std.testing.expectEqual(Page.form_1701q, model.page);
     try std.testing.expect(model.incomeTaxSaveDisabled());
     try std.testing.expect(model.formProfiles.formRevision() == null);
+    // 1701Q covers quarters one to three, so a December context opens no
+    // projection and the header has nothing truthful to show.
+    try std.testing.expectEqualStrings("", model.formFilerRdo());
 
     update(&model, .income_tax_quarter_q2);
     try std.testing.expectEqual(@as(u8, 6), model.calendar.selected_month);
@@ -11477,6 +12883,27 @@ test "1701Q opens exact state and coarse draft persistence stays disabled" {
         model.exact1701Q.rows().len,
     );
     try std.testing.expect(!model.formProfileCanSaveDraft());
+
+    // With a projection open the header shows the taxpayer's own details,
+    // which is what the bound inputs render.
+    {
+        var arena_state = std.heap.ArenaAllocator.init(allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        try std.testing.expectEqualStrings("040", model.formFilerRdo());
+        try std.testing.expectEqualStrings(
+            "Juan Dela Cruz",
+            model.formFilerTaxpayerName(),
+        );
+        try std.testing.expectEqualStrings(
+            "123-456-789-000",
+            model.formFilerTin(arena),
+        );
+        try std.testing.expectEqualStrings(
+            "Quezon City",
+            model.formFilerRegisteredAddress(),
+        );
+    }
 
     const filer_id = model.taxProfiles.selectedProfileDomainId().?;
     var spouse_slot: ?usize = null;
@@ -11858,6 +13285,9 @@ test "material exact 1701Q guards profile creation and retains its immutable rev
     try std.testing.expectEqual(Page.profile_setup, model.page);
     try std.testing.expect(!model.taxProfiles.editing_new);
     try expectAppMarkupBuilds(&model);
+    // Reopening the editor reloads the persisted values, so give the save an
+    // actual change to record: a revision logs a real event, not a visit.
+    model.taxProfiles.display_name.set("Exact Filer Renamed");
     update(&model, .save_profile);
 
     try std.testing.expectEqual(Page.form_1701q, model.page);
@@ -12564,7 +13994,7 @@ test "inline profile settings discard staged edits when cancelled or left" {
     try std.testing.expect(model.pendingProfileFormLaunch == null);
 
     update(&model, .show_dashboard_forms);
-    update(&model, .{ .profile_forms_edit_year = 2026 });
+    update(&model, .{ .profile_setup_select_year = 2026 });
     update(&model, .{
         .toggle_profile_form = formCatalogIndex("2551Q").?,
     });
@@ -13480,6 +14910,234 @@ fn writeFormActivationProofShots(
     }
 }
 
+/// The states of the taxpayer setup workspace worth proving at every width.
+const SetupWorkspaceStage = enum {
+    profile,
+    forms_configured,
+    forms_year_open,
+    forms_draft_choice,
+    forms_draft_seeded,
+    branch,
+};
+
+const setup_workspace_widths = [_]struct {
+    name: []const u8,
+    width: usize,
+    height: usize,
+}{
+    .{ .name = "desktop", .width = 1400, .height = 900 },
+    .{ .name = "tablet", .width = 768, .height = 900 },
+    .{ .name = "phone", .width = 408, .height = 900 },
+};
+
+/// A taxpayer with one configured year and one that still needs setting up,
+/// so both halves of the year workspace are reachable.
+fn attachSetupWorkspaceFixture(
+    model: *Model,
+    allocator: std.mem.Allocator,
+    store: *profile_store.Store,
+) !void {
+    const profile_id = "77777777777777777777777777777777";
+    try addTestProfile(
+        store,
+        profile_id,
+        "Maria Santos",
+        "123-456-789-000",
+        .sole_proprietor,
+    );
+    // The fixture seeds 2025-2027; leave 2025 unset so both a configured year
+    // and a year that still needs setup are reachable.
+    _ = try store.clearFormSet(profile_id, 2025);
+    _ = try store.clearFormSet(profile_id, 2027);
+    try store.replaceFormSet(profile_id, 2026, &.{
+        .{ .form_code = "2551Q", .form_revision = "2018-01-ENCS" },
+        .{ .form_code = "1701Q", .form_revision = "2018-01-ENCS" },
+    });
+
+    model.calendarToday = try calendar_domain.Date.init(2026, 8, 4);
+    model.calendar.selected_year = 2026;
+    try model.taxProfiles.attach(allocator, store, "2026-08-04", 2026);
+    model.formProfiles.attach(allocator, store);
+    canvas.icons.registerAppIcons(&app_icons);
+    update(model, .{ .select_taxpayer = 0 });
+    model.page = .profile_setup;
+    model.taxProfiles.dismissNotice();
+}
+
+fn driveSetupWorkspaceStage(model: *Model, stage: SetupWorkspaceStage) void {
+    switch (stage) {
+        .profile => update(model, .show_profile_tax),
+        .forms_configured => {
+            update(model, .show_profile_tax_forms);
+            update(model, .{ .profile_setup_select_year = 2026 });
+        },
+        .forms_year_open => {
+            update(model, .show_profile_tax_forms);
+            update(model, .profile_setup_toggle_year_picker);
+        },
+        .forms_draft_choice => {
+            update(model, .profile_setup_close_year_picker);
+            update(model, .{ .profile_setup_select_year = 2025 });
+        },
+        .forms_draft_seeded => {
+            update(model, .{ .profile_setup_draft_seed = 2026 });
+        },
+        .branch => {
+            // Leave the seeded draft behind first: an unsaved year
+            // legitimately blocks leaving, which the previous stage
+            // already demonstrates.
+            update(model, .profile_setup_cancel_year_switch);
+            update(model, .profile_forms_cancel);
+            update(model, .{ .profile_setup_select_year = 2026 });
+            update(model, .add_branch_profile);
+        },
+    }
+}
+
+/// Lays the current model out at one size and runs the SDK's layout audit.
+///
+/// The audit reports text painted past its frame, widgets escaping their clip
+/// scope, overlapping siblings, and undersized hit targets — the defect
+/// classes that only rendering used to catch. It reads geometry, so layout
+/// must actually run: a finalized tree carries no frames.
+fn expectSetupWorkspaceLayoutClean(
+    model: *const Model,
+    width: usize,
+    height: usize,
+    label: []const u8,
+) !void {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var ui = canvas.Ui(Msg).init(arena);
+    const tree = try ui.finalize(try view.build(&ui, model));
+    const tokens = canvas.DesignTokens.theme(.{ .color_scheme = .light });
+    const nodes = try arena.alloc(
+        canvas.WidgetLayoutNode,
+        canvas.max_layout_audit_nodes,
+    );
+    const bounds = geometry.RectF.init(
+        0,
+        0,
+        @floatFromInt(width),
+        @floatFromInt(height),
+    );
+    const layout = canvas.layoutWidgetTreeWithTokens(
+        tree.root,
+        bounds,
+        tokens,
+        nodes,
+    ) catch |err| {
+        std.debug.print(
+            "layout audit: {s} failed to lay out at {d}x{d}: {s}\n",
+            .{ label, width, height, @errorName(err) },
+        );
+        return err;
+    };
+    // The audit only inspects the first `max_layout_audit_nodes`. A tree that
+    // outgrows the buffer would be audited in part while reporting clean, so
+    // fail loudly instead of quietly covering less.
+    if (layout.nodes.len >= canvas.max_layout_audit_nodes) {
+        std.debug.print(
+            "layout audit: {s} at {d}x{d} has {d} nodes, at or past the {d} the audit can inspect\n",
+            .{ label, width, height, layout.nodes.len, canvas.max_layout_audit_nodes },
+        );
+        return error.LayoutAuditTreeTooLarge;
+    }
+
+    var storage: [canvas.max_layout_audit_findings]canvas.LayoutAuditFinding =
+        undefined;
+    const issues = canvas.auditWidgetLayout(layout, bounds, tokens, &storage);
+    if (issues.total == 0) return;
+
+    std.debug.print(
+        "layout audit: {d} finding(s) for {s} at {d}x{d}\n",
+        .{ issues.total, label, width, height },
+    );
+    for (issues.findings) |finding| {
+        var buffer: [1024]u8 = undefined;
+        var writer = std.Io.Writer.fixed(&buffer);
+        canvas.formatLayoutAuditFinding(layout, finding, &writer) catch {};
+        std.debug.print("  - {s}\n", .{writer.buffered()});
+    }
+    return error.LayoutAuditFindings;
+}
+
+test "taxpayer setup workspace lays out cleanly at every width" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+
+    var model = Model{ .page = .profile_setup };
+    try attachSetupWorkspaceFixture(&model, allocator, &store);
+    defer model.formProfiles.deinit();
+
+    for (setup_workspace_widths) |viewport| {
+        for (std.meta.tags(SetupWorkspaceStage)) |stage| {
+            update(&model, .{
+                .viewport_width_changed = @floatFromInt(viewport.width),
+            });
+            driveSetupWorkspaceStage(&model, stage);
+            update(&model, .{
+                .viewport_width_changed = @floatFromInt(viewport.width),
+            });
+            model.taxProfiles.dismissNotice();
+
+            var label_buffer: [96]u8 = undefined;
+            const label = try std.fmt.bufPrint(
+                &label_buffer,
+                "{s}/{s}",
+                .{ @tagName(stage), viewport.name },
+            );
+            try expectSetupWorkspaceLayoutClean(
+                &model,
+                viewport.width,
+                viewport.height,
+                label,
+            );
+        }
+        // Return to a saved taxpayer before the next width sweep.
+        model.taxProfiles.cancelAddBranch();
+        update(&model, .{ .select_taxpayer = 0 });
+        model.page = .profile_setup;
+    }
+}
+
+test "render taxpayer setup workspace proof shots when requested" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    if (std.c.getenv("SETUP_WORKSPACE_SHOTS") == null) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+
+    var model = Model{ .page = .profile_setup };
+    try attachSetupWorkspaceFixture(&model, allocator, &store);
+    defer model.formProfiles.deinit();
+
+    for (setup_workspace_widths) |shot| {
+        for (std.meta.tags(SetupWorkspaceStage)) |stage| {
+            update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+            driveSetupWorkspaceStage(&model, stage);
+            update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
+            model.taxProfiles.dismissNotice();
+            var path_buffer: [192]u8 = undefined;
+            const path = try std.fmt.bufPrint(
+                &path_buffer,
+                "/tmp/ebirforms-setup-shots/{s}-{s}.png",
+                .{ @tagName(stage), shot.name },
+            );
+            try writeReferenceProofShot(&model, shot.width, shot.height, path);
+        }
+        // Return to a saved taxpayer before the next width sweep.
+        model.taxProfiles.cancelAddBranch();
+        update(&model, .{ .select_taxpayer = 0 });
+        model.page = .profile_setup;
+    }
+}
+
 test "render tax form filter menu proof shots when requested" {
     if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
     if (std.c.getenv("FILTER_MENU_SHOTS") == null) return error.SkipZigTest;
@@ -13544,7 +15202,7 @@ test "render tax form filter menu proof shots when requested" {
     // Capture a single-month selection first, then a multi-month selection.
     // The period tiles are the interaction itself, so these renders make the
     // selected-state and the compact closed summary auditable at each step.
-    update(&model, .profile_forms_toggle_month_1);
+    update(&model, .{ .profile_forms_toggle_month = 1 });
     model.libraryFilter.filter_picker_visible = true;
     for (shots[0..3]) |shot| {
         update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
@@ -13562,8 +15220,8 @@ test "render tax form filter menu proof shots when requested" {
             selected_path,
         );
     }
-    update(&model, .profile_forms_toggle_month_2);
-    update(&model, .profile_forms_toggle_month_3);
+    update(&model, .{ .profile_forms_toggle_month = 2 });
+    update(&model, .{ .profile_forms_toggle_month = 3 });
     model.libraryFilter.filter_picker_visible = true;
     for (shots[0..3]) |shot| {
         update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
@@ -13583,7 +15241,7 @@ test "render tax form filter menu proof shots when requested" {
     }
 
     update(&model, .profile_forms_reset_filters);
-    update(&model, .profile_forms_toggle_month_1);
+    update(&model, .{ .profile_forms_toggle_month = 1 });
     update(&model, .profile_forms_toggle_quarter_2);
     model.libraryFilter.filter_picker_visible = true;
     for (shots[0..3]) |shot| {
@@ -13694,22 +15352,8 @@ test "render tax form filter menu proof shots when requested" {
 
     var month_index: u8 = 1;
     while (month_index <= 12) : (month_index += 1) {
-        const toggle: Msg = switch (month_index) {
-            1 => .profile_forms_toggle_month_1,
-            2 => .profile_forms_toggle_month_2,
-            3 => .profile_forms_toggle_month_3,
-            4 => .profile_forms_toggle_month_4,
-            5 => .profile_forms_toggle_month_5,
-            6 => .profile_forms_toggle_month_6,
-            7 => .profile_forms_toggle_month_7,
-            8 => .profile_forms_toggle_month_8,
-            9 => .profile_forms_toggle_month_9,
-            10 => .profile_forms_toggle_month_10,
-            11 => .profile_forms_toggle_month_11,
-            12 => .profile_forms_toggle_month_12,
-            else => unreachable,
-        };
-        update(&model, toggle);
+        // The message carries the month, so no tag-per-month mapping is needed.
+        update(&model, .{ .profile_forms_toggle_month = month_index });
         for (period_shots) |shot| {
             update(&model, .{ .viewport_width_changed = @floatFromInt(shot.width) });
             model.libraryFilter.filter_picker_visible = false;
@@ -13955,7 +15599,7 @@ test "render form activation flow proof shots when requested" {
     // Enter the yearly Forms Set editor through Profile Settings → Tax Forms.
     update(&model, .show_profile_setup);
     update(&model, .show_profile_tax_forms);
-    update(&model, .{ .profile_forms_edit_year = 2026 });
+    update(&model, .{ .profile_setup_select_year = 2026 });
     model.taxProfiles.applyFormsQuery(.{ .insert_text = "2551Q" });
     try writeFormActivationProofShots(&model, "02-manage");
     update(&model, .{ .viewport_width_changed = 1176 });
@@ -14207,9 +15851,9 @@ test "tax form library keeps browse and manage trees within widget budget" {
         ).?.state.disabled,
     );
 
-    try std.testing.expect(
-        model.taxProfiles.beginManageFormsForYear(2026, false),
-    );
+    model.page = .profile_setup;
+    update(&model, .show_profile_tax_forms);
+    update(&model, .{ .profile_setup_select_year = 2026 });
     resetProfileFormsPage(&model);
     var manage_ui = canvas.Ui(Msg).init(arena);
     const manage_tree = try manage_ui.finalize(try view.build(&manage_ui, &model));
@@ -14667,6 +16311,115 @@ test "global calendar day widget toggles exact-date rows and heading" {
     try std.testing.expect(model.globalDashboard.selectedDay() == null);
 }
 
+test "the sidebar keeps a taxpayer's registrations together, head office first" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+
+    // Deliberately created out of order, and named so that sorting by name
+    // alone would interleave the two taxpayers.
+    try addTestProfile(
+        &store,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "Zeta Branch Two",
+        "123-456-789-002",
+        .individual,
+    );
+    try addTestProfile(
+        &store,
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "Alpha Other Taxpayer",
+        "987-654-321-000",
+        .individual,
+    );
+    try addTestProfile(
+        &store,
+        "cccccccccccccccccccccccccccccccc",
+        "Mid Head Office",
+        "123-456-789-000",
+        .individual,
+    );
+
+    var model = Model{};
+    try model.taxProfiles.attach(allocator, &store, "2026-01-01", 2026);
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const rows = model.visibleProfileRows(arena);
+    try std.testing.expectEqual(@as(usize, 3), rows.len);
+    // One taxpayer's registrations are adjacent with the head office leading,
+    // and the unrelated taxpayer does not land between them.
+    try std.testing.expectEqualStrings("Mid Head Office", rows[0].nameLabel());
+    try std.testing.expectEqualStrings("Zeta Branch Two", rows[1].nameLabel());
+    try std.testing.expectEqualStrings("Alpha Other Taxpayer", rows[2].nameLabel());
+    try std.testing.expect(!rows[0].isBranch());
+    try std.testing.expect(rows[1].isBranch());
+
+    // Ordering is presentation only: each row still selects its own taxpayer.
+    for (rows) |row| {
+        const source = model.taxProfiles.rowAt(row.slot).?;
+        try std.testing.expectEqualStrings(source.idLabel(), row.idLabel());
+    }
+}
+
+test "missing taxpayer details are listed once with the forms that need them" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+
+    var model = Model{};
+    model.calendar.selected_year = 2026;
+    try model.taxProfiles.attach(allocator, &store, "2026-01-01", 2026);
+    model.taxProfiles.tin.set("123-456-789-000");
+    model.taxProfiles.rdo.set("040");
+    model.taxProfiles.display_name.set("Missing Details Taxpayer");
+    model.taxProfiles.registered_address.set("Quezon City");
+    model.taxProfiles.effective_from.set("2026-01-01");
+    try std.testing.expect(model.taxProfiles.save());
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Nothing is active yet, so nothing may be demanded.
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        model.profileMissingFactRows(arena).len,
+    );
+
+    // 2551Q requires ZIP code, contact number, and email address.
+    try store.replaceFormSet(
+        model.taxProfiles.selectedProfileId().?,
+        2026,
+        &.{.{ .form_code = "2551Q", .form_revision = "2018-01-ENCS" }},
+    );
+    try model.taxProfiles.refreshCalendarFormSet(2026);
+
+    const rows = model.profileMissingFactRows(arena);
+    try std.testing.expect(rows.len >= 3);
+    var saw_email = false;
+    for (rows) |row| {
+        // Every listed detail names at least one active form that needs it,
+        // so the user can see the fix is shared rather than per-form.
+        try std.testing.expect(row.usedByLabel().len != 0);
+        if (std.mem.eql(u8, row.fieldLabel(), "Registered email address")) {
+            saw_email = true;
+            try std.testing.expectEqualStrings("2551Q", row.usedByLabel());
+        }
+    }
+    try std.testing.expect(saw_email);
+
+    // Filling the shared editor once clears it for every form that uses it.
+    model.taxProfiles.email.set("taxpayer@example.ph");
+    for (model.profileMissingFactRows(arena)) |row| {
+        try std.testing.expect(
+            !std.mem.eql(u8, row.fieldLabel(), "Registered email address"),
+        );
+    }
+}
+
 test "profile calendar year picker is configured and future bounded" {
     const allocator = std.testing.allocator;
     var store = try profile_store.Store.openMemory(allocator);
@@ -14710,10 +16463,50 @@ test "profile calendar year picker is configured and future bounded" {
     try std.testing.expectEqual(@as(usize, 1), filtered.len);
     try std.testing.expectEqual(@as(i32, 2020), filtered[0].year);
 
-    model.taxProfiles.tax_year.set("2026");
-    try std.testing.expect(model.profileFormsAddYearDisabled());
-    model.taxProfiles.tax_year.set("2024");
-    try std.testing.expect(!model.profileFormsAddYearDisabled());
+    // The yearly setup combobox opens on the current year, distinguishes
+    // configured years from ones that still need setup, and never lists a year
+    // that has not started.
+    const setup_options = model.profileSetupYearOptions(arena);
+    try std.testing.expect(setup_options.len >= 3);
+    try std.testing.expectEqual(@as(i32, 2026), setup_options[0].year);
+    try std.testing.expect(setup_options[0].configured);
+    var saw_unconfigured_2024 = false;
+    var saw_configured_2020 = false;
+    for (setup_options) |option| {
+        try std.testing.expect(option.year <= 2026);
+        try std.testing.expect(option.year >= profile_ui.minimum_setup_year);
+        if (option.year == 2024) {
+            saw_unconfigured_2024 = true;
+            try std.testing.expect(option.missing());
+        }
+        if (option.year == 2020) {
+            saw_configured_2020 = true;
+            try std.testing.expect(option.configured);
+        }
+    }
+    try std.testing.expect(saw_unconfigured_2024);
+    try std.testing.expect(saw_configured_2020);
+
+    // A future year is explained rather than offered, so no create action for
+    // it can exist anywhere in the list.
+    update(&model, .{
+        .profile_setup_year_query = .{ .insert_text = "2027" },
+    });
+    try std.testing.expect(model.profileSetupYearHelperVisible());
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        model.profileSetupYearOptions(arena).len,
+    );
+
+    // The filter holds digits only, however the bytes arrived.
+    update(&model, .profile_setup_close_year_picker);
+    update(&model, .{
+        .profile_setup_year_query = .{ .insert_text = "20a4" },
+    });
+    try std.testing.expectEqualStrings(
+        "204",
+        model.profileSetupYearQueryValue(),
+    );
 }
 
 test "profile calendar form picker searches only active forms and stays session local" {

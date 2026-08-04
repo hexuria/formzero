@@ -7,7 +7,7 @@
         <column grow="1" gap="5">
           <text size="heading" wrap="true">{selectedTaxpayerName}</text>
           <text wrap="true" foreground="text_muted">TIN: {selectedTaxpayerTin}</text>
-          <text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear} - Non-VAT</text>
+          <text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear} - {selectedTaxpayerTaxType}</text>
         </column>
       </row>
     </if>
@@ -16,9 +16,7 @@
         <avatar label="{selectedTaxpayerName}">{selectedTaxpayerInitials}</avatar>
         <column grow="1" gap="6">
           <text size="heading">{selectedTaxpayerName}</text>
-          <text wrap="true" foreground="text_muted">
-            TIN: {selectedTaxpayerTin} - Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear} - Non-VAT
-          </text>
+          <text wrap="true" foreground="text_muted">{selectedTaxpayerSummary}</text>
         </column>
       </row>
     </else>

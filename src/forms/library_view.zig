@@ -385,6 +385,59 @@ pub const TaxFormLibraryRow = struct {
     }
 };
 
+/// One month filter choice: its short button text, its spoken name, and
+/// whether it is selected. Months are regular, so they are generated rather
+/// than written out twelve times.
+pub const LibraryMonthFilterRow = struct {
+    id: usize,
+    month: u8,
+    selected: bool,
+
+    const short_names = [_][]const u8{
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    };
+    const full_names = [_][]const u8{
+        "January",   "February", "March",    "April",
+        "May",       "June",     "July",     "August",
+        "September", "October",  "November", "December",
+    };
+
+    pub fn key(self: *const LibraryMonthFilterRow) canvas.UiKey {
+        return canvas.uiKey(self.id);
+    }
+
+    pub fn text(self: *const LibraryMonthFilterRow) []const u8 {
+        if (self.month < 1 or self.month > 12) return "";
+        return short_names[self.month - 1];
+    }
+
+    pub fn label(self: *const LibraryMonthFilterRow) []const u8 {
+        if (self.month < 1 or self.month > 12) return "";
+        return full_names[self.month - 1];
+    }
+
+    pub fn variant(self: *const LibraryMonthFilterRow) []const u8 {
+        return if (self.selected) "primary" else "outline";
+    }
+};
+
+/// One tax-category filter choice. Rows come from the catalog enum, so the
+/// filter list cannot fall out of step with the categories that exist.
+pub const LibraryCategoryFilterRow = struct {
+    id: usize,
+    label: []const u8,
+    selected: bool,
+
+    pub fn key(self: *const LibraryCategoryFilterRow) canvas.UiKey {
+        return canvas.uiKey(self.id);
+    }
+
+    pub fn text(self: *const LibraryCategoryFilterRow) []const u8 {
+        return self.label;
+    }
+};
+
 pub const LibraryOnDemandFilterRow = struct {
     id: usize,
     definition: *const form_catalog.FormDefinition,
@@ -471,7 +524,9 @@ pub fn periodStatusColor(label: []const u8) []const u8 {
     {
         return "warning";
     }
-    return "muted";
+    // A real token name, so markup can bind `foreground` directly instead of
+    // branching over every possible colour to reach the same text element.
+    return "text_muted";
 }
 
 

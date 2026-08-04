@@ -1,146 +1,59 @@
 <template name="form-1702-mx-grid-1" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Taxable Year</text>
-      <input text="{formFilingYear}" placeholder="YYYY" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Amended Return?</text>
-      <input placeholder="No" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Number of Sheets Attached</text>
-      <input placeholder="Enter number" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">TIN</text>
-      <input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">RDO Code</text>
-      <input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Registered Name</text>
-      <input text="{formFilerRegisteredName}" placeholder="Corporation name" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Registered Address</text>
-      <input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Line of Business</text>
-      <input text="{formFilerLineOfBusiness}" placeholder="Business activity" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Special / Preferential Rate Basis</text>
-      <input text="{formFilerSpecialRateBasis}" placeholder="Legal basis or registration" disabled="true" />
-    </column>
+    <!-- @include-template form-field-bound label="Taxable Year" v="{formFilingYear}" ph="YYYY" -->
+    <!-- @include-template form-field label="Amended Return?" ph="No" -->
+    <!-- @include-template form-field label="Number of Sheets Attached" ph="Enter number" -->
+    <!-- @include-template form-field-bound label="TIN" v="{formFilerTin}" ph="000-000-000-000" -->
+    <!-- @include-template form-field-bound label="RDO Code" v="{formFilerRdo}" ph="RDO" -->
+    <!-- @include-template form-field-bound label="Registered Name" v="{formFilerRegisteredName}" ph="Corporation name" -->
+    <!-- @include-template form-field-bound label="Registered Address" v="{formFilerRegisteredAddress}" ph="Registered address" -->
+    <!-- @include-template form-field-bound label="Line of Business" v="{formFilerLineOfBusiness}" ph="Business activity" -->
+    <!-- @include-template form-field-bound label="Special / Preferential Rate Basis" v="{formFilerSpecialRateBasis}" ph="Legal basis or registration" -->
   </grid>
 </template>
 
 <template name="form-1702-mx-grid-2" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Gross Income Subject to Regular Rate</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Gross Income Subject to Special Rate</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Special / Preferential Tax Rate</text>
-      <input placeholder="Rate" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Schedule 2 Regular-Rate Tax Due</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Schedule 2 Special-Rate Tax Due</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Schedule 3 Total Tax Credits</text>
-      <input placeholder="Enter amount" />
-    </column>
+    <!-- @include-template form-field label="Gross Income Subject to Regular Rate" ph="Enter amount" -->
+    <!-- @include-template form-field label="Gross Income Subject to Special Rate" ph="Enter amount" -->
+    <!-- @include-template form-field label="Special / Preferential Tax Rate" ph="Rate" -->
+    <!-- @include-template form-field label="Schedule 2 Regular-Rate Tax Due" ph="Enter amount" -->
+    <!-- @include-template form-field label="Schedule 2 Special-Rate Tax Due" ph="Enter amount" -->
+    <!-- @include-template form-field label="Schedule 3 Total Tax Credits" ph="Enter amount" -->
   </grid>
 </template>
 
 <template name="form-1702-mx-grid-3" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Income Tax at Regular Rate</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Income Tax at Special Rate</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Total Income Tax Due</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Total Tax Credits / Payments</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Net Tax Payable / (Overpayment)</text>
-      <input placeholder="Enter amount" />
-    </column>
+    <!-- @include-template form-field label="Income Tax at Regular Rate" ph="Enter amount" -->
+    <!-- @include-template form-field label="Income Tax at Special Rate" ph="Enter amount" -->
+    <!-- @include-template form-field label="Total Income Tax Due" ph="Enter amount" -->
+    <!-- @include-template form-field label="Total Tax Credits / Payments" ph="Enter amount" -->
+    <!-- @include-template form-field label="Net Tax Payable / (Overpayment)" ph="Enter amount" -->
   </grid>
 </template>
 
 <template name="form-1702-mx-grid-4" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Surcharge</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Interest</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Compromise</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Total Amount Payable</text>
-      <input placeholder="Enter amount" />
-    </column>
+    <!-- @include-template form-field label="Surcharge" ph="Enter amount" -->
+    <!-- @include-template form-field label="Interest" ph="Enter amount" -->
+    <!-- @include-template form-field label="Compromise" ph="Enter amount" -->
+    <!-- @include-template form-field label="Total Amount Payable" ph="Enter amount" -->
   </grid>
 </template>
 
 <template name="form-1702-mx-grid-5" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Refund</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Tax Credit Certificate</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Carry Over to Next Period</text>
-      <input placeholder="Enter amount" />
-    </column>
+    <!-- @include-template form-field label="Refund" ph="Enter amount" -->
+    <!-- @include-template form-field label="Tax Credit Certificate" ph="Enter amount" -->
+    <!-- @include-template form-field label="Carry Over to Next Period" ph="Enter amount" -->
   </grid>
 </template>
 
 <template name="form-1702-mx-grid-6" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">Attachment Description</text>
-      <input placeholder="Supporting schedule" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Attachment Reference</text>
-      <input placeholder="Filename or reference" />
-    </column>
+    <!-- @include-template form-field label="Attachment Description" ph="Supporting schedule" -->
+    <!-- @include-template form-field label="Attachment Reference" ph="Filename or reference" -->
   </grid>
 </template>
 

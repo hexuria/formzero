@@ -15,7 +15,54 @@ const Money = @import("../domain/money.zig").Money;
 const canvas = native_sdk.canvas;
 
 pub const max_schedule_rows = 2;
-pub const max_draft_values = 28;
+/// The contact details a single filing may state differently from the
+/// taxpayer's profile.
+///
+/// Only contact details: the TIN, RDO, and registered name identify the
+/// taxpayer, and a filing that disagreed with the profile about those would be
+/// claiming to be a different taxpayer rather than reaching them differently.
+pub const FilingContactField = enum {
+    registered_address,
+    zip_code,
+    contact_number,
+    email_address,
+
+    pub fn reusable(self: FilingContactField) field.ReusableField {
+        return switch (self) {
+            .registered_address => .registered_address,
+            .zip_code => .zip_code,
+            .contact_number => .contact_number,
+            .email_address => .email_address,
+        };
+    }
+
+    /// The stable target this override replaces on the printed form.
+    pub fn target(self: FilingContactField) []const u8 {
+        return switch (self) {
+            .registered_address => "2551Q.2018-01-ENCS.input.registered_address",
+            .zip_code => "2551Q.2018-01-ENCS.input.zip_code",
+            .contact_number => "2551Q.2018-01-ENCS.input.contact_number",
+            .email_address => "2551Q.2018-01-ENCS.input.email_address",
+        };
+    }
+};
+
+pub const filing_contact_field_count = std.meta.tags(FilingContactField).len;
+
+/// Marks a stored value as belonging to this filing rather than to the
+/// taxpayer, so provenance survives save and resume.
+pub const filing_override_provenance = "filing_override";
+
+fn resolveContactTarget(field_id: []const u8) ?FilingContactField {
+    for (std.meta.tags(FilingContactField)) |contact_field| {
+        if (std.mem.eql(u8, contact_field.target(), field_id)) {
+            return contact_field;
+        }
+    }
+    return null;
+}
+
+pub const max_draft_values = 28 + filing_contact_field_count;
 pub const max_persisted_value_len = 192;
 pub const max_persisted_field_id_len = 96;
 
@@ -221,11 +268,12 @@ const ResolvedPersistedField = union(enum) {
 
 comptime {
     if (std.meta.fields(PersistedField).len +
-        max_schedule_rows * std.meta.fields(ScheduleField).len !=
+        max_schedule_rows * std.meta.fields(ScheduleField).len +
+        filing_contact_field_count !=
         max_draft_values)
     {
         @compileError(
-            "max_draft_values must cover scalar and repeated 2551Q fields",
+            "max_draft_values must cover scalar, repeated, and filing-specific 2551Q fields",
         );
     }
 }
@@ -378,6 +426,16 @@ pub const State = struct {
     interest: canvas.TextBuffer(32) = .{},
     compromise: canvas.TextBuffer(32) = .{},
 
+    /// Contact details this filing states differently from the taxpayer's
+    /// profile. They belong to the filing, so they persist with the draft's
+    /// transaction values and never touch the immutable snapshot the draft was
+    /// composed from - which is exactly what lets the profile value be
+    /// restored later.
+    contact_overrides: [filing_contact_field_count]canvas.TextBuffer(255) =
+        [_]canvas.TextBuffer(255){.{}} ** filing_contact_field_count,
+    contact_overridden: [filing_contact_field_count]bool =
+        [_]bool{false} ** filing_contact_field_count,
+
     total_due_display: DisplayText(40) = .{},
     total_credits_display: DisplayText(40) = .{},
     net_tax_display: DisplayText(40) = .{},
@@ -420,7 +478,22 @@ pub const State = struct {
         self.editable = std.mem.eql(u8, draft.lifecycle, "editing");
 
         var seen: u32 = 0;
+        self.useProfileContactValues();
         for (draft.values) |*stored| {
+            // A filing-specific contact value is not one of the transaction
+            // fields; its provenance says so, and it is restored to the
+            // override it was rather than to the taxpayer's own details.
+            if (std.mem.eql(u8, stored.provenance, filing_override_provenance)) {
+                const contact_field = resolveContactTarget(stored.field_id) orelse
+                    return error.InvalidDraftValue;
+                const index = @intFromEnum(contact_field);
+                if (self.contact_overridden[index]) {
+                    return error.DuplicateDraftField;
+                }
+                self.contact_overrides[index].set(stored.value_text);
+                self.contact_overridden[index] = true;
+                continue;
+            }
             const persisted_field = resolveFieldId(stored.field_id) orelse
                 return error.InvalidDraftValue;
             const mask = @as(u32, 1) <<
@@ -743,6 +816,49 @@ pub const State = struct {
         return transaction;
     }
 
+    pub fn contactOverridden(
+        self: *const State,
+        contact_field: FilingContactField,
+    ) bool {
+        return self.contact_overridden[@intFromEnum(contact_field)];
+    }
+
+    pub fn contactOverrideText(
+        self: *const State,
+        contact_field: FilingContactField,
+    ) []const u8 {
+        return self.contact_overrides[@intFromEnum(contact_field)].text();
+    }
+
+    pub fn overriddenContactCount(self: *const State) usize {
+        var count: usize = 0;
+        for (self.contact_overridden) |overridden| {
+            if (overridden) count += 1;
+        }
+        return count;
+    }
+
+    /// Records a value that applies to this filing only.
+    pub fn setContactOverride(
+        self: *State,
+        contact_field: FilingContactField,
+        edit: canvas.TextInputEvent,
+    ) void {
+        const index = @intFromEnum(contact_field);
+        self.contact_overrides[index].apply(edit);
+        self.contact_overridden[index] =
+            self.contact_overrides[index].text().len != 0;
+    }
+
+    /// Drops every filing-specific value, so the form shows what the taxpayer
+    /// profile said when this filing was started. The restored value comes
+    /// from the draft's own snapshot, never from the live profile, so a
+    /// profile revised since then cannot leak into a filing already under way.
+    pub fn useProfileContactValues(self: *State) void {
+        for (&self.contact_overrides) |*value| value.clear();
+        self.contact_overridden = [_]bool{false} ** filing_contact_field_count;
+    }
+
     pub fn draftValueWrites(
         self: *const State,
         output: *DraftValueSet,
@@ -857,6 +973,20 @@ pub const State = struct {
             .overpayment_disposition,
             @tagName(transaction.overpayment_disposition),
         );
+        // Filing-specific contact values ride with the draft's transaction
+        // values and carry their own provenance, so resuming knows they came
+        // from this filing rather than from the taxpayer.
+        for (std.meta.tags(FilingContactField)) |contact_field| {
+            const index = @intFromEnum(contact_field);
+            if (!self.contact_overridden[index]) continue;
+            const value = self.contact_overrides[index].text();
+            if (value.len == 0) continue;
+            try output.appendRaw(
+                contact_field.target(),
+                value,
+                filing_override_provenance,
+            );
+        }
         return output.slice();
     }
 
@@ -1627,8 +1757,10 @@ test "draft writes preserve source categories and resume all source values" {
 
     var persisted: DraftValueSet = .{};
     const writes = try source.draftValueWrites(&persisted);
+    // Every transaction field is written; the filing-specific contact slots
+    // stay empty until this filing actually states one.
     try std.testing.expectEqual(
-        @as(usize, max_draft_values),
+        @as(usize, max_draft_values - filing_contact_field_count),
         writes.len,
     );
     var line_2_rate_id: [max_persisted_field_id_len]u8 = undefined;
@@ -1671,7 +1803,9 @@ test "draft writes preserve source categories and resume all source values" {
         .amendment_of = null,
         .bindings = &empty_bindings,
         .snapshots = &empty_snapshots,
-        .values = &owned_values,
+        // Only the entries actually written: the array is sized for the
+        // maximum, which now includes filing-specific slots this draft has none of.
+        .values = owned_values[0..writes.len],
     };
 
     var resumed: State = .{};
@@ -1797,4 +1931,77 @@ test "resume rejects partial nonempty values and unknown lifecycle" {
         error.InvalidDraftIntent,
         state.loadFromDraft(&amended_draft),
     );
+}
+
+test "a contact value changed for one filing survives resume and can be undone" {
+    var state = try configuredState();
+    state.refresh();
+
+    var clean: DraftValueSet = .{};
+    const baseline = try state.draftValueWrites(&clean);
+    try std.testing.expectEqual(@as(usize, 0), state.overriddenContactCount());
+
+    // This filing states a different contact number.
+    state.setContactOverride(.contact_number, .{ .insert_text = "+639170000000" });
+    try std.testing.expect(state.contactOverridden(.contact_number));
+    try std.testing.expectEqualStrings(
+        "+639170000000",
+        state.contactOverrideText(.contact_number),
+    );
+
+    var persisted: DraftValueSet = .{};
+    const writes = try state.draftValueWrites(&persisted);
+    try std.testing.expectEqual(baseline.len + 1, writes.len);
+    const stored = findWrite(
+        writes,
+        FilingContactField.contact_number.target(),
+    ).?;
+    // The stored value says it belongs to the filing, not to the taxpayer.
+    try std.testing.expectEqualStrings(filing_override_provenance, stored.provenance);
+    try std.testing.expectEqualStrings("+639170000000", stored.value_text);
+
+    var owned: [max_draft_values]store_module.OwnedDraftValue = undefined;
+    for (writes, 0..) |write, index| {
+        owned[index] = .{
+            .field_id = @constCast(write.field_id),
+            .value_text = @constCast(write.value_text),
+            .provenance = @constCast(write.provenance),
+        };
+    }
+    var empty_bindings: [0]store_module.OwnedRoleBinding = .{};
+    var empty_snapshots: [0]store_module.OwnedSnapshotField = .{};
+    var draft: store_module.OwnedDraft = .{
+        .id = @constCast("draft-filing-contact"),
+        .form_code = @constCast("2551Q"),
+        .form_revision = @constCast("2018-01-ENCS"),
+        .period_key = @constCast("2026-Q1"),
+        .profile_as_of = @constCast("2026-03-31"),
+        .lifecycle = @constCast("editing"),
+        .intent = @constCast("original"),
+        .mapping_revision = @constCast("tax-profile-snapshot-v1"),
+        .amendment_of = null,
+        .bindings = &empty_bindings,
+        .snapshots = &empty_snapshots,
+        .values = owned[0..writes.len],
+    };
+
+    var resumed: State = .{};
+    try resumed.loadFromDraft(&draft);
+    try std.testing.expect(resumed.contactOverridden(.contact_number));
+    try std.testing.expectEqualStrings(
+        "+639170000000",
+        resumed.contactOverrideText(.contact_number),
+    );
+    // Only the detail this filing stated is its own; the rest stay the
+    // taxpayer's.
+    try std.testing.expectEqual(@as(usize, 1), resumed.overriddenContactCount());
+    try std.testing.expect(!resumed.contactOverridden(.registered_address));
+
+    // Undoing it leaves nothing filing-specific behind, so the form falls back
+    // to the details the draft was composed from.
+    resumed.useProfileContactValues();
+    try std.testing.expectEqual(@as(usize, 0), resumed.overriddenContactCount());
+    var after: DraftValueSet = .{};
+    const restored = try resumed.draftValueWrites(&after);
+    try std.testing.expectEqual(baseline.len, restored.len);
 }

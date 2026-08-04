@@ -1,4 +1,18 @@
-<template name="sidebar-profile" args="name tin profile active=false">
+<template name="form-field" args="label ph">
+  <column gap="4">
+    <text foreground="text_muted">{label}</text>
+    <input placeholder="{ph}" />
+  </column>
+</template>
+
+<template name="form-field-bound" args="label v ph">
+  <column gap="4">
+    <text foreground="text_muted">{label}</text>
+    <input text="{v}" placeholder="{ph}" disabled="true" />
+  </column>
+</template>
+
+<template name="sidebar-profile" args="name tin profile branch active=false">
   <list-item
     width="255"
     height="72"
@@ -11,8 +25,11 @@
       <text><span weight="bold">{name}</span></text>
       <text foreground="text_muted">{tin}</text>
       <if test="{active}">
-        <text foreground="text_muted">RDO: {selectedTaxpayerRdo}</text>
+        <text foreground="text_muted">{branch} - RDO: {selectedTaxpayerRdo}</text>
       </if>
+      <else>
+        <text foreground="text_muted">{branch}</text>
+      </else>
     </column>
   </list-item>
 </template>
@@ -253,6 +270,9 @@
         label="Search taxpayer profiles"
         autofocus="{overlay}"
         on-input="sidebar_profile_search_changed"/>
+      <if test="{profileListTruncatedVisible}">
+        <text width="232" wrap="true" foreground="text_muted">{profileListTruncatedLabel}</text>
+      </if>
 
       <spacer height="16"/>
       <separator/>
@@ -273,9 +293,27 @@
               template="sidebar-profile"
               name="{profile.nameLabel}"
               tin="{profile.tinLabel}"
+              branch="{profile.branchLabel}"
               profile="{profile.slot}"
               active="{profile.active and taxpayerNavigationSelectionVisible}"/>
           </for>
+
+          <if test="{profileCanAddBranch}">
+            <row width="232" height="48" cross="center">
+              <list-item
+                key="{sidebarActionEpoch}"
+                width="232"
+                height="44"
+                padding="12"
+                radius="md"
+                icon="plus"
+                selected="false"
+                label="{profileAddBranchLabel}"
+                on-press="add_branch_profile">
+                Add branch
+              </list-item>
+            </row>
+          </if>
 
           <row width="232" height="48" cross="center">
             <list-item

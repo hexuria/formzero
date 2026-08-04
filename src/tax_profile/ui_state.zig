@@ -16,9 +16,19 @@ const multi_select = @import("../components/multi_select.zig");
 
 const canvas = native_sdk.canvas;
 
-pub const max_profiles: usize = 64;
+/// Display bound for loaded taxpayer rows, not a reachability ceiling: the
+/// sidebar search queries the store, so a taxpayer past this bound is still
+/// found by typing. At ~300 bytes a row this is ~300 KB of fixed buffers.
+pub const max_profiles: usize = 1024;
 pub const max_registered_forms: usize = catalog.registry_count;
 pub const max_form_set_summaries: usize = 128;
+/// Recorded mid-year changes shown per year. The store holds every row; past
+/// this bound the list says it is truncated rather than dropping silently.
+pub const max_form_set_intervals: usize = 12;
+
+/// Whether the year workspace's primary save applies to the whole year (the
+/// default, today's behavior) or records a change effective from a date.
+pub const FormsApplyScope = enum { whole_year, from_date };
 /// Covers every recurring catalog slot (51 forms × 12 periods) plus a
 /// bounded on-demand history window. If that window is exceeded the library
 /// reports status as unavailable instead of falsely labelling omitted work
@@ -42,6 +52,17 @@ pub const Error = error{
     NoSelectedProfile,
     FormsRequireSavedProfile,
     UnsavedFormSetChanges,
+    UnsavedProfileChanges,
+    NoFactsEffectiveForYear,
+    CorFileUnreadable,
+    CorFileEmpty,
+    CorFileTooLarge,
+    CorFileUnsupported,
+    DuplicateTaxpayerIdentifier,
+    NoProfileChanges,
+    BranchTinRootChanged,
+    BranchCodeRequired,
+    BranchLegalPersonChanged,
 } || persistence.Error;
 
 pub const NoticeKind = enum {
@@ -62,8 +83,88 @@ pub const GovernmentWithholdingChoice = enum {
     yes,
 };
 
+/// The taxpayer details a COR states, which the user transcribes and reviews
+/// before any of them become authoritative.
+///
+/// Deliberately a short list: a COR carries registration facts, and filing
+/// amounts, schedules, and payments are not among them no matter what else
+/// the document shows.
+pub const CorCandidateField = enum {
+    rdo_code,
+    taxpayer_name,
+    registered_address,
+    zip_code,
+    tax_type,
+
+    pub fn reusable(self: CorCandidateField) fields.ReusableField {
+        return switch (self) {
+            .rdo_code => .rdo_code,
+            .taxpayer_name => .taxpayer_name,
+            .registered_address => .registered_address,
+            .zip_code => .zip_code,
+            .tax_type => .tax_type,
+        };
+    }
+};
+
+pub const cor_candidate_count = std.meta.tags(CorCandidateField).len;
+
+/// Whether the COR the user is transcribing belongs to this taxpayer.
+pub const CorTinMatch = enum {
+    /// No TIN entered yet, so nothing can be applied.
+    unknown,
+    /// The COR states this taxpayer's canonical TIN.
+    matches,
+    /// The COR belongs to a different taxpayer. Nothing may be applied.
+    mismatched,
+};
+
+/// Why the user is editing taxpayer details. Both append to the same
+/// append-only history; they differ in which period the new record claims and
+/// therefore in what the interface must tell the user about older filings.
+pub const ChangeIntent = enum {
+    /// Something changed in the real world on a date.
+    record_change,
+    /// Something was recorded wrongly and the same period must be restated.
+    fix_mistake,
+};
+
 pub const FormActivityFilter = enum { active, inactive, all };
 pub const FormCapabilityFilter = enum { all, editor, calendar_only };
+
+/// Oldest tax year the setup UI offers. The storage layer accepts 1-9999,
+/// but that is a data bound rather than a product promise: the oldest catalog
+/// revision is 1999-07-ENCS, so older years would only add unreachable rows.
+pub const minimum_setup_year: i32 = 2000;
+
+/// The yearly setup workspace. Exactly one mode is active while a year is
+/// open, and only `draft_*` modes may create a Forms Set. A year is never
+/// classified from a cached summary: `openYearWorkspace` resolves the store
+/// first, so a configured year cannot present a create action.
+pub const YearWorkspaceMode = enum {
+    /// A configured year (including explicitly empty and the legacy catalog
+    /// compatibility state) is loaded for editing.
+    viewing,
+    /// An unconfigured year is open, but the user has not chosen how to start.
+    draft_choice,
+    /// An unconfigured year started from no forms.
+    draft_empty,
+    /// An unconfigured year seeded from another year's active forms.
+    draft_seeded,
+    /// Saving a draft lost the race with another writer. The staged selection
+    /// is preserved until the user reviews or discards it.
+    conflict,
+    /// The year could not be read. No create action may be offered, because an
+    /// unknown year must never be treated as unconfigured.
+    open_failed,
+
+    pub fn isDraft(self: YearWorkspaceMode) bool {
+        return switch (self) {
+            .draft_choice, .draft_empty, .draft_seeded => true,
+            .viewing, .conflict, .open_failed => false,
+        };
+    }
+};
 
 /// Presentation status for one catalog form while the Forms Set editor is
 /// open. Persisted membership and staged membership stay separate so Manage
@@ -145,6 +246,42 @@ pub const ProfileRow = struct {
     initials: InitialsText = .{},
     subject_kind: model.SubjectKind,
     active: bool = false,
+    /// The nine-digit root shared by a head office and its branches, and the
+    /// branch segment that distinguishes them. Both are derived from the
+    /// canonical TIN; neither is a second source of truth.
+    tin_root: FixedText(9) = .{},
+    branch_code: FixedText(5) = .{},
+
+    pub fn tinRoot(self: *const ProfileRow) []const u8 {
+        return self.tin_root.text();
+    }
+
+    pub fn branchCode(self: *const ProfileRow) []const u8 {
+        return self.branch_code.text();
+    }
+
+    /// A registration with no branch segment, or segment zero, is the head
+    /// office. Anything else is a branch of the same taxpayer.
+    pub fn isBranch(self: *const ProfileRow) bool {
+        const code = self.branch_code.text();
+        if (code.len == 0) return false;
+        for (code) |digit| {
+            if (digit != '0') return true;
+        }
+        return false;
+    }
+
+    pub fn branchLabel(
+        self: *const ProfileRow,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (!self.isBranch()) return "Head office";
+        return std.fmt.allocPrint(
+            arena,
+            "Branch {s}",
+            .{self.branch_code.text()},
+        ) catch "Branch";
+    }
 
     pub fn nameLabel(self: *const ProfileRow) []const u8 {
         return self.name.text();
@@ -231,6 +368,16 @@ pub const State = struct {
     profiles: [max_profiles]ProfileRow = undefined,
     profile_count: usize = 0,
     profile_records_truncated: bool = false,
+    /// The sidebar search text. When set, the loaded rows are the store-wide
+    /// matches rather than the first `max_profiles` taxpayers, which is what
+    /// makes everyone findable regardless of the display bound.
+    sidebar_query: FixedText(96) = .{},
+    /// Display details of the selected taxpayer, kept current at selection
+    /// time. The loaded rows are a view that a search narrows; the header
+    /// must keep telling the truth about who is selected even while that view
+    /// does not contain them.
+    selected_display: ProfileRow = .{ .slot = 0, .subject_kind = .individual },
+    has_selected_display: bool = false,
     selected_id: StableIdText = .{},
     has_selection: bool = false,
     selected_revision_id: StableIdText = .{},
@@ -270,12 +417,72 @@ pub const State = struct {
     staged_forms: FormSelectionState = .{},
     managing_forms: bool = false,
     form_set_create_mode: bool = false,
+    year_workspace: YearWorkspaceMode = .viewing,
+    /// Whether the primary save applies to the whole year or records a
+    /// change taking effect on a date. From-a-date routes the save to the
+    /// interval tables and leaves the year's base set untouched.
+    forms_apply_scope: FormsApplyScope = .whole_year,
+    change_effective_from: canvas.TextBuffer(10) = .{},
+    form_set_intervals: [max_form_set_intervals]persistence.FormSetIntervalSummary = undefined,
+    form_set_interval_count: usize = 0,
+    form_set_intervals_truncated: bool = false,
+    /// The source year a draft copied its forms from. Presentation only: no
+    /// facts are duplicated and the source year is never opened for writing.
+    draft_source_year: ?i32 = null,
+    /// A year the user selected while the workspace still held unsaved work.
+    /// Nothing is discarded until they answer the prompt.
+    pending_year_switch: ?i32 = null,
     form_activity_filter: FormActivityFilter = .active,
     form_capability_filter: FormCapabilityFilter = .all,
     input_was_truncated: bool = false,
 
     default_effective_from: FixedText(10) = .{},
     default_tax_year: i32 = 2026,
+
+    /// Fingerprint of the editor values as they were loaded. Saving compares
+    /// against it so reopening a taxpayer and pressing save cannot append a
+    /// revision that records no actual change.
+    baseline_fingerprint: u64 = 0,
+    /// Which taxpayer facts apply to the workspace year, summarized without
+    /// revision vocabulary.
+    facts_summary_year: i32 = 0,
+    facts_summary_available: bool = false,
+    facts_effective_from: FixedText(10) = .{},
+    facts_missing_for_year: bool = false,
+    facts_changed_during_year: bool = false,
+    facts_same_as_prior_year: bool = false,
+    /// Persisted registered tax type for header display, kept separate from
+    /// the editable buffer so unsaved typing never reads as recorded fact.
+    selected_tax_type: FixedText(80) = .{},
+    /// How many tax-type registrations the loaded revision carries. More than
+    /// one is a real state the single-value editor cannot show, and reporting
+    /// it as "not recorded" would deny a fact the taxpayer actually has.
+    selected_tax_type_count: usize = 0,
+    cor_state: CorEvidenceState = .none,
+    cor_file_name: FixedText(160) = .{},
+    cor_attached_at: i64 = 0,
+    cor_digest: FixedText(64) = .{},
+    cor_document_id: FixedText(64) = .{},
+    /// Transcription of the COR under review. Nothing here is authoritative:
+    /// it becomes a taxpayer record only through an explicit apply, and only
+    /// for the rows the user accepted.
+    cor_review_open: bool = false,
+    cor_review_tin: canvas.TextBuffer(32) = .{},
+    cor_review_values: [cor_candidate_count]canvas.TextBuffer(255) =
+        [_]canvas.TextBuffer(255){.{}} ** cor_candidate_count,
+    cor_review_accepted: [cor_candidate_count]bool = .{false} ** cor_candidate_count,
+    cor_review_apply_forms: bool = false,
+    change_intent: ChangeIntent = .record_change,
+    /// Set while creating another registration of the taxpayer already
+    /// selected. The nine-digit root and the legal person are fixed by that
+    /// taxpayer; everything branch-specific must be reviewed, not inherited.
+    branch_mode: bool = false,
+    branch_source_root: FixedText(9) = .{},
+    branch_source_name: NameText = .{},
+    branch_source_kind: model.SubjectKind = .individual,
+    /// The effective date as loaded, so switching to a correction can restore
+    /// the period being restated without guessing.
+    loaded_effective_from: FixedText(10) = .{},
 
     /// The dashboard renders deadlines for the viewed year while some of
     /// those deadlines belong to the immediately preceding taxable year.
@@ -295,6 +502,10 @@ pub const State = struct {
     notice: NoticeText = .{},
     notice_kind: NoticeKind = .neutral,
     notice_epoch: u64 = 0,
+    /// A composed failure message that outranks the generic error mapping,
+    /// used where the refusal can name the taxpayer involved.
+    pending_error_detail: NoticeText = .{},
+    has_pending_error_detail: bool = false,
 
     pub fn attach(
         self: *State,
@@ -375,6 +586,204 @@ pub const State = struct {
         return self.store == null or !self.loaded_shape_supported;
     }
 
+    /// Order-stable fingerprint of every value the editor can change. Used
+    /// only to detect "nothing actually changed"; the domain remains the
+    /// authority on what a revision contains.
+    fn editorFingerprint(self: *const State) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        const parts = [_][]const u8{
+            trimmed(self.tin.text()),
+            trimmed(self.rdo.text()),
+            trimmed(self.display_name.text()),
+            trimmed(self.trade_name.text()),
+            trimmed(self.registered_address.text()),
+            trimmed(self.zip_code.text()),
+            trimmed(self.phone.text()),
+            trimmed(self.email.text()),
+            trimmed(self.birth_date.text()),
+            trimmed(self.citizenship.text()),
+            trimmed(self.foreign_tax_number.text()),
+            trimmed(self.business_line.text()),
+            trimmed(self.atc.text()),
+            trimmed(self.tax_type.text()),
+            trimmed(self.special_rate_basis.text()),
+            trimmed(self.effective_from.text()),
+            trimmed(self.effective_until.text()),
+            trimmed(self.source_reference.text()),
+        };
+        for (parts) |part| {
+            hasher.update(part);
+            hasher.update("\x1e");
+        }
+        hasher.update(&[_]u8{
+            @intFromEnum(self.subject_kind),
+            @intFromEnum(self.source_kind),
+            @intFromEnum(self.government_withholding_agent),
+        });
+        return hasher.final();
+    }
+
+    fn captureBaseline(self: *State) void {
+        self.baseline_fingerprint = self.editorFingerprint();
+    }
+
+    /// True when the open taxpayer has editor changes that saving would
+    /// record. A brand-new taxpayer is never "dirty" in this sense: it has no
+    /// saved state to diverge from and is guarded by its own save path.
+    pub fn factsDirty(self: *const State) bool {
+        if (self.editing_new or !self.has_selection) return false;
+        return self.editorFingerprint() != self.baseline_fingerprint;
+    }
+
+    /// The editor's current value for one canonical reusable fact. Forms
+    /// consume these facts through named roles; they never own a private copy,
+    /// so there is exactly one place to fix a missing one.
+    pub fn reusableValueText(
+        self: *const State,
+        key: fields.ReusableField,
+    ) []const u8 {
+        return switch (key) {
+            .tin => trimmed(self.tin.text()),
+            .rdo_code => trimmed(self.rdo.text()),
+            .taxpayer_name => trimmed(self.display_name.text()),
+            .registered_name => if (self.subject_kind == .sole_proprietor)
+                trimmed(self.trade_name.text())
+            else
+                trimmed(self.display_name.text()),
+            .registered_address => trimmed(self.registered_address.text()),
+            .zip_code => trimmed(self.zip_code.text()),
+            .contact_number => trimmed(self.phone.text()),
+            .email_address => trimmed(self.email.text()),
+            .date_of_birth => trimmed(self.birth_date.text()),
+            .citizenship => trimmed(self.citizenship.text()),
+            .foreign_tax_number => trimmed(self.foreign_tax_number.text()),
+            .line_of_business => trimmed(self.business_line.text()),
+            .atc => trimmed(self.atc.text()),
+            .tax_type => trimmed(self.tax_type.text()),
+            // Recorded either way; only "not recorded" counts as missing.
+            .government_withholding_agent => if (self.government_withholding_agent == .unset)
+                ""
+            else
+                "recorded",
+            .special_rate_basis => trimmed(self.special_rate_basis.text()),
+        };
+    }
+
+    pub fn changeIntent(self: *const State) ChangeIntent {
+        return self.change_intent;
+    }
+
+    /// Records something that happened on a date. Earlier periods keep the
+    /// details they already had.
+    pub fn beginRecordChange(self: *State) void {
+        if (self.editing_new or !self.has_selection) return;
+        self.change_intent = .record_change;
+        setEditorBuffer(&self.effective_from, self.default_effective_from.text());
+    }
+
+    /// Restates the period that is already on screen, because what was
+    /// recorded for it was wrong. Filings already prepared keep their values.
+    pub fn beginFixMistake(self: *State) void {
+        if (self.editing_new or !self.has_selection) return;
+        self.change_intent = .fix_mistake;
+        setEditorBuffer(&self.effective_from, self.loaded_effective_from.text());
+    }
+
+    pub fn factsSummaryAvailable(self: *const State) bool {
+        return self.facts_summary_available;
+    }
+
+    pub fn factsSummaryYear(self: *const State) i32 {
+        return self.facts_summary_year;
+    }
+
+    pub fn factsMissingForYear(self: *const State) bool {
+        return self.facts_summary_available and self.facts_missing_for_year;
+    }
+
+    pub fn factsChangedDuringYear(self: *const State) bool {
+        return self.facts_summary_available and self.facts_changed_during_year;
+    }
+
+    pub fn factsSameAsPriorYear(self: *const State) bool {
+        return self.facts_summary_available and self.facts_same_as_prior_year;
+    }
+
+    pub fn factsEffectiveFrom(self: *const State) []const u8 {
+        return self.facts_effective_from.text();
+    }
+
+    /// Summarizes which taxpayer facts apply to one year by resolving the
+    /// effective history at its boundaries. Nothing is duplicated per year:
+    /// this only reports what the append-only history already says.
+    pub fn refreshFactsSummary(self: *State, year: i32) void {
+        self.facts_summary_year = year;
+        self.facts_summary_available = false;
+        self.facts_missing_for_year = false;
+        self.facts_changed_during_year = false;
+        self.facts_same_as_prior_year = false;
+        self.facts_effective_from.clear();
+        self.refreshFactsSummaryFallible(year) catch return;
+        self.facts_summary_available = true;
+    }
+
+    fn refreshFactsSummaryFallible(self: *State, year: i32) !void {
+        const allocator = self.allocator orelse return error.NotAttached;
+        const store = self.store orelse return error.NotAttached;
+        const profile_id = self.selectedProfileDomainId() orelse
+            return error.NoSelectedProfile;
+        if (year < 1 or year > 9999) return error.InvalidTaxYear;
+
+        var opening = try profile_persistence.loadEffectiveRevision(
+            store,
+            allocator,
+            profile_id,
+            try model.Date.init(@intCast(year), 1, 1),
+        );
+        defer if (opening) |*owned| owned.deinit(allocator);
+        var closing = try profile_persistence.loadEffectiveRevision(
+            store,
+            allocator,
+            profile_id,
+            try model.Date.init(@intCast(year), 12, 31),
+        );
+        defer if (closing) |*owned| owned.deinit(allocator);
+
+        // Only a year with no facts at any point needs a reviewed retroactive
+        // record. A taxpayer registered partway through a year legitimately
+        // has none on its first day, and that is not a gap to fix.
+        if (opening == null and closing == null) {
+            self.facts_missing_for_year = true;
+            return;
+        }
+        if (opening != null and closing != null and
+            !opening.?.revision.id.eql(&closing.?.revision.id))
+        {
+            self.facts_changed_during_year = true;
+        }
+
+        const anchor = opening orelse closing.?;
+        var buffer: [10]u8 = undefined;
+        try self.facts_effective_from.set(
+            anchor.revision.effective.from.writeIso(&buffer),
+        );
+
+        if (year > 1) {
+            var prior = try profile_persistence.loadEffectiveRevision(
+                store,
+                allocator,
+                profile_id,
+                try model.Date.init(@intCast(year - 1), 12, 31),
+            );
+            defer if (prior) |*owned| owned.deinit(allocator);
+            if (prior) |*owned| {
+                self.facts_same_as_prior_year =
+                    owned.revision.id.eql(&anchor.revision.id) and
+                    !self.facts_changed_during_year;
+            }
+        }
+    }
+
     pub fn selectedProfileId(self: *const State) ?[]const u8 {
         return if (self.has_selection) self.selected_id.text() else null;
     }
@@ -415,24 +824,325 @@ pub const State = struct {
         ) catch null;
     }
 
+    /// The row when loaded, else the captured display: a search narrowing the
+    /// sidebar past the selected taxpayer must not make the header claim
+    /// nobody is selected.
+    fn selectedDisplay(self: *const State) ?*const ProfileRow {
+        if (self.selectedRow()) |row| return row;
+        if (self.has_selection and self.has_selected_display) {
+            return &self.selected_display;
+        }
+        return null;
+    }
+
     pub fn selectedName(self: *const State) []const u8 {
-        const row = self.selectedRow() orelse return "No tax profile selected";
+        const row = self.selectedDisplay() orelse return "No tax profile selected";
         return row.name.text();
     }
 
     pub fn selectedTin(self: *const State) []const u8 {
-        const row = self.selectedRow() orelse return "—";
+        const row = self.selectedDisplay() orelse return "—";
         return row.tin.text();
     }
 
     pub fn selectedInitials(self: *const State) []const u8 {
-        const row = self.selectedRow() orelse return "—";
+        const row = self.selectedDisplay() orelse return "—";
         return row.initials.text();
     }
 
     pub fn selectedKindLabel(self: *const State) []const u8 {
-        const row = self.selectedRow() orelse return "None";
+        const row = self.selectedDisplay() orelse return "None";
         return subjectKindLabel(row.subject_kind);
+    }
+
+    /// Whether the file a COR reference points at is still the one attached.
+    pub const CorEvidenceState = enum {
+        /// No document has been attached to this taxpayer.
+        none,
+        /// The file is where it was, byte for byte.
+        on_file,
+        /// The file is no longer readable at the path it was attached from.
+        moved,
+        /// A file is there, but it is not the document that was attached.
+        changed,
+    };
+
+    pub fn corEvidenceState(self: *const State) CorEvidenceState {
+        return self.cor_state;
+    }
+
+    pub fn corFileName(self: *const State) []const u8 {
+        return self.cor_file_name.text();
+    }
+
+    pub fn corAttachedAt(self: *const State) i64 {
+        return self.cor_attached_at;
+    }
+
+    /// Reloads the COR reference for the selected taxpayer and re-checks the
+    /// file behind it, so the card reports what is true now rather than what
+    /// was true when it was attached.
+    pub fn refreshCorEvidence(self: *State) void {
+        self.cor_state = .none;
+        self.cor_file_name.clear();
+        self.cor_digest.clear();
+        self.cor_document_id.clear();
+        self.cor_attached_at = 0;
+        self.cor_review_open = false;
+        self.refreshCorEvidenceFallible() catch return;
+    }
+
+    fn refreshCorEvidenceFallible(self: *State) !void {
+        const allocator = self.allocator orelse return error.NotAttached;
+        const store = self.store orelse return error.NotAttached;
+        const profile_id = self.selectedProfileId() orelse
+            return error.NoSelectedProfile;
+        var document = (try store.getLatestCorDocument(
+            allocator,
+            profile_id,
+        )) orelse return;
+        defer document.deinit(allocator);
+
+        try self.cor_file_name.set(document.file_name);
+        try self.cor_digest.set(document.sha256);
+        try self.cor_document_id.set(document.id);
+        self.cor_attached_at = document.attached_at_unix_seconds;
+        self.cor_state = verifyCorFile(document.file_path, document.sha256);
+    }
+
+    /// Attaches the COR the user chose. The document is referenced, never
+    /// copied: the profile database already holds more sensitive facts than a
+    /// path and a digest, so a reference needs no key custody to be honest,
+    /// while a copy would.
+    pub fn attachCorDocument(self: *State, path: []const u8) bool {
+        self.attachCorDocumentFallible(path) catch |err| {
+            self.setError(err);
+            return false;
+        };
+        self.setNotice(.success, "COR attached.");
+        return true;
+    }
+
+    fn attachCorDocumentFallible(self: *State, path: []const u8) !void {
+        const store = self.store orelse return error.NotAttached;
+        if (self.editing_new) return error.FormsRequireSavedProfile;
+        const profile_id = self.selectedProfileId() orelse
+            return error.NoSelectedProfile;
+
+        var digest_text: [64]u8 = undefined;
+        const measured = try hashCorFile(path, &digest_text);
+        const generated = try store.generateOpaqueId();
+        try store.attachCorDocument(.{
+            .id = &generated,
+            .profile_id = profile_id,
+            .file_path = path,
+            .file_name = fileNameOf(path),
+            .sha256 = &digest_text,
+            .byte_size = measured,
+        });
+        self.refreshCorEvidence();
+    }
+
+    pub fn corReviewOpen(self: *const State) bool {
+        return self.cor_review_open;
+    }
+
+    /// Opens the review. The user reads the COR and types what it says; there
+    /// is no extraction engine behind this, and none is implied.
+    pub fn beginCorReview(self: *State) bool {
+        if (self.editing_new or !self.has_selection) {
+            self.setError(error.FormsRequireSavedProfile);
+            return false;
+        }
+        if (self.cor_state == .none) return false;
+        self.cor_review_open = true;
+        self.cor_review_tin.clear();
+        for (&self.cor_review_values) |*value| value.clear();
+        self.cor_review_accepted = .{false} ** cor_candidate_count;
+        self.cor_review_apply_forms = false;
+        return true;
+    }
+
+    pub fn cancelCorReview(self: *State) void {
+        self.cor_review_open = false;
+    }
+
+    pub fn corReviewValue(self: *const State, field_index: usize) []const u8 {
+        if (field_index >= cor_candidate_count) return "";
+        return self.cor_review_values[field_index].text();
+    }
+
+    pub fn corReviewAccepted(self: *const State, field_index: usize) bool {
+        if (field_index >= cor_candidate_count) return false;
+        return self.cor_review_accepted[field_index];
+    }
+
+    /// A row can only be accepted once it states something, and accepting a
+    /// value equal to the one on file is allowed but changes nothing.
+    pub fn toggleCorReviewAccepted(self: *State, field_index: usize) void {
+        if (field_index >= cor_candidate_count) return;
+        if (trimmed(self.cor_review_values[field_index].text()).len == 0) {
+            self.cor_review_accepted[field_index] = false;
+            return;
+        }
+        self.cor_review_accepted[field_index] =
+            !self.cor_review_accepted[field_index];
+    }
+
+    pub fn corReviewApplyForms(self: *const State) bool {
+        return self.cor_review_apply_forms;
+    }
+
+    pub fn toggleCorReviewApplyForms(self: *State) void {
+        self.cor_review_apply_forms = !self.cor_review_apply_forms;
+    }
+
+    pub fn corReviewAcceptedCount(self: *const State) usize {
+        var count: usize = 0;
+        for (self.cor_review_accepted, 0..) |accepted, index| {
+            if (accepted and
+                trimmed(self.cor_review_values[index].text()).len != 0) count += 1;
+        }
+        return count;
+    }
+
+    /// Whether the transcribed TIN is this taxpayer's.
+    ///
+    /// A COR naming a different taxpayer must never touch the selected one:
+    /// applying it would merge two identities through a form the user thought
+    /// was about details.
+    pub fn corReviewTinMatch(self: *const State) CorTinMatch {
+        const typed = trimmed(self.cor_review_tin.text());
+        if (typed.len == 0) return .unknown;
+        const stated = fields.Tin.parse(typed) catch return .mismatched;
+        const current = fields.Tin.parse(
+            trimmed(self.tin.text()),
+        ) catch return .mismatched;
+        return if (stated.eql(&current)) .matches else .mismatched;
+    }
+
+    pub fn corReviewApplyBlocked(self: *const State) bool {
+        if (self.corReviewTinMatch() != .matches) return true;
+        return self.corReviewAcceptedCount() == 0 and
+            !self.cor_review_apply_forms;
+    }
+
+    /// Applies exactly what the user accepted.
+    ///
+    /// Accepted details go through the ordinary save path, so identity limits,
+    /// validation, and the no-op check all still apply — which is why
+    /// accepting only forms appends no taxpayer record at all, and why
+    /// accepting a detail the taxpayer already has appends nothing either.
+    pub fn applyCorReview(self: *State) bool {
+        if (self.corReviewApplyBlocked()) return false;
+        const accepted = self.corReviewAcceptedCount();
+        const wants_forms = self.cor_review_apply_forms;
+
+        if (accepted == 0) {
+            // Forms alone are already one transaction, and nothing on this
+            // path may create a profile revision.
+            if (wants_forms and !self.saveYearWorkspace()) return false;
+            self.cor_review_open = false;
+            self.setNotice(.success, "The forms you accepted were saved.");
+            return true;
+        }
+
+        for (self.cor_review_accepted, 0..) |is_accepted, index| {
+            if (!is_accepted) continue;
+            const value = trimmed(self.cor_review_values[index].text());
+            if (value.len == 0) continue;
+            self.applyCorCandidate(
+                std.meta.tags(CorCandidateField)[index],
+                value,
+            );
+        }
+        self.setSourceKind(.imported);
+        var reference: [160]u8 = undefined;
+        setEditorBuffer(&self.source_reference, std.fmt.bufPrint(
+            &reference,
+            "COR {s} sha256:{s}",
+            .{
+                self.cor_file_name.text(),
+                self.cor_digest.text()[0..@min(8, self.cor_digest.len)],
+            },
+        ) catch "COR");
+
+        if (!wants_forms) {
+            if (!self.saveWithCor(.{
+                .document_id = self.cor_document_id.text(),
+                .include_forms = false,
+            })) return false;
+        } else if (!self.applyCorReviewWithForms(self.cor_document_id.text())) {
+            return false;
+        }
+        self.cor_review_open = false;
+        return true;
+    }
+
+    /// The combined details-and-forms half of a COR decision: one store
+    /// transaction, wrapped in the same guards, conflict handling, and
+    /// afterwards-state as the standalone forms save.
+    fn applyCorReviewWithForms(self: *State, document_id: []const u8) bool {
+        if (self.year_workspace == .draft_choice or
+            self.year_workspace == .open_failed or
+            self.year_workspace == .conflict)
+        {
+            return false;
+        }
+        const creating_year = self.year_workspace.isDraft();
+        const notice_year = self.workspaceYear();
+        // Accepted values identical to what is already recorded from this
+        // document: nothing to append, the forms half is the whole decision.
+        if (!self.factsDirty()) return self.saveYearWorkspace();
+        self.saveFallible(.{
+            .document_id = document_id,
+            .include_forms = true,
+        }) catch |err| {
+            if (err == error.NoProfileChanges) return self.saveYearWorkspace();
+            if (creating_year and err == persistence.Error.FormSetAlreadyExists) {
+                self.year_workspace = .conflict;
+                self.managing_forms = true;
+                self.setNotice(
+                    .failure,
+                    "This year was set up in another window while you were working. Your choices are still here.",
+                );
+                return false;
+            }
+            self.setError(err);
+            return false;
+        };
+        self.year_workspace = .viewing;
+        self.draft_source_year = null;
+        self.managing_forms = true;
+        self.resetFormFilters();
+        self.setSaveNotice(notice_year);
+        return true;
+    }
+
+    fn applyCorCandidate(
+        self: *State,
+        field_key: CorCandidateField,
+        value: []const u8,
+    ) void {
+        switch (field_key) {
+            .rdo_code => setEditorBuffer(&self.rdo, value),
+            .taxpayer_name => setEditorBuffer(&self.display_name, value),
+            .registered_address => setEditorBuffer(&self.registered_address, value),
+            .zip_code => setEditorBuffer(&self.zip_code, value),
+            .tax_type => setEditorBuffer(&self.tax_type, value),
+        }
+    }
+
+    /// The registered tax type as persisted, never as currently typed. A
+    /// header states what is on file, so it must not echo an unsaved edit and
+    /// must not assert a classification that was never recorded.
+    pub fn selectedTaxTypeLabel(self: *const State) []const u8 {
+        if (!self.has_selection) return "Tax type not recorded";
+        // Several registered tax types is a truthful state this header has no
+        // room for; saying "not recorded" would deny facts that exist.
+        if (self.selected_tax_type_count > 1) return "Multiple registered tax types";
+        const value = self.selected_tax_type.text();
+        return if (value.len == 0) "Tax type not recorded" else value;
     }
 
     pub fn draftSummaries(self: *const State) []const DraftSummaryRow {
@@ -446,12 +1156,14 @@ pub const State = struct {
     pub fn selectSlot(self: *State, slot: usize) !void {
         if (slot >= self.profile_count) return persistence.Error.NotFound;
         if (self.formsDirty()) return error.UnsavedFormSetChanges;
+        if (self.factsDirty()) return error.UnsavedProfileChanges;
         // Invalidate before changing identity or performing any fallible load.
         // A failed profile switch must not expose the prior profile's forms.
         self.invalidateCalendarFormSetCache(self.default_tax_year);
         try self.selected_id.set(self.profiles[slot].stable_id.text());
         self.has_selection = true;
         self.markActiveRow();
+        self.captureSelectedDisplay();
         try self.loadSelectedRevision(true);
         try self.refreshCalendarFormSet(self.default_tax_year);
         try self.refreshFormSetSummaries();
@@ -474,6 +1186,10 @@ pub const State = struct {
             self.setError(error.UnsavedFormSetChanges);
             return;
         }
+        if (self.factsDirty()) {
+            self.setError(error.UnsavedProfileChanges);
+            return;
+        }
         self.editing_new = true;
         self.loaded_shape_supported = true;
         self.clearEditor();
@@ -493,6 +1209,162 @@ pub const State = struct {
             .neutral,
             "New profile. Saving creates revision 1 and opaque stable IDs.",
         );
+    }
+
+    pub fn branchMode(self: *const State) bool {
+        return self.branch_mode;
+    }
+
+    pub fn branchSourceName(self: *const State) []const u8 {
+        return self.branch_source_name.text();
+    }
+
+    pub fn branchSourceRoot(self: *const State) []const u8 {
+        return self.branch_source_root.text();
+    }
+
+    pub fn canAddBranch(self: *const State) bool {
+        if (!self.has_selection or self.editing_new) return false;
+        const row = self.selectedRow() orelse return false;
+        return row.tin_root.len == 9;
+    }
+
+    /// Starts another registration of the selected taxpayer.
+    ///
+    /// Contact details and the registered name are reused because they
+    /// describe the same taxpayer. The branch segment, RDO, address, and every
+    /// registration fact are deliberately left blank: they are the facts most
+    /// likely to differ, and a silent copy would assert something unverified.
+    /// Nothing is copied that belongs to a filing, an evidence document, or a
+    /// secret.
+    pub fn beginAddBranch(self: *State) bool {
+        if (!self.canAddBranch()) {
+            self.setError(error.FormsRequireSavedProfile);
+            return false;
+        }
+        if (self.formsDirty()) {
+            self.setError(error.UnsavedFormSetChanges);
+            return false;
+        }
+        if (self.factsDirty()) {
+            self.setError(error.UnsavedProfileChanges);
+            return false;
+        }
+        const row = self.selectedRow() orelse return false;
+        const source_root = row.tin_root.text();
+        const source_name = row.name.text();
+        const source_kind = row.subject_kind;
+
+        const reused_name = self.display_name.text();
+        const reused_trade_name = self.trade_name.text();
+        const reused_phone = self.phone.text();
+        const reused_email = self.email.text();
+        var name_buffer: [160]u8 = undefined;
+        var trade_buffer: [160]u8 = undefined;
+        var phone_buffer: [32]u8 = undefined;
+        var email_buffer: [254]u8 = undefined;
+        const name = copyInto(&name_buffer, reused_name);
+        const trade_name = copyInto(&trade_buffer, reused_trade_name);
+        const phone = copyInto(&phone_buffer, reused_phone);
+        const email = copyInto(&email_buffer, reused_email);
+
+        self.editing_new = true;
+        self.loaded_shape_supported = true;
+        self.clearEditor();
+        self.branch_mode = true;
+        self.branch_source_root.set(source_root) catch {};
+        self.branch_source_name.set(source_name) catch {};
+        self.branch_source_kind = source_kind;
+
+        // The branch belongs to the same legal person, so its kind is fixed.
+        self.subject_kind = source_kind;
+        // Prefill the root the way a TIN is normally written, so the user
+        // appends a branch code to something they recognize.
+        var root_buffer: [11]u8 = undefined;
+        setEditorBuffer(&self.tin, std.fmt.bufPrint(
+            &root_buffer,
+            "{s}-{s}-{s}",
+            .{ source_root[0..3], source_root[3..6], source_root[6..9] },
+        ) catch source_root);
+        setEditorBuffer(&self.display_name, name);
+        if (source_kind == .sole_proprietor) {
+            setEditorBuffer(&self.trade_name, trade_name);
+        }
+        setEditorBuffer(&self.phone, phone);
+        setEditorBuffer(&self.email, email);
+        setEditorBuffer(&self.effective_from, self.default_effective_from.text());
+        setTaxYearBuffer(&self.tax_year, self.default_tax_year);
+        self.captureBaseline();
+        self.setNotice(
+            .neutral,
+            "Add the branch code, then review its RDO, address, and registration details.",
+        );
+        return true;
+    }
+
+    pub fn cancelAddBranch(self: *State) void {
+        self.branch_mode = false;
+        self.branch_source_root.clear();
+        self.branch_source_name.clear();
+    }
+
+    /// Reports the taxpayer already registered under a canonical TIN, so a
+    /// duplicate registration is refused with somewhere to go instead.
+    fn profileWithTin(
+        self: *const State,
+        tin: *const fields.Tin,
+    ) ?*const ProfileRow {
+        for (self.profiles[0..self.profile_count]) |*row| {
+            const existing = fields.Tin.parse(row.tin.text()) catch continue;
+            if (existing.eql(tin)) return row;
+        }
+        return null;
+    }
+
+    /// Refuses a second registration of one canonical TIN, naming the taxpayer
+    /// that already holds it.
+    ///
+    /// A TIN is issued once and never reassigned, so an archived taxpayer's
+    /// TIN is still theirs — the answer is to restore that taxpayer, not to
+    /// register a second one that its filings could never be told apart from.
+    fn rejectDuplicateTin(self: *State, tin: *const fields.Tin) !void {
+        if (self.profileWithTin(tin)) |row| {
+            var message: [256]u8 = undefined;
+            self.setErrorDetail(std.fmt.bufPrint(
+                &message,
+                "That TIN already belongs to {s}. Open it instead of adding it again.",
+                .{row.name.text()},
+            ) catch "That TIN already belongs to a taxpayer you have.");
+            return error.DuplicateTaxpayerIdentifier;
+        }
+
+        // The loaded rows are active-only and bounded; ask the store about
+        // every taxpayer, archived ones included. A failed read falls through
+        // to the store's own check, which refuses without naming anyone.
+        const allocator = self.allocator orelse return;
+        const store = self.store orelse return;
+        var owner = (store.findProfileWithCanonicalTin(
+            allocator,
+            tin.asDigits(),
+            null,
+        ) catch return) orelse return;
+        defer owner.deinit(allocator);
+
+        var message: [256]u8 = undefined;
+        const name = owner.display_name orelse "another taxpayer";
+        self.setErrorDetail(switch (owner.status) {
+            .archived => std.fmt.bufPrint(
+                &message,
+                "That TIN belongs to {s}, which is archived. Restore it instead of adding it again.",
+                .{name},
+            ) catch "That TIN belongs to an archived taxpayer. Restore it instead of adding it again.",
+            .active => std.fmt.bufPrint(
+                &message,
+                "That TIN already belongs to {s}. Open it instead of adding it again.",
+                .{name},
+            ) catch "That TIN already belongs to a taxpayer you have.",
+        });
+        return error.DuplicateTaxpayerIdentifier;
     }
 
     pub fn editSelected(self: *State) void {
@@ -545,23 +1417,54 @@ pub const State = struct {
         self.government_withholding_agent = value;
     }
 
+    /// What a save carries when it applies a reviewed COR decision: the
+    /// durable document key, and whether the accepted forms ride in the same
+    /// store transaction.
+    const CorApply = struct {
+        document_id: []const u8,
+        include_forms: bool,
+    };
+
     pub fn save(self: *State) bool {
+        return self.saveWithCor(null);
+    }
+
+    fn saveWithCor(self: *State, cor: ?CorApply) bool {
         const was_new = self.editing_new;
-        self.saveFallible() catch |err| {
+        // Reopening a taxpayer and saving must not record a change that did
+        // not happen: history stays a log of real events, not of visits.
+        if (!was_new and !self.factsDirty()) {
+            self.setNotice(.neutral, "No changes to save.");
+            return true;
+        }
+        self.saveFallible(cor) catch |err| {
+            // Nothing to record is a successful outcome, not a failure: the
+            // taxpayer's details already say what the user wants them to say.
+            if (err == error.NoProfileChanges) {
+                self.has_pending_error_detail = false;
+                self.setNotice(.neutral, "No changes to save.");
+                return true;
+            }
             self.setError(err);
             return false;
         };
+        const was_branch = self.branch_mode;
+        self.branch_mode = false;
+        self.branch_source_root.clear();
+        self.branch_source_name.clear();
         self.setNotice(
             .success,
-            if (was_new)
-                "Tax profile created."
+            if (was_branch)
+                "Branch created. Upload its COR and choose its forms when ready."
+            else if (was_new)
+                "Taxpayer created."
             else
-                "A new immutable profile revision was saved.",
+                "Your change was saved.",
         );
         return true;
     }
 
-    fn saveFallible(self: *State) !void {
+    fn saveFallible(self: *State, cor: ?CorApply) !void {
         const allocator = self.allocator orelse return error.NotAttached;
         const store = self.store orelse return error.NotAttached;
         if (!self.loaded_shape_supported) {
@@ -586,6 +1489,21 @@ pub const State = struct {
                 null,
         );
 
+        if (cor) |apply| {
+            // The forms half of a combined apply carries the same reviewed-
+            // retroactive guard as the standalone forms save — checked before
+            // commit, because one transaction refuses everything where the
+            // old two-step flow would have committed the revision and then
+            // refused the forms. The pending revision itself may be what
+            // gives the year its facts.
+            if (apply.include_forms and self.year_workspace.isDraft() and
+                self.factsMissingForYear() and
+                !effectiveCoversYearBoundary(effective, year))
+            {
+                return error.NoFactsEffectiveForYear;
+            }
+        }
+
         const contact: model.RegisteredContact = .{
             .address = address,
             .zip_code = if (optionalTrimmed(self.zip_code.text())) |value|
@@ -604,6 +1522,27 @@ pub const State = struct {
 
         const source = try self.buildSource();
         const creating = self.editing_new;
+        if (creating) {
+            // One registration per canonical TIN. Two profiles sharing a full
+            // TIN would make filings and evidence ambiguous with no way to
+            // tell them apart afterwards. The store repeats this check inside
+            // its write transaction; this one exists to name the taxpayer who
+            // already holds the TIN, including an archived one the loaded
+            // rows cannot see.
+            try self.rejectDuplicateTin(&tin);
+            if (self.branch_mode) {
+                if (!std.mem.eql(u8, tin.root(), self.branch_source_root.text())) {
+                    return error.BranchTinRootChanged;
+                }
+                if (tin.branch() == null) return error.BranchCodeRequired;
+                // A branch is another registration of the same legal person.
+                // Changing the kind would make it a different taxpayer, which
+                // needs its own profile rather than a branch of this one.
+                if (self.subject_kind != self.branch_source_kind) {
+                    return error.BranchLegalPersonChanged;
+                }
+            }
+        }
         var generated_profile_id: persistence.OpaqueId = undefined;
         const profile_id = if (creating) blk: {
             generated_profile_id = try store.generateOpaqueId();
@@ -698,6 +1637,24 @@ pub const State = struct {
             .withRegistrationFacts(facts[0..fact_count])
             .build();
 
+        // The authority on "did anything change": the editor's text can differ
+        // from what was loaded while parsing to the very same facts, and a
+        // record that says a phone number changed when only its punctuation
+        // did is a lie in the history.
+        if (!creating) {
+            var current = try profile_persistence.loadCurrentRevision(
+                store,
+                allocator,
+                profile_id,
+            );
+            if (current) |*owned| {
+                defer owned.deinit(allocator);
+                if (revision.contentEquals(&owned.revision)) {
+                    return error.NoProfileChanges;
+                }
+            }
+        }
+
         if (creating) {
             try profile_persistence.createProfileWithRevision(
                 store,
@@ -705,6 +1662,42 @@ pub const State = struct {
                 .active,
                 &revision,
             );
+        } else if (cor) |apply| {
+            if (apply.include_forms) {
+                // Staged writes and the create-vs-update mode are computed
+                // before any refresh below can rewrite workspace state; the
+                // old two-step flow reloaded the workspace between the
+                // halves and wiped the staged selection it was about to
+                // save.
+                var writes: [max_registered_forms]persistence.FormRegistrationWrite =
+                    undefined;
+                const count = self.stagedFormWrites(&writes);
+                const mode: persistence.FormSetApplyMode =
+                    if (self.form_set_create_mode or
+                        self.form_set_state == .needs_configuration or
+                        self.form_set_state == .legacy_catalog_default)
+                        .create
+                    else
+                        .update;
+                try profile_persistence.applyCorReview(
+                    store,
+                    allocator,
+                    &revision,
+                    observed_sequence,
+                    apply.document_id,
+                    year,
+                    writes[0..count],
+                    mode,
+                );
+            } else {
+                try profile_persistence.appendRevisionLinked(
+                    store,
+                    allocator,
+                    &revision,
+                    observed_sequence,
+                    apply.document_id,
+                );
+            }
         } else {
             try profile_persistence.appendRevision(
                 store,
@@ -770,12 +1763,6 @@ pub const State = struct {
         }
     }
 
-    pub fn taxYearInputChanged(self: *State) void {
-        if (self.editing_new or !self.has_selection) return;
-        const year = parseTaxYear(self.tax_year.text()) catch return;
-        self.loadEditorFormSet(year) catch |err| self.setError(err);
-    }
-
     pub fn rejectIfFormsDirty(self: *State) bool {
         if (!self.formsDirty()) return false;
         self.setError(error.UnsavedFormSetChanges);
@@ -835,43 +1822,503 @@ pub const State = struct {
         }
     }
 
-    pub fn beginManageFormsForYear(
-        self: *State,
-        year: i32,
-        creating: bool,
-    ) bool {
+    /// Reverts edits without leaving the year. A configured year returns to
+    /// its saved membership; a draft returns to its starting choice, because
+    /// there is no earlier state to restore.
+    pub fn cancelYearWorkspaceEdits(self: *State) void {
+        switch (self.year_workspace) {
+            .viewing => {
+                self.staged_forms.copySelectionFrom(&self.saved_forms);
+                self.staged_forms.resetInteraction();
+            },
+            .draft_choice, .draft_empty, .draft_seeded => {
+                _ = self.staged_forms.clear();
+                self.staged_forms.resetInteraction();
+                self.draft_source_year = null;
+                self.year_workspace = .draft_choice;
+            },
+            .conflict, .open_failed => {},
+        }
+        self.forms_apply_scope = .whole_year;
+        self.change_effective_from.clear();
+        self.resetFormFilters();
+    }
+
+    /// The newest year the setup UI may open. A Forms Set is never created
+    /// for a year that has not started.
+    pub fn maximumSetupYear(self: *const State) i32 {
+        return self.default_tax_year;
+    }
+
+    pub fn workspaceYear(self: *const State) ?i32 {
+        return self.formSetYearInput();
+    }
+
+    /// True when the workspace holds work that a year switch would destroy.
+    /// A draft that has only been opened holds nothing worth a prompt.
+    pub fn workspaceDirty(self: *const State) bool {
+        return switch (self.year_workspace) {
+            .open_failed, .draft_choice => false,
+            .viewing, .draft_empty, .draft_seeded, .conflict =>
+                self.changedFormCount() > 0,
+        };
+    }
+
+    pub fn pendingYearSwitch(self: *const State) ?i32 {
+        return self.pending_year_switch;
+    }
+
+    pub fn cancelPendingYearSwitch(self: *State) void {
+        self.pending_year_switch = null;
+    }
+
+    /// Applies a year switch the user confirmed after being warned. Staged
+    /// work is dropped only on this explicit path.
+    pub fn confirmPendingYearSwitch(self: *State) bool {
+        const year = self.pending_year_switch orelse return false;
+        self.pending_year_switch = null;
+        self.staged_forms.copySelectionFrom(&self.saved_forms);
+        return self.openYearWorkspace(year);
+    }
+
+    /// The single entry point for the yearly setup workspace.
+    ///
+    /// The create-versus-edit decision is always resolved against the store,
+    /// never against the cached yearly summaries: a summary cache that has
+    /// not caught up must not be able to present a blank create workspace for
+    /// a year that already exists.
+    pub fn openYearWorkspace(self: *State, year: i32) bool {
         if (self.editing_new or !self.has_selection) {
             self.setError(error.FormsRequireSavedProfile);
             return false;
         }
-        if (self.formsDirty()) {
-            self.setError(error.UnsavedFormSetChanges);
-            return false;
-        }
-        if (year < 1 or year > 9999) {
+        if (year < minimum_setup_year or year > self.maximumSetupYear()) {
             self.setError(error.InvalidTaxYear);
             return false;
         }
-        setTaxYearBuffer(&self.tax_year, year);
-        if (creating) {
+        if (self.workspaceDirty() and self.workspaceYear() != year) {
+            self.pending_year_switch = year;
+            return false;
+        }
+        self.pending_year_switch = null;
+        self.openYearWorkspaceFallible(year) catch |err| {
+            // Fail closed: an unreadable year keeps no selection at all and
+            // offers no create action, so it can never be mistaken for one
+            // that is merely unconfigured.
+            setTaxYearBuffer(&self.tax_year, year);
             self.saved_forms = .{};
             self.staged_forms = .{};
-            self.form_set_state = .needs_configuration;
-            self.forms_set_configured = false;
-            self.legacy_form_set_reset_allowed = false;
-            self.form_set_create_mode = true;
-            self.managing_forms = true;
-            self.resetFormFilters();
-            return true;
-        }
-        self.loadEditorFormSet(year) catch |err| {
+            self.managing_forms = false;
+            self.form_set_create_mode = false;
+            self.draft_source_year = null;
+            self.forms_apply_scope = .whole_year;
+            self.change_effective_from.clear();
+            self.form_set_interval_count = 0;
+            self.form_set_intervals_truncated = false;
+            self.year_workspace = .open_failed;
             self.setError(err);
             return false;
         };
+        return true;
+    }
+
+    fn openYearWorkspaceFallible(self: *State, year: i32) !void {
+        try self.loadEditorFormSet(year);
+        setTaxYearBuffer(&self.tax_year, year);
+        self.draft_source_year = null;
+        self.managing_forms = true;
+        self.forms_apply_scope = .whole_year;
+        self.change_effective_from.clear();
+        self.resetFormFilters();
+        self.refreshFactsSummary(year);
+        try self.refreshFormSetIntervals(year);
+        if (self.form_set_state == .needs_configuration) {
+            self.saved_forms = .{};
+            self.staged_forms = .{};
+            self.form_set_create_mode = true;
+            self.year_workspace = .draft_choice;
+        } else {
+            self.form_set_create_mode = false;
+            self.year_workspace = .viewing;
+        }
+    }
+
+    /// Starts an unconfigured year from no forms. Saving this is a deliberate
+    /// empty configuration, not an absence of one.
+    pub fn chooseDraftEmpty(self: *State) bool {
+        if (!self.year_workspace.isDraft()) return false;
+        _ = self.staged_forms.clear();
+        self.draft_source_year = null;
+        self.year_workspace = .draft_empty;
+        return true;
+    }
+
+    /// Copies another year's active forms into this draft's staged selection.
+    /// Only form membership is copied: taxpayer facts are resolved from the
+    /// effective history for the target period, never duplicated.
+    pub fn chooseDraftSeed(self: *State, source_year: i32) bool {
+        if (!self.year_workspace.isDraft()) return false;
+        self.chooseDraftSeedFallible(source_year) catch |err| {
+            self.setError(err);
+            return false;
+        };
+        return true;
+    }
+
+    fn chooseDraftSeedFallible(self: *State, source_year: i32) !void {
+        const allocator = self.allocator orelse return error.NotAttached;
+        const store = self.store orelse return error.NotAttached;
+        const profile_id = self.selectedProfileId() orelse
+            return error.NoSelectedProfile;
+        const target_year = self.workspaceYear() orelse
+            return error.InvalidTaxYear;
+        if (source_year == target_year) return error.InvalidTaxYear;
+
+        var resolved = try store.resolveFormSet(
+            allocator,
+            profile_id,
+            source_year,
+        );
+        defer resolved.deinit(allocator);
+        if (resolved.state == .needs_configuration) {
+            return persistence.Error.NotFound;
+        }
+
+        var seeded: FormSelectionState = if (resolved.state == .legacy_catalog_default)
+            FormSelectionState.allSelected()
+        else
+            FormSelectionState{};
+        for (resolved.forms.items) |item| {
+            for (&catalog.forms, 0..) |*form, index| {
+                if (!std.ascii.eqlIgnoreCase(item.form_code, form.code)) continue;
+                _ = seeded.set(index, true);
+                break;
+            }
+        }
+        self.staged_forms.copySelectionFrom(&seeded);
+        self.draft_source_year = source_year;
+        self.year_workspace = .draft_seeded;
+    }
+
+    pub fn draftSourceYear(self: *const State) ?i32 {
+        return self.draft_source_year;
+    }
+
+    /// The year a draft should offer as its recommended source: the newest
+    /// configured year that is not the year being set up.
+    pub fn recommendedSeedYear(self: *const State) ?i32 {
+        const target = self.workspaceYear();
+        for (self.form_set_summaries[0..self.form_set_summary_count]) |summary| {
+            if (target != null and summary.tax_year == target.?) continue;
+            return summary.tax_year;
+        }
+        return null;
+    }
+
+    /// Recovers from a duplicate created by another window. The persisted set
+    /// becomes the comparison baseline while the user's staged choices are
+    /// preserved as pending changes they can still save or abandon.
+    pub fn reviewConflictingYear(self: *State) bool {
+        if (self.year_workspace != .conflict) return false;
+        const year = self.workspaceYear() orelse return false;
+        self.rebaseOnPersisted(year) catch |err| {
+            self.setError(err);
+            return false;
+        };
+        self.setNotice(
+            .neutral,
+            "Loaded the saved setup. Your choices are shown as pending changes.",
+        );
+        return true;
+    }
+
+    /// Abandons the staged draft and adopts the setup another window saved.
+    pub fn discardConflictingDraft(self: *State) bool {
+        if (self.year_workspace != .conflict) return false;
+        const year = self.workspaceYear() orelse return false;
+        if (!self.openYearWorkspaceAfterConflict(year)) return false;
+        self.setNotice(.neutral, "Your draft was discarded.");
+        return true;
+    }
+
+    fn openYearWorkspaceAfterConflict(self: *State, year: i32) bool {
+        self.year_workspace = .viewing;
+        self.staged_forms.copySelectionFrom(&self.saved_forms);
+        return self.openYearWorkspace(year);
+    }
+
+    /// Loads persisted membership into the saved baseline only. The staged
+    /// selection is deliberately untouched so a conflict never discards work.
+    fn rebaseOnPersisted(self: *State, year: i32) !void {
+        const allocator = self.allocator orelse return error.NotAttached;
+        const store = self.store orelse return error.NotAttached;
+        const profile_id = self.selectedProfileId() orelse
+            return error.NoSelectedProfile;
+        var resolved = try store.resolveFormSet(allocator, profile_id, year);
+        defer resolved.deinit(allocator);
+
+        self.form_set_state = resolved.state;
+        self.legacy_form_set_reset_allowed = resolved.legacy_reset_allowed;
+        self.forms_set_configured = switch (resolved.state) {
+            .active_empty, .active_nonempty => true,
+            .needs_configuration, .legacy_catalog_default => false,
+        };
+        self.saved_forms = if (resolved.state == .legacy_catalog_default)
+            FormSelectionState.allSelected()
+        else
+            FormSelectionState{};
+        for (resolved.forms.items) |item| {
+            for (&catalog.forms, 0..) |*form, index| {
+                if (!std.ascii.eqlIgnoreCase(item.form_code, form.code)) continue;
+                _ = self.saved_forms.set(index, true);
+                break;
+            }
+        }
         self.form_set_create_mode = false;
         self.managing_forms = true;
+        self.year_workspace = .viewing;
+        self.draft_source_year = null;
+        try self.updateFormSetSummary();
+        try self.refreshFormSetSummaries();
+        try self.refreshFormSetIntervals(year);
+    }
+
+    /// Saves the open year. A draft creates; a configured year updates. A
+    /// duplicate created concurrently becomes a recoverable conflict rather
+    /// than a lost draft or a silent overwrite.
+    pub fn saveYearWorkspace(self: *State) bool {
+        if (self.year_workspace == .draft_choice or
+            self.year_workspace == .open_failed or
+            self.year_workspace == .conflict)
+        {
+            return false;
+        }
+        if (self.year_workspace == .viewing and
+            self.forms_apply_scope == .from_date)
+        {
+            return self.recordMidYearChange();
+        }
+        const creating = self.year_workspace.isDraft();
+        const year = self.workspaceYear();
+        // Setting up a historical year must not invent facts for it. The user
+        // records what was true then, reviewed, before its forms can be saved.
+        if (creating and self.factsMissingForYear()) {
+            self.setError(error.NoFactsEffectiveForYear);
+            return false;
+        }
+        self.saveManagedFormsFallible() catch |err| {
+            if (creating and err == persistence.Error.FormSetAlreadyExists) {
+                self.year_workspace = .conflict;
+                self.managing_forms = true;
+                self.setNotice(
+                    .failure,
+                    "This year was set up in another window while you were working. Your choices are still here.",
+                );
+                return false;
+            }
+            self.setError(err);
+            return false;
+        };
+        self.year_workspace = .viewing;
+        self.draft_source_year = null;
+        self.managing_forms = true;
         self.resetFormFilters();
+        self.setSaveNotice(year);
         return true;
+    }
+
+    fn setSaveNotice(self: *State, year: ?i32) void {
+        var message: [128]u8 = undefined;
+        const active = self.saved_forms.selectedCount();
+        const rendered = if (year) |value| (if (active == 0)
+            std.fmt.bufPrint(
+                &message,
+                "Forms for {d} saved · no active forms.",
+                .{value},
+            ) catch "Your forms were saved."
+        else if (active == 1)
+            std.fmt.bufPrint(
+                &message,
+                "Forms for {d} saved · 1 active form.",
+                .{value},
+            ) catch "Your forms were saved."
+        else
+            std.fmt.bufPrint(
+                &message,
+                "Forms for {d} saved · {d} active forms.",
+                .{ value, active },
+            ) catch "Your forms were saved.") else "Your forms were saved.";
+        self.setNotice(.success, rendered);
+    }
+
+    pub fn chooseApplyWholeYear(self: *State) void {
+        if (self.year_workspace != .viewing) return;
+        self.forms_apply_scope = .whole_year;
+    }
+
+    pub fn chooseApplyFromDate(self: *State) void {
+        if (self.year_workspace != .viewing) return;
+        self.forms_apply_scope = .from_date;
+    }
+
+    pub fn applyScopeFromDate(self: *const State) bool {
+        return self.year_workspace == .viewing and
+            self.forms_apply_scope == .from_date;
+    }
+
+    pub fn changeDateText(self: *const State) []const u8 {
+        return self.change_effective_from.text();
+    }
+
+    pub fn changeDateEmpty(self: *const State) bool {
+        return trimmed(self.change_effective_from.text()).len == 0;
+    }
+
+    pub fn formSetIntervals(
+        self: *const State,
+    ) []const persistence.FormSetIntervalSummary {
+        return self.form_set_intervals[0..self.form_set_interval_count];
+    }
+
+    pub fn formSetIntervalsTruncated(self: *const State) bool {
+        return self.form_set_intervals_truncated;
+    }
+
+    fn refreshFormSetIntervals(self: *State, year: i32) !void {
+        const allocator = self.allocator orelse return error.NotAttached;
+        const store = self.store orelse return error.NotAttached;
+        self.form_set_interval_count = 0;
+        self.form_set_intervals_truncated = false;
+        const profile_id = self.selectedProfileId() orelse return;
+        var listed = try store.listFormSetIntervals(
+            allocator,
+            profile_id,
+            year,
+        );
+        defer listed.deinit(allocator);
+        self.form_set_intervals_truncated =
+            listed.items.len > self.form_set_intervals.len;
+        const count = @min(listed.items.len, self.form_set_intervals.len);
+        @memcpy(self.form_set_intervals[0..count], listed.items[0..count]);
+        self.form_set_interval_count = count;
+    }
+
+    /// Records the staged catalog selection as a change effective from the
+    /// typed date, leaving the year's base setup untouched. The workspace
+    /// afterwards shows the saved year again — proof the base did not move —
+    /// with the recorded change in the review list.
+    fn recordMidYearChange(self: *State) bool {
+        self.recordMidYearChangeFallible() catch |err| {
+            self.setError(err);
+            return false;
+        };
+        return true;
+    }
+
+    fn recordMidYearChangeFallible(self: *State) !void {
+        const store = self.store orelse return error.NotAttached;
+        if (self.editing_new) return error.FormsRequireSavedProfile;
+        const profile_id = self.selectedProfileId() orelse
+            return error.NoSelectedProfile;
+        const year = try parseTaxYear(self.tax_year.text());
+        const raw_date = trimmed(self.change_effective_from.text());
+        // A clamped paste can truncate to a plausible date; deliberately not
+        // in the sticky global truncation chain, because a bad date here must
+        // not block an unrelated profile save.
+        if (self.change_effective_from.truncated) {
+            self.setErrorDetail(
+                "Enter the date the change took effect as YYYY-MM-DD.",
+            );
+            return error.InvalidValue;
+        }
+        _ = model.Date.parseIso(raw_date) catch {
+            self.setErrorDetail(
+                "Enter the date the change took effect as YYYY-MM-DD.",
+            );
+            return error.InvalidValue;
+        };
+        var year_text: [4]u8 = undefined;
+        _ = std.fmt.bufPrint(&year_text, "{d:0>4}", .{
+            @as(u32, @intCast(year)),
+        }) catch return error.InvalidTaxYear;
+        if (!std.mem.startsWith(u8, raw_date, &year_text)) {
+            var message: [96]u8 = undefined;
+            self.setErrorDetail(std.fmt.bufPrint(
+                &message,
+                "That date isn't in {d}. Record the change in the year it belongs to.",
+                .{year},
+            ) catch "That date isn't in the open year.");
+            return error.InvalidValue;
+        }
+
+        var writes: [max_registered_forms]persistence.FormRegistrationWrite =
+            undefined;
+        const count = self.stagedFormWrites(&writes);
+        const generated = try store.generateOpaqueId();
+        store.createFormSetInterval(.{
+            .id = &generated,
+            .profile_id = profile_id,
+            .tax_year = year,
+            .effective_from = raw_date,
+            .forms = writes[0..count],
+        }) catch |err| {
+            if (err == persistence.Error.FormSetIntervalOverlap) {
+                var message: [160]u8 = undefined;
+                // The recorded change runs open through year end, so the
+                // collision is the first existing change still in effect on
+                // or after the typed date.
+                const existing_from: []const u8 = blk: {
+                    for (self.formSetIntervals()) |*interval| {
+                        const open = interval.effective_until == null;
+                        if (open or std.mem.order(
+                            u8,
+                            &interval.effective_until.?,
+                            raw_date,
+                        ) != .lt) {
+                            break :blk &interval.effective_from;
+                        }
+                    }
+                    break :blk "an earlier date";
+                };
+                self.setErrorDetail(std.fmt.bufPrint(
+                    &message,
+                    "A change recorded from {s} already covers those days. {d} can hold one recorded change per day.",
+                    .{ existing_from, year },
+                ) catch "A recorded change already covers those days.");
+                return err;
+            }
+            if (err == persistence.Error.FormSetIntervalOutsideYear) {
+                self.setErrorDetail(
+                    "That date isn't in the open year. Record the change in the year it belongs to.",
+                );
+            }
+            return err;
+        };
+
+        // The base year set was not touched, so nothing base-derived is
+        // refreshed: the catalog snaps back to the saved membership and the
+        // recorded change appears in the review list.
+        const recorded_count = count;
+        self.staged_forms.copySelectionFrom(&self.saved_forms);
+        self.staged_forms.resetInteraction();
+        self.forms_apply_scope = .whole_year;
+        self.resetFormFilters();
+        try self.refreshFormSetIntervals(year);
+        var message: [160]u8 = undefined;
+        const rendered = (if (recorded_count == 1)
+            std.fmt.bufPrint(
+                &message,
+                "Mid-year change recorded · 1 form from {s}. Deadlines still follow the year's saved setup.",
+                .{raw_date},
+            )
+        else
+            std.fmt.bufPrint(
+                &message,
+                "Mid-year change recorded · {d} forms from {s}. Deadlines still follow the year's saved setup.",
+                .{ recorded_count, raw_date },
+            )) catch "Mid-year change recorded.";
+        self.setNotice(.success, rendered);
+        self.change_effective_from.clear();
     }
 
     pub fn beginManageForms(self: *State) bool {
@@ -1061,8 +2508,26 @@ pub const State = struct {
             self.setError(err);
             return false;
         };
-        self.setNotice(.success, "Forms Set saved for this profile and tax year.");
+        self.setNotice(.success, "Your forms were saved for this tax year.");
         return true;
+    }
+
+    /// Collects the staged catalog selection as store writes. Callers copy
+    /// before any reload can rewrite `staged_forms` underneath them.
+    fn stagedFormWrites(
+        self: *const State,
+        output: *[max_registered_forms]persistence.FormRegistrationWrite,
+    ) usize {
+        var count: usize = 0;
+        for (&catalog.forms, 0..) |*form, index| {
+            if (!self.staged_forms.isSelected(index)) continue;
+            output[count] = .{
+                .form_code = form.code,
+                .form_revision = form.revision orelse "calendar-only",
+            };
+            count += 1;
+        }
+        return count;
     }
 
     fn saveManagedFormsFallible(self: *State) !void {
@@ -1073,15 +2538,7 @@ pub const State = struct {
         const year = try parseTaxYear(self.tax_year.text());
         var writes: [max_registered_forms]persistence.FormRegistrationWrite =
             undefined;
-        var count: usize = 0;
-        for (&catalog.forms, 0..) |*form, index| {
-            if (!self.staged_forms.isSelected(index)) continue;
-            writes[count] = .{
-                .form_code = form.code,
-                .form_revision = form.revision orelse "calendar-only",
-            };
-            count += 1;
-        }
+        const count = self.stagedFormWrites(&writes);
         if (self.form_set_create_mode or
             self.form_set_state == .needs_configuration or
             self.form_set_state == .legacy_catalog_default)
@@ -1107,7 +2564,7 @@ pub const State = struct {
             self.setError(err);
             return false;
         };
-        self.setNotice(.success, "Legacy catalog default restored.");
+        self.setNotice(.success, "The original catalog default was restored.");
         return true;
     }
 
@@ -1433,10 +2890,32 @@ pub const State = struct {
         );
     }
 
+    /// Reloads the sidebar rows against the current search text. Errors keep
+    /// the previous rows rather than blanking the sidebar mid-keystroke.
+    pub fn setSidebarQuery(self: *State, text: []const u8) void {
+        self.sidebar_query.set(std.mem.trim(u8, text, " \t\r\n")) catch return;
+        // Typing before a store is attached (tests, early boot) records the
+        // text and nothing else; rows load once attachment happens.
+        if (self.store == null) return;
+        self.reloadRows() catch |err| self.setError(err);
+    }
+
+    pub fn sidebarQuery(self: *const State) []const u8 {
+        return self.sidebar_query.text();
+    }
+
+    pub fn profileListTruncated(self: *const State) bool {
+        return self.profile_records_truncated;
+    }
+
     fn reloadRows(self: *State) !void {
         const allocator = self.allocator orelse return error.NotAttached;
         const store = self.store orelse return error.NotAttached;
-        var profiles = try store.listProfiles(allocator, false);
+        const query = self.sidebar_query.text();
+        var profiles = if (query.len == 0)
+            try store.listProfiles(allocator, false)
+        else
+            try store.searchProfiles(allocator, query, false);
         defer profiles.deinit(allocator);
 
         self.profile_records_truncated = profiles.items.len > max_profiles;
@@ -1452,6 +2931,12 @@ pub const State = struct {
             try row.stable_id.set(item.id);
             try row.name.set(item.display_name);
             try row.tin.set(item.tin);
+            if (fields.Tin.parse(item.tin)) |parsed| {
+                try row.tin_root.set(parsed.root());
+                if (parsed.branch()) |segment| {
+                    try row.branch_code.set(segment);
+                }
+            } else |_| {}
             try setInitials(&row.initials, item.display_name);
             row.active = self.has_selection and
                 std.mem.eql(u8, self.selected_id.text(), item.id);
@@ -1459,8 +2944,13 @@ pub const State = struct {
             self.profile_count += 1;
         }
 
+        const searching = self.sidebar_query.text().len != 0;
         if (self.profile_count == 0) {
+            // A search matching nobody narrows the view; it must not clear
+            // the selection behind it.
+            if (searching) return;
             self.has_selection = false;
+            self.has_selected_display = false;
             self.selected_id.clear();
             self.selected_revision_id.clear();
             self.selected_revision_sequence = null;
@@ -1468,16 +2958,45 @@ pub const State = struct {
             self.selected_activity_id.clear();
             return;
         }
-        if (self.selectedRow() == null) {
+        if (self.selectedRow() == null and !searching) {
             try self.selected_id.set(self.profiles[0].stable_id.text());
             self.has_selection = true;
         }
         self.markActiveRow();
-        if (self.profile_records_truncated) {
-            self.setNotice(
-                .neutral,
-                "Only the first 64 active tax profiles are shown.",
-            );
+        self.captureSelectedDisplay();
+        self.reportSharedTin();
+    }
+
+    /// Remembers how the selected taxpayer presents, so the header stays
+    /// truthful while a search narrows the loaded rows past them.
+    fn captureSelectedDisplay(self: *State) void {
+        const row = self.selectedRow() orelse return;
+        self.selected_display = row.*;
+        self.has_selected_display = true;
+    }
+
+    /// Names a TIN held by two loaded taxpayers.
+    ///
+    /// Nothing can create this state now, but data written before the rule
+    /// existed still can hold it, and silently rendering two taxpayers that
+    /// cannot be told apart is worse than saying so. Never prints a full TIN.
+    fn reportSharedTin(self: *State) void {
+        const loaded = self.profiles[0..self.profile_count];
+        for (loaded, 0..) |*row, index| {
+            const left = fields.Tin.parse(row.tin.text()) catch continue;
+            for (loaded[index + 1 ..]) |*other| {
+                const right = fields.Tin.parse(other.tin.text()) catch continue;
+                if (!left.eql(&right)) continue;
+                var masked_buffer: [24]u8 = undefined;
+                const masked = left.writeMasked(&masked_buffer) catch return;
+                var message: [200]u8 = undefined;
+                self.setNotice(.failure, std.fmt.bufPrint(
+                    &message,
+                    "Two taxpayers share TIN {s}. Their filings cannot be told apart — review them.",
+                    .{masked},
+                ) catch "Two taxpayers share one TIN. Their filings cannot be told apart.");
+                return;
+            }
         }
     }
 
@@ -1561,10 +3080,10 @@ pub const State = struct {
         );
 
         var date_buffer: [10]u8 = undefined;
-        setEditorBuffer(
-            &self.effective_from,
-            revision.effective.from.writeIso(&date_buffer),
-        );
+        const loaded_from = revision.effective.from.writeIso(&date_buffer);
+        setEditorBuffer(&self.effective_from, loaded_from);
+        try self.loaded_effective_from.set(loaded_from);
+        self.change_intent = .record_change;
         if (revision.effective.until) |until| {
             var until_buffer: [10]u8 = undefined;
             setEditorBuffer(
@@ -1608,12 +3127,18 @@ pub const State = struct {
 
         clearEditorBuffer(&self.tax_type);
         clearEditorBuffer(&self.special_rate_basis);
+        self.selected_tax_type.clear();
+        self.selected_tax_type_count = registrationFactKindCount(
+            revision,
+            .tax_type,
+        );
         self.government_withholding_agent = .unset;
         for (revision.registration_facts) |fact| {
             switch (fact.value) {
                 .tax_type => |value| {
                     if (registrationFactKindCount(revision, .tax_type) == 1) {
                         setEditorBuffer(&self.tax_type, value.asSlice());
+                        try self.selected_tax_type.set(value.asSlice());
                     }
                 },
                 .government_withholding_agent => |value| {
@@ -1644,6 +3169,9 @@ pub const State = struct {
         setTaxYearBuffer(&self.tax_year, self.default_tax_year);
         try self.loadEditorFormSet(self.default_tax_year);
         self.input_was_truncated = false;
+        self.captureBaseline();
+        self.refreshFactsSummary(self.default_tax_year);
+        self.refreshCorEvidence();
         if (!self.loaded_shape_supported) {
             self.setNotice(
                 .failure,
@@ -1680,6 +3208,8 @@ pub const State = struct {
         self.staged_forms.resetInteraction();
         self.managing_forms = false;
         self.form_set_create_mode = false;
+        self.year_workspace = .viewing;
+        self.draft_source_year = null;
         self.resetFormFilters();
         try self.updateFormSetSummary();
     }
@@ -1753,6 +3283,15 @@ pub const State = struct {
         self.staged_forms = .{};
         self.managing_forms = false;
         self.form_set_create_mode = false;
+        self.year_workspace = .viewing;
+        self.draft_source_year = null;
+        self.pending_year_switch = null;
+        self.branch_mode = false;
+        self.branch_source_root.clear();
+        self.branch_source_name.clear();
+        self.change_intent = .record_change;
+        self.selected_tax_type.clear();
+        self.selected_tax_type_count = 0;
         self.resetFormFilters();
         self.input_was_truncated = false;
     }
@@ -1798,10 +3337,27 @@ pub const State = struct {
         self.notice_epoch +%= 1;
     }
 
+    /// Records a specific failure message for the error about to be returned.
+    /// Refusals that can name the taxpayer involved are far more useful than
+    /// the generic mapping, which cannot see the offending row.
+    fn setErrorDetail(self: *State, message: []const u8) void {
+        self.pending_error_detail.set(message) catch {
+            self.pending_error_detail.clear();
+            return;
+        };
+        self.has_pending_error_detail = true;
+    }
+
     fn setError(self: *State, err: anyerror) void {
+        if (self.has_pending_error_detail) {
+            self.has_pending_error_detail = false;
+            self.setNotice(.failure, self.pending_error_detail.text());
+            self.pending_error_detail.clear();
+            return;
+        }
         const message = switch (err) {
             persistence.Error.RevisionConflict => "This profile changed elsewhere. Reload it before saving a new revision.",
-            error.UnknownFormCode => "The Forms Set contains a code that is not in the 51-form catalog.",
+            error.UnknownFormCode => "One of the chosen forms is not in the 51-form catalog.",
             error.InvalidTaxYear => "Tax year must be a four-digit year from 0001 through 9999.",
             error.ActivityRequiresBusinessLine => "An activity ATC requires a line of business. Tax type remains an independent registration fact.",
             error.PersonalFieldsNotApplicable => "Birth date, citizenship, and foreign tax number apply only to individual subjects.",
@@ -1809,9 +3365,21 @@ pub const State = struct {
             error.SourceReferenceRequired => "Imported and migrated revisions require a source reference.",
             error.ManualSourceHasReference => "Manual entry has no external source reference. Choose Imported or Migrated.",
             error.UnsupportedRepeatedComponents => "This repeated-component revision is preserved, but cannot be rewritten by the single-activity editor.",
-            error.UnsavedFormSetChanges => "Save or cancel the staged Forms Set before switching profiles or creating another profile.",
-            error.FormsRequireSavedProfile => "Create this profile before managing its Forms Set.",
-            persistence.Error.FormSetAlreadyExists => "That tax year already has a Forms Set. Choose it from the list to edit the active forms.",
+            error.UnsavedFormSetChanges => "Save or cancel your unsaved form changes before switching taxpayers.",
+            error.UnsavedProfileChanges => "Save or cancel your unsaved taxpayer details before switching taxpayers.",
+            error.DuplicateTaxpayerIdentifier,
+            persistence.Error.DuplicateCanonicalTin,
+            => "That TIN already belongs to a taxpayer you have. Open it instead of adding it again.",
+            error.BranchTinRootChanged => "A branch keeps the same nine-digit TIN as its head office. Change only the branch code.",
+            error.BranchCodeRequired => "Add the branch code after the nine-digit TIN, for example 123-456-789-002.",
+            error.BranchLegalPersonChanged => "A branch is the same taxpayer. A different kind of taxpayer needs its own profile.",
+            error.NoFactsEffectiveForYear => "No taxpayer details exist for that year yet. Record what was true then before setting up its forms.",
+            error.CorFileUnreadable => "That file could not be opened. Check it is still where you chose it from.",
+            error.CorFileEmpty => "That file is empty.",
+            error.CorFileTooLarge => "That file is larger than 16 MB, so it is not a Certificate of Registration.",
+            error.CorFileUnsupported => "A COR must be a PDF or an image.",
+            error.FormsRequireSavedProfile => "Save this taxpayer profile before choosing its forms.",
+            persistence.Error.FormSetAlreadyExists => "That year is already set up. Choose it from the year list to edit its forms.",
             error.FieldTooLong => "One or more profile fields exceed their supported length.",
             else => "Profile was not saved. Check required fields and field formats.",
         };
@@ -1880,6 +3448,16 @@ fn parseTaxYear(raw: []const u8) Error!i32 {
         return error.InvalidTaxYear;
     if (value < 1 or value > 9999) return error.InvalidTaxYear;
     return value;
+}
+
+/// The facts-summary boundary rule: a year has facts when a revision is
+/// effective on its first or its last day. A period from June to June covers
+/// neither, so the disjunction must not collapse.
+fn effectiveCoversYearBoundary(effective: model.EffectivePeriod, year: i32) bool {
+    if (year < 1 or year > 9999) return false;
+    const opening = model.Date.init(@intCast(year), 1, 1) catch return false;
+    const closing = model.Date.init(@intCast(year), 12, 31) catch return false;
+    return effective.contains(opening) or effective.contains(closing);
 }
 
 fn parseFormsSet(
@@ -1974,6 +3552,29 @@ fn subjectKindToDomain(kind: persistence.SubjectKind) model.SubjectKind {
     };
 }
 
+/// End-user names for the canonical reusable facts. These are the words the
+/// editor uses, so a missing-detail message points at a field the user can see.
+pub fn reusableFieldLabel(key: fields.ReusableField) []const u8 {
+    return switch (key) {
+        .tin => "Taxpayer Identification Number (TIN)",
+        .rdo_code => "Revenue District Office (RDO) code",
+        .taxpayer_name => "Taxpayer or registered name",
+        .registered_name => "Registered name",
+        .registered_address => "Registered address",
+        .zip_code => "ZIP code",
+        .contact_number => "Contact number",
+        .email_address => "Registered email address",
+        .date_of_birth => "Birth date",
+        .citizenship => "Citizenship",
+        .foreign_tax_number => "Foreign tax number",
+        .line_of_business => "Line of business",
+        .atc => "Alphanumeric Tax Code (ATC)",
+        .tax_type => "Registered tax type",
+        .government_withholding_agent => "Government withholding agent",
+        .special_rate_basis => "Special-rate basis",
+    };
+}
+
 fn subjectKindLabel(kind: model.SubjectKind) []const u8 {
     return switch (kind) {
         .individual => "Individual",
@@ -2017,6 +3618,110 @@ fn optionalTrimmed(value: []const u8) ?[]const u8 {
 
 fn trimmed(value: []const u8) []const u8 {
     return std.mem.trim(u8, value, " \t\r\n");
+}
+
+/// A COR is a registration certificate, not an archive: anything past this is
+/// not the document it claims to be, and reading it would only stall the app.
+const max_cor_document_bytes: u64 = 16 * 1024 * 1024;
+
+/// The application's I/O handle, published once at boot.
+///
+/// Filesystem calls need one, and a message handler has no other way to reach
+/// it. Hashing a document is bounded and runs on the same loop thread as the
+/// file chooser that produced the path, so it costs no more than the modal the
+/// user just dismissed. Absent in tests, where no file is ever read.
+var app_io: ?std.Io = null;
+
+pub fn publishIo(io: std.Io) void {
+    app_io = io;
+}
+
+pub const CorFileError = error{
+    CorFileUnreadable,
+    CorFileEmpty,
+    CorFileTooLarge,
+    CorFileUnsupported,
+};
+
+/// Hashes the document at `path` and returns its size, refusing anything that
+/// is not a PDF or a common image. The signature check reads the real bytes
+/// rather than trusting the extension, which is what a file name can lie about.
+fn hashCorFile(path: []const u8, digest_text: *[64]u8) CorFileError!u64 {
+    const io = app_io orelse return error.CorFileUnreadable;
+    var file = std.Io.Dir.cwd().openFile(io, path, .{}) catch
+        return error.CorFileUnreadable;
+    defer file.close(io);
+
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    var buffer: [64 * 1024]u8 = undefined;
+    var total: u64 = 0;
+    var signature: [8]u8 = undefined;
+    var signature_len: usize = 0;
+    while (true) {
+        const read = file.readPositionalAll(io, &buffer, total) catch |err| {
+            // A short final chunk ends the file rather than failing it.
+            if (err != error.EndOfStream) return error.CorFileUnreadable;
+            break;
+        };
+        if (read == 0) break;
+        if (signature_len < signature.len) {
+            const take = @min(signature.len - signature_len, read);
+            @memcpy(signature[signature_len..][0..take], buffer[0..take]);
+            signature_len += take;
+        }
+        hasher.update(buffer[0..read]);
+        total += read;
+        if (total > max_cor_document_bytes) return error.CorFileTooLarge;
+        if (read < buffer.len) break;
+    }
+    if (total == 0) return error.CorFileEmpty;
+    if (!isSupportedCorSignature(signature[0..signature_len])) {
+        return error.CorFileUnsupported;
+    }
+
+    var digest: [32]u8 = undefined;
+    hasher.final(&digest);
+    _ = std.fmt.bufPrint(digest_text, "{x}", .{&digest}) catch unreachable;
+    return total;
+}
+
+fn isSupportedCorSignature(signature: []const u8) bool {
+    if (std.mem.startsWith(u8, signature, "%PDF-")) return true;
+    if (std.mem.startsWith(u8, signature, "\x89PNG\r\n\x1a\n")) return true;
+    // JPEG: start of image plus the first marker byte.
+    if (signature.len >= 3 and
+        std.mem.startsWith(u8, signature, "\xff\xd8\xff")) return true;
+    return false;
+}
+
+/// Re-checks a referenced document without loading it into the model.
+fn verifyCorFile(path: []const u8, expected_digest: []const u8) State.CorEvidenceState {
+    var digest_text: [64]u8 = undefined;
+    const size = hashCorFile(path, &digest_text) catch |err| return switch (err) {
+        // A file that is present but no longer the attached document is a
+        // different situation from one that is gone, and the user needs to
+        // be able to tell them apart.
+        error.CorFileUnsupported, error.CorFileEmpty, error.CorFileTooLarge => .changed,
+        error.CorFileUnreadable => .moved,
+    };
+    _ = size;
+    return if (std.mem.eql(u8, &digest_text, expected_digest))
+        .on_file
+    else
+        .changed;
+}
+
+fn fileNameOf(path: []const u8) []const u8 {
+    if (std.fs.path.basename(path).len != 0) return std.fs.path.basename(path);
+    return path;
+}
+
+/// Copies a slice into caller-owned scratch so it survives the editor being
+/// cleared. Reusing values across a reset would otherwise read freed bytes.
+fn copyInto(buffer: []u8, value: []const u8) []const u8 {
+    const length = @min(buffer.len, value.len);
+    @memcpy(buffer[0..length], value[0..length]);
+    return buffer[0..length];
 }
 
 test "form filter checkbox groups stay nonempty and reset by context" {
@@ -2456,6 +4161,1398 @@ test "profile state appends immutable source-aware revision" {
         std.meta.Tag(model.RevisionSource).imported,
         std.meta.activeTag(current.revision.source),
     );
+}
+
+fn workspaceFixture(
+    state: *State,
+    allocator: std.mem.Allocator,
+    store: *persistence.Store,
+) !void {
+    try state.attach(allocator, store, "2026-01-01", 2026);
+    state.tin.set("123-456-789-000");
+    state.rdo.set("040");
+    state.display_name.set("Workspace Taxpayer");
+    state.registered_address.set("Quezon City");
+    // Registered well before the years these tests set up, so historical years
+    // resolve real facts instead of hitting the retroactive-record guard.
+    state.effective_from.set("2020-01-01");
+    try std.testing.expect(state.save());
+}
+
+fn catalogIndexOf(code: []const u8) usize {
+    for (&catalog.forms, 0..) |*form, index| {
+        if (std.mem.eql(u8, form.code, code)) return index;
+    }
+    unreachable;
+}
+
+test "configured year opens for editing and never offers a create workspace" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    const profile_id = state.selectedProfileId().?;
+    try store.createFormSet(profile_id, 2026, &.{.{
+        .form_code = "2551Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+    try state.refreshFormSetSummaries();
+
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expectEqual(YearWorkspaceMode.viewing, state.year_workspace);
+    try std.testing.expect(!state.year_workspace.isDraft());
+    try std.testing.expect(!state.form_set_create_mode);
+    try std.testing.expectEqual(@as(usize, 1), state.activeFormCount());
+    // Editing an existing year takes the update path: the insert-only create
+    // path is unreachable, so a save can never collide with itself.
+    try std.testing.expect(state.saveYearWorkspace());
+    try std.testing.expectEqual(YearWorkspaceMode.viewing, state.year_workspace);
+    try std.testing.expectEqual(@as(usize, 1), state.activeFormCount());
+
+    // Even a stale summary cache cannot reclassify a configured year, because
+    // the workspace resolves membership from the store on every open.
+    state.form_set_summary_count = 0;
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expectEqual(YearWorkspaceMode.viewing, state.year_workspace);
+    try std.testing.expectEqual(@as(usize, 1), state.activeFormCount());
+}
+
+test "a duplicate created elsewhere becomes a recoverable conflict" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    const profile_id = state.selectedProfileId().?;
+    const index_2551q = catalogIndexOf("2551Q");
+    const index_1701q = catalogIndexOf("1701Q");
+
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expectEqual(YearWorkspaceMode.draft_choice, state.year_workspace);
+    try std.testing.expect(state.chooseDraftEmpty());
+    state.toggleStagedForm(index_2551q);
+    try std.testing.expect(state.stagedFormSelected(index_2551q));
+
+    // Another window configures the same year first.
+    try store.createFormSet(profile_id, 2026, &.{.{
+        .form_code = "1701Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+
+    try std.testing.expect(!state.saveYearWorkspace());
+    try std.testing.expectEqual(YearWorkspaceMode.conflict, state.year_workspace);
+    // The staged work survives the collision.
+    try std.testing.expect(state.stagedFormSelected(index_2551q));
+
+    try std.testing.expect(state.reviewConflictingYear());
+    try std.testing.expectEqual(YearWorkspaceMode.viewing, state.year_workspace);
+    // The saved setup is the new baseline; the user's pick reads as pending.
+    try std.testing.expect(state.persistedFormSelected(index_1701q));
+    try std.testing.expectEqual(
+        ManagedFormStatus.will_activate,
+        state.managedFormStatus(index_2551q).?,
+    );
+    try std.testing.expectEqual(
+        ManagedFormStatus.will_deactivate,
+        state.managedFormStatus(index_1701q).?,
+    );
+    try std.testing.expect(state.saveYearWorkspace());
+    try std.testing.expect(state.persistedFormSelected(index_2551q));
+    try std.testing.expect(!state.persistedFormSelected(index_1701q));
+}
+
+test "discarding a conflicting draft adopts the setup saved elsewhere" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    const profile_id = state.selectedProfileId().?;
+    const index_2551q = catalogIndexOf("2551Q");
+    const index_1701q = catalogIndexOf("1701Q");
+
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expect(state.chooseDraftEmpty());
+    state.toggleStagedForm(index_2551q);
+    try store.createFormSet(profile_id, 2026, &.{.{
+        .form_code = "1701Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+    try std.testing.expect(!state.saveYearWorkspace());
+
+    try std.testing.expect(state.discardConflictingDraft());
+    try std.testing.expectEqual(YearWorkspaceMode.viewing, state.year_workspace);
+    try std.testing.expect(state.persistedFormSelected(index_1701q));
+    try std.testing.expect(!state.stagedFormSelected(index_2551q));
+    try std.testing.expect(!state.workspaceDirty());
+}
+
+test "a missing year seeded from another year saves without touching the source" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    const profile_id = state.selectedProfileId().?;
+    const index_2551q = catalogIndexOf("2551Q");
+    const index_1701q = catalogIndexOf("1701Q");
+    try store.createFormSet(profile_id, 2026, &.{
+        .{ .form_code = "2551Q", .form_revision = "2018-01-ENCS" },
+        .{ .form_code = "1701Q", .form_revision = "2018-01-ENCS" },
+    });
+    try state.refreshFormSetSummaries();
+
+    try std.testing.expect(state.openYearWorkspace(2025));
+    try std.testing.expectEqual(YearWorkspaceMode.draft_choice, state.year_workspace);
+    try std.testing.expectEqual(@as(i32, 2026), state.recommendedSeedYear().?);
+
+    try std.testing.expect(state.chooseDraftSeed(2026));
+    try std.testing.expectEqual(YearWorkspaceMode.draft_seeded, state.year_workspace);
+    try std.testing.expectEqual(@as(i32, 2026), state.draftSourceYear().?);
+    try std.testing.expectEqual(@as(usize, 2), state.stagedFormCount());
+
+    state.toggleStagedForm(index_1701q);
+    try std.testing.expectEqual(@as(usize, 1), state.stagedFormCount());
+    try std.testing.expect(state.saveYearWorkspace());
+    try std.testing.expectEqual(YearWorkspaceMode.viewing, state.year_workspace);
+
+    var saved_2025 = (try store.getFormSet(allocator, profile_id, 2025)).?;
+    defer saved_2025.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), saved_2025.items.len);
+    try std.testing.expectEqualStrings("2551Q", saved_2025.items[0].form_code);
+
+    // The source year is read-only during a copy.
+    var saved_2026 = (try store.getFormSet(allocator, profile_id, 2026)).?;
+    defer saved_2026.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), saved_2026.items.len);
+    _ = index_2551q;
+}
+
+test "an explicitly empty year stays configured and never widens" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expect(state.chooseDraftEmpty());
+    try std.testing.expectEqual(YearWorkspaceMode.draft_empty, state.year_workspace);
+    try std.testing.expect(state.saveYearWorkspace());
+
+    try std.testing.expectEqual(
+        persistence.FormSetState.active_empty,
+        state.form_set_state,
+    );
+    try std.testing.expect(state.forms_set_configured);
+    try std.testing.expect(!state.formAvailable(2026, "2551Q"));
+    // Reopening keeps it configured rather than reverting to a setup draft.
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expectEqual(YearWorkspaceMode.viewing, state.year_workspace);
+}
+
+test "the year workspace rejects future and out-of-range years" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+
+    try std.testing.expect(!state.openYearWorkspace(2027));
+    try std.testing.expect(state.noticeFailure());
+    try std.testing.expect(!state.openYearWorkspace(minimum_setup_year - 1));
+    try std.testing.expectEqual(@as(i32, 2026), state.maximumSetupYear());
+}
+
+test "switching year with unsaved work prompts instead of discarding" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    const index_2551q = catalogIndexOf("2551Q");
+
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expect(state.chooseDraftEmpty());
+    try std.testing.expect(!state.workspaceDirty());
+    state.toggleStagedForm(index_2551q);
+    try std.testing.expect(state.workspaceDirty());
+
+    // The switch is withheld, not applied, and nothing is written.
+    try std.testing.expect(!state.openYearWorkspace(2025));
+    try std.testing.expectEqual(@as(i32, 2025), state.pendingYearSwitch().?);
+    try std.testing.expectEqual(@as(i32, 2026), state.workspaceYear().?);
+    try std.testing.expect(state.stagedFormSelected(index_2551q));
+
+    state.cancelPendingYearSwitch();
+    try std.testing.expect(state.pendingYearSwitch() == null);
+    try std.testing.expectEqual(@as(i32, 2026), state.workspaceYear().?);
+
+    try std.testing.expect(!state.openYearWorkspace(2025));
+    try std.testing.expect(state.confirmPendingYearSwitch());
+    try std.testing.expectEqual(@as(i32, 2025), state.workspaceYear().?);
+    try std.testing.expectEqual(YearWorkspaceMode.draft_choice, state.year_workspace);
+    try std.testing.expect(!state.stagedFormSelected(index_2551q));
+}
+
+test "an unreadable year fails closed instead of offering setup" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    try store.createFormSet(state.selectedProfileId().?, 2026, &.{.{
+        .form_code = "2551Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expectEqual(@as(usize, 1), state.activeFormCount());
+
+    store.close();
+    try std.testing.expect(!state.openYearWorkspace(2025));
+    try std.testing.expectEqual(YearWorkspaceMode.open_failed, state.year_workspace);
+    try std.testing.expect(!state.year_workspace.isDraft());
+    try std.testing.expect(!state.form_set_create_mode);
+    // No selection from the previous year survives an unreadable one.
+    try std.testing.expectEqual(@as(usize, 0), state.stagedFormCount());
+    try std.testing.expectEqual(@as(usize, 0), state.activeFormCount());
+}
+
+test "saving unchanged taxpayer details records no new revision" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    try std.testing.expectEqual(@as(u32, 1), state.selectedRevisionSequence().?);
+    try std.testing.expect(!state.factsDirty());
+
+    // Reopening and saving is a visit, not a change.
+    try std.testing.expect(state.save());
+    try std.testing.expectEqual(@as(u32, 1), state.selectedRevisionSequence().?);
+    try std.testing.expectEqualStrings("No changes to save.", state.noticeText());
+
+    // A real edit still appends exactly one revision.
+    state.registered_address.set("Makati City");
+    try std.testing.expect(state.factsDirty());
+    try std.testing.expect(state.save());
+    try std.testing.expectEqual(@as(u32, 2), state.selectedRevisionSequence().?);
+    try std.testing.expect(!state.factsDirty());
+}
+
+test "the header states several registered tax types rather than none" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    try std.testing.expectEqualStrings(
+        "Tax type not recorded",
+        state.selectedTaxTypeLabel(),
+    );
+
+    state.tax_type.set("Percentage Tax");
+    try std.testing.expect(state.save());
+    try std.testing.expectEqualStrings(
+        "Percentage Tax",
+        state.selectedTaxTypeLabel(),
+    );
+
+    // A taxpayer registered for two tax types has facts the single-value
+    // editor cannot show; the header must not report that as having none.
+    const profile_id = state.selectedProfileDomainId().?;
+    const observed = state.selectedRevisionSequence().?;
+    const generated = try store.generateOpaqueId();
+    const facts = [_]model.RegistrationFact{
+        .{
+            .id = try model.RegistrationFactId.parse("tax-type-percentage"),
+            .effective = try model.EffectivePeriod.init(
+                try model.Date.parseIso("2026-01-01"),
+                try model.Date.parseIso("2026-06-30"),
+            ),
+            .value = .{ .tax_type = try fields.TaxType.parse("Percentage Tax") },
+        },
+        .{
+            .id = try model.RegistrationFactId.parse("tax-type-vat"),
+            .effective = try model.EffectivePeriod.init(
+                try model.Date.parseIso("2026-07-01"),
+                null,
+            ),
+            .value = .{ .tax_type = try fields.TaxType.parse("Value Added Tax") },
+        },
+    };
+    const revision: model.ProfileRevision = .{
+        .profile_id = profile_id,
+        .id = try model.RevisionId.parse(&generated),
+        .sequence = observed + 1,
+        .effective = try model.EffectivePeriod.init(
+            try model.Date.parseIso("2026-01-01"),
+            null,
+        ),
+        .source = .manual_entry,
+        .identity = .{
+            .tin = try fields.Tin.parse("123-456-789-000"),
+            .rdo_code = try fields.RdoCode.parse("040"),
+        },
+        .contact = .{
+            .address = try fields.RegisteredAddress.parse("Quezon City"),
+        },
+        .subject = .{ .individual = .{
+            .name = try fields.TaxpayerName.parse("Workspace Taxpayer"),
+        } },
+        .registration_facts = &facts,
+    };
+    try profile_persistence.appendRevision(
+        &store,
+        allocator,
+        &revision,
+        observed,
+    );
+    try state.attach(allocator, &store, "2026-01-01", 2026);
+    try std.testing.expectEqualStrings(
+        "Multiple registered tax types",
+        state.selectedTaxTypeLabel(),
+    );
+}
+
+test "an attached COR is a checked reference, not a copy" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    publishIo(std.testing.io);
+    defer app_io = null;
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+
+    // A real file on disk, because the point of a reference is that the
+    // document stays where the user keeps it.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var full_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const document = try std.fmt.bufPrint(
+        &full_buffer,
+        ".zig-cache/tmp/{s}/cor.pdf",
+        .{tmp.sub_path},
+    );
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "cor.pdf",
+        .data = "%PDF-1.4 registration",
+    });
+
+    try std.testing.expectEqual(State.CorEvidenceState.none, state.corEvidenceState());
+    try std.testing.expect(state.attachCorDocument(document));
+    try std.testing.expectEqual(State.CorEvidenceState.on_file, state.corEvidenceState());
+    try std.testing.expectEqualStrings("cor.pdf", state.corFileName());
+
+    // Nothing was copied: only a reference and a digest were recorded.
+    var stored = (try store.getLatestCorDocument(
+        allocator,
+        state.selectedProfileId().?,
+    )).?;
+    defer stored.deinit(allocator);
+    try std.testing.expectEqualStrings(document, stored.file_path);
+    try std.testing.expectEqual(@as(u64, 21), stored.byte_size);
+    try std.testing.expectEqual(@as(usize, 64), stored.sha256.len);
+
+    // Editing the document behind the reference is detectable, which is the
+    // whole reason the digest is stored.
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "cor.pdf",
+        .data = "%PDF-1.4 tampered!!!!",
+    });
+    state.refreshCorEvidence();
+    try std.testing.expectEqual(State.CorEvidenceState.changed, state.corEvidenceState());
+
+    // So is removing it.
+    try tmp.dir.deleteFile(std.testing.io, "cor.pdf");
+    state.refreshCorEvidence();
+    try std.testing.expectEqual(State.CorEvidenceState.moved, state.corEvidenceState());
+}
+
+fn attachTestCor(
+    state: *State,
+    tmp: *std.testing.TmpDir,
+) !void {
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "cor.pdf",
+        .data = "%PDF-1.4 registration",
+    });
+    var buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const document = try std.fmt.bufPrint(
+        &buffer,
+        ".zig-cache/tmp/{s}/cor.pdf",
+        .{tmp.sub_path},
+    );
+    try std.testing.expect(state.attachCorDocument(document));
+}
+
+test "accepting only forms from a COR records no taxpayer change" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    publishIo(std.testing.io);
+    defer app_io = null;
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try attachTestCor(&state, &tmp);
+    const sequence_before = state.selectedRevisionSequence().?;
+
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expect(state.chooseDraftEmpty());
+    state.toggleStagedForm(catalogIndexOf("2551Q"));
+
+    try std.testing.expect(state.beginCorReview());
+    state.cor_review_tin.set("123-456-789-000");
+    try std.testing.expectEqual(CorTinMatch.matches, state.corReviewTinMatch());
+
+    // Only the forms are accepted; no detail row is.
+    state.toggleCorReviewApplyForms();
+    try std.testing.expectEqual(@as(usize, 0), state.corReviewAcceptedCount());
+    try std.testing.expect(!state.corReviewApplyBlocked());
+    try std.testing.expect(state.applyCorReview());
+
+    // The forms were saved and the taxpayer's history gained nothing, because
+    // nothing about the taxpayer changed.
+    try std.testing.expectEqual(
+        sequence_before,
+        state.selectedRevisionSequence().?,
+    );
+    try std.testing.expect(state.formAvailable(2026, "2551Q"));
+}
+
+test "accepting details from a COR records one change with its provenance" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    publishIo(std.testing.io);
+    defer app_io = null;
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try attachTestCor(&state, &tmp);
+    const sequence_before = state.selectedRevisionSequence().?;
+
+    try std.testing.expect(state.beginCorReview());
+    state.cor_review_tin.set("123-456-789-000");
+    const address_index = @intFromEnum(CorCandidateField.registered_address);
+    state.cor_review_values[address_index].set("Makati City");
+    state.toggleCorReviewAccepted(address_index);
+    try std.testing.expectEqual(@as(usize, 1), state.corReviewAcceptedCount());
+    try std.testing.expect(state.applyCorReview());
+
+    try std.testing.expectEqual(
+        sequence_before + 1,
+        state.selectedRevisionSequence().?,
+    );
+    try std.testing.expectEqualStrings("Makati City", state.registered_address.text());
+
+    // The record says where the value came from, so the history can be read
+    // back to the document that justified it.
+    var current = (try profile_persistence.loadCurrentRevision(
+        &store,
+        allocator,
+        state.selectedProfileDomainId().?,
+    )).?;
+    defer current.deinit(allocator);
+    try std.testing.expectEqual(
+        std.meta.Tag(model.RevisionSource).imported,
+        std.meta.activeTag(current.revision.source),
+    );
+    try std.testing.expect(std.mem.startsWith(
+        u8,
+        current.revision.source.imported.asSlice(),
+        "COR cor.pdf sha256:",
+    ));
+
+    // Alongside the readable reference, the durable key points at the exact
+    // evidence row.
+    const linked = (try store.corDocumentIdForRevision(
+        allocator,
+        state.selectedProfileId().?,
+        current.revision.id.asSlice(),
+    )).?;
+    defer allocator.free(linked);
+    try std.testing.expectEqualStrings(state.cor_document_id.text(), linked);
+}
+
+test "applying details and forms from a COR is one decision" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    publishIo(std.testing.io);
+    defer app_io = null;
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try attachTestCor(&state, &tmp);
+    const sequence_before = state.selectedRevisionSequence().?;
+
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expect(state.chooseDraftEmpty());
+    state.toggleStagedForm(catalogIndexOf("2551Q"));
+
+    try std.testing.expect(state.beginCorReview());
+    state.cor_review_tin.set("123-456-789-000");
+    const address_index = @intFromEnum(CorCandidateField.registered_address);
+    state.cor_review_values[address_index].set("Makati City");
+    state.toggleCorReviewAccepted(address_index);
+    state.toggleCorReviewApplyForms();
+    try std.testing.expect(state.applyCorReview());
+
+    // Both halves of the decision landed: the detail change and the staged
+    // forms, which the old two-step flow wiped before writing.
+    try std.testing.expectEqual(
+        sequence_before + 1,
+        state.selectedRevisionSequence().?,
+    );
+    try std.testing.expectEqualStrings(
+        "Makati City",
+        state.registered_address.text(),
+    );
+    try std.testing.expect(state.formAvailable(2026, "2551Q"));
+    try std.testing.expect(!state.corReviewOpen());
+
+    var current = (try profile_persistence.loadCurrentRevision(
+        &store,
+        allocator,
+        state.selectedProfileDomainId().?,
+    )).?;
+    defer current.deinit(allocator);
+    const linked = (try store.corDocumentIdForRevision(
+        allocator,
+        state.selectedProfileId().?,
+        current.revision.id.asSlice(),
+    )).?;
+    defer allocator.free(linked);
+    try std.testing.expectEqualStrings(state.cor_document_id.text(), linked);
+}
+
+test "a year conflict leaves a COR review unapplied and recoverable" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    publishIo(std.testing.io);
+    defer app_io = null;
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try attachTestCor(&state, &tmp);
+    const sequence_before = state.selectedRevisionSequence().?;
+
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expect(state.chooseDraftEmpty());
+    state.toggleStagedForm(catalogIndexOf("2551Q"));
+
+    try std.testing.expect(state.beginCorReview());
+    state.cor_review_tin.set("123-456-789-000");
+    const address_index = @intFromEnum(CorCandidateField.registered_address);
+    state.cor_review_values[address_index].set("Makati City");
+    state.toggleCorReviewAccepted(address_index);
+    state.toggleCorReviewApplyForms();
+
+    // The year is set up in another window while the review is open.
+    try store.createFormSet(state.selectedProfileId().?, 2026, &.{});
+
+    // The apply fails as one decision: no revision, review still open, the
+    // staged choices intact behind the conflict card.
+    try std.testing.expect(!state.applyCorReview());
+    try std.testing.expectEqual(
+        sequence_before,
+        state.selectedRevisionSequence().?,
+    );
+    try std.testing.expect(state.corReviewOpen());
+    try std.testing.expectEqual(YearWorkspaceMode.conflict, state.year_workspace);
+    try std.testing.expect(
+        state.staged_forms.isSelected(catalogIndexOf("2551Q")),
+    );
+}
+
+test "re-applying the same COR decision appends nothing new" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    publishIo(std.testing.io);
+    defer app_io = null;
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try attachTestCor(&state, &tmp);
+
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expect(state.chooseDraftEmpty());
+    state.toggleStagedForm(catalogIndexOf("2551Q"));
+
+    const address_index = @intFromEnum(CorCandidateField.registered_address);
+    try std.testing.expect(state.beginCorReview());
+    state.cor_review_tin.set("123-456-789-000");
+    state.cor_review_values[address_index].set("Makati City");
+    state.toggleCorReviewAccepted(address_index);
+    state.toggleCorReviewApplyForms();
+    try std.testing.expect(state.applyCorReview());
+    const sequence_after_first = state.selectedRevisionSequence().?;
+
+    // The same decision again — same value, same document — records nothing:
+    // the history logs events, not repetitions.
+    try std.testing.expect(state.beginCorReview());
+    state.cor_review_tin.set("123-456-789-000");
+    state.cor_review_values[address_index].set("Makati City");
+    state.toggleCorReviewAccepted(address_index);
+    state.toggleCorReviewApplyForms();
+    try std.testing.expect(state.applyCorReview());
+    try std.testing.expectEqual(
+        sequence_after_first,
+        state.selectedRevisionSequence().?,
+    );
+    try std.testing.expect(state.formAvailable(2026, "2551Q"));
+    try std.testing.expect(!state.corReviewOpen());
+}
+
+fn configuredYearFixture(
+    state: *State,
+    allocator: std.mem.Allocator,
+    store: *persistence.Store,
+) !void {
+    try workspaceFixture(state, allocator, store);
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expect(state.chooseDraftEmpty());
+    state.toggleStagedForm(catalogIndexOf("2551Q"));
+    try std.testing.expect(state.saveYearWorkspace());
+}
+
+test "a mid-year change is recorded without touching the year's saved setup" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    var state = State{};
+    try configuredYearFixture(&state, allocator, &store);
+
+    state.toggleStagedForm(catalogIndexOf("2550Q"));
+    state.chooseApplyFromDate();
+    state.change_effective_from.set("2026-07-01");
+    try std.testing.expect(state.saveYearWorkspace());
+
+    // The year's base setup did not move; the recorded change lives beside
+    // it and answers only date-scoped resolution.
+    const profile_id = state.selectedProfileId().?;
+    var base = try store.resolveFormSet(allocator, profile_id, 2026);
+    defer base.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), base.forms.items.len);
+    try std.testing.expectEqualStrings(
+        "2551Q",
+        base.forms.items[0].form_code,
+    );
+    var dated = try store.resolveFormSetOn(allocator, profile_id, "2026-07-01");
+    defer dated.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), dated.forms.items.len);
+}
+
+test "recording a mid-year change leaves the workspace showing the saved year" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    var state = State{};
+    try configuredYearFixture(&state, allocator, &store);
+
+    state.toggleStagedForm(catalogIndexOf("2550Q"));
+    state.chooseApplyFromDate();
+    state.change_effective_from.set("2026-07-01");
+    try std.testing.expect(state.saveYearWorkspace());
+
+    // The catalog snaps back to the saved year — zero unsaved changes, or
+    // the record would read as a lost save — while the review list and the
+    // notice carry what was recorded.
+    try std.testing.expectEqual(@as(usize, 0), state.changedFormCount());
+    try std.testing.expectEqual(FormsApplyScope.whole_year, state.forms_apply_scope);
+    try std.testing.expectEqual(YearWorkspaceMode.viewing, state.year_workspace);
+    try std.testing.expectEqual(@as(usize, 1), state.formSetIntervals().len);
+    try std.testing.expectEqualStrings(
+        "2026-07-01",
+        &state.formSetIntervals()[0].effective_from,
+    );
+    try std.testing.expectEqual(@as(usize, 2), state.formSetIntervals()[0].form_count);
+    try std.testing.expectEqualStrings(
+        "Mid-year change recorded · 2 forms from 2026-07-01. Deadlines still follow the year's saved setup.",
+        state.noticeText(),
+    );
+}
+
+test "a second recorded change over the same days is refused in plain words" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    var state = State{};
+    try configuredYearFixture(&state, allocator, &store);
+
+    state.chooseApplyFromDate();
+    state.change_effective_from.set("2026-07-01");
+    try std.testing.expect(state.saveYearWorkspace());
+
+    // The recorded change runs open through year end, so any later date in
+    // the year collides with it — said plainly, not as a constraint name.
+    state.chooseApplyFromDate();
+    state.change_effective_from.set("2026-10-01");
+    try std.testing.expect(!state.saveYearWorkspace());
+    try std.testing.expectEqualStrings(
+        "A change recorded from 2026-07-01 already covers those days. 2026 can hold one recorded change per day.",
+        state.noticeText(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), state.formSetIntervals().len);
+}
+
+test "a change dated outside the open year never reaches the store" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    var state = State{};
+    try configuredYearFixture(&state, allocator, &store);
+
+    state.chooseApplyFromDate();
+    state.change_effective_from.set("2025-07-01");
+    try std.testing.expect(!state.saveYearWorkspace());
+    try std.testing.expectEqualStrings(
+        "That date isn't in 2026. Record the change in the year it belongs to.",
+        state.noticeText(),
+    );
+    const profile_id = state.selectedProfileId().?;
+    var this_year = try store.listFormSetIntervals(allocator, profile_id, 2026);
+    defer this_year.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), this_year.items.len);
+    var other_year = try store.listFormSetIntervals(allocator, profile_id, 2025);
+    defer other_year.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), other_year.items.len);
+}
+
+test "an invalid change date is named, not swallowed" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    var state = State{};
+    try configuredYearFixture(&state, allocator, &store);
+
+    state.chooseApplyFromDate();
+    try std.testing.expect(!state.saveYearWorkspace());
+    try std.testing.expectEqualStrings(
+        "Enter the date the change took effect as YYYY-MM-DD.",
+        state.noticeText(),
+    );
+
+    state.chooseApplyFromDate();
+    state.change_effective_from.set("2026-13-40");
+    try std.testing.expect(!state.saveYearWorkspace());
+    try std.testing.expectEqualStrings(
+        "Enter the date the change took effect as YYYY-MM-DD.",
+        state.noticeText(),
+    );
+}
+
+test "a COR for another taxpayer cannot change this one" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    publishIo(std.testing.io);
+    defer app_io = null;
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try attachTestCor(&state, &tmp);
+    const sequence_before = state.selectedRevisionSequence().?;
+
+    try std.testing.expect(state.beginCorReview());
+    state.cor_review_tin.set("987-654-321-000");
+    const address_index = @intFromEnum(CorCandidateField.registered_address);
+    state.cor_review_values[address_index].set("Somewhere Else");
+    state.toggleCorReviewAccepted(address_index);
+
+    // A document naming a different taxpayer has no path to this one, no
+    // matter what has been accepted.
+    try std.testing.expectEqual(CorTinMatch.mismatched, state.corReviewTinMatch());
+    try std.testing.expect(state.corReviewApplyBlocked());
+    try std.testing.expect(!state.applyCorReview());
+    try std.testing.expectEqual(
+        sequence_before,
+        state.selectedRevisionSequence().?,
+    );
+    try std.testing.expectEqualStrings("Quezon City", state.registered_address.text());
+}
+
+test "a COR must be a document, not any file" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    publishIo(std.testing.io);
+    defer app_io = null;
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var full_buffer: [std.fs.max_path_bytes]u8 = undefined;
+
+    // The extension claims a PDF; the bytes do not. Signatures decide.
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "notes.pdf",
+        .data = "just some text",
+    });
+    const disguised = try std.fmt.bufPrint(
+        &full_buffer,
+        ".zig-cache/tmp/{s}/notes.pdf",
+        .{tmp.sub_path},
+    );
+    try std.testing.expect(!state.attachCorDocument(disguised));
+    try std.testing.expectEqualStrings(
+        "A COR must be a PDF or an image.",
+        state.noticeText(),
+    );
+    try std.testing.expectEqual(State.CorEvidenceState.none, state.corEvidenceState());
+
+    var missing_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const missing = try std.fmt.bufPrint(
+        &missing_buffer,
+        ".zig-cache/tmp/{s}/absent.pdf",
+        .{tmp.sub_path},
+    );
+    try std.testing.expect(!state.attachCorDocument(missing));
+    try std.testing.expect(state.noticeFailure());
+
+    try std.testing.expect(
+        (try store.getLatestCorDocument(allocator, state.selectedProfileId().?)) == null,
+    );
+}
+
+test "reformatting a value is not a change worth recording" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    state.phone.set("+639171234567");
+    try std.testing.expect(state.save());
+    try std.testing.expectEqual(@as(u32, 2), state.selectedRevisionSequence().?);
+
+    // The same TIN written the way it is normally printed parses to the same
+    // canonical value, so appending would record a change nobody made.
+    state.tin.set("123456789000");
+    try std.testing.expect(state.factsDirty());
+    try std.testing.expect(state.save());
+    try std.testing.expectEqualStrings("No changes to save.", state.noticeText());
+    try std.testing.expectEqual(@as(u32, 2), state.selectedRevisionSequence().?);
+
+    // A genuinely different value still appends.
+    state.phone.set("+639179999999");
+    try std.testing.expect(state.save());
+    try std.testing.expectEqual(@as(u32, 3), state.selectedRevisionSequence().?);
+}
+
+test "unsaved taxpayer details block a profile switch instead of vanishing" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    state.display_name.set("Edited But Unsaved");
+    try std.testing.expect(state.factsDirty());
+
+    try std.testing.expectError(
+        error.UnsavedProfileChanges,
+        state.selectSlot(0),
+    );
+    try std.testing.expectEqualStrings(
+        "Edited But Unsaved",
+        state.display_name.text(),
+    );
+
+    state.startNew();
+    try std.testing.expect(state.noticeFailure());
+    try std.testing.expect(!state.editing_new);
+}
+
+test "a year carries details forward without a duplicate record" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+
+    state.refreshFactsSummary(2026);
+    try std.testing.expect(state.factsSummaryAvailable());
+    try std.testing.expect(!state.factsMissingForYear());
+    try std.testing.expect(!state.factsChangedDuringYear());
+    // One record from 2020 still covers 2026, so 2025 and 2026 share it.
+    try std.testing.expect(state.factsSameAsPriorYear());
+    try std.testing.expectEqualStrings("2020-01-01", state.factsEffectiveFrom());
+
+    // A mid-year change is reported as such, and earlier years are untouched.
+    state.registered_address.set("Makati City");
+    state.effective_from.set("2026-07-01");
+    try std.testing.expect(state.save());
+
+    state.refreshFactsSummary(2026);
+    try std.testing.expect(state.factsChangedDuringYear());
+    try std.testing.expect(!state.factsSameAsPriorYear());
+
+    state.refreshFactsSummary(2025);
+    try std.testing.expect(!state.factsChangedDuringYear());
+    try std.testing.expect(state.factsSameAsPriorYear());
+    try std.testing.expectEqualStrings("2020-01-01", state.factsEffectiveFrom());
+}
+
+test "a historical year with no details asks for a record instead of inventing one" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try state.attach(allocator, &store, "2026-01-01", 2026);
+    state.tin.set("123-456-789-000");
+    state.rdo.set("040");
+    state.display_name.set("Recently Registered Taxpayer");
+    state.registered_address.set("Quezon City");
+    state.effective_from.set("2026-01-01");
+    try std.testing.expect(state.save());
+
+    try std.testing.expect(state.openYearWorkspace(2023));
+    try std.testing.expectEqual(YearWorkspaceMode.draft_choice, state.year_workspace);
+    try std.testing.expect(state.factsMissingForYear());
+
+    try std.testing.expect(state.chooseDraftEmpty());
+    // Today's details are never copied backward to make the save succeed.
+    try std.testing.expect(!state.saveYearWorkspace());
+    try std.testing.expect(state.noticeFailure());
+    try std.testing.expect(
+        (try store.getFormSet(allocator, state.selectedProfileId().?, 2023)) == null,
+    );
+
+    // Recording what was true then unblocks the year.
+    state.effective_from.set("2023-01-01");
+    state.registered_address.set("Cebu City");
+    try std.testing.expect(state.save());
+    try std.testing.expect(state.openYearWorkspace(2023));
+    try std.testing.expect(!state.factsMissingForYear());
+    try std.testing.expect(state.chooseDraftEmpty());
+    try std.testing.expect(state.saveYearWorkspace());
+}
+
+test "a taxpayer registered mid-year is not treated as missing details" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try state.attach(allocator, &store, "2026-08-04", 2026);
+    state.tin.set("123-456-789-000");
+    state.rdo.set("040");
+    state.display_name.set("Mid Year Registrant");
+    state.registered_address.set("Quezon City");
+    state.effective_from.set("2026-08-04");
+    try std.testing.expect(state.save());
+
+    // No details on 1 January is normal for a taxpayer registered in August.
+    state.refreshFactsSummary(2026);
+    try std.testing.expect(!state.factsMissingForYear());
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expect(state.chooseDraftEmpty());
+    try std.testing.expect(state.saveYearWorkspace());
+}
+
+test "a branch reuses safe details and requires its own registration facts" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    state.phone.set("+639171234567");
+    state.email.set("head@example.ph");
+    state.business_line.set("Retail");
+    try std.testing.expect(state.save());
+    // Copy: the selection buffer is reused when the branch becomes selected.
+    var head_office_storage: [64]u8 = undefined;
+    const selected_head_office = state.selectedProfileId().?;
+    @memcpy(
+        head_office_storage[0..selected_head_office.len],
+        selected_head_office,
+    );
+    const head_office_id = head_office_storage[0..selected_head_office.len];
+
+    try std.testing.expect(state.canAddBranch());
+    try std.testing.expect(state.beginAddBranch());
+    try std.testing.expect(state.branchMode());
+    try std.testing.expect(state.editing_new);
+
+    // The taxpayer's own details carry over.
+    try std.testing.expectEqualStrings("123-456-789", state.tin.text());
+    try std.testing.expectEqualStrings("Workspace Taxpayer", state.display_name.text());
+    try std.testing.expectEqualStrings("+639171234567", state.phone.text());
+    try std.testing.expectEqualStrings("head@example.ph", state.email.text());
+    // Everything branch-specific starts blank so it must be reviewed.
+    try std.testing.expectEqualStrings("", state.rdo.text());
+    try std.testing.expectEqualStrings("", state.registered_address.text());
+    try std.testing.expectEqualStrings("", state.business_line.text());
+    try std.testing.expectEqualStrings("", state.tax_type.text());
+
+    // Saving without a branch code would create a duplicate registration.
+    state.rdo.set("043");
+    state.registered_address.set("Makati City");
+    try std.testing.expect(!state.save());
+    try std.testing.expect(state.noticeFailure());
+
+    state.tin.set("123-456-789-002");
+    try std.testing.expect(state.save());
+    try std.testing.expect(!state.branchMode());
+
+    const branch_id = state.selectedProfileId().?;
+    try std.testing.expect(!std.mem.eql(u8, head_office_id, branch_id));
+    // The branch keeps its own forms: nothing was copied from the head office.
+    try std.testing.expect(
+        (try store.getFormSet(allocator, branch_id, 2026)) == null,
+    );
+}
+
+test "a branch cannot become a different kind of taxpayer" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    try std.testing.expect(state.beginAddBranch());
+    try std.testing.expectEqual(state.subject_kind, state.branch_source_kind);
+
+    state.rdo.set("043");
+    state.registered_address.set("Makati City");
+    state.tin.set("123-456-789-002");
+    state.setSubjectKind(.corporation);
+    try std.testing.expect(!state.save());
+    try std.testing.expectEqualStrings(
+        "A branch is the same taxpayer. A different kind of taxpayer needs its own profile.",
+        state.noticeText(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), state.rows().len);
+}
+
+test "a branch cannot change the taxpayer it belongs to" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    try std.testing.expect(state.beginAddBranch());
+
+    state.rdo.set("043");
+    state.registered_address.set("Makati City");
+    state.tin.set("999-888-777-002");
+    try std.testing.expect(!state.save());
+    try std.testing.expectEqualStrings(
+        "A branch keeps the same nine-digit TIN as its head office. Change only the branch code.",
+        state.noticeText(),
+    );
+}
+
+test "one canonical TIN cannot be registered twice" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+
+    state.startNew();
+    state.tin.set("123-456-789-000");
+    state.rdo.set("040");
+    state.display_name.set("Same TIN Again");
+    state.registered_address.set("Quezon City");
+    state.effective_from.set("2026-01-01");
+    try std.testing.expect(!state.save());
+    // The refusal names who holds the TIN, so the user has somewhere to go.
+    try std.testing.expectEqualStrings(
+        "That TIN already belongs to Workspace Taxpayer. Open it instead of adding it again.",
+        state.noticeText(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), state.rows().len);
+}
+
+test "an archived taxpayer still owns its TIN" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    const owner_id = state.selectedProfileId().?;
+    var owner_storage: [64]u8 = undefined;
+    @memcpy(owner_storage[0..owner_id.len], owner_id);
+    const archived_id = owner_storage[0..owner_id.len];
+
+    // Archiving is not deletion: a TIN is issued once and never reassigned.
+    try store.setProfileStatus(archived_id, .archived);
+    try state.attach(allocator, &store, "2026-01-01", 2026);
+    try std.testing.expectEqual(@as(usize, 0), state.rows().len);
+
+    state.startNew();
+    state.tin.set("123-456-789-000");
+    state.rdo.set("040");
+    state.display_name.set("Different Taxpayer Same TIN");
+    state.registered_address.set("Quezon City");
+    state.effective_from.set("2020-01-01");
+    try std.testing.expect(!state.save());
+    try std.testing.expectEqualStrings(
+        "That TIN belongs to Workspace Taxpayer, which is archived. Restore it instead of adding it again.",
+        state.noticeText(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), state.rows().len);
+
+    // The store knows the owner independently of the loaded rows.
+    var owner = (try store.findProfileWithCanonicalTin(
+        allocator,
+        "123456789000",
+        null,
+    )).?;
+    defer owner.deinit(allocator);
+    try std.testing.expectEqual(persistence.ProfileStatus.archived, owner.status);
+    try std.testing.expectEqualStrings("Workspace Taxpayer", owner.display_name.?);
+}
+
+test "searching narrows the view without stealing the selection" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    state.startNew();
+    state.tin.set("987-654-321-000");
+    state.rdo.set("040");
+    state.display_name.set("Beta Other Taxpayer");
+    state.registered_address.set("Quezon City");
+    state.effective_from.set("2020-01-01");
+    try std.testing.expect(state.save());
+
+    // Select the first taxpayer, then search for the other one.
+    for (state.rows()) |*row| {
+        if (std.mem.eql(u8, row.name.text(), "Workspace Taxpayer")) {
+            try state.selectSlot(row.slot);
+        }
+    }
+    try std.testing.expectEqualStrings("Workspace Taxpayer", state.selectedName());
+
+    state.setSidebarQuery("Beta");
+    try std.testing.expectEqual(@as(usize, 1), state.rows().len);
+    try std.testing.expectEqualStrings("Beta Other Taxpayer", state.rows()[0].name.text());
+    // The view narrowed; the selection did not move, and the header still
+    // names the selected taxpayer even though their row is not loaded.
+    try std.testing.expect(state.has_selection);
+    try std.testing.expectEqualStrings("Workspace Taxpayer", state.selectedName());
+    try std.testing.expectEqualStrings("123456789000", state.selectedTin());
+
+    // A search matching nobody is a narrow view, not a lost selection.
+    state.setSidebarQuery("Nobody With This Name");
+    try std.testing.expectEqual(@as(usize, 0), state.rows().len);
+    try std.testing.expect(state.has_selection);
+    try std.testing.expectEqualStrings("Workspace Taxpayer", state.selectedName());
+
+    // TIN fragments find taxpayers however the digits were punctuated.
+    state.setSidebarQuery("654-321");
+    try std.testing.expectEqual(@as(usize, 1), state.rows().len);
+    try std.testing.expectEqualStrings("Beta Other Taxpayer", state.rows()[0].name.text());
+
+    state.setSidebarQuery("");
+    try std.testing.expectEqual(@as(usize, 2), state.rows().len);
+    try std.testing.expectEqualStrings("Workspace Taxpayer", state.selectedName());
+}
+
+test "a taxpayer past the display bound is reachable by search" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    // One more taxpayer than the sidebar will load. Creation goes through the
+    // real path so anchors and uniqueness hold for every row.
+    var index: usize = 0;
+    while (index < max_profiles + 1) : (index += 1) {
+        var id_buffer: [64]u8 = undefined;
+        var name_buffer: [64]u8 = undefined;
+        var tin_buffer: [16]u8 = undefined;
+        const revision: model.ProfileRevision = .{
+            .profile_id = try model.ProfileId.parse(
+                try std.fmt.bufPrint(&id_buffer, "profile-scale-{d:0>4}", .{index}),
+            ),
+            .id = try model.RevisionId.parse("revision-1"),
+            .sequence = 1,
+            .effective = try model.EffectivePeriod.init(
+                try model.Date.parseIso("2020-01-01"),
+                null,
+            ),
+            .source = .manual_entry,
+            .identity = .{
+                .tin = try fields.Tin.parse(
+                    try std.fmt.bufPrint(&tin_buffer, "1{d:0>8}", .{index}),
+                ),
+                .rdo_code = try fields.RdoCode.parse("040"),
+            },
+            .contact = .{
+                .address = try fields.RegisteredAddress.parse("Quezon City"),
+            },
+            .subject = .{ .individual = .{
+                .name = try fields.TaxpayerName.parse(
+                    try std.fmt.bufPrint(&name_buffer, "Taxpayer {d:0>4}", .{index}),
+                ),
+            } },
+        };
+        try profile_persistence.createProfileWithRevision(
+            &store,
+            allocator,
+            .active,
+            &revision,
+        );
+    }
+
+    var state = State{};
+    try state.attach(allocator, &store, "2026-01-01", 2026);
+    try std.testing.expectEqual(max_profiles, state.rows().len);
+    try std.testing.expect(state.profileListTruncated());
+
+    // Names sort alphabetically, so the last taxpayer fell past the bound.
+    var last_name_buffer: [64]u8 = undefined;
+    const last_name = try std.fmt.bufPrint(
+        &last_name_buffer,
+        "Taxpayer {d:0>4}",
+        .{max_profiles},
+    );
+    var found_in_listing = false;
+    for (state.rows()) |*row| {
+        if (std.mem.eql(u8, row.name.text(), last_name)) found_in_listing = true;
+    }
+    try std.testing.expect(!found_in_listing);
+
+    // Search reaches them anyway: the store answers, not the loaded rows.
+    state.setSidebarQuery(last_name);
+    try std.testing.expectEqual(@as(usize, 1), state.rows().len);
+    try std.testing.expectEqualStrings(last_name, state.rows()[0].name.text());
+    try std.testing.expect(!state.profileListTruncated());
+}
+
+test "a corrected TIN reaches the sidebar and regroups its registrations" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    var owner_storage: [64]u8 = undefined;
+    const selected = state.selectedProfileId().?;
+    @memcpy(owner_storage[0..selected.len], selected);
+    const head_office_id = owner_storage[0..selected.len];
+
+    try std.testing.expect(state.beginAddBranch());
+    state.rdo.set("043");
+    state.registered_address.set("Makati City");
+    state.tin.set("123-456-789-002");
+    try std.testing.expect(state.save());
+    try std.testing.expectEqual(@as(usize, 2), state.rows().len);
+
+    // Correcting the head office's TIN is audited and appends no revision, so
+    // a sidebar reading the revision would keep the old identifier - and its
+    // branch, still on the old root, would keep looking like family.
+    _ = try store.recordIdentityCorrection(.{
+        .id = "identity-correction-sidebar",
+        .profile_id = head_office_id,
+        .expected_anchor_sequence = 1,
+        .new_canonical_tin = "555-666-777-000",
+        .new_legal_person_class = .natural_person,
+        .reason = "clerical correction confirmed by source record",
+        .actor_reference = "operator:test-reviewer",
+        .recorded_at_unix_seconds = 1_785_369_600,
+        .provenance = "synthetic reviewed identity source",
+    });
+    try state.attach(allocator, &store, "2026-01-01", 2026);
+
+    var corrected: ?*const ProfileRow = null;
+    var branch: ?*const ProfileRow = null;
+    for (state.rows()) |*row| {
+        if (std.mem.eql(u8, row.stable_id.text(), head_office_id)) {
+            corrected = row;
+        } else {
+            branch = row;
+        }
+    }
+    try std.testing.expect(corrected != null);
+    try std.testing.expect(branch != null);
+    // The sidebar follows the identity, and the two no longer group together
+    // because the recorded identities no longer say they belong to one
+    // taxpayer.
+    try std.testing.expectEqualStrings("555666777000", corrected.?.tin.text());
+    try std.testing.expectEqualStrings("555666777", corrected.?.tinRoot());
+    try std.testing.expectEqualStrings("123456789", branch.?.tinRoot());
+}
+
+test "profile rows expose head office and branch identity" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    try std.testing.expect(state.beginAddBranch());
+    state.rdo.set("043");
+    state.registered_address.set("Makati City");
+    state.tin.set("123-456-789-002");
+    try std.testing.expect(state.save());
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var head_office: ?*const ProfileRow = null;
+    var branch: ?*const ProfileRow = null;
+    for (state.rows()) |*row| {
+        if (row.isBranch()) branch = row else head_office = row;
+    }
+    try std.testing.expect(head_office != null);
+    try std.testing.expect(branch != null);
+    try std.testing.expectEqualStrings("123456789", head_office.?.tinRoot());
+    try std.testing.expectEqualStrings("123456789", branch.?.tinRoot());
+    try std.testing.expectEqualStrings("002", branch.?.branchCode());
+    try std.testing.expectEqualStrings("Head office", head_office.?.branchLabel(arena));
+    try std.testing.expectEqualStrings("Branch 002", branch.?.branchLabel(arena));
 }
 
 test "calendar form selection refresh fails closed" {
