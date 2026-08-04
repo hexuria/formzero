@@ -2471,6 +2471,93 @@ pub const Store = struct {
         return .{ .items = try items.toOwnedSlice(allocator) };
     }
 
+    /// Finds taxpayers whose name contains the query, or whose canonical TIN
+    /// contains the query's digits, across the whole store.
+    ///
+    /// This exists because the sidebar holds a bounded number of rows: a
+    /// taxpayer past that bound must still be findable by typing, otherwise
+    /// the bound is a silent ceiling on who exists. TIN matching runs against
+    /// the identity anchor, the same authority the listing reads, so a
+    /// corrected TIN is found under its corrected value.
+    pub fn searchProfiles(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        raw_query: []const u8,
+        include_archived: bool,
+    ) !ProfileSummaryList {
+        const query = std.mem.trim(u8, raw_query, " \t\r\n");
+        if (query.len == 0) return self.listProfiles(allocator, include_archived);
+
+        // The query is user text inside a LIKE pattern, so its wildcard
+        // characters must match themselves.
+        var name_pattern_storage: [256]u8 = undefined;
+        const name_pattern = likeContainsPattern(
+            query,
+            &name_pattern_storage,
+        ) orelse return .{ .items = try allocator.alloc(OwnedProfileSummary, 0) };
+
+        // Digits in the query may be a TIN fragment however it was punctuated.
+        var digits_storage: [32]u8 = undefined;
+        var digits_len: usize = 0;
+        for (query) |byte| {
+            if (!std.ascii.isDigit(byte)) continue;
+            if (digits_len == digits_storage.len) break;
+            digits_storage[digits_len] = byte;
+            digits_len += 1;
+        }
+        var tin_pattern_storage: [40]u8 = undefined;
+        const tin_pattern: ?[]const u8 = if (digits_len >= 3)
+            likeContainsPattern(digits_storage[0..digits_len], &tin_pattern_storage)
+        else
+            null;
+
+        var statement = try self.prepare(
+            \\SELECT p.id, p.status, p.current_revision_id, r.sequence,
+            \\       COALESCE(r.taxpayer_name, r.registered_name),
+            \\       COALESCE(anchor.canonical_tin, r.tin), r.subject_kind
+            \\FROM tax_profiles AS p
+            \\JOIN tax_profile_revisions AS r
+            \\  ON r.profile_id = p.id AND r.id = p.current_revision_id
+            \\LEFT JOIN tax_profile_identity_anchors AS anchor
+            \\  ON anchor.profile_id = p.id
+            \\ AND anchor.sequence = (
+            \\     SELECT MAX(sequence)
+            \\     FROM tax_profile_identity_anchors
+            \\     WHERE profile_id = p.id
+            \\ )
+            \\WHERE (? = 1 OR p.status = 'active')
+            \\  AND (
+            \\      COALESCE(r.taxpayer_name, r.registered_name)
+            \\          LIKE ? ESCAPE '\'
+            \\      OR (? IS NOT NULL AND
+            \\          COALESCE(anchor.canonical_tin, r.tin) LIKE ? ESCAPE '\')
+            \\  )
+            \\ORDER BY COALESCE(
+            \\    r.taxpayer_name, r.registered_name
+            \\) COLLATE NOCASE, p.id;
+        );
+        defer statement.deinit();
+        try statement.bindBool(1, include_archived);
+        try statement.bindText(2, name_pattern);
+        try statement.bindOptionalText(3, tin_pattern);
+        try statement.bindOptionalText(4, tin_pattern);
+
+        var items: std.ArrayList(OwnedProfileSummary) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+        while (try statement.step() == .row) {
+            const item = try readProfileSummary(allocator, statement.raw);
+            errdefer {
+                var owned = item;
+                owned.deinit(allocator);
+            }
+            try items.append(allocator, item);
+        }
+        return .{ .items = try items.toOwnedSlice(allocator) };
+    }
+
     /// Replaces the authoritative per-year Forms Set. Passing an empty slice
     /// intentionally leaves the parent row present with zero entries.
     pub fn replaceFormSet(
@@ -6179,6 +6266,32 @@ fn dupBlobColumnCapped(
         u8,
         try blobColumnCapped(row, column, maximum),
     );
+}
+
+/// Builds a `%text%` LIKE pattern with the query's own wildcard characters
+/// escaped, so user text matches itself. Null when the escaped pattern would
+/// not fit the caller's buffer — an over-long query simply matches nothing.
+fn likeContainsPattern(text: []const u8, storage: []u8) ?[]const u8 {
+    var length: usize = 0;
+    if (storage.len < 2) return null;
+    storage[length] = '%';
+    length += 1;
+    for (text) |byte| {
+        if (byte == '%' or byte == '_' or byte == '\\') {
+            if (length + 2 > storage.len) return null;
+            storage[length] = '\\';
+            storage[length + 1] = byte;
+            length += 2;
+            continue;
+        }
+        if (length + 1 > storage.len) return null;
+        storage[length] = byte;
+        length += 1;
+    }
+    if (length + 1 > storage.len) return null;
+    storage[length] = '%';
+    length += 1;
+    return storage[0..length];
 }
 
 fn dupColumn(

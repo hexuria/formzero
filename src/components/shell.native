@@ -266,6 +266,9 @@
         label="Search taxpayer profiles"
         autofocus="{overlay}"
         on-input="sidebar_profile_search_changed"/>
+      <if test="{profileListTruncatedVisible}">
+        <text width="232" wrap="true" foreground="text_muted">{profileListTruncatedLabel}</text>
+      </if>
 
       <spacer height="16"/>
       <separator/>

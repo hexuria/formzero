@@ -1263,25 +1263,19 @@ pub const Model = struct {
     /// so a branch reads as part of that taxpayer rather than as an unrelated
     /// entry that happens to share a name. Ordering is presentation only: each
     /// row keeps its own slot, and selection is unaffected.
+    ///
+    /// No filtering happens here: the loaded rows already ARE the search
+    /// result, answered by the store. Re-filtering the text would disagree
+    /// with the store about punctuation — a TIN typed as bare digits matches
+    /// there but not against the dashed display text.
     pub fn visibleProfileRows(
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const profile_ui.ProfileRow {
         const all = self.taxProfiles.rows();
-        const query = self.sidebarProfileSearchBuffer.text();
         const rows = arena.alloc(profile_ui.ProfileRow, all.len) catch return &.{};
-        var count: usize = 0;
-        for (all) |row| {
-            if (query.len != 0 and
-                !multi_select.containsAsciiInsensitive(row.nameLabel(), query) and
-                !multi_select.containsAsciiInsensitive(row.tinLabel(arena), query))
-            {
-                continue;
-            }
-            rows[count] = row;
-            count += 1;
-        }
-        const visible = rows[0..count];
+        @memcpy(rows[0..all.len], all);
+        const visible = rows[0..all.len];
         std.mem.sort(profile_ui.ProfileRow, visible, {}, profileRowPrecedes);
         return visible;
     }
@@ -1294,15 +1288,26 @@ pub const Model = struct {
     }
 
     pub fn profileRowsEmptyTitle(self: *const Model) []const u8 {
-        if (self.taxProfiles.rowsEmpty()) return "No tax profiles yet";
-        return "No matching profiles";
+        // With store-backed search, an empty row set during a query means no
+        // taxpayer matched — not that none exist.
+        if (self.taxProfiles.sidebarQuery().len != 0) return "No matching profiles";
+        return "No tax profiles yet";
     }
 
     pub fn profileRowsEmptyMessage(self: *const Model) []const u8 {
-        if (self.taxProfiles.rowsEmpty()) {
-            return "Add a profile once, then reuse its qualified fields on recurring forms.";
+        if (self.taxProfiles.sidebarQuery().len != 0) {
+            return "Try a taxpayer name or TIN, or clear the search field.";
         }
-        return "Try a taxpayer name or TIN, or clear the search field.";
+        return "Add a profile once, then reuse its qualified fields on recurring forms.";
+    }
+
+    pub fn profileListTruncatedVisible(self: *const Model) bool {
+        return self.taxProfiles.profileListTruncated();
+    }
+
+    pub fn profileListTruncatedLabel(self: *const Model) []const u8 {
+        _ = self;
+        return "Showing the first 1024 taxpayers. Search finds the rest.";
     }
 
     pub fn selectedTaxpayerRdo(self: *const Model) []const u8 {
@@ -7605,6 +7610,11 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .sidebar_profile_search_changed => |edit| {
             model.sidebarProfileSearchBuffer.apply(edit);
+            // The store answers the search, so a taxpayer past the display
+            // bound is still found by typing.
+            model.taxProfiles.setSidebarQuery(
+                model.sidebarProfileSearchBuffer.text(),
+            );
         },
         .viewport_class_changed => |viewport_class| {
             const class_changed = model.viewportClass != viewport_class;

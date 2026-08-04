@@ -16,7 +16,10 @@ const multi_select = @import("../components/multi_select.zig");
 
 const canvas = native_sdk.canvas;
 
-pub const max_profiles: usize = 64;
+/// Display bound for loaded taxpayer rows, not a reachability ceiling: the
+/// sidebar search queries the store, so a taxpayer past this bound is still
+/// found by typing. At ~300 bytes a row this is ~300 KB of fixed buffers.
+pub const max_profiles: usize = 1024;
 pub const max_registered_forms: usize = catalog.registry_count;
 pub const max_form_set_summaries: usize = 128;
 /// Covers every recurring catalog slot (51 forms × 12 periods) plus a
@@ -358,6 +361,16 @@ pub const State = struct {
     profiles: [max_profiles]ProfileRow = undefined,
     profile_count: usize = 0,
     profile_records_truncated: bool = false,
+    /// The sidebar search text. When set, the loaded rows are the store-wide
+    /// matches rather than the first `max_profiles` taxpayers, which is what
+    /// makes everyone findable regardless of the display bound.
+    sidebar_query: FixedText(96) = .{},
+    /// Display details of the selected taxpayer, kept current at selection
+    /// time. The loaded rows are a view that a search narrows; the header
+    /// must keep telling the truth about who is selected even while that view
+    /// does not contain them.
+    selected_display: ProfileRow = .{ .slot = 0, .subject_kind = .individual },
+    has_selected_display: bool = false,
     selected_id: StableIdText = .{},
     has_selection: bool = false,
     selected_revision_id: StableIdText = .{},
@@ -795,23 +808,34 @@ pub const State = struct {
         ) catch null;
     }
 
+    /// The row when loaded, else the captured display: a search narrowing the
+    /// sidebar past the selected taxpayer must not make the header claim
+    /// nobody is selected.
+    fn selectedDisplay(self: *const State) ?*const ProfileRow {
+        if (self.selectedRow()) |row| return row;
+        if (self.has_selection and self.has_selected_display) {
+            return &self.selected_display;
+        }
+        return null;
+    }
+
     pub fn selectedName(self: *const State) []const u8 {
-        const row = self.selectedRow() orelse return "No tax profile selected";
+        const row = self.selectedDisplay() orelse return "No tax profile selected";
         return row.name.text();
     }
 
     pub fn selectedTin(self: *const State) []const u8 {
-        const row = self.selectedRow() orelse return "—";
+        const row = self.selectedDisplay() orelse return "—";
         return row.tin.text();
     }
 
     pub fn selectedInitials(self: *const State) []const u8 {
-        const row = self.selectedRow() orelse return "—";
+        const row = self.selectedDisplay() orelse return "—";
         return row.initials.text();
     }
 
     pub fn selectedKindLabel(self: *const State) []const u8 {
-        const row = self.selectedRow() orelse return "None";
+        const row = self.selectedDisplay() orelse return "None";
         return subjectKindLabel(row.subject_kind);
     }
 
@@ -1072,6 +1096,7 @@ pub const State = struct {
         try self.selected_id.set(self.profiles[slot].stable_id.text());
         self.has_selection = true;
         self.markActiveRow();
+        self.captureSelectedDisplay();
         try self.loadSelectedRevision(true);
         try self.refreshCalendarFormSet(self.default_tax_year);
         try self.refreshFormSetSummaries();
@@ -2540,10 +2565,32 @@ pub const State = struct {
         );
     }
 
+    /// Reloads the sidebar rows against the current search text. Errors keep
+    /// the previous rows rather than blanking the sidebar mid-keystroke.
+    pub fn setSidebarQuery(self: *State, text: []const u8) void {
+        self.sidebar_query.set(std.mem.trim(u8, text, " \t\r\n")) catch return;
+        // Typing before a store is attached (tests, early boot) records the
+        // text and nothing else; rows load once attachment happens.
+        if (self.store == null) return;
+        self.reloadRows() catch |err| self.setError(err);
+    }
+
+    pub fn sidebarQuery(self: *const State) []const u8 {
+        return self.sidebar_query.text();
+    }
+
+    pub fn profileListTruncated(self: *const State) bool {
+        return self.profile_records_truncated;
+    }
+
     fn reloadRows(self: *State) !void {
         const allocator = self.allocator orelse return error.NotAttached;
         const store = self.store orelse return error.NotAttached;
-        var profiles = try store.listProfiles(allocator, false);
+        const query = self.sidebar_query.text();
+        var profiles = if (query.len == 0)
+            try store.listProfiles(allocator, false)
+        else
+            try store.searchProfiles(allocator, query, false);
         defer profiles.deinit(allocator);
 
         self.profile_records_truncated = profiles.items.len > max_profiles;
@@ -2572,8 +2619,13 @@ pub const State = struct {
             self.profile_count += 1;
         }
 
+        const searching = self.sidebar_query.text().len != 0;
         if (self.profile_count == 0) {
+            // A search matching nobody narrows the view; it must not clear
+            // the selection behind it.
+            if (searching) return;
             self.has_selection = false;
+            self.has_selected_display = false;
             self.selected_id.clear();
             self.selected_revision_id.clear();
             self.selected_revision_sequence = null;
@@ -2581,18 +2633,21 @@ pub const State = struct {
             self.selected_activity_id.clear();
             return;
         }
-        if (self.selectedRow() == null) {
+        if (self.selectedRow() == null and !searching) {
             try self.selected_id.set(self.profiles[0].stable_id.text());
             self.has_selection = true;
         }
         self.markActiveRow();
-        if (self.profile_records_truncated) {
-            self.setNotice(
-                .neutral,
-                "Only the first 64 active tax profiles are shown.",
-            );
-        }
+        self.captureSelectedDisplay();
         self.reportSharedTin();
+    }
+
+    /// Remembers how the selected taxpayer presents, so the header stays
+    /// truthful while a search narrows the loaded rows past them.
+    fn captureSelectedDisplay(self: *State) void {
+        const row = self.selectedRow() orelse return;
+        self.selected_display = row.*;
+        self.has_selected_display = true;
     }
 
     /// Names a TIN held by two loaded taxpayers.
@@ -4670,6 +4725,125 @@ test "an archived taxpayer still owns its TIN" {
     defer owner.deinit(allocator);
     try std.testing.expectEqual(persistence.ProfileStatus.archived, owner.status);
     try std.testing.expectEqualStrings("Workspace Taxpayer", owner.display_name.?);
+}
+
+test "searching narrows the view without stealing the selection" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try workspaceFixture(&state, allocator, &store);
+    state.startNew();
+    state.tin.set("987-654-321-000");
+    state.rdo.set("040");
+    state.display_name.set("Beta Other Taxpayer");
+    state.registered_address.set("Quezon City");
+    state.effective_from.set("2020-01-01");
+    try std.testing.expect(state.save());
+
+    // Select the first taxpayer, then search for the other one.
+    for (state.rows()) |*row| {
+        if (std.mem.eql(u8, row.name.text(), "Workspace Taxpayer")) {
+            try state.selectSlot(row.slot);
+        }
+    }
+    try std.testing.expectEqualStrings("Workspace Taxpayer", state.selectedName());
+
+    state.setSidebarQuery("Beta");
+    try std.testing.expectEqual(@as(usize, 1), state.rows().len);
+    try std.testing.expectEqualStrings("Beta Other Taxpayer", state.rows()[0].name.text());
+    // The view narrowed; the selection did not move, and the header still
+    // names the selected taxpayer even though their row is not loaded.
+    try std.testing.expect(state.has_selection);
+    try std.testing.expectEqualStrings("Workspace Taxpayer", state.selectedName());
+    try std.testing.expectEqualStrings("123456789000", state.selectedTin());
+
+    // A search matching nobody is a narrow view, not a lost selection.
+    state.setSidebarQuery("Nobody With This Name");
+    try std.testing.expectEqual(@as(usize, 0), state.rows().len);
+    try std.testing.expect(state.has_selection);
+    try std.testing.expectEqualStrings("Workspace Taxpayer", state.selectedName());
+
+    // TIN fragments find taxpayers however the digits were punctuated.
+    state.setSidebarQuery("654-321");
+    try std.testing.expectEqual(@as(usize, 1), state.rows().len);
+    try std.testing.expectEqualStrings("Beta Other Taxpayer", state.rows()[0].name.text());
+
+    state.setSidebarQuery("");
+    try std.testing.expectEqual(@as(usize, 2), state.rows().len);
+    try std.testing.expectEqualStrings("Workspace Taxpayer", state.selectedName());
+}
+
+test "a taxpayer past the display bound is reachable by search" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    // One more taxpayer than the sidebar will load. Creation goes through the
+    // real path so anchors and uniqueness hold for every row.
+    var index: usize = 0;
+    while (index < max_profiles + 1) : (index += 1) {
+        var id_buffer: [64]u8 = undefined;
+        var name_buffer: [64]u8 = undefined;
+        var tin_buffer: [16]u8 = undefined;
+        const revision: model.ProfileRevision = .{
+            .profile_id = try model.ProfileId.parse(
+                try std.fmt.bufPrint(&id_buffer, "profile-scale-{d:0>4}", .{index}),
+            ),
+            .id = try model.RevisionId.parse("revision-1"),
+            .sequence = 1,
+            .effective = try model.EffectivePeriod.init(
+                try model.Date.parseIso("2020-01-01"),
+                null,
+            ),
+            .source = .manual_entry,
+            .identity = .{
+                .tin = try fields.Tin.parse(
+                    try std.fmt.bufPrint(&tin_buffer, "1{d:0>8}", .{index}),
+                ),
+                .rdo_code = try fields.RdoCode.parse("040"),
+            },
+            .contact = .{
+                .address = try fields.RegisteredAddress.parse("Quezon City"),
+            },
+            .subject = .{ .individual = .{
+                .name = try fields.TaxpayerName.parse(
+                    try std.fmt.bufPrint(&name_buffer, "Taxpayer {d:0>4}", .{index}),
+                ),
+            } },
+        };
+        try profile_persistence.createProfileWithRevision(
+            &store,
+            allocator,
+            .active,
+            &revision,
+        );
+    }
+
+    var state = State{};
+    try state.attach(allocator, &store, "2026-01-01", 2026);
+    try std.testing.expectEqual(max_profiles, state.rows().len);
+    try std.testing.expect(state.profileListTruncated());
+
+    // Names sort alphabetically, so the last taxpayer fell past the bound.
+    var last_name_buffer: [64]u8 = undefined;
+    const last_name = try std.fmt.bufPrint(
+        &last_name_buffer,
+        "Taxpayer {d:0>4}",
+        .{max_profiles},
+    );
+    var found_in_listing = false;
+    for (state.rows()) |*row| {
+        if (std.mem.eql(u8, row.name.text(), last_name)) found_in_listing = true;
+    }
+    try std.testing.expect(!found_in_listing);
+
+    // Search reaches them anyway: the store answers, not the loaded rows.
+    state.setSidebarQuery(last_name);
+    try std.testing.expectEqual(@as(usize, 1), state.rows().len);
+    try std.testing.expectEqualStrings(last_name, state.rows()[0].name.text());
+    try std.testing.expect(!state.profileListTruncated());
 }
 
 test "a corrected TIN reaches the sidebar and regroups its registrations" {
