@@ -21,6 +21,7 @@ pub const CalendarMarkerTone = enum {
     approaching,
     due_soon,
     overdue,
+    closed,
 };
 
 /// Calendar deadlines currently resolve to a civil date, not a clock time.

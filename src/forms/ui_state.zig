@@ -340,6 +340,65 @@ pub const State = struct {
         };
     }
 
+    /// Opens the exact persisted draft selected by a caller-owned summary.
+    /// The adopted draft must still match the requested form, filing period,
+    /// and filer role; `adoptPersistedDraft` rejects every mismatch before the
+    /// editor receives persisted values. Exact 1701Q remains projection-only.
+    pub fn openPersistedDraft(
+        self: *State,
+        request: OpenRequest,
+        draft_id: ids.DraftId,
+    ) !void {
+        self.openPersistedDraftInner(request, draft_id) catch |err| {
+            self.clearOwnedRevisions();
+            self.resetOpenData();
+            self.setErrorNotice(err);
+            return err;
+        };
+    }
+
+    fn openPersistedDraftInner(
+        self: *State,
+        request: OpenRequest,
+        draft_id: ids.DraftId,
+    ) !void {
+        const allocator = self.allocator orelse return error.NotAttached;
+        const store = self.store orelse return error.NotAttached;
+        if (request.form.eql(&form_1701q.revision)) {
+            return error.DraftPersistenceDisabled;
+        }
+        try validateEditorRevision(request.form);
+        const request_quarter = try validateRequestPeriod(request);
+
+        self.clearOwnedRevisions();
+        self.resetOpenData();
+        self.open_policy = .draft_backed;
+        self.opened_form = request.form;
+        self.opened_tax_year = request.tax_year;
+        self.opened_quarter = request_quarter;
+        self.opened_filing_period = request.filing_period orelse
+            .{ .quarterly = .{
+                .tax_year = request.tax_year,
+                .quarter = request_quarter,
+            } };
+        self.opened_profile_as_of = request.profile_as_of orelse
+            try filingPeriodEnd(self.opened_filing_period.?);
+        self.selected_filer_id = request.filer_profile_id;
+        self.selected_spouse_id = request.spouse_profile_id;
+
+        var draft = (try store.getDraft(
+            allocator,
+            draft_id.asSlice(),
+        )) orelse return error.NotFound;
+        defer draft.deinit(allocator);
+        try self.adoptPersistedDraft(&draft, .resumed);
+        try self.refreshCandidateCaches();
+        self.setNotice(
+            .info,
+            "Selected draft resumed. Its persisted tax-profile snapshot is authoritative.",
+        );
+    }
+
     fn openWithPolicy(
         self: *State,
         request: OpenRequest,

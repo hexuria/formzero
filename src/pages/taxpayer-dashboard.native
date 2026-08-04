@@ -6,11 +6,11 @@
   </column>
 </template>
 
-<template name="taxpayer-calendar-empty" args="icon title body">
+<template name="t-e" args="i t b">
   <column height="154" padding="18" gap="8" main="center" cross="center" background="surface_subtle" radius="md">
-    <icon name="{icon}" foreground="text_muted" width="22" height="22"/>
-    <text><span weight="bold">{title}</span></text>
-    <text wrap="true" text-alignment="center" foreground="text_muted">{body}</text>
+    <icon name="{i}" foreground="text_muted" width="22" height="22"/>
+    <text><span weight="bold">{t}</span></text>
+    <text wrap="true" text-alignment="center" foreground="text_muted">{b}</text>
   </column>
 </template>
 
@@ -18,9 +18,9 @@
   <card padding="0">
     <column gap="0">
       <row padding="8" cross="center" gap="6">
-        <button width="44" height="44" size="icon" variant="ghost" icon="chevron-left" label="Previous month" on-press="calendar_previous_month"></button>
+        <button width="44" height="44" size="icon" variant="ghost" icon="chevron-left" label="Previous month" disabled="{profileCalendarPreviousMonthDisabled}" on-press="calendar_previous_month"></button>
         <text grow="1" text-alignment="center"><span weight="bold">{currentCalendarMonth} {currentCalendarYear}</span></text>
-        <button width="44" height="44" size="icon" variant="ghost" icon="chevron-right" label="Next month" on-press="calendar_next_month"></button>
+        <button width="44" height="44" size="icon" variant="ghost" icon="chevron-right" label="Next month" disabled="{profileCalendarNextMonthDisabled}" on-press="calendar_next_month"></button>
       </row>
       <separator/>
       <grid columns="7" gap="1" background="border">
@@ -55,19 +55,24 @@
                 </else>
                 <if test="{cell.hasDeadlines}">
                   <row grow="1" main="center" cross="center">
-                    <if test="{cell.overdue}">
-                      <text foreground="destructive">{cell.marker}</text>
+                    <if test="{cell.closed}">
+                      <text foreground="success">{cell.marker}</text>
                     </if>
                     <else>
-                      <if test="{cell.dueSoon}">
-                        <text foreground="warning">{cell.marker}</text>
+                      <if test="{cell.overdue}">
+                        <text foreground="destructive">{cell.marker}</text>
                       </if>
                       <else>
-                        <if test="{cell.approaching}">
-                          <text foreground="success">{cell.marker}</text>
+                        <if test="{cell.dueSoon}">
+                          <text foreground="warning">{cell.marker}</text>
                         </if>
                         <else>
-                          <text>{cell.marker}</text>
+                          <if test="{cell.approaching}">
+                            <text foreground="success">{cell.marker}</text>
+                          </if>
+                          <else>
+                            <text>{cell.marker}</text>
+                          </else>
                         </else>
                       </else>
                     </else>
@@ -82,84 +87,228 @@
   </card>
 </template>
 
-<template name="taxpayer-calendar-section">
-  <column gap="12">
-    <row cross="center" gap="8">
-      <text grow="1"><span weight="bold">{profileCalendarDeadlineHeading}</span></text>
-      <badge variant="secondary">{profileCalendarDeadlineCount}</badge>
-      <stack width="176">
-        <select
-          height="44"
-          label="Tax calendar year"
-          disabled="{profileCalendarYearPickerDisabled}"
-          on-press="profile_calendar_toggle_year_picker">{profileCalendarYearLabel}</select>
-        <if test="{profileCalendarYearPickerOpen}">
-          <dropdown-menu
-            anchor="below"
-            anchor-alignment="stretch"
-            anchor-offset="4"
-            height="280"
-            on-dismiss="profile_calendar_close_year_picker">
-            <column padding="8" gap="8">
-              <input
-                height="40"
-                text="{profileCalendarYearQueryValue}"
-                placeholder="Filter years"
-                label="Filter tax years"
-                on-input="profile_calendar_year_query"/>
-              <scroll height="190" label="Configured tax years">
-                <column gap="4">
-                  <for each="profileCalendarYearOptions" key="id" as="option">
-                    <menu-item height="44" selected="{option.selected}" on-press="profile_calendar_select_year:{option.year}">{option.year}</menu-item>
-                  </for>
-                </column>
-              </scroll>
+<template name="taxpayer-profile-calendar-year-picker">
+  <stack width="{profileCalendarYearPickerWidth}">
+    <select
+      height="44"
+      label="Tax calendar year"
+      disabled="{profileCalendarYearPickerDisabled}"
+      on-press="profile_calendar_toggle_year_picker">{profileCalendarYearLabel}</select>
+    <if test="{profileCalendarYearPickerOpen}">
+      <dropdown-menu
+        anchor="below"
+        anchor-alignment="stretch"
+        anchor-offset="4"
+        height="280"
+        on-dismiss="profile_calendar_close_year_picker">
+        <column padding="8" gap="8">
+          <input
+            height="40"
+            text="{profileCalendarYearQueryValue}"
+            placeholder="Filter years"
+            label="Filter tax years"
+            on-input="profile_calendar_year_query"/>
+          <scroll height="190" label="Configured tax years">
+            <column gap="4">
+              <for each="profileCalendarYearOptions" key="id" as="option">
+                <menu-item height="44" selected="{option.selected}" on-press="profile_calendar_select_year:{option.year}">{option.year}</menu-item>
+              </for>
             </column>
-          </dropdown-menu>
-        </if>
-      </stack>
-      <button height="44" variant="primary" icon="app:calendar" disabled="{profileCalendarExportBusy}" on-press="profile_calendar_export">Add to Calendar</button>
-    </row>
-    <use template="taxpayer-compact-calendar"/>
-    <if test="{profileCalendarHasDeadlines}">
-      <for each="profileCalendarDeadlineRows" key="id" as="deadline">
-        <card padding="0">
-          <row padding="12" gap="14" cross="center">
-            <column width="58" gap="2" cross="center">
-              <text text-alignment="center"><span weight="bold">{deadline.dateLabel}</span></text>
-              <text text-alignment="center" foreground="text_muted">{deadline.yearLabel}</text>
-            </column>
-            <column width="1" height="54" background="border"></column>
-            <column grow="1" gap="5">
-              <row gap="8" cross="center">
-                <badge variant="secondary">{deadline.displayFormNo}</badge>
-                <badge variant="{deadline.deadlineTone}">{deadline.deadlineStatus}</badge>
-                <badge variant="outline">{deadline.filingStatus}</badge>
-              </row>
-              <text><span weight="bold">{deadline.formName}</span></text>
-              <text wrap="true" foreground="text_muted">Taxable period: {deadline.periodLabel}</text>
-              <if test="{deadline.adjustmentVisible}">
-                <text wrap="true" foreground="text_muted">{deadline.adjustmentLabel}</text>
-              </if>
-              <if test="{deadline.actionVisible}">
-                <row main="end">
-                  <button
-                    height="36"
-                    variant="outline"
-                    on-press="open_profile_deadline:{deadline.id}">{deadline.actionLabel}</button>
-                </row>
-              </if>
-            </column>
-          </row>
-        </card>
-      </for>
+          </scroll>
+        </column>
+      </dropdown-menu>
+    </if>
+  </stack>
+</template>
+
+<template name="taxpayer-profile-calendar-toolbar">
+  <column gap="0">
+    <if test="{desktopLayout}">
+      <row cross="center" gap="8">
+        <text grow="1"><span weight="bold">{profileCalendarDeadlineHeading}</span></text>
+        <!-- @include-template profile-calendar-multi-select-combobox
+          placeholder="Search active forms..."
+          label="Filter profile calendar forms"
+        -->
+        <use template="taxpayer-profile-calendar-year-picker"/>
+        <button height="44" variant="primary" icon="app:calendar" disabled="{profileCalendarExportBusy}" on-press="profile_calendar_export">Add to Calendar</button>
+      </row>
     </if>
     <else>
-      <use
-        template="taxpayer-calendar-empty"
-        icon="clock"
-        title="No deadlines this month"
-        body="This tax profile's active Forms Set has no resolved deadlines for the selected date or month."/>
+      <column gap="8">
+        <row height="44" cross="center">
+          <text grow="1"><span weight="bold">{profileCalendarDeadlineHeading}</span></text>
+        </row>
+        <if test="{phoneLayout}">
+          <column gap="8">
+            <row gap="8" cross="center">
+              <use template="taxpayer-profile-calendar-year-picker"/>
+              <button width="44" height="44" size="icon" variant="primary" icon="app:calendar" label="Add to Calendar" disabled="{profileCalendarExportBusy}" on-press="profile_calendar_export"></button>
+            </row>
+            <!-- @include-template profile-calendar-multi-select-combobox
+              placeholder="Search active forms..."
+              label="Filter profile calendar forms"
+            -->
+          </column>
+        </if>
+        <else>
+          <row gap="8" cross="center">
+            <!-- @include-template profile-calendar-multi-select-combobox
+              placeholder="Search active forms..."
+              label="Filter profile calendar forms"
+            -->
+            <use template="taxpayer-profile-calendar-year-picker"/>
+            <button width="44" height="44" size="icon" variant="primary" icon="app:calendar" label="Add to Calendar" disabled="{profileCalendarExportBusy}" on-press="profile_calendar_export"></button>
+          </row>
+        </else>
+      </column>
+    </else>
+  </column>
+</template>
+
+<template name="t-dh">
+  <row height="40" padding="10" gap="8" cross="center" background="surface_subtle">
+    <text size="sm" grow="1" foreground="text_muted"><span weight="bold">Form</span></text>
+    <text size="sm" width="108" foreground="text_muted"><span weight="bold">Status</span></text>
+    <text size="sm" width="{profileDeadlineActionColumnWidth}" text-alignment="center" foreground="text_muted"><span weight="bold">Action</span></text>
+  </row>
+</template>
+
+<template name="t-da" args="pi pl pd mk mo oi ol od">
+  <stack width="{profileDeadlineActionColumnWidth}">
+    <row gap="2" main="end" cross="center">
+      <button width="{profileDeadlineActionButtonSize}" height="{profileDeadlineActionButtonSize}" size="icon" variant="secondary" icon="{pi}" label="{pl}" on-press="profile_deadline_run_action:{pd}"></button>
+      <if test="{ol != ''}"><button width="{profileDeadlineActionButtonSize}" height="{profileDeadlineActionButtonSize}" size="icon" variant="ghost" icon="chevron-down" label="More filing actions" on-press="profile_deadline_toggle_actions:{mk}"></button></if>
+    </row>
+    <if test="{mo}">
+      <dropdown-menu width="220" anchor="below" anchor-alignment="end" anchor-offset="4" on-dismiss="profile_deadline_close_actions">
+        <column padding="4" gap="2">
+          <menu-item height="44" icon="{oi}" on-press="profile_deadline_run_action:{od}">{ol}</menu-item>
+        </column>
+      </dropdown-menu>
+    </if>
+  </stack>
+</template>
+
+<template name="t-l" args="r h">
+  <column>
+    <if test="{h}">
+      <column>
+    <if test="{profileDeadlineTableLayout}">
+      <card padding="0">
+        <column gap="0">
+          <use template="t-dh"/>
+          <separator/>
+          <for each="r" key="id" as="deadline">
+            <column gap="0">
+              <row padding="10" gap="8" cross="center">
+                <column grow="1" gap="4"><row gap="6" cross="center"><badge variant="secondary">{deadline.compactLabel}</badge><if test="{deadline.timingVisible}"><row gap="4" cross="center"><icon name="{deadline.timingIcon}" width="16" height="16"/><badge variant="{deadline.timingTone}">{deadline.timingLabel}</badge></row></if></row><text size="sm"><span weight="bold">{deadline.formName}</span></text><row gap="4" cross="center"><text grow="1" size="sm" wrap="true" foreground="text_muted">{deadline.dueLabel}</text><if test="{deadline.adjustmentVisible}"><button width="{profileDeadlineActionButtonSize}" height="{profileDeadlineActionButtonSize}" size="icon" variant="ghost" icon="info" label="{deadline.adjustmentActionLabel}" on-press="profile_deadline_show_adjustment:{deadline.adjustmentDispatchId}"></button></if></row></column>
+                <column width="108" gap="6" main="center"><row gap="6" cross="center"><icon name="{deadline.filingIcon}" width="16" height="16"/><badge variant="{deadline.filingTone}">{deadline.filingStatus}</badge></row></column>
+                <if test="{deadline.primaryActionVisible}"><use template="t-da" pi="{deadline.primaryActionIcon}" pl="{deadline.primaryActionLabel}" pd="{deadline.primaryActionDispatchId}" mk="{deadline.actionMenuId}" mo="{deadline.actionMenuOpen}" oi="{deadline.secondaryActionOneIcon}" ol="{deadline.secondaryActionOneLabel}" od="{deadline.secondaryActionOneDispatchId}"/></if>
+              </row>
+              <separator/>
+            </column>
+          </for>
+        </column>
+      </card>
+    </if>
+    <else>
+      <column gap="8">
+        <for each="r" key="id" as="deadline">
+          <card padding="0">
+            <column padding="12" gap="8">
+              <row gap="8" cross="start">
+                <column grow="1" gap="4"><row gap="6" cross="center"><badge variant="secondary">{deadline.compactLabel}</badge><if test="{deadline.timingVisible}"><row gap="4" cross="center"><icon name="{deadline.timingIcon}" width="16" height="16"/><badge variant="{deadline.timingTone}">{deadline.timingLabel}</badge></row></if></row><text size="sm"><span weight="bold">{deadline.formName}</span></text><row gap="4" cross="center"><text grow="1" size="sm" wrap="true" foreground="text_muted">{deadline.dueLabel}</text><if test="{deadline.adjustmentVisible}"><button width="{profileDeadlineActionButtonSize}" height="{profileDeadlineActionButtonSize}" size="icon" variant="ghost" icon="info" label="{deadline.adjustmentActionLabel}" on-press="profile_deadline_show_adjustment:{deadline.adjustmentDispatchId}"></button></if></row></column>
+                <if test="{deadline.primaryActionVisible}"><use template="t-da" pi="{deadline.primaryActionIcon}" pl="{deadline.primaryActionLabel}" pd="{deadline.primaryActionDispatchId}" mk="{deadline.actionMenuId}" mo="{deadline.actionMenuOpen}" oi="{deadline.secondaryActionOneIcon}" ol="{deadline.secondaryActionOneLabel}" od="{deadline.secondaryActionOneDispatchId}"/></if>
+              </row>
+              <separator/>
+              <row gap="6" cross="center"><icon name="{deadline.filingIcon}" width="16" height="16"/><badge variant="{deadline.filingTone}">{deadline.filingStatus}</badge></row>
+            </column>
+          </card>
+        </for>
+      </column>
+    </else>
+      </column>
+    </if>
+    <else>
+      <slot/>
+    </else>
+  </column>
+</template>
+
+<template name="t-dc">
+  <column gap="12">
+    <row height="36" cross="center" gap="8">
+      <text grow="1"><span weight="bold">Deadlines</span></text>
+      <badge variant="secondary">{profileMonthlyDeadlineCountLabel}</badge>
+    </row>
+    <use template="taxpayer-compact-calendar"/>
+    <if test="{profileMonthlyHasDeadlines}">
+      <column gap="8">
+        <for each="profileMonthlyDeadlineRows" key="id" as="deadline">
+          <column>
+            <!-- @include-template d-s d="{deadline.dateLabel}" y="{deadline.yearLabel}" c="{deadline.compactLabel}" t="{deadline.formName}" p="{deadline.periodLabel}" -->
+          </column>
+        </for>
+      </column>
+    </if>
+    <else>
+      <use template="t-e" i="clock" t="No deadlines" b="No forms are scheduled for this date or month."/>
+    </else>
+  </column>
+</template>
+
+<template name="t-ac">
+  <column gap="12">
+    <row height="36" cross="center" gap="8">
+      <text grow="1"><span weight="bold">Action Required</span></text>
+      <badge variant="secondary">{profileActionRequiredCount}</badge>
+    </row>
+    <use template="t-l" r="{profileActionRequiredRows}" h="{profileActionRequiredHasRows}">
+      <use template="t-e" i="check-circle" t="All caught up" b="Forms that need attention appear here."/>
+    </use>
+  </column>
+</template>
+
+<template name="t-oc">
+  <column gap="12">
+    <row height="36" cross="center" gap="8">
+      <text grow="1"><span weight="bold">Overdue</span></text>
+      <badge variant="destructive">{profileOverdueDeadlineCount}</badge>
+    </row>
+    <use template="t-l" r="{profileOverdueDeadlineRows}" h="{profileOverdueHasDeadlines}">
+      <use template="t-e" i="check-circle" t="Nothing overdue" b="No unpaid deadline has passed for this tax profile."/>
+    </use>
+  </column>
+</template>
+
+<template name="taxpayer-calendar-section">
+  <column gap="12">
+    <use template="taxpayer-profile-calendar-toolbar"/>
+    <if test="{dashboardThreeColumnLayout}">
+      <row gap="16" cross="start">
+        <column width="{profileCalendarLaneWidth}"><use template="t-dc"/></column>
+        <column grow="1"><use template="t-ac"/></column>
+        <column grow="1"><use template="t-oc"/></column>
+      </row>
+    </if>
+    <else>
+      <if test="{dashboardTwoColumnLayout}">
+        <row gap="16" cross="start">
+          <column width="{profileCalendarLaneWidth}"><use template="t-dc"/></column>
+          <column grow="1" gap="20">
+            <use template="t-ac"/>
+            <use template="t-oc"/>
+          </column>
+        </row>
+      </if>
+      <else>
+        <column gap="20">
+          <column width="{profileCalendarLaneWidth}"><use template="t-dc"/></column>
+          <use template="t-ac"/>
+          <use template="t-oc"/>
+        </column>
+      </else>
     </else>
   </column>
 </template>
@@ -301,6 +450,23 @@
   </stack>
 </template>
 
+<template name="profile-deadline-dialog-content">
+  <column>
+    <row padding="16" gap="12" cross="center">
+      <column grow="1" gap="4">
+        <text><span weight="bold" scale="1.2">{profileDeadlineDialogTitle}</span></text>
+        <text wrap="true" foreground="text_muted">{profileDeadlineDialogContext}</text>
+      </column>
+      <button width="40" height="40" size="icon" variant="ghost" icon="x" label="Close dialog" on-press="profile_deadline_close_dialog"></button>
+    </row>
+    <separator/>
+    <column padding="16" gap="12">
+      <text wrap="true">{profileDeadlineDialogBody}</text>
+      <if test="{profileDeadlineDialogSourceVisible}"><text size="sm" wrap="true" foreground="text_muted">Source: {profileDeadlineDialogSource}</text></if>
+    </column>
+  </column>
+</template>
+
 <template name="taxpayer-form-info-content" args="code title category cadence capability revision">
   <column>
     <row padding="16" gap="12" cross="center">
@@ -345,52 +511,24 @@
   </column>
 </template>
 
-<template name="taxpayer-filing-period-tile" args="editor action_label action_id selected disabled label status status_color tile_width visible">
-  <stack width="{tile_width}" height="48">
-    <if test="{visible}">
-      <panel width="{tile_width}" height="48" padding="0" selected="{selected}">
-        <if test="{editor}">
-          <column
-            width="{tile_width}"
-            height="48"
-            padding="0"
-            gap="1"
-            main="center"
-            cross="stretch"
-            role="button"
-            label="{action_label}"
-            disabled="{disabled}"
-            on-press="open_library_period:{action_id}">
-            <text wrap="false" size="sm" text-alignment="center">{label}</text>
-            <if test="{status_color == 'success'}"><text wrap="false" size="sm" text-alignment="center" foreground="success">{status}</text></if>
-            <if test="{status_color == 'info'}"><text wrap="false" size="sm" text-alignment="center" foreground="info">{status}</text></if>
-            <if test="{status_color == 'warning'}"><text wrap="false" size="sm" text-alignment="center" foreground="warning">{status}</text></if>
-            <if test="{status_color == 'destructive'}"><text wrap="false" size="sm" text-alignment="center" foreground="destructive">{status}</text></if>
-            <if test="{status_color == 'muted'}"><text wrap="false" size="sm" text-alignment="center" foreground="text_muted">{status}</text></if>
+<template name="t-fp" args="a i x d l s c w v">
+  <stack width="{w}" height="48">
+    <if test="{v}">
+      <panel width="{w}" height="48" padding="0" selected="{x}">
+        <column width="{w}" height="48" padding="0" main="center" cross="stretch" role="button" label="{a}" disabled="{d}" on-press="open_library_period:{i}">
+          <column gap="1" main="center" cross="stretch">
+            <text wrap="false" size="sm" text-alignment="center">{l}</text>
+            <if test="{c == 'success'}"><text wrap="false" size="sm" text-alignment="center" foreground="success">{s}</text></if>
+            <if test="{c == 'info'}"><text wrap="false" size="sm" text-alignment="center" foreground="info">{s}</text></if>
+            <if test="{c == 'warning'}"><text wrap="false" size="sm" text-alignment="center" foreground="warning">{s}</text></if>
+            <if test="{c == 'destructive'}"><text wrap="false" size="sm" text-alignment="center" foreground="destructive">{s}</text></if>
+            <if test="{c == 'muted'}"><text wrap="false" size="sm" text-alignment="center" foreground="text_muted">{s}</text></if>
           </column>
-        </if>
-        <else>
-          <column
-            width="{tile_width}"
-            height="48"
-            padding="0"
-            gap="1"
-            main="center"
-            cross="stretch"
-            label="{action_label}"
-            disabled="{disabled}">
-            <text wrap="false" size="sm" text-alignment="center">{label}</text>
-            <if test="{status_color == 'success'}"><text wrap="false" size="sm" text-alignment="center" foreground="success">{status}</text></if>
-            <if test="{status_color == 'info'}"><text wrap="false" size="sm" text-alignment="center" foreground="info">{status}</text></if>
-            <if test="{status_color == 'warning'}"><text wrap="false" size="sm" text-alignment="center" foreground="warning">{status}</text></if>
-            <if test="{status_color == 'destructive'}"><text wrap="false" size="sm" text-alignment="center" foreground="destructive">{status}</text></if>
-            <if test="{status_color == 'muted'}"><text wrap="false" size="sm" text-alignment="center" foreground="text_muted">{status}</text></if>
-          </column>
-        </else>
+        </column>
       </panel>
     </if>
     <else>
-      <spacer width="{tile_width}" height="48"/>
+      <spacer width="{w}" height="48"/>
     </else>
   </stack>
 </template>
@@ -513,7 +651,7 @@
         </else>
       </if>
       <else>
-        <use template="taxpayer-calendar-empty" icon="search" title="No matching catalog forms" body="Change the search, selection, capability, cadence, or tax-category filters."/>
+        <use template="t-e" i="search" t="No matching catalog forms" b="Change the search, selection, capability, cadence, or tax-category filters."/>
       </else>
     </if>
     <else>
@@ -559,18 +697,18 @@
                 </row>
                 <if test="{form.hasPeriodCells}">
                   <grid columns="{form.periodGridColumns}" gap="6">
-                    <if test="{form.period1.available}"><use template="taxpayer-filing-period-tile" editor="{form.editorAvailable}" action_label="{form.period1.actionLabel}" action_id="{form.period1.actionId}" selected="{form.period1.selected}" disabled="{form.period1.disabled}" label="{form.period1.label}" status="{form.period1.visualStatus}" visible="{form.period1.visible}" status_color="{form.period1.statusColor}" tile_width="{form.period1.tileWidth}"/></if>
-                    <if test="{form.period2.available}"><use template="taxpayer-filing-period-tile" editor="{form.editorAvailable}" action_label="{form.period2.actionLabel}" action_id="{form.period2.actionId}" selected="{form.period2.selected}" disabled="{form.period2.disabled}" label="{form.period2.label}" status="{form.period2.visualStatus}" visible="{form.period2.visible}" status_color="{form.period2.statusColor}" tile_width="{form.period2.tileWidth}"/></if>
-                    <if test="{form.period3.available}"><use template="taxpayer-filing-period-tile" editor="{form.editorAvailable}" action_label="{form.period3.actionLabel}" action_id="{form.period3.actionId}" selected="{form.period3.selected}" disabled="{form.period3.disabled}" label="{form.period3.label}" status="{form.period3.visualStatus}" visible="{form.period3.visible}" status_color="{form.period3.statusColor}" tile_width="{form.period3.tileWidth}"/></if>
-                    <if test="{form.period4.available}"><use template="taxpayer-filing-period-tile" editor="{form.editorAvailable}" action_label="{form.period4.actionLabel}" action_id="{form.period4.actionId}" selected="{form.period4.selected}" disabled="{form.period4.disabled}" label="{form.period4.label}" status="{form.period4.visualStatus}" visible="{form.period4.visible}" status_color="{form.period4.statusColor}" tile_width="{form.period4.tileWidth}"/></if>
-                    <if test="{form.period5.available}"><use template="taxpayer-filing-period-tile" editor="{form.editorAvailable}" action_label="{form.period5.actionLabel}" action_id="{form.period5.actionId}" selected="{form.period5.selected}" disabled="{form.period5.disabled}" label="{form.period5.label}" status="{form.period5.visualStatus}" visible="{form.period5.visible}" status_color="{form.period5.statusColor}" tile_width="{form.period5.tileWidth}"/></if>
-                    <if test="{form.period6.available}"><use template="taxpayer-filing-period-tile" editor="{form.editorAvailable}" action_label="{form.period6.actionLabel}" action_id="{form.period6.actionId}" selected="{form.period6.selected}" disabled="{form.period6.disabled}" label="{form.period6.label}" status="{form.period6.visualStatus}" visible="{form.period6.visible}" status_color="{form.period6.statusColor}" tile_width="{form.period6.tileWidth}"/></if>
-                    <if test="{form.period7.available}"><use template="taxpayer-filing-period-tile" editor="{form.editorAvailable}" action_label="{form.period7.actionLabel}" action_id="{form.period7.actionId}" selected="{form.period7.selected}" disabled="{form.period7.disabled}" label="{form.period7.label}" status="{form.period7.visualStatus}" visible="{form.period7.visible}" status_color="{form.period7.statusColor}" tile_width="{form.period7.tileWidth}"/></if>
-                    <if test="{form.period8.available}"><use template="taxpayer-filing-period-tile" editor="{form.editorAvailable}" action_label="{form.period8.actionLabel}" action_id="{form.period8.actionId}" selected="{form.period8.selected}" disabled="{form.period8.disabled}" label="{form.period8.label}" status="{form.period8.visualStatus}" visible="{form.period8.visible}" status_color="{form.period8.statusColor}" tile_width="{form.period8.tileWidth}"/></if>
-                    <if test="{form.period9.available}"><use template="taxpayer-filing-period-tile" editor="{form.editorAvailable}" action_label="{form.period9.actionLabel}" action_id="{form.period9.actionId}" selected="{form.period9.selected}" disabled="{form.period9.disabled}" label="{form.period9.label}" status="{form.period9.visualStatus}" visible="{form.period9.visible}" status_color="{form.period9.statusColor}" tile_width="{form.period9.tileWidth}"/></if>
-                    <if test="{form.period10.available}"><use template="taxpayer-filing-period-tile" editor="{form.editorAvailable}" action_label="{form.period10.actionLabel}" action_id="{form.period10.actionId}" selected="{form.period10.selected}" disabled="{form.period10.disabled}" label="{form.period10.label}" status="{form.period10.visualStatus}" visible="{form.period10.visible}" status_color="{form.period10.statusColor}" tile_width="{form.period10.tileWidth}"/></if>
-                    <if test="{form.period11.available}"><use template="taxpayer-filing-period-tile" editor="{form.editorAvailable}" action_label="{form.period11.actionLabel}" action_id="{form.period11.actionId}" selected="{form.period11.selected}" disabled="{form.period11.disabled}" label="{form.period11.label}" status="{form.period11.visualStatus}" visible="{form.period11.visible}" status_color="{form.period11.statusColor}" tile_width="{form.period11.tileWidth}"/></if>
-                    <if test="{form.period12.available}"><use template="taxpayer-filing-period-tile" editor="{form.editorAvailable}" action_label="{form.period12.actionLabel}" action_id="{form.period12.actionId}" selected="{form.period12.selected}" disabled="{form.period12.disabled}" label="{form.period12.label}" status="{form.period12.visualStatus}" visible="{form.period12.visible}" status_color="{form.period12.statusColor}" tile_width="{form.period12.tileWidth}"/></if>
+                    <if test="{form.period1.available}"><use template="t-fp" a="{form.period1.actionLabel}" i="{form.period1.actionId}" x="{form.period1.selected}" d="{form.period1.disabled}" l="{form.period1.label}" s="{form.period1.visualStatus}" v="{form.period1.visible}" c="{form.period1.statusColor}" w="{form.period1.tileWidth}"/></if>
+                    <if test="{form.period2.available}"><use template="t-fp" a="{form.period2.actionLabel}" i="{form.period2.actionId}" x="{form.period2.selected}" d="{form.period2.disabled}" l="{form.period2.label}" s="{form.period2.visualStatus}" v="{form.period2.visible}" c="{form.period2.statusColor}" w="{form.period2.tileWidth}"/></if>
+                    <if test="{form.period3.available}"><use template="t-fp" a="{form.period3.actionLabel}" i="{form.period3.actionId}" x="{form.period3.selected}" d="{form.period3.disabled}" l="{form.period3.label}" s="{form.period3.visualStatus}" v="{form.period3.visible}" c="{form.period3.statusColor}" w="{form.period3.tileWidth}"/></if>
+                    <if test="{form.period4.available}"><use template="t-fp" a="{form.period4.actionLabel}" i="{form.period4.actionId}" x="{form.period4.selected}" d="{form.period4.disabled}" l="{form.period4.label}" s="{form.period4.visualStatus}" v="{form.period4.visible}" c="{form.period4.statusColor}" w="{form.period4.tileWidth}"/></if>
+                    <if test="{form.period5.available}"><use template="t-fp" a="{form.period5.actionLabel}" i="{form.period5.actionId}" x="{form.period5.selected}" d="{form.period5.disabled}" l="{form.period5.label}" s="{form.period5.visualStatus}" v="{form.period5.visible}" c="{form.period5.statusColor}" w="{form.period5.tileWidth}"/></if>
+                    <if test="{form.period6.available}"><use template="t-fp" a="{form.period6.actionLabel}" i="{form.period6.actionId}" x="{form.period6.selected}" d="{form.period6.disabled}" l="{form.period6.label}" s="{form.period6.visualStatus}" v="{form.period6.visible}" c="{form.period6.statusColor}" w="{form.period6.tileWidth}"/></if>
+                    <if test="{form.period7.available}"><use template="t-fp" a="{form.period7.actionLabel}" i="{form.period7.actionId}" x="{form.period7.selected}" d="{form.period7.disabled}" l="{form.period7.label}" s="{form.period7.visualStatus}" v="{form.period7.visible}" c="{form.period7.statusColor}" w="{form.period7.tileWidth}"/></if>
+                    <if test="{form.period8.available}"><use template="t-fp" a="{form.period8.actionLabel}" i="{form.period8.actionId}" x="{form.period8.selected}" d="{form.period8.disabled}" l="{form.period8.label}" s="{form.period8.visualStatus}" v="{form.period8.visible}" c="{form.period8.statusColor}" w="{form.period8.tileWidth}"/></if>
+                    <if test="{form.period9.available}"><use template="t-fp" a="{form.period9.actionLabel}" i="{form.period9.actionId}" x="{form.period9.selected}" d="{form.period9.disabled}" l="{form.period9.label}" s="{form.period9.visualStatus}" v="{form.period9.visible}" c="{form.period9.statusColor}" w="{form.period9.tileWidth}"/></if>
+                    <if test="{form.period10.available}"><use template="t-fp" a="{form.period10.actionLabel}" i="{form.period10.actionId}" x="{form.period10.selected}" d="{form.period10.disabled}" l="{form.period10.label}" s="{form.period10.visualStatus}" v="{form.period10.visible}" c="{form.period10.statusColor}" w="{form.period10.tileWidth}"/></if>
+                    <if test="{form.period11.available}"><use template="t-fp" a="{form.period11.actionLabel}" i="{form.period11.actionId}" x="{form.period11.selected}" d="{form.period11.disabled}" l="{form.period11.label}" s="{form.period11.visualStatus}" v="{form.period11.visible}" c="{form.period11.statusColor}" w="{form.period11.tileWidth}"/></if>
+                    <if test="{form.period12.available}"><use template="t-fp" a="{form.period12.actionLabel}" i="{form.period12.actionId}" x="{form.period12.selected}" d="{form.period12.disabled}" l="{form.period12.label}" s="{form.period12.visualStatus}" v="{form.period12.visible}" c="{form.period12.statusColor}" w="{form.period12.tileWidth}"/></if>
                   </grid>
                 </if>
               </column>
@@ -603,95 +741,4 @@
       </if>
     </else>
   </column>
-</template>
-
-<template name="taxpayer-dashboard-content" args="padding">
-  <column padding="{padding}" gap="24">
-    <if test="{constrainedLayout}">
-      <row gap="12" cross="center">
-        <avatar label="{selectedTaxpayerName}">{selectedTaxpayerInitials}</avatar>
-        <column grow="1" gap="5">
-          <text size="heading" wrap="true">{selectedTaxpayerName}</text>
-          <text wrap="true" foreground="text_muted">TIN: {selectedTaxpayerTin}</text>
-          <text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear} - Non-VAT</text>
-        </column>
-        <button
-          width="44"
-          height="44"
-          size="icon"
-          variant="outline"
-          radius="xl"
-          icon="settings"
-          label="Profile Settings"
-          on-press="show_profile_setup">
-        </button>
-      </row>
-    </if>
-    <else>
-      <row gap="16" cross="center">
-        <avatar label="{selectedTaxpayerName}">{selectedTaxpayerInitials}</avatar>
-        <column grow="1" gap="6">
-          <text size="heading">{selectedTaxpayerName}</text>
-          <text wrap="true" foreground="text_muted">
-            TIN: {selectedTaxpayerTin} - Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear} - Non-VAT
-          </text>
-        </column>
-        <button variant="outline" icon="settings" on-press="show_profile_setup">Profile Settings</button>
-      </row>
-    </else>
-
-    <if test="{constrainedLayout}">
-      <tabs gap="4" label="Dashboard view">
-        <button
-          height="44"
-          variant="ghost"
-          icon="app:calendar"
-          selected="{dashboardCalendarActive}"
-          on-press="show_dashboard_calendar">Calendar</button>
-        <button
-          height="44"
-          variant="ghost"
-          icon="folder-open"
-          selected="{dashboardFormsActive}"
-          on-press="show_dashboard_forms">Tax Form Library</button>
-      </tabs>
-    </if>
-    <else>
-      <tabs gap="4" label="Dashboard view">
-        <button
-          variant="ghost"
-          icon="file-text"
-          selected="{dashboardCalendarActive}"
-          on-press="show_dashboard_calendar">Calendar</button>
-        <button
-          variant="ghost"
-          icon="folder-open"
-          selected="{dashboardFormsActive}"
-          on-press="show_dashboard_forms">Tax Form Library</button>
-      </tabs>
-    </else>
-
-    <if test="{dashboardCalendarActive}">
-      <use template="taxpayer-calendar-section"/>
-    </if>
-    <if test="{dashboardFormsActive}">
-      <use template="taxpayer-form-library-section"/>
-    </if>
-  </column>
-</template>
-
-<template name="taxpayer-dashboard-page">
-  <scroll grow="1" global-key="page-taxpayer-dashboard" label="Taxpayer dashboard content">
-    <if test="{phoneLayout}">
-      <use template="taxpayer-dashboard-content" padding="16"/>
-    </if>
-    <else>
-      <if test="{desktopLayout}">
-        <use template="taxpayer-dashboard-content" padding="32"/>
-      </if>
-      <else>
-        <use template="taxpayer-dashboard-content" padding="24"/>
-      </else>
-    </else>
-  </scroll>
 </template>
