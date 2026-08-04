@@ -461,6 +461,42 @@ pub const ProfileCalendarDeadlineRow = struct {
     }
 };
 
+pub const ProfileSetupChangeRow = struct {
+    id: u64,
+    effective_from: [10]u8,
+    form_count: usize,
+    covers_today: bool,
+
+    pub fn rangeLabel(
+        self: *const ProfileSetupChangeRow,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "From {s}",
+            .{&self.effective_from},
+        ) catch "Recorded change";
+    }
+
+    pub fn formsLabel(
+        self: *const ProfileSetupChangeRow,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "{d} active {s}",
+            .{
+                self.form_count,
+                if (self.form_count == 1) "form" else "forms",
+            },
+        ) catch "Forms unavailable";
+    }
+
+    pub fn todayBadgeVisible(self: *const ProfileSetupChangeRow) bool {
+        return self.covers_today;
+    }
+};
+
 pub const ProfileFormSetRow = struct {
     id: u64,
     tax_year: i32,
@@ -756,6 +792,7 @@ pub const Model = struct {
     profileSetupYearQuery: canvas.TextBuffer(4) = .{},
     profileSetupSourcePickerVisible: bool = false,
     profileSetupYearsExpanded: bool = false,
+    profileSetupChangesExpanded: bool = false,
     profileAdvancedExpanded: bool = false,
     profileNoticeTimerKey: u64 = 0,
     calendarToday: calendar_domain.Date = .{
@@ -799,6 +836,7 @@ pub const Model = struct {
         "profileSetupYearQuery",
         "profileSetupSourcePickerVisible",
         "profileSetupYearsExpanded",
+        "profileSetupChangesExpanded",
         "profileAdvancedExpanded",
         "profileFormLaunchAssessments",
         "profileFormLaunchAssessmentsReady",
@@ -2879,6 +2917,15 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
+        if (self.taxProfiles.applyScopeFromDate()) {
+            const change_year = self.taxProfiles.workspaceYear() orelse
+                return "Record mid-year change";
+            return std.fmt.allocPrint(
+                arena,
+                "Record change for {d}",
+                .{change_year},
+            ) catch "Record mid-year change";
+        }
         if (!self.taxProfiles.year_workspace.isDraft()) return "Save changes";
         const year = self.taxProfiles.workspaceYear() orelse return "Save setup";
         return std.fmt.allocPrint(
@@ -2892,15 +2939,22 @@ pub const Model = struct {
         return switch (self.taxProfiles.year_workspace) {
             .draft_choice, .conflict, .open_failed => true,
             .draft_empty, .draft_seeded => false,
-            .viewing => !self.taxProfiles.formsDirty(),
+            // From-a-date deliberately ignores formsDirty: recording the
+            // current membership taking effect on a date is a real event.
+            .viewing => if (self.taxProfiles.applyScopeFromDate())
+                self.taxProfiles.changeDateEmpty()
+            else
+                !self.taxProfiles.formsDirty(),
         };
     }
 
     /// Shown beside Save when a save would deliberately configure no forms, so
-    /// an explicit empty year is never an accident.
+    /// an explicit empty year is never an accident. A recorded change has its
+    /// own copy; this one talks about the year and would be wrong there.
     pub fn profileSetupZeroFormsHelperVisible(self: *const Model) bool {
         return self.profileSetupManagerVisible() and
             self.taxProfiles.stagedFormCount() == 0 and
+            !self.taxProfiles.applyScopeFromDate() and
             !self.profileSetupPrimaryDisabled();
     }
 
@@ -2945,6 +2999,81 @@ pub const Model = struct {
 
     pub fn profileSetupYearsExpandedVisible(self: *const Model) bool {
         return self.profileSetupYearsExpanded;
+    }
+
+    /// The when-does-this-apply control belongs to a configured year only:
+    /// a draft has no base setup for a recorded change to layer over.
+    pub fn profileSetupScopeVisible(self: *const Model) bool {
+        return self.profileSetupManagerVisible() and
+            self.taxProfiles.year_workspace == .viewing;
+    }
+
+    pub fn profileSetupScopeWholeYearSelected(self: *const Model) bool {
+        return !self.taxProfiles.applyScopeFromDate();
+    }
+
+    pub fn profileSetupScopeFromDateSelected(self: *const Model) bool {
+        return self.taxProfiles.applyScopeFromDate();
+    }
+
+    pub fn profileSetupScopeDateVisible(self: *const Model) bool {
+        return self.profileSetupScopeVisible() and
+            self.taxProfiles.applyScopeFromDate();
+    }
+
+    pub fn profileSetupChangeDateValue(self: *const Model) []const u8 {
+        return self.taxProfiles.changeDateText();
+    }
+
+    pub fn profileSetupChangesVisible(self: *const Model) bool {
+        return self.profileSetupManagerVisible() and
+            self.taxProfiles.year_workspace == .viewing and
+            self.taxProfiles.formSetIntervals().len > 0;
+    }
+
+    pub fn profileSetupChangesDisclosureLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "Mid-year changes ({d})",
+            .{self.taxProfiles.formSetIntervals().len},
+        ) catch "Mid-year changes";
+    }
+
+    pub fn profileSetupChangesExpandedVisible(self: *const Model) bool {
+        return self.profileSetupChangesExpanded;
+    }
+
+    pub fn profileSetupChangeRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const ProfileSetupChangeRow {
+        const intervals = self.taxProfiles.formSetIntervals();
+        const rows = arena.alloc(ProfileSetupChangeRow, intervals.len) catch
+            return &.{};
+        const today = self.taxProfiles.default_effective_from.text();
+        for (intervals, 0..) |*interval, index| {
+            // "Covers today" is a plain range check against the boot date,
+            // not date-scoped resolution — nothing downstream reads it. An
+            // open range ends with its own year, so the year must match too.
+            const same_year = today.len == 10 and
+                std.mem.eql(u8, today[0..4], interval.effective_from[0..4]);
+            const started = same_year and
+                std.mem.order(u8, today, &interval.effective_from) != .lt;
+            const still_running = if (interval.effective_until) |*until|
+                std.mem.order(u8, today, until) != .gt
+            else
+                true;
+            rows[index] = .{
+                .id = interval.sequence,
+                .effective_from = interval.effective_from,
+                .form_count = interval.form_count,
+                .covers_today = started and still_running,
+            };
+        }
+        return rows;
     }
 
     pub fn profileSetupYearsDisclosureLabel(
@@ -6331,6 +6460,10 @@ pub const Msg = union(enum) {
     profile_setup_confirm_year_switch,
     profile_setup_cancel_year_switch,
     profile_setup_toggle_years_disclosure,
+    profile_setup_apply_whole_year,
+    profile_setup_apply_from_date,
+    profile_setup_change_date_input: canvas.TextInputEvent,
+    profile_setup_toggle_changes_disclosure,
     profile_record_change,
     profile_fix_mistake,
     profile_toggle_advanced,
@@ -7071,11 +7204,15 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.profileSetupSourcePickerVisible = false;
         },
         .profile_setup_save => {
+            const recorded_change = model.taxProfiles.applyScopeFromDate();
             if (model.taxProfiles.saveYearWorkspace()) {
                 model.libraryFilter.filter_picker_visible = false;
                 resetProfileFormsPage(model);
                 refreshSelectedProfileFormSet(model);
                 refreshSelectedProfileCalendar(model);
+                // A just-recorded change must be visible without a click, or
+                // the catalog snapping back reads as a lost save.
+                if (recorded_change) model.profileSetupChangesExpanded = true;
             }
         },
         .profile_setup_conflict_review => {
@@ -7098,6 +7235,18 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .profile_setup_toggle_years_disclosure => {
             model.profileSetupYearsExpanded = !model.profileSetupYearsExpanded;
+        },
+        .profile_setup_apply_whole_year => {
+            model.taxProfiles.chooseApplyWholeYear();
+        },
+        .profile_setup_apply_from_date => {
+            model.taxProfiles.chooseApplyFromDate();
+        },
+        .profile_setup_change_date_input => |edit| {
+            model.taxProfiles.change_effective_from.apply(edit);
+        },
+        .profile_setup_toggle_changes_disclosure => {
+            model.profileSetupChangesExpanded = !model.profileSetupChangesExpanded;
         },
         .add_branch_profile => {
             if (rejectExact1701QContextChange(model)) {

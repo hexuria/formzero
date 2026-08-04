@@ -2471,6 +2471,34 @@ settings never copy between years.
 </card>
 </if>
 <if test="{profileSetupManagerVisible}">
+<if test="{profileSetupScopeVisible}">
+<column gap="10">
+<text><span weight="bold">When does this apply?</span></text>
+<if test="{constrainedLayout}">
+<column gap="8">
+<button height="44" variant="outline" selected="{profileSetupScopeWholeYearSelected}" on-press="profile_setup_apply_whole_year">Whole year</button>
+<button height="44" variant="outline" selected="{profileSetupScopeFromDateSelected}" on-press="profile_setup_apply_from_date">From a date</button>
+</column>
+</if>
+<else>
+<row gap="8">
+<button height="44" variant="outline" selected="{profileSetupScopeWholeYearSelected}" on-press="profile_setup_apply_whole_year">Whole year</button>
+<button height="44" variant="outline" selected="{profileSetupScopeFromDateSelected}" on-press="profile_setup_apply_from_date">From a date</button>
+</row>
+</else>
+<if test="{profileSetupScopeDateVisible}">
+<use template="profile-field" label="Change takes effect">
+<input
+height="44"
+text="{profileSetupChangeDateValue}"
+placeholder="YYYY-MM-DD"
+label="Change takes effect"
+on-input="profile_setup_change_date_input"/>
+</use>
+<text wrap="true" foreground="text_muted">Records that this year's forms changed on that date. Deadlines and the tax calendar still follow the year's saved setup.</text>
+</if>
+</column>
+</if>
 <if test="{profileSetupZeroFormsHelperVisible}">
 <text wrap="true" foreground="text_muted">{profileSetupZeroFormsHelperText}</text>
 </if>
@@ -2502,6 +2530,35 @@ disabled="{profileSetupPrimaryDisabled}"
 on-press="profile_setup_save">{profileSetupPrimaryLabel}</button>
 </row>
 </else>
+<if test="{profileSetupChangesVisible}">
+<column gap="8">
+<row>
+<button
+height="44"
+variant="ghost"
+icon="chevron-right"
+on-press="profile_setup_toggle_changes_disclosure">{profileSetupChangesDisclosureLabel}</button>
+</row>
+<if test="{profileSetupChangesExpandedVisible}">
+<column gap="8">
+<for each="profileSetupChangeRows" key="id" as="change">
+<card padding="0">
+<row padding="12" gap="12" cross="center">
+<column grow="1" gap="2">
+<text><span weight="bold">{change.rangeLabel}</span></text>
+<text foreground="text_muted">{change.formsLabel}</text>
+</column>
+<if test="{change.todayBadgeVisible}">
+<badge variant="secondary">Covers today</badge>
+</if>
+</row>
+</card>
+</for>
+<text wrap="true" foreground="text_muted">Recorded for reference. Deadlines and the calendar keep following the year's saved setup.</text>
+</column>
+</if>
+</column>
+</if>
 <use template="taxpayer-form-library-section"/>
 </if>
 <if test="{profileSetupYearsDisclosureVisible}">

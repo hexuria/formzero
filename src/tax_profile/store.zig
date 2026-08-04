@@ -367,6 +367,27 @@ pub const FormSetSummaryList = struct {
     }
 };
 
+/// One recorded mid-year Forms Set change, summarized for review. Dates are
+/// by value so callers can cache rows without owning allocations.
+pub const FormSetIntervalSummary = struct {
+    sequence: u32,
+    effective_from: DateText,
+    effective_until: ?DateText,
+    form_count: usize,
+};
+
+pub const FormSetIntervalSummaryList = struct {
+    items: []FormSetIntervalSummary,
+
+    pub fn deinit(
+        self: *FormSetIntervalSummaryList,
+        allocator: std.mem.Allocator,
+    ) void {
+        allocator.free(self.items);
+        self.* = undefined;
+    }
+};
+
 pub const DraftWrite = struct {
     id: []const u8,
     form_code: []const u8,
@@ -3093,6 +3114,60 @@ pub const Store = struct {
                 .tax_year = @intCast(sqlite.sqlite3_column_int64(statement.raw, 0)),
                 .state = state,
                 .active_form_count = @intCast(count),
+            });
+        }
+        return .{ .items = try items.toOwnedSlice(allocator) };
+    }
+
+    /// A year's recorded mid-year changes, oldest first. Dates were validated
+    /// on write, so a malformed column is corruption, not input.
+    pub fn listFormSetIntervals(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        tax_year: i32,
+    ) !FormSetIntervalSummaryList {
+        try validateOpaqueText(profile_id);
+        try validateTaxYear(tax_year);
+        var statement = try self.prepare(
+            \\SELECT r.sequence, r.effective_from, r.effective_until,
+            \\       COUNT(e.form_code)
+            \\FROM tax_profile_form_set_interval_revisions AS r
+            \\LEFT JOIN tax_profile_form_set_interval_entries AS e
+            \\  ON e.revision_id = r.id
+            \\WHERE r.profile_id = ? AND r.tax_year = ?
+            \\GROUP BY r.id
+            \\ORDER BY r.effective_from, r.sequence;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindInt64(2, tax_year);
+
+        var items: std.ArrayList(FormSetIntervalSummary) = .empty;
+        errdefer items.deinit(allocator);
+        while (try statement.step() == .row) {
+            const sequence = sqlite.sqlite3_column_int64(statement.raw, 0);
+            if (sequence < 1 or sequence > std.math.maxInt(u32)) {
+                return Error.InvalidValue;
+            }
+            const from_text = columnText(statement.raw, 1) orelse
+                return Error.InvalidValue;
+            if (from_text.len != 10) return Error.InvalidValue;
+            var from: DateText = undefined;
+            @memcpy(&from, from_text);
+            var until: ?DateText = null;
+            if (columnText(statement.raw, 2)) |until_text| {
+                if (until_text.len != 10) return Error.InvalidValue;
+                until = undefined;
+                @memcpy(&until.?, until_text);
+            }
+            const count = sqlite.sqlite3_column_int64(statement.raw, 3);
+            if (count < 0) return Error.InvalidValue;
+            try items.append(allocator, .{
+                .sequence = @intCast(sequence),
+                .effective_from = from,
+                .effective_until = until,
+                .form_count = @intCast(count),
             });
         }
         return .{ .items = try items.toOwnedSlice(allocator) };
@@ -10229,6 +10304,62 @@ test "a mid-year forms change supersedes the year set only within its dates" {
     var yearly = try store.resolveFormSet(allocator, profile_id, 2026);
     defer yearly.deinit(allocator);
     try std.testing.expectEqualStrings("2551Q", yearly.forms.items[0].form_code);
+}
+
+test "a year's recorded changes list oldest first with their form counts" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    const profile_id = "tax-profile-interval-listing";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Listing Taxpayer", "2026-01-01"),
+        .{},
+    );
+    try store.createFormSetInterval(.{
+        .id = "interval-late",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .effective_from = "2026-08-01",
+        .effective_until = "2026-09-30",
+        .forms = &.{
+            .{ .form_code = "2550Q", .form_revision = "2024-04-ENCS" },
+            .{ .form_code = "2551Q", .form_revision = "2018-01-ENCS" },
+        },
+    });
+    try store.createFormSetInterval(.{
+        .id = "interval-early",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .effective_from = "2026-02-01",
+        .effective_until = "2026-03-31",
+        .forms = &.{},
+    });
+
+    var listed = try store.listFormSetIntervals(allocator, profile_id, 2026);
+    defer listed.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), listed.items.len);
+    try std.testing.expectEqualStrings(
+        "2026-02-01",
+        &listed.items[0].effective_from,
+    );
+    try std.testing.expectEqualStrings(
+        "2026-03-31",
+        &listed.items[0].effective_until.?,
+    );
+    try std.testing.expectEqual(@as(usize, 0), listed.items[0].form_count);
+    try std.testing.expectEqualStrings(
+        "2026-08-01",
+        &listed.items[1].effective_from,
+    );
+    try std.testing.expectEqual(@as(usize, 2), listed.items[1].form_count);
+    try std.testing.expect(listed.items[1].sequence > 0);
+
+    // Another year and another taxpayer both list empty.
+    var other_year = try store.listFormSetIntervals(allocator, profile_id, 2025);
+    defer other_year.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), other_year.items.len);
 }
 
 test "two active form set intervals cannot claim the same day" {

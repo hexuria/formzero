@@ -22,6 +22,13 @@ const canvas = native_sdk.canvas;
 pub const max_profiles: usize = 1024;
 pub const max_registered_forms: usize = catalog.registry_count;
 pub const max_form_set_summaries: usize = 128;
+/// Recorded mid-year changes shown per year. The store holds every row; past
+/// this bound the list says it is truncated rather than dropping silently.
+pub const max_form_set_intervals: usize = 12;
+
+/// Whether the year workspace's primary save applies to the whole year (the
+/// default, today's behavior) or records a change effective from a date.
+pub const FormsApplyScope = enum { whole_year, from_date };
 /// Covers every recurring catalog slot (51 forms × 12 periods) plus a
 /// bounded on-demand history window. If that window is exceeded the library
 /// reports status as unavailable instead of falsely labelling omitted work
@@ -411,6 +418,14 @@ pub const State = struct {
     managing_forms: bool = false,
     form_set_create_mode: bool = false,
     year_workspace: YearWorkspaceMode = .viewing,
+    /// Whether the primary save applies to the whole year or records a
+    /// change taking effect on a date. From-a-date routes the save to the
+    /// interval tables and leaves the year's base set untouched.
+    forms_apply_scope: FormsApplyScope = .whole_year,
+    change_effective_from: canvas.TextBuffer(10) = .{},
+    form_set_intervals: [max_form_set_intervals]persistence.FormSetIntervalSummary = undefined,
+    form_set_interval_count: usize = 0,
+    form_set_intervals_truncated: bool = false,
     /// The source year a draft copied its forms from. Presentation only: no
     /// facts are duplicated and the source year is never opened for writing.
     draft_source_year: ?i32 = null,
@@ -1824,6 +1839,8 @@ pub const State = struct {
             },
             .conflict, .open_failed => {},
         }
+        self.forms_apply_scope = .whole_year;
+        self.change_effective_from.clear();
         self.resetFormFilters();
     }
 
@@ -1894,6 +1911,10 @@ pub const State = struct {
             self.managing_forms = false;
             self.form_set_create_mode = false;
             self.draft_source_year = null;
+            self.forms_apply_scope = .whole_year;
+            self.change_effective_from.clear();
+            self.form_set_interval_count = 0;
+            self.form_set_intervals_truncated = false;
             self.year_workspace = .open_failed;
             self.setError(err);
             return false;
@@ -1906,8 +1927,11 @@ pub const State = struct {
         setTaxYearBuffer(&self.tax_year, year);
         self.draft_source_year = null;
         self.managing_forms = true;
+        self.forms_apply_scope = .whole_year;
+        self.change_effective_from.clear();
         self.resetFormFilters();
         self.refreshFactsSummary(year);
+        try self.refreshFormSetIntervals(year);
         if (self.form_set_state == .needs_configuration) {
             self.saved_forms = .{};
             self.staged_forms = .{};
@@ -2056,6 +2080,7 @@ pub const State = struct {
         self.draft_source_year = null;
         try self.updateFormSetSummary();
         try self.refreshFormSetSummaries();
+        try self.refreshFormSetIntervals(year);
     }
 
     /// Saves the open year. A draft creates; a configured year updates. A
@@ -2067,6 +2092,11 @@ pub const State = struct {
             self.year_workspace == .conflict)
         {
             return false;
+        }
+        if (self.year_workspace == .viewing and
+            self.forms_apply_scope == .from_date)
+        {
+            return self.recordMidYearChange();
         }
         const creating = self.year_workspace.isDraft();
         const year = self.workspaceYear();
@@ -2119,6 +2149,176 @@ pub const State = struct {
                 .{ value, active },
             ) catch "Your forms were saved.") else "Your forms were saved.";
         self.setNotice(.success, rendered);
+    }
+
+    pub fn chooseApplyWholeYear(self: *State) void {
+        if (self.year_workspace != .viewing) return;
+        self.forms_apply_scope = .whole_year;
+    }
+
+    pub fn chooseApplyFromDate(self: *State) void {
+        if (self.year_workspace != .viewing) return;
+        self.forms_apply_scope = .from_date;
+    }
+
+    pub fn applyScopeFromDate(self: *const State) bool {
+        return self.year_workspace == .viewing and
+            self.forms_apply_scope == .from_date;
+    }
+
+    pub fn changeDateText(self: *const State) []const u8 {
+        return self.change_effective_from.text();
+    }
+
+    pub fn changeDateEmpty(self: *const State) bool {
+        return trimmed(self.change_effective_from.text()).len == 0;
+    }
+
+    pub fn formSetIntervals(
+        self: *const State,
+    ) []const persistence.FormSetIntervalSummary {
+        return self.form_set_intervals[0..self.form_set_interval_count];
+    }
+
+    pub fn formSetIntervalsTruncated(self: *const State) bool {
+        return self.form_set_intervals_truncated;
+    }
+
+    fn refreshFormSetIntervals(self: *State, year: i32) !void {
+        const allocator = self.allocator orelse return error.NotAttached;
+        const store = self.store orelse return error.NotAttached;
+        self.form_set_interval_count = 0;
+        self.form_set_intervals_truncated = false;
+        const profile_id = self.selectedProfileId() orelse return;
+        var listed = try store.listFormSetIntervals(
+            allocator,
+            profile_id,
+            year,
+        );
+        defer listed.deinit(allocator);
+        self.form_set_intervals_truncated =
+            listed.items.len > self.form_set_intervals.len;
+        const count = @min(listed.items.len, self.form_set_intervals.len);
+        @memcpy(self.form_set_intervals[0..count], listed.items[0..count]);
+        self.form_set_interval_count = count;
+    }
+
+    /// Records the staged catalog selection as a change effective from the
+    /// typed date, leaving the year's base setup untouched. The workspace
+    /// afterwards shows the saved year again — proof the base did not move —
+    /// with the recorded change in the review list.
+    fn recordMidYearChange(self: *State) bool {
+        self.recordMidYearChangeFallible() catch |err| {
+            self.setError(err);
+            return false;
+        };
+        return true;
+    }
+
+    fn recordMidYearChangeFallible(self: *State) !void {
+        const store = self.store orelse return error.NotAttached;
+        if (self.editing_new) return error.FormsRequireSavedProfile;
+        const profile_id = self.selectedProfileId() orelse
+            return error.NoSelectedProfile;
+        const year = try parseTaxYear(self.tax_year.text());
+        const raw_date = trimmed(self.change_effective_from.text());
+        // A clamped paste can truncate to a plausible date; deliberately not
+        // in the sticky global truncation chain, because a bad date here must
+        // not block an unrelated profile save.
+        if (self.change_effective_from.truncated) {
+            self.setErrorDetail(
+                "Enter the date the change took effect as YYYY-MM-DD.",
+            );
+            return error.InvalidValue;
+        }
+        _ = model.Date.parseIso(raw_date) catch {
+            self.setErrorDetail(
+                "Enter the date the change took effect as YYYY-MM-DD.",
+            );
+            return error.InvalidValue;
+        };
+        var year_text: [4]u8 = undefined;
+        _ = std.fmt.bufPrint(&year_text, "{d:0>4}", .{
+            @as(u32, @intCast(year)),
+        }) catch return error.InvalidTaxYear;
+        if (!std.mem.startsWith(u8, raw_date, &year_text)) {
+            var message: [96]u8 = undefined;
+            self.setErrorDetail(std.fmt.bufPrint(
+                &message,
+                "That date isn't in {d}. Record the change in the year it belongs to.",
+                .{year},
+            ) catch "That date isn't in the open year.");
+            return error.InvalidValue;
+        }
+
+        var writes: [max_registered_forms]persistence.FormRegistrationWrite =
+            undefined;
+        const count = self.stagedFormWrites(&writes);
+        const generated = try store.generateOpaqueId();
+        store.createFormSetInterval(.{
+            .id = &generated,
+            .profile_id = profile_id,
+            .tax_year = year,
+            .effective_from = raw_date,
+            .forms = writes[0..count],
+        }) catch |err| {
+            if (err == persistence.Error.FormSetIntervalOverlap) {
+                var message: [160]u8 = undefined;
+                // The recorded change runs open through year end, so the
+                // collision is the first existing change still in effect on
+                // or after the typed date.
+                const existing_from: []const u8 = blk: {
+                    for (self.formSetIntervals()) |*interval| {
+                        const open = interval.effective_until == null;
+                        if (open or std.mem.order(
+                            u8,
+                            &interval.effective_until.?,
+                            raw_date,
+                        ) != .lt) {
+                            break :blk &interval.effective_from;
+                        }
+                    }
+                    break :blk "an earlier date";
+                };
+                self.setErrorDetail(std.fmt.bufPrint(
+                    &message,
+                    "A change recorded from {s} already covers those days. {d} can hold one recorded change per day.",
+                    .{ existing_from, year },
+                ) catch "A recorded change already covers those days.");
+                return err;
+            }
+            if (err == persistence.Error.FormSetIntervalOutsideYear) {
+                self.setErrorDetail(
+                    "That date isn't in the open year. Record the change in the year it belongs to.",
+                );
+            }
+            return err;
+        };
+
+        // The base year set was not touched, so nothing base-derived is
+        // refreshed: the catalog snaps back to the saved membership and the
+        // recorded change appears in the review list.
+        const recorded_count = count;
+        self.staged_forms.copySelectionFrom(&self.saved_forms);
+        self.staged_forms.resetInteraction();
+        self.forms_apply_scope = .whole_year;
+        self.resetFormFilters();
+        try self.refreshFormSetIntervals(year);
+        var message: [160]u8 = undefined;
+        const rendered = (if (recorded_count == 1)
+            std.fmt.bufPrint(
+                &message,
+                "Mid-year change recorded · 1 form from {s}. Deadlines still follow the year's saved setup.",
+                .{raw_date},
+            )
+        else
+            std.fmt.bufPrint(
+                &message,
+                "Mid-year change recorded · {d} forms from {s}. Deadlines still follow the year's saved setup.",
+                .{ recorded_count, raw_date },
+            )) catch "Mid-year change recorded.";
+        self.setNotice(.success, rendered);
+        self.change_effective_from.clear();
     }
 
     pub fn beginManageForms(self: *State) bool {
@@ -4634,6 +4834,144 @@ test "re-applying the same COR decision appends nothing new" {
     );
     try std.testing.expect(state.formAvailable(2026, "2551Q"));
     try std.testing.expect(!state.corReviewOpen());
+}
+
+fn configuredYearFixture(
+    state: *State,
+    allocator: std.mem.Allocator,
+    store: *persistence.Store,
+) !void {
+    try workspaceFixture(state, allocator, store);
+    try std.testing.expect(state.openYearWorkspace(2026));
+    try std.testing.expect(state.chooseDraftEmpty());
+    state.toggleStagedForm(catalogIndexOf("2551Q"));
+    try std.testing.expect(state.saveYearWorkspace());
+}
+
+test "a mid-year change is recorded without touching the year's saved setup" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    var state = State{};
+    try configuredYearFixture(&state, allocator, &store);
+
+    state.toggleStagedForm(catalogIndexOf("2550Q"));
+    state.chooseApplyFromDate();
+    state.change_effective_from.set("2026-07-01");
+    try std.testing.expect(state.saveYearWorkspace());
+
+    // The year's base setup did not move; the recorded change lives beside
+    // it and answers only date-scoped resolution.
+    const profile_id = state.selectedProfileId().?;
+    var base = try store.resolveFormSet(allocator, profile_id, 2026);
+    defer base.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), base.forms.items.len);
+    try std.testing.expectEqualStrings(
+        "2551Q",
+        base.forms.items[0].form_code,
+    );
+    var dated = try store.resolveFormSetOn(allocator, profile_id, "2026-07-01");
+    defer dated.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), dated.forms.items.len);
+}
+
+test "recording a mid-year change leaves the workspace showing the saved year" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    var state = State{};
+    try configuredYearFixture(&state, allocator, &store);
+
+    state.toggleStagedForm(catalogIndexOf("2550Q"));
+    state.chooseApplyFromDate();
+    state.change_effective_from.set("2026-07-01");
+    try std.testing.expect(state.saveYearWorkspace());
+
+    // The catalog snaps back to the saved year — zero unsaved changes, or
+    // the record would read as a lost save — while the review list and the
+    // notice carry what was recorded.
+    try std.testing.expectEqual(@as(usize, 0), state.changedFormCount());
+    try std.testing.expectEqual(FormsApplyScope.whole_year, state.forms_apply_scope);
+    try std.testing.expectEqual(YearWorkspaceMode.viewing, state.year_workspace);
+    try std.testing.expectEqual(@as(usize, 1), state.formSetIntervals().len);
+    try std.testing.expectEqualStrings(
+        "2026-07-01",
+        &state.formSetIntervals()[0].effective_from,
+    );
+    try std.testing.expectEqual(@as(usize, 2), state.formSetIntervals()[0].form_count);
+    try std.testing.expectEqualStrings(
+        "Mid-year change recorded · 2 forms from 2026-07-01. Deadlines still follow the year's saved setup.",
+        state.noticeText(),
+    );
+}
+
+test "a second recorded change over the same days is refused in plain words" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    var state = State{};
+    try configuredYearFixture(&state, allocator, &store);
+
+    state.chooseApplyFromDate();
+    state.change_effective_from.set("2026-07-01");
+    try std.testing.expect(state.saveYearWorkspace());
+
+    // The recorded change runs open through year end, so any later date in
+    // the year collides with it — said plainly, not as a constraint name.
+    state.chooseApplyFromDate();
+    state.change_effective_from.set("2026-10-01");
+    try std.testing.expect(!state.saveYearWorkspace());
+    try std.testing.expectEqualStrings(
+        "A change recorded from 2026-07-01 already covers those days. 2026 can hold one recorded change per day.",
+        state.noticeText(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), state.formSetIntervals().len);
+}
+
+test "a change dated outside the open year never reaches the store" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    var state = State{};
+    try configuredYearFixture(&state, allocator, &store);
+
+    state.chooseApplyFromDate();
+    state.change_effective_from.set("2025-07-01");
+    try std.testing.expect(!state.saveYearWorkspace());
+    try std.testing.expectEqualStrings(
+        "That date isn't in 2026. Record the change in the year it belongs to.",
+        state.noticeText(),
+    );
+    const profile_id = state.selectedProfileId().?;
+    var this_year = try store.listFormSetIntervals(allocator, profile_id, 2026);
+    defer this_year.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), this_year.items.len);
+    var other_year = try store.listFormSetIntervals(allocator, profile_id, 2025);
+    defer other_year.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), other_year.items.len);
+}
+
+test "an invalid change date is named, not swallowed" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    var state = State{};
+    try configuredYearFixture(&state, allocator, &store);
+
+    state.chooseApplyFromDate();
+    try std.testing.expect(!state.saveYearWorkspace());
+    try std.testing.expectEqualStrings(
+        "Enter the date the change took effect as YYYY-MM-DD.",
+        state.noticeText(),
+    );
+
+    state.chooseApplyFromDate();
+    state.change_effective_from.set("2026-13-40");
+    try std.testing.expect(!state.saveYearWorkspace());
+    try std.testing.expectEqualStrings(
+        "Enter the date the change took effect as YYYY-MM-DD.",
+        state.noticeText(),
+    );
 }
 
 test "a COR for another taxpayer cannot change this one" {
