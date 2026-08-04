@@ -8,10 +8,11 @@
 //! that buffer is securely erased on hide, selection change, close, and
 //! deinitialization.
 //!
-//! Persistence is deliberately fail-closed here until the exact occurrence
-//! persistence adapter and local key-custody policy are both connected. The
-//! only revisions this page can currently guard are the exact in-memory
-//! workspace histories owned by `form_1701q_exact_ui_state`.
+//! Durable I/O remains outside this view/controller. A separate exact runtime
+//! may borrow the exact state only when the application injects its
+//! source-minted development capability and repository. Production custody
+//! remains unavailable; this module owns no Store, capability, or runtime
+//! selector.
 
 const std = @import("std");
 const native_sdk = @import("native_sdk");
@@ -42,10 +43,11 @@ pub const SecurityBoundary = struct {
     pub const transport_enabled = false;
 };
 
-/// Narrow integration seam for the separately reviewed exact persistence
-/// adapter. No branch in this module treats this status as a successful save.
 pub const PersistenceStatus = enum {
-    unavailable_pending_exact_adapter_and_key_custody,
+    unavailable_pending_application_bridge,
+    development_plaintext_saved,
+    development_plaintext_resumed,
+    development_plaintext_failed_closed,
 };
 
 pub const FilerProfileBinding = struct {
@@ -394,7 +396,7 @@ pub const State = struct {
     material_work: bool = false,
     failed_interaction_slots: std.StaticBitSet(exact_ui.control_count) = .initEmpty(),
     persistence_status: PersistenceStatus =
-        .unavailable_pending_exact_adapter_and_key_custody,
+        .unavailable_pending_application_bridge,
 
     pub fn attach(
         self: *Self,
@@ -470,7 +472,7 @@ pub const State = struct {
                 self.refreshRows();
                 self.setNotice(
                     .neutral,
-                    "Exact 173-control workspace opened. Durable persistence remains unavailable until the exact adapter and local key custody are connected.",
+                    "Exact 173-control workspace opened. Development-only plaintext persistence requires the application-injected exact bridge; production custody remains unavailable.",
                 );
                 return true;
             },
@@ -542,6 +544,123 @@ pub const State = struct {
     pub fn filerRevisionSequence(self: *const Self) ?u32 {
         const binding = self.filer_profile_binding orelse return null;
         return binding.revision_sequence;
+    }
+
+    /// Borrowed exact payload authority for the separately reviewed runtime.
+    /// The Native row cache is never a persistence source.
+    pub fn exactPersistenceState(
+        self: *const Self,
+    ) ?*const exact_ui.State {
+        return self.exact;
+    }
+
+    /// Applies or verifies the filer taxpayer-year election through the exact
+    /// state before persistence. The exact state owns the Item 16/16A lock;
+    /// this wrapper only refreshes the Native row cache after a successful
+    /// editing-state application.
+    pub fn applyOrValidateAnnualFilerElection(
+        self: *Self,
+        expected: exact_ui.AnnualFilerElection,
+    ) (exact_ui.Error || error{NotOpen})!exact_ui.AnnualFilerElectionBinding {
+        const exact = self.exact orelse return error.NotOpen;
+        const result = try exact.applyOrValidateAnnualFilerElection(expected);
+        self.refreshRows();
+        return result;
+    }
+
+    /// The exact runtime must allocate a reopened state with this allocator so
+    /// this Native owner can later deinitialize and destroy it safely.
+    pub fn exactPersistenceAllocator(
+        self: *const Self,
+    ) ?std.mem.Allocator {
+        return self.allocator;
+    }
+
+    /// Consumes `reopened` only on success. The application retains ownership
+    /// on every error and must release it through the runtime owner.
+    pub fn adoptReopenedDevelopmentPlaintext(
+        self: *Self,
+        reopened_allocator: std.mem.Allocator,
+        reopened: *exact_ui.State,
+        historical_profile: *const projection.Snapshot,
+    ) !void {
+        if (self.exact != null) return error.ExactWorkspaceAlreadyOpen;
+        const allocator = self.allocator orelse return error.NotAttached;
+        if (allocator.ptr != reopened_allocator.ptr or
+            allocator.vtable != reopened_allocator.vtable)
+        {
+            return error.ExactReopenAllocatorMismatch;
+        }
+        if (!reopened.profileAsOf().eql(historical_profile.effective_on)) {
+            return error.ExactReopenProfileAsOfMismatch;
+        }
+        var filer_profile_binding =
+            try captureFilerProfileBinding(historical_profile);
+        defer sensitive_memory.wipeValue(
+            FilerProfileBinding,
+            &filer_profile_binding,
+        );
+
+        self.closeForm();
+        self.exact = reopened;
+        self.filer_profile_binding = filer_profile_binding;
+        self.material_work = true;
+        self.persistence_status = .development_plaintext_resumed;
+        self.refreshRows();
+        self.setNotice(
+            .success,
+            "Development-only plaintext exact workspace resumed after unique-key, history, profile-binding, occurrence, validation, and artifact checks. Production custody remains unavailable.",
+        );
+    }
+
+    pub fn reportDevelopmentPersistenceSaved(
+        self: *Self,
+        revision: u64,
+        shape: draft.PayloadShape,
+    ) void {
+        if (!self.ready()) return;
+        self.persistence_status = .development_plaintext_saved;
+        self.setNoticeFmt(
+            .success,
+            "Development-only plaintext exact {s} revision {d} saved. No coarse draft, upload, submission, or production-qualified artifact was created.",
+            .{ @tagName(shape), revision },
+        );
+    }
+
+    pub fn reportDevelopmentPersistenceFailure(
+        self: *Self,
+        stage: []const u8,
+        err: anyerror,
+    ) void {
+        if (!self.ready()) return;
+        self.persistence_status = .development_plaintext_failed_closed;
+        self.setNoticeFmt(
+            .failure,
+            "Exact development persistence failed closed at {s}: {s}.",
+            .{ stage, @errorName(err) },
+        );
+    }
+
+    pub fn reportDevelopmentResumeNotFound(self: *Self) void {
+        if (self.ready()) return;
+        self.setNotice(
+            .neutral,
+            "No exact persisted workspace uniquely matches this filer, form revision, filing period, and filing intent.",
+        );
+    }
+
+    pub fn reportDevelopmentResumeFailure(
+        self: *Self,
+        stage: []const u8,
+        err: anyerror,
+    ) void {
+        self.closeForm();
+        self.persistence_status = .development_plaintext_failed_closed;
+        self.setNoticeFmt(
+            .failure,
+            "Exact development resume failed closed at {s}: {s}.",
+            .{ stage, @errorName(err) },
+        );
     }
 
     pub fn reportNewerProfileRevision(self: *Self) void {
@@ -1350,6 +1469,8 @@ pub const State = struct {
         self.editor_dirty = false;
         self.generated_revealed = false;
         self.material_work = false;
+        self.persistence_status =
+            .unavailable_pending_application_bridge;
         self.failed_interaction_slots =
             std.StaticBitSet(exact_ui.control_count).initEmpty();
     }
@@ -1893,6 +2014,73 @@ test "Native dirty editor makes retained candidate unreachable until explicit di
     state.toggleSelectedReveal();
     try std.testing.expect(!state.editor_dirty);
     try std.testing.expect(state.candidateVisible());
+}
+
+test "Native exact state adopts one allocator-compatible reopened owner and reports persistence" {
+    const allocator = std.testing.allocator;
+    var page: State = .{};
+    page.attach(allocator, .{
+        .current_year = 2026,
+        .schedule_date = .{
+            .current_date = .{ .year = 2026, .month = 7, .day = 30 },
+            .empty_default_input_was_later = false,
+        },
+    });
+    defer page.deinit();
+
+    var profile = try nativeBlurTestProfile(false);
+    defer sensitive_memory.wipeValue(@TypeOf(profile), &profile);
+    const reopened = try allocator.create(exact_ui.State);
+    var allocation_owned = true;
+    var reopened_initialized = false;
+    defer if (allocation_owned) {
+        if (reopened_initialized) reopened.deinit();
+        allocator.destroy(reopened);
+    };
+    switch (try exact_ui.State.openInto(
+        reopened,
+        allocator,
+        try draft.DraftWorkspaceId.init([_]u8{0x66} ** 16),
+        .{ .tax_year = 2026, .quarter = .second, .amended = false },
+        &profile,
+    )) {
+        .opened => reopened_initialized = true,
+        .blocked => return error.UnexpectedProfileMappingBlock,
+    }
+
+    try page.adoptReopenedDevelopmentPlaintext(
+        allocator,
+        reopened,
+        &profile,
+    );
+    allocation_owned = false;
+    try std.testing.expect(page.ready());
+    try std.testing.expectEqual(
+        PersistenceStatus.development_plaintext_resumed,
+        page.persistence_status,
+    );
+    try std.testing.expect(page.exactPersistenceState() == reopened);
+    try std.testing.expect(page.exactPersistenceAllocator() != null);
+
+    page.reportDevelopmentPersistenceSaved(1, .editable_save);
+    try std.testing.expectEqual(
+        PersistenceStatus.development_plaintext_saved,
+        page.persistence_status,
+    );
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        page.noticeText(),
+        "No coarse draft",
+    ) != null);
+    page.reportDevelopmentPersistenceFailure(
+        "persist_exact_candidate",
+        error.DraftAlreadyExists,
+    );
+    try std.testing.expectEqual(
+        PersistenceStatus.development_plaintext_failed_closed,
+        page.persistence_status,
+    );
+    try std.testing.expect(page.ready());
 }
 
 test "Native revision guards follow each exact shape history" {

@@ -3,17 +3,25 @@
 //!
 //! SQLite is an injected repository. This module owns no path, file dialog,
 //! network, encryption, queue, endpoint, upload, or submission operation.
-//! Stored occurrence values are currently plaintext. Until an independently
-//! reviewed at-rest key-custody design exists, this bridge is restricted to
-//! synthetic/test data and must not be presented as production-qualified.
+//! Stored occurrence values are currently plaintext. The source-classified
+//! development artifact may persist them only with its separately minted
+//! development capability; synthetic tests retain their narrower capability.
+//! Neither path is production-qualified, and the production custody gate stays
+//! unavailable until an independently reviewed at-rest design replaces it.
 
 const std = @import("std");
 const ids = @import("id.zig");
 const form = @import("form_1701q.zig");
+const draft_provenance = @import("draft_provenance.zig");
+const form_catalog = @import("generated/catalog.zig");
 const field = @import("../tax_profile/field.zig");
+const forms_set_history = @import("../tax_profile/forms_set_history.zig");
 const model = @import("../tax_profile/model.zig");
 const projection = @import("../tax_profile/projection.zig");
+const registration = @import("../tax_profile/registration.zig");
 const store = @import("../tax_profile/store.zig");
+const annual_profile = @import("../tax_profile/tax_form_profile.zig");
+const year_settings = @import("../tax_profile/taxpayer_year_settings.zig");
 const key_custody = @import("../security/key_custody.zig");
 const sensitive_memory = @import("../security/sensitive_memory.zig");
 const draft = @import("../form_engine/draft.zig");
@@ -27,16 +35,21 @@ const workflow = form_1701q_2018.workflow;
 const validation = form_1701q_2018.validation;
 const ui = @import("form_1701q_exact_ui_state.zig");
 
-pub const synthetic_test_only_at_rest = true;
+pub const synthetic_test_only_at_rest = false;
+pub const development_plaintext_at_rest = true;
 
 pub const SecurityBoundary = struct {
     pub const plaintext_storage_state =
         key_custody.PlaintextStorageState.synthetic_plaintext_test_only;
+    pub const development_storage_classification =
+        key_custody.current_artifact_storage_classification;
     pub const production_storage_state =
         key_custody.current_production_storage_state;
     pub const synthetic_plaintext_persistence_enabled = true;
+    pub const development_plaintext_persistence_enabled = true;
     pub const sqlite_values_are_plaintext = true;
-    pub const synthetic_test_only = true;
+    pub const development_only = true;
+    pub const synthetic_test_only = false;
     pub const production_key_custody_qualified = false;
     pub const stores_protocol_secrets = false;
     pub const outbound_encryption_enabled = false;
@@ -51,6 +64,8 @@ pub const SecurityBoundary = struct {
 pub const Error =
     store.Error ||
     key_custody.SyntheticPlaintextTestError ||
+    key_custody.DevelopmentPlaintextStorageError ||
+    draft_provenance.Error ||
     workflow.Error ||
     ui.Error ||
     error{
@@ -71,6 +86,14 @@ pub const Error =
         PersistedOccurrenceContextMismatch,
         LoadedWorkspaceAlreadyConsumed,
         MissingValidationEvidenceReceipt,
+        InvalidExactDraftProvenance,
+        MissingFilerIncomeTaxRateSource,
+        DuplicateFilerIncomeTaxRateSource,
+        MissingFilerDeductionMethodSource,
+        DuplicateFilerDeductionMethodSource,
+        UnexpectedFilerDeductionMethodSource,
+        ExactAnnualSelectionMismatch,
+        ExactAnnualControlKindMismatch,
     };
 
 /// Caller-owned relation identity layered over the immutable revision
@@ -82,11 +105,25 @@ pub const RoleInstanceBinding = struct {
     provenance: []const u8 = "historical_profile_projection",
 };
 
+/// Allocation-free, caller-owned view of the immutable annual provenance
+/// captured before the exact candidate is saved. The Forms Set decision is a
+/// value rather than a borrowed pointer so a frozen runtime owner can rebuild
+/// it without retaining the SQLite-backed preparation aggregate.
+pub const ProvenanceInput = struct {
+    applicability_date: model.Date,
+    forms_set_decision: forms_set_history.Decision,
+    snapshot: *const draft_provenance.DraftProvenance,
+};
+
 pub const PersistRequest = struct {
     historical_profile: *const projection.Snapshot,
     role_instances: []const RoleInstanceBinding,
     recorded_at_unix_seconds: i64,
     guard: draft.RevisionGuard,
+    /// Null is retained only for pre-v19 synthetic/development compatibility
+    /// tests. The application-facing exact runtime requires a frozen value and
+    /// never takes this legacy path.
+    provenance: ?ProvenanceInput = null,
 };
 
 pub const PersistReceipt = struct {
@@ -105,6 +142,688 @@ comptime {
     }
 }
 
+const ExactProvenanceWriteBuffers = struct {
+    taxpayers: [draft_provenance.max_taxpayer_roles]store.DraftProvenanceTaxpayerRevisionWrite = undefined,
+    components: [draft_provenance.max_component_bindings]store.DraftProvenanceComponentWrite = undefined,
+    sources: [draft_provenance.max_source_snapshots]store.DraftProvenanceSourceSnapshotWrite = undefined,
+    seeds: [draft_provenance.max_transaction_seeds]store.DraftProvenanceTransactionSeedWrite = undefined,
+    applicability_text: store.DateText = undefined,
+};
+
+fn exactProvenanceWrite(
+    exact: *const ProvenanceInput,
+    buffers: *ExactProvenanceWriteBuffers,
+) Error!store.ExactDraftProvenanceWrite {
+    const snapshot = exact.snapshot;
+    const definition = form_catalog.findForm(
+        snapshot.identity.form_code.asSlice(),
+    ) orelse return error.InvalidExactDraftProvenance;
+    const capture_input: draft_provenance.CaptureInput = .{
+        .identity = snapshot.identity,
+        .taxpayer_revisions = snapshot.taxpayerRevisions(),
+        .taxpayer_year_revision = snapshot.taxpayer_year_revision,
+        .tax_form_profile_revision = snapshot.tax_form_profile_revision,
+        .components = snapshot.components(),
+        .source_snapshots = snapshot.sourceSnapshots(),
+        .transaction_seeds = snapshot.transactionSeeds(),
+    };
+    _ = try draft_provenance.DraftProvenance.capture(
+        &capture_input,
+        definition,
+    );
+    try validateFormsSetDecision(
+        &snapshot.identity,
+        exact.applicability_date,
+        &exact.forms_set_decision,
+    );
+
+    for (snapshot.taxpayerRevisions(), 0..) |*binding, index| {
+        buffers.taxpayers[index] = .{
+            .role = binding.role,
+            .profile_id = binding.profile_id.asSlice(),
+            .revision_id = binding.revision_id.asSlice(),
+            .revision_sequence = binding.revision_sequence,
+        };
+    }
+    for (snapshot.components(), 0..) |*component, index| {
+        buffers.components[index] = provenanceComponentWrite(component);
+    }
+    for (snapshot.sourceSnapshots(), 0..) |*source, index| {
+        buffers.sources[index] = .{
+            .key = provenanceSourceKeyWrite(&source.key),
+            .copied_value = provenanceValueWrite(&source.copied_value),
+        };
+    }
+    for (snapshot.transactionSeeds(), 0..) |*seed, index| {
+        buffers.seeds[index] = .{
+            .filing_field = seed.filing_field.asSlice(),
+            .source_key = provenanceSourceKeyWrite(&seed.source_key),
+            .source = switch (seed.source) {
+                .tax_form_profile_revision => |*revision_id| .{
+                    .tax_form_profile_revision = revision_id.asSlice(),
+                },
+                .catalog_default => |*catalog_binding| .{
+                    .catalog_default = .{
+                        .revision = catalog_binding.revision.asSlice(),
+                        .sha256 = catalog_binding.sha256.asSlice(),
+                    },
+                },
+            },
+            .copied_seed_value = provenanceValueWrite(
+                &seed.copied_seed_value,
+            ),
+        };
+    }
+    _ = exact.applicability_date.writeIso(&buffers.applicability_text);
+    return .{
+        .owner_profile_id = snapshot.identity.owner_profile_id.asSlice(),
+        .tax_year = snapshot.identity.tax_year,
+        .form_code = snapshot.identity.form_code.asSlice(),
+        .form_revision = snapshot.identity.form_revision.asSlice(),
+        .catalog_revision = snapshot.identity.catalog.revision.asSlice(),
+        .catalog_sha256 = snapshot.identity.catalog.sha256.asSlice(),
+        .setup_spec_revision = snapshot.identity.setup_spec_revision,
+        .setup_spec_hash = snapshot.identity.setup_spec_hash.asSlice(),
+        .forms_set_decision = .{
+            .id = exact.forms_set_decision.id.asSlice(),
+            .sequence = exact.forms_set_decision.sequence,
+            .source = switch (exact.forms_set_decision.source) {
+                .manual => .manual,
+                .imported => .imported,
+                .cor => .cor,
+            },
+            .evidence_reference = exact.forms_set_decision.evidence_reference,
+            .applicability_date = buffers.applicability_text,
+        },
+        .taxpayer_revisions = buffers.taxpayers[0..snapshot.taxpayerRevisions().len],
+        .taxpayer_year_revision = if (snapshot.taxpayer_year_revision) |*binding|
+            .{
+                .profile_id = binding.stream.profile_id.asSlice(),
+                .tax_year = binding.stream.tax_year,
+                .revision_id = binding.revision_id.asSlice(),
+                .revision_sequence = binding.revision_sequence,
+            }
+        else
+            null,
+        .tax_form_profile_revision = if (snapshot.tax_form_profile_revision) |*binding|
+            .{
+                .profile_id = binding.stream.profile_id.asSlice(),
+                .tax_year = binding.stream.tax_year,
+                .form_code = binding.stream.form_code.asSlice(),
+                .form_revision = binding.stream.form_revision.asSlice(),
+                .revision_id = binding.revision_id.asSlice(),
+                .revision_sequence = binding.revision_sequence,
+                .spec_revision = binding.spec_revision,
+                .spec_hash = binding.spec_hash.asSlice(),
+            }
+        else
+            null,
+        .components = buffers.components[0..snapshot.components().len],
+        .source_snapshots = buffers.sources[0..snapshot.sourceSnapshots().len],
+        .transaction_seeds = buffers.seeds[0..snapshot.transactionSeeds().len],
+    };
+}
+
+fn validateFormsSetDecision(
+    identity: *const draft_provenance.FilingIdentity,
+    applicability_date: model.Date,
+    decision: *const forms_set_history.Decision,
+) Error!void {
+    if (decision.review != .confirmed or decision.state != .active or
+        decision.sequence == 0 or
+        !decision.stream.profile_id.eql(&identity.owner_profile_id) or
+        decision.stream.tax_year != identity.tax_year or
+        !std.mem.eql(
+            u8,
+            decision.stream.form.code,
+            identity.form_code.asSlice(),
+        ) or
+        !std.mem.eql(
+            u8,
+            decision.stream.form.revision,
+            identity.form_revision.asSlice(),
+        ) or
+        !decision.appliesOn(applicability_date))
+    {
+        return error.InvalidExactDraftProvenance;
+    }
+}
+
+fn provenanceComponentWrite(
+    component: *const draft_provenance.ComponentBinding,
+) store.DraftProvenanceComponentWrite {
+    return switch (component.*) {
+        .business_activity => |*binding| .{ .business_activity = .{
+            .role = binding.role,
+            .profile_id = binding.anchor.owner_profile_id.asSlice(),
+            .anchor_id = binding.anchor.id.asSlice(),
+            .revision_id = binding.component_revision_id.asSlice(),
+            .revision_sequence = binding.component_revision_sequence,
+        } },
+        .registration_obligation => |*binding| .{
+            .registration_obligation = .{
+                .role = binding.role,
+                .profile_id = binding.anchor.owner_profile_id.asSlice(),
+                .anchor_id = binding.anchor.id.asSlice(),
+                .revision_id = binding.component_revision_id.asSlice(),
+                .revision_sequence = binding.component_revision_sequence,
+            },
+        },
+    };
+}
+
+fn provenanceSourceKeyWrite(
+    key: *const draft_provenance.SourceKey,
+) store.DraftProvenanceSourceKeyWrite {
+    return switch (key.*) {
+        .taxpayer_fact => |value| .{ .taxpayer_fact = .{
+            .role = value.role,
+            .key = std.meta.stringToEnum(
+                store.DraftProvenanceTaxpayerFactKey,
+                @tagName(value.key),
+            ).?,
+        } },
+        .taxpayer_year_setting => |value| .{ .taxpayer_year_setting = .{
+            .role = value.role,
+            .key = std.meta.stringToEnum(
+                store.DraftProvenanceTaxpayerYearSettingKey,
+                @tagName(value.key),
+            ).?,
+        } },
+        .tax_form_profile_value => |*value| .{
+            .tax_form_profile_value = .{
+                .role = value.role,
+                .key = value.key,
+            },
+        },
+        .business_activity_fact => |*value| .{
+            .business_activity_fact = .{
+                .role = value.role,
+                .anchor_id = value.anchor_id.asSlice(),
+                .key = std.meta.stringToEnum(
+                    store.DraftProvenanceActivityFactKey,
+                    @tagName(value.key),
+                ).?,
+            },
+        },
+        .registration_obligation_fact => |*value| .{
+            .registration_obligation_fact = .{
+                .role = value.role,
+                .anchor_id = value.anchor_id.asSlice(),
+                .key = std.meta.stringToEnum(
+                    store.DraftProvenanceObligationFactKey,
+                    @tagName(value.key),
+                ).?,
+            },
+        },
+    };
+}
+
+fn provenanceValueWrite(
+    value: *const draft_provenance.SnapshotValue,
+) store.DraftProvenanceValueWrite {
+    return switch (value.*) {
+        .text => |*text| .{ .text = text.asSlice() },
+        .choice => |*choice| .{ .choice = choice.asSlice() },
+        .boolean => |boolean| .{ .boolean = boolean },
+        .integer => |integer| .{ .integer = integer },
+        .date => |date| blk: {
+            var serialized: store.DateText = undefined;
+            _ = date.writeIso(&serialized);
+            break :blk .{ .date = serialized };
+        },
+        .year => |year| .{ .year = year },
+        .profile_id => |*id| .{ .profile_id = id.asSlice() },
+        .business_activity_anchor_id => |*id| .{
+            .business_activity_anchor_id = id.asSlice(),
+        },
+        .registration_obligation_anchor_id => |*id| .{
+            .registration_obligation_anchor_id = id.asSlice(),
+        },
+        .income_tax_rate_election => |election| .{
+            .income_tax_rate_election = switch (election) {
+                .graduated => .graduated,
+                .eight_percent => .eight_percent,
+            },
+        },
+        .deduction_method => |deduction| .{
+            .deduction_method = switch (deduction) {
+                .itemized_deduction => .itemized_deduction,
+                .optional_standard_deduction => .optional_standard_deduction,
+            },
+        },
+    };
+}
+
+/// Form-domain reconstruction of one store-owned v19 exact provenance row.
+/// The decision's borrowed strings remain valid only while the caller retains
+/// the `OwnedExactDraftProvenance`; consumers should immediately copy this
+/// result into their fixed runtime owner.
+pub const DecodedExactProvenance = struct {
+    provenance_snapshot: draft_provenance.DraftProvenance,
+    applicability_date: model.Date,
+    forms_set_decision: forms_set_history.Decision,
+};
+
+pub fn decodeOwnedExactProvenance(
+    raw: *const store.OwnedExactDraftProvenance,
+) anyerror!DecodedExactProvenance {
+    if (raw.taxpayer_revisions.len > draft_provenance.max_taxpayer_roles or
+        raw.components.len > draft_provenance.max_component_bindings or
+        raw.source_snapshots.len > draft_provenance.max_source_snapshots or
+        raw.transaction_seeds.len > draft_provenance.max_transaction_seeds)
+    {
+        return error.InvalidExactDraftProvenance;
+    }
+    const identity: draft_provenance.FilingIdentity = .{
+        .owner_profile_id = try model.ProfileId.parse(raw.owner_profile_id),
+        .tax_year = raw.tax_year,
+        .form_code = try annual_profile.FormCode.parse(raw.form_code),
+        .form_revision = try annual_profile.FormRevision.parse(
+            raw.form_revision,
+        ),
+        .catalog = .{
+            .revision = try draft_provenance.CatalogRevision.parse(
+                raw.catalog_revision,
+            ),
+            .sha256 = try draft_provenance.Sha256.parse(raw.catalog_sha256),
+        },
+        .setup_spec_revision = raw.setup_spec_revision,
+        .setup_spec_hash = try draft_provenance.Sha256.parse(
+            raw.setup_spec_hash,
+        ),
+    };
+
+    var taxpayers: [draft_provenance.max_taxpayer_roles]draft_provenance.TaxpayerRevisionBinding = undefined;
+    for (raw.taxpayer_revisions, 0..) |binding, index| {
+        taxpayers[index] = .{
+            .role = binding.role,
+            .profile_id = try model.ProfileId.parse(binding.profile_id),
+            .revision_id = try model.RevisionId.parse(binding.revision_id),
+            .revision_sequence = binding.revision_sequence,
+        };
+    }
+    var components: [draft_provenance.max_component_bindings]draft_provenance.ComponentBinding = undefined;
+    for (raw.components, 0..) |component, index| {
+        components[index] = switch (component.kind) {
+            .business_activity => .{ .business_activity = .{
+                .role = component.role,
+                .anchor = .{
+                    .owner_profile_id = try model.ProfileId.parse(
+                        component.profile_id,
+                    ),
+                    .id = try registration.ActivityAnchorId.parse(
+                        component.anchor_id,
+                    ),
+                },
+                .component_revision_id = try registration.ComponentRevisionId.parse(
+                    component.revision_id,
+                ),
+                .component_revision_sequence = component.revision_sequence,
+            } },
+            .registration_obligation => .{ .registration_obligation = .{
+                .role = component.role,
+                .anchor = .{
+                    .owner_profile_id = try model.ProfileId.parse(
+                        component.profile_id,
+                    ),
+                    .id = try registration.ObligationAnchorId.parse(
+                        component.anchor_id,
+                    ),
+                },
+                .component_revision_id = try registration.ComponentRevisionId.parse(
+                    component.revision_id,
+                ),
+                .component_revision_sequence = component.revision_sequence,
+            } },
+            else => return error.InvalidExactDraftProvenance,
+        };
+    }
+    var sources: [draft_provenance.max_source_snapshots]draft_provenance.SourceSnapshot = undefined;
+    for (raw.source_snapshots, 0..) |*source, index| {
+        sources[index] = .{
+            .key = try provenanceSourceKeyFromOwned(&source.key),
+            .copied_value = try provenanceValueFromOwned(
+                &source.copied_value,
+            ),
+        };
+    }
+    var seeds: [draft_provenance.max_transaction_seeds]draft_provenance.TransactionDefaultSeed = undefined;
+    for (raw.transaction_seeds, 0..) |*seed, index| {
+        seeds[index] = .{
+            .filing_field = try draft_provenance.DraftFieldKey.parse(
+                seed.filing_field,
+            ),
+            .source_key = try provenanceSourceKeyFromOwned(&seed.source_key),
+            .source = switch (seed.source) {
+                .tax_form_profile_revision => |revision_id| .{
+                    .tax_form_profile_revision = try annual_profile.RevisionId.parse(
+                        revision_id,
+                    ),
+                },
+                .catalog_default => |catalog_binding| .{
+                    .catalog_default = .{
+                        .revision = try draft_provenance.CatalogRevision.parse(
+                            catalog_binding.revision,
+                        ),
+                        .sha256 = try draft_provenance.Sha256.parse(
+                            catalog_binding.sha256,
+                        ),
+                    },
+                },
+            },
+            .copied_seed_value = try provenanceValueFromOwned(
+                &seed.copied_seed_value,
+            ),
+        };
+    }
+
+    const taxpayer_year_revision: ?draft_provenance.TaxpayerYearRevisionBinding =
+        if (raw.taxpayer_year_revision) |binding| .{
+            .stream = .{
+                .profile_id = try model.ProfileId.parse(binding.profile_id),
+                .tax_year = binding.tax_year,
+            },
+            .revision_id = try year_settings.RevisionId.parse(
+                binding.revision_id,
+            ),
+            .revision_sequence = binding.revision_sequence,
+        } else null;
+    const tax_form_profile_revision: ?draft_provenance.TaxFormProfileRevisionBinding =
+        if (raw.tax_form_profile_revision) |binding| .{
+            .stream = .{
+                .profile_id = try model.ProfileId.parse(binding.profile_id),
+                .tax_year = binding.tax_year,
+                .form_code = try annual_profile.FormCode.parse(
+                    binding.form_code,
+                ),
+                .form_revision = try annual_profile.FormRevision.parse(
+                    binding.form_revision,
+                ),
+            },
+            .revision_id = try annual_profile.RevisionId.parse(
+                binding.revision_id,
+            ),
+            .revision_sequence = binding.revision_sequence,
+            .spec_revision = binding.spec_revision,
+            .spec_hash = try annual_profile.SpecHash.parse(binding.spec_hash),
+        } else null;
+    const capture_input: draft_provenance.CaptureInput = .{
+        .identity = identity,
+        .taxpayer_revisions = taxpayers[0..raw.taxpayer_revisions.len],
+        .taxpayer_year_revision = taxpayer_year_revision,
+        .tax_form_profile_revision = tax_form_profile_revision,
+        .components = components[0..raw.components.len],
+        .source_snapshots = sources[0..raw.source_snapshots.len],
+        .transaction_seeds = seeds[0..raw.transaction_seeds.len],
+    };
+    const definition = form_catalog.findForm(raw.form_code) orelse
+        return error.InvalidExactDraftProvenance;
+    const snapshot = try draft_provenance.DraftProvenance.capture(
+        &capture_input,
+        definition,
+    );
+    const decision = try formsSetDecisionFromOwned(
+        &raw.forms_set_decision,
+    );
+    const applicability_date = try model.Date.parseIso(
+        raw.forms_set_applicability_date,
+    );
+    try validateFormsSetDecision(
+        &snapshot.identity,
+        applicability_date,
+        &decision,
+    );
+    return .{
+        .provenance_snapshot = snapshot,
+        .applicability_date = applicability_date,
+        .forms_set_decision = decision,
+    };
+}
+
+fn provenanceSourceKeyFromOwned(
+    key: *const store.OwnedDraftProvenanceSourceKey,
+) anyerror!draft_provenance.SourceKey {
+    return switch (key.*) {
+        .taxpayer_fact => |value| .{ .taxpayer_fact = .{
+            .role = value.role,
+            .key = std.meta.stringToEnum(
+                draft_provenance.TaxpayerFactKey,
+                @tagName(value.key),
+            ) orelse return error.InvalidExactDraftProvenance,
+        } },
+        .taxpayer_year_setting => |value| .{ .taxpayer_year_setting = .{
+            .role = value.role,
+            .key = std.meta.stringToEnum(
+                year_settings.SettingKey,
+                @tagName(value.key),
+            ) orelse return error.InvalidExactDraftProvenance,
+        } },
+        .tax_form_profile_value => |value| .{ .tax_form_profile_value = .{
+            .role = value.role,
+            .key = value.key,
+        } },
+        .business_activity_fact => |value| .{
+            .business_activity_fact = .{
+                .role = value.role,
+                .anchor_id = try registration.ActivityAnchorId.parse(
+                    value.anchor_id,
+                ),
+                .key = std.meta.stringToEnum(
+                    draft_provenance.ActivityFactKey,
+                    @tagName(value.key),
+                ) orelse return error.InvalidExactDraftProvenance,
+            },
+        },
+        .registration_obligation_fact => |value| .{
+            .registration_obligation_fact = .{
+                .role = value.role,
+                .anchor_id = try registration.ObligationAnchorId.parse(
+                    value.anchor_id,
+                ),
+                .key = std.meta.stringToEnum(
+                    draft_provenance.ObligationFactKey,
+                    @tagName(value.key),
+                ) orelse return error.InvalidExactDraftProvenance,
+            },
+        },
+    };
+}
+
+fn provenanceValueFromOwned(
+    value: *const store.OwnedDraftProvenanceValue,
+) anyerror!draft_provenance.SnapshotValue {
+    return switch (value.*) {
+        .text => |text| .{ .text = try draft_provenance.OwnedText.copy(text) },
+        .choice => |choice| .{
+            .choice = try draft_provenance.OwnedText.copy(choice),
+        },
+        .boolean => |boolean| .{ .boolean = boolean },
+        .integer => |integer| .{ .integer = integer },
+        .date => |date| .{ .date = try model.Date.parseIso(date) },
+        .year => |year| .{ .year = year },
+        .profile_id => |id| .{ .profile_id = try model.ProfileId.parse(id) },
+        .business_activity_anchor_id => |id| .{
+            .business_activity_anchor_id = try registration.ActivityAnchorId.parse(
+                id,
+            ),
+        },
+        .registration_obligation_anchor_id => |id| .{
+            .registration_obligation_anchor_id = try registration.ObligationAnchorId.parse(
+                id,
+            ),
+        },
+        .income_tax_rate_election => |election| .{
+            .income_tax_rate_election = switch (election) {
+                .graduated => .graduated,
+                .eight_percent => .eight_percent,
+            },
+        },
+        .deduction_method => |deduction| .{
+            .deduction_method = switch (deduction) {
+                .itemized_deduction => .itemized_deduction,
+                .optional_standard_deduction => .optional_standard_deduction,
+            },
+        },
+    };
+}
+
+fn formsSetDecisionFromOwned(
+    row: *const store.OwnedFormSetDecision,
+) anyerror!forms_set_history.Decision {
+    const from = try model.Date.parseIso(row.effective_from);
+    const until = if (row.effective_until) |date|
+        try model.Date.parseIso(date)
+    else
+        null;
+    return .{
+        .id = try forms_set_history.DecisionId.parse(row.id),
+        .sequence = row.sequence,
+        .stream = .{
+            .profile_id = try model.ProfileId.parse(row.profile_id),
+            .tax_year = row.tax_year,
+            .form = .{
+                .code = row.form_code,
+                .revision = row.form_revision,
+            },
+        },
+        .state = switch (row.state) {
+            .active => .active,
+            .inactive => .inactive,
+        },
+        .scope = switch (row.scope) {
+            .whole_year => .whole_year,
+            .interval => .interval,
+        },
+        .effective = try model.EffectivePeriod.init(from, until),
+        .source = switch (row.source) {
+            .manual => .manual,
+            .imported => .imported,
+            .cor => .cor,
+        },
+        .evidence_reference = row.evidence_reference,
+        .review = switch (row.review_state) {
+            .confirmed => .confirmed,
+            .review_required => .review_required,
+            .rejected => .rejected,
+        },
+        .supersedes = if (row.supersedes_id) |id|
+            try forms_set_history.DecisionId.parse(id)
+        else
+            null,
+    };
+}
+
+fn checkedAnnualControl(
+    state: *const ui.State,
+    control_id: []const u8,
+) Error!bool {
+    return switch ((try state.control(control_id)).display) {
+        .checked => |checked| checked,
+        else => error.ExactAnnualControlKindMismatch,
+    };
+}
+
+/// Item 16 and Item 16A are filing controls, but their legal value is frozen
+/// by the filer taxpayer-year revision. Strict persistence rejects a candidate
+/// whose current controls diverge from those exact copied source snapshots.
+/// Spouse controls are deliberately not read or written here.
+pub const FilerAnnualElection = struct {
+    rate: year_settings.IncomeTaxRateElection,
+    deduction: ?year_settings.DeductionMethod,
+};
+
+pub fn filerAnnualElectionFromProvenance(
+    snapshot: *const draft_provenance.DraftProvenance,
+) Error!FilerAnnualElection {
+    var rate: ?year_settings.IncomeTaxRateElection = null;
+    var deduction: ?year_settings.DeductionMethod = null;
+    for (snapshot.sourceSnapshots()) |*source| {
+        const setting = switch (source.key) {
+            .taxpayer_year_setting => |value| value,
+            else => continue,
+        };
+        if (setting.role != .filer) continue;
+        switch (setting.key) {
+            .income_tax_rate_election => {
+                if (rate != null) {
+                    return error.DuplicateFilerIncomeTaxRateSource;
+                }
+                rate = switch (source.copied_value) {
+                    .income_tax_rate_election => |value| value,
+                    else => return error.InvalidExactDraftProvenance,
+                };
+            },
+            .deduction_method => {
+                if (deduction != null) {
+                    return error.DuplicateFilerDeductionMethodSource;
+                }
+                deduction = switch (source.copied_value) {
+                    .deduction_method => |value| value,
+                    else => return error.InvalidExactDraftProvenance,
+                };
+            },
+        }
+    }
+
+    const exact_rate = rate orelse
+        return error.MissingFilerIncomeTaxRateSource;
+    switch (exact_rate) {
+        .graduated => if (deduction == null) {
+            return error.MissingFilerDeductionMethodSource;
+        },
+        .eight_percent => if (deduction != null) {
+            return error.UnexpectedFilerDeductionMethodSource;
+        },
+    }
+    return .{ .rate = exact_rate, .deduction = deduction };
+}
+
+pub fn validateFilerAnnualSelections(
+    state: *const ui.State,
+    snapshot: *const draft_provenance.DraftProvenance,
+) Error!void {
+    const election = try filerAnnualElectionFromProvenance(snapshot);
+
+    const graduated = try checkedAnnualControl(
+        state,
+        "frm1701q:optTaxRate_1",
+    );
+    const eight_percent = try checkedAnnualControl(
+        state,
+        "frm1701q:optTaxRate_2",
+    );
+    const itemized = try checkedAnnualControl(
+        state,
+        "frm1701q:optMethodOfDeduction:_1",
+    );
+    const osd = try checkedAnnualControl(
+        state,
+        "frm1701q:optMethodOfDeduction:_2",
+    );
+
+    switch (election.rate) {
+        .graduated => {
+            if (!graduated or eight_percent) {
+                return error.ExactAnnualSelectionMismatch;
+            }
+            switch (election.deduction.?) {
+                .itemized_deduction => if (!itemized or osd) {
+                    return error.ExactAnnualSelectionMismatch;
+                },
+                .optional_standard_deduction => if (!osd or itemized) {
+                    return error.ExactAnnualSelectionMismatch;
+                },
+            }
+        },
+        .eight_percent => {
+            if (!eight_percent or graduated or itemized or osd) {
+                return error.ExactAnnualSelectionMismatch;
+            }
+        },
+    }
+}
+
 /// Copies the current generated candidate transactionally with an optimistic
 /// create/match guard. Neither the state nor the historical projection is
 /// mutated.
@@ -114,9 +833,39 @@ pub fn persistCurrentCandidate(
     state: *const ui.State,
     request: PersistRequest,
 ) Error!PersistReceipt {
-    try key_custody.requireSyntheticPlaintextForTest(
+    return persistCurrentCandidateAuthorized(
         plaintext_capability,
+        repository,
+        state,
+        request,
     );
+}
+
+/// Development-artifact counterpart to `persistCurrentCandidate`. The opaque
+/// authority is minted only by `bootstrapCurrentArtifactStorage`; this API
+/// cannot accept a synthetic or production capability and does not change the
+/// fail-closed production-storage decision.
+pub fn persistCurrentCandidateDevelopmentPlaintext(
+    plaintext_capability: *const key_custody.DevelopmentPlaintextStorageCapability,
+    repository: *store.Store,
+    state: *const ui.State,
+    request: PersistRequest,
+) Error!PersistReceipt {
+    return persistCurrentCandidateAuthorized(
+        plaintext_capability,
+        repository,
+        state,
+        request,
+    );
+}
+
+fn persistCurrentCandidateAuthorized(
+    plaintext_capability: anytype,
+    repository: *store.Store,
+    state: *const ui.State,
+    request: PersistRequest,
+) Error!PersistReceipt {
+    try requirePlaintextAuthority(plaintext_capability);
     if (request.recorded_at_unix_seconds <= 0) {
         return error.RecordedAtInvalid;
     }
@@ -162,8 +911,17 @@ pub fn persistCurrentCandidate(
     const profile_as_of = dateText(state.profileAsOf());
     const validation_evidence = state.validationEvidenceReceipt() orelse
         return error.MissingValidationEvidenceReceipt;
+    var provenance_buffers: ExactProvenanceWriteBuffers = .{};
+    const provenance_write: ?store.ExactDraftProvenanceWrite =
+        if (request.provenance) |*provenance| blk: {
+            try validateFilerAnnualSelections(state, provenance.snapshot);
+            break :blk try exactProvenanceWrite(
+                provenance,
+                &provenance_buffers,
+            );
+        } else null;
 
-    try repository.appendExactDraftRevision(plaintext_capability, request.guard, .{
+    try appendExactDraftRevisionAuthorized(repository, plaintext_capability, request.guard, .{
         .filing_key = filing_key,
         .profile_as_of = profile_as_of,
         .recorded_at_unix_seconds = request.recorded_at_unix_seconds,
@@ -174,13 +932,59 @@ pub fn persistCurrentCandidate(
         .snapshot = snapshot,
         .bindings = bindings,
         .occurrence_contexts = contexts,
-    });
+    }, provenance_write);
     return .{
         .draft_identity = snapshot.draft_identity,
         .revision = snapshot.revision,
         .parent_revision = snapshot.parent_revision,
         .shape = snapshot.schema.payload_shape,
     };
+}
+
+fn appendExactDraftRevisionAuthorized(
+    repository: *store.Store,
+    plaintext_capability: anytype,
+    guard: store.ExactDraftRevisionGuard,
+    value: store.ExactDraftRevisionWrite,
+    provenance: ?store.ExactDraftProvenanceWrite,
+) Error!void {
+    const Capability = @TypeOf(plaintext_capability);
+    if (comptime Capability ==
+        *const key_custody.SyntheticPlaintextTestCapability)
+    {
+        if (provenance) |exact| {
+            return repository.appendExactDraftRevisionWithProvenance(
+                plaintext_capability,
+                guard,
+                value,
+                exact,
+            );
+        }
+        return repository.appendExactDraftRevision(
+            plaintext_capability,
+            guard,
+            value,
+        );
+    } else if (comptime Capability ==
+        *const key_custody.DevelopmentPlaintextStorageCapability)
+    {
+        if (provenance) |exact| {
+            return repository
+                .appendExactDraftRevisionDevelopmentPlaintextWithProvenance(
+                plaintext_capability,
+                guard,
+                value,
+                exact,
+            );
+        }
+        return repository.appendExactDraftRevisionDevelopmentPlaintext(
+            plaintext_capability,
+            guard,
+            value,
+        );
+    } else {
+        @compileError("unsupported exact-draft plaintext authority");
+    }
 }
 
 /// Shape-specific histories remain siblings under one random workspace.
@@ -234,6 +1038,23 @@ pub const LoadedWorkspace = struct {
         if (history.revisions.len == 0) return null;
         return &history.revisions[history.revisions.len - 1];
     }
+
+    pub fn persistedIdentity(
+        self: *const Self,
+        shape: draft.PayloadShape,
+    ) ?draft.DraftIdentity {
+        const history = switch (shape) {
+            .editable_save => if (self.editable_history) |*value|
+                value
+            else
+                return null,
+            .final_copy_plaintext => if (self.final_history) |*value|
+                value
+            else
+                return null,
+        };
+        return history.draft_identity;
+    }
 };
 
 /// Loads both exact-schema streams for one random workspace and replays every
@@ -248,9 +1069,50 @@ pub fn loadWorkspaceInto(
     filer_profile_id: []const u8,
     context: ui.FilingContext,
 ) Error!void {
-    try key_custody.requireSyntheticPlaintextForTest(
+    return loadWorkspaceIntoAuthorized(
         plaintext_capability,
+        out,
+        repository,
+        allocator,
+        workspace_id,
+        filer_profile_id,
+        context,
     );
+}
+
+/// Loads and validates a development-artifact plaintext workspace. Every
+/// immutable snapshot, role binding, occurrence context, digest, and candidate
+/// byte remains subject to the same replay checks as the synthetic test path.
+pub fn loadWorkspaceIntoDevelopmentPlaintext(
+    plaintext_capability: *const key_custody.DevelopmentPlaintextStorageCapability,
+    out: *LoadedWorkspace,
+    repository: *store.Store,
+    allocator: std.mem.Allocator,
+    workspace_id: draft.DraftWorkspaceId,
+    filer_profile_id: []const u8,
+    context: ui.FilingContext,
+) Error!void {
+    return loadWorkspaceIntoAuthorized(
+        plaintext_capability,
+        out,
+        repository,
+        allocator,
+        workspace_id,
+        filer_profile_id,
+        context,
+    );
+}
+
+fn loadWorkspaceIntoAuthorized(
+    plaintext_capability: anytype,
+    out: *LoadedWorkspace,
+    repository: *store.Store,
+    allocator: std.mem.Allocator,
+    workspace_id: draft.DraftWorkspaceId,
+    filer_profile_id: []const u8,
+    context: ui.FilingContext,
+) Error!void {
+    try requirePlaintextAuthority(plaintext_capability);
     var key_storage = FilingKeyStorage.init(filer_profile_id, context);
     defer sensitive_memory.wipeValue(FilingKeyStorage, &key_storage);
     const expected_key = key_storage.borrowed(filer_profile_id);
@@ -345,12 +1207,13 @@ pub fn loadWorkspaceInto(
 }
 
 fn loadBoundedExactHistory(
-    plaintext_capability: *const key_custody.SyntheticPlaintextTestCapability,
+    plaintext_capability: anytype,
     repository: *store.Store,
     allocator: std.mem.Allocator,
     identity: draft.DraftIdentity,
 ) Error!?store.OwnedExactDraftHistory {
-    return repository.getExactDraftHistory(
+    return getExactDraftHistoryAuthorized(
+        repository,
         plaintext_capability,
         allocator,
         identity,
@@ -363,6 +1226,66 @@ fn loadBoundedExactHistory(
         => return err,
         else => return err,
     };
+}
+
+fn getExactDraftHistoryAuthorized(
+    repository: *store.Store,
+    plaintext_capability: anytype,
+    allocator: std.mem.Allocator,
+    identity: draft.DraftIdentity,
+) Error!?store.OwnedExactDraftHistory {
+    const Capability = @TypeOf(plaintext_capability);
+    if (comptime Capability ==
+        *const key_custody.SyntheticPlaintextTestCapability)
+    {
+        return repository.getExactDraftHistory(
+            plaintext_capability,
+            allocator,
+            identity,
+        );
+    } else if (comptime Capability ==
+        *const key_custody.DevelopmentPlaintextStorageCapability)
+    {
+        return repository.getExactDraftHistoryDevelopmentPlaintext(
+            plaintext_capability,
+            allocator,
+            identity,
+        );
+    } else {
+        @compileError("unsupported exact-draft plaintext authority");
+    }
+}
+
+pub fn loadRevisionProvenance(
+    plaintext_capability: *const key_custody.SyntheticPlaintextTestCapability,
+    repository: *store.Store,
+    allocator: std.mem.Allocator,
+    identity: draft.DraftIdentity,
+    revision: draft.DraftRevision,
+) Error!store.ExactDraftProvenanceLoad {
+    try requirePlaintextAuthority(plaintext_capability);
+    return repository.getExactDraftRevisionProvenance(
+        plaintext_capability,
+        allocator,
+        identity,
+        revision,
+    );
+}
+
+pub fn loadRevisionProvenanceDevelopmentPlaintext(
+    plaintext_capability: *const key_custody.DevelopmentPlaintextStorageCapability,
+    repository: *store.Store,
+    allocator: std.mem.Allocator,
+    identity: draft.DraftIdentity,
+    revision: draft.DraftRevision,
+) Error!store.ExactDraftProvenanceLoad {
+    try requirePlaintextAuthority(plaintext_capability);
+    return repository.getExactDraftRevisionProvenanceDevelopmentPlaintext(
+        plaintext_capability,
+        allocator,
+        identity,
+        revision,
+    );
 }
 
 /// Validates the latest immutable role bindings against the explicitly
@@ -380,9 +1303,50 @@ pub fn reopenStateInto(
     historical_profile: *const projection.Snapshot,
     role_instances: []const RoleInstanceBinding,
 ) Error!ui.OpenStatus {
-    try key_custody.requireSyntheticPlaintextForTest(
+    return reopenStateIntoAuthorized(
         plaintext_capability,
+        out,
+        loaded,
+        selected_shape,
+        context,
+        historical_profile,
+        role_instances,
     );
+}
+
+/// Reopens an already-loaded development plaintext workspace only after exact
+/// historical-profile and role-binding verification. Success consumes the
+/// replayed workspace exactly as the synthetic path does.
+pub fn reopenStateIntoDevelopmentPlaintext(
+    plaintext_capability: *const key_custody.DevelopmentPlaintextStorageCapability,
+    out: *ui.State,
+    loaded: *LoadedWorkspace,
+    selected_shape: draft.PayloadShape,
+    context: ui.FilingContext,
+    historical_profile: *const projection.Snapshot,
+    role_instances: []const RoleInstanceBinding,
+) Error!ui.OpenStatus {
+    return reopenStateIntoAuthorized(
+        plaintext_capability,
+        out,
+        loaded,
+        selected_shape,
+        context,
+        historical_profile,
+        role_instances,
+    );
+}
+
+fn reopenStateIntoAuthorized(
+    plaintext_capability: anytype,
+    out: *ui.State,
+    loaded: *LoadedWorkspace,
+    selected_shape: draft.PayloadShape,
+    context: ui.FilingContext,
+    historical_profile: *const projection.Snapshot,
+    role_instances: []const RoleInstanceBinding,
+) Error!ui.OpenStatus {
+    try requirePlaintextAuthority(plaintext_capability);
     if (!loaded.workspace_owned) {
         return error.LoadedWorkspaceAlreadyConsumed;
     }
@@ -451,17 +1415,87 @@ pub fn listAlternateWorkspaces(
     context: ui.FilingContext,
     excluding_workspace_id: ?draft.DraftWorkspaceId,
 ) Error!store.ExactDraftAlternateList {
-    try key_custody.requireSyntheticPlaintextForTest(
+    return listAlternateWorkspacesAuthorized(
         plaintext_capability,
-    );
-    var key_storage = FilingKeyStorage.init(filer_profile_id, context);
-    defer sensitive_memory.wipeValue(FilingKeyStorage, &key_storage);
-    return repository.listExactDraftAlternates(
-        plaintext_capability,
+        repository,
         allocator,
-        key_storage.borrowed(filer_profile_id),
+        filer_profile_id,
+        context,
         excluding_workspace_id,
     );
+}
+
+pub fn listAlternateWorkspacesDevelopmentPlaintext(
+    plaintext_capability: *const key_custody.DevelopmentPlaintextStorageCapability,
+    repository: *store.Store,
+    allocator: std.mem.Allocator,
+    filer_profile_id: []const u8,
+    context: ui.FilingContext,
+    excluding_workspace_id: ?draft.DraftWorkspaceId,
+) Error!store.ExactDraftAlternateList {
+    return listAlternateWorkspacesAuthorized(
+        plaintext_capability,
+        repository,
+        allocator,
+        filer_profile_id,
+        context,
+        excluding_workspace_id,
+    );
+}
+
+fn listAlternateWorkspacesAuthorized(
+    plaintext_capability: anytype,
+    repository: *store.Store,
+    allocator: std.mem.Allocator,
+    filer_profile_id: []const u8,
+    context: ui.FilingContext,
+    excluding_workspace_id: ?draft.DraftWorkspaceId,
+) Error!store.ExactDraftAlternateList {
+    try requirePlaintextAuthority(plaintext_capability);
+    var key_storage = FilingKeyStorage.init(filer_profile_id, context);
+    defer sensitive_memory.wipeValue(FilingKeyStorage, &key_storage);
+    const filing_key = key_storage.borrowed(filer_profile_id);
+    const Capability = @TypeOf(plaintext_capability);
+    if (comptime Capability ==
+        *const key_custody.SyntheticPlaintextTestCapability)
+    {
+        return repository.listExactDraftAlternates(
+            plaintext_capability,
+            allocator,
+            filing_key,
+            excluding_workspace_id,
+        );
+    } else if (comptime Capability ==
+        *const key_custody.DevelopmentPlaintextStorageCapability)
+    {
+        return repository.listExactDraftAlternatesDevelopmentPlaintext(
+            plaintext_capability,
+            allocator,
+            filing_key,
+            excluding_workspace_id,
+        );
+    } else {
+        @compileError("unsupported exact-draft plaintext authority");
+    }
+}
+
+fn requirePlaintextAuthority(plaintext_capability: anytype) Error!void {
+    const Capability = @TypeOf(plaintext_capability);
+    if (comptime Capability ==
+        *const key_custody.SyntheticPlaintextTestCapability)
+    {
+        return key_custody.requireSyntheticPlaintextForTest(
+            plaintext_capability,
+        );
+    } else if (comptime Capability ==
+        *const key_custody.DevelopmentPlaintextStorageCapability)
+    {
+        return key_custody.requireDevelopmentPlaintextStorage(
+            plaintext_capability,
+        );
+    } else {
+        @compileError("unsupported exact-draft plaintext authority");
+    }
 }
 
 fn replayOwnedHistory(
@@ -931,10 +1965,14 @@ fn dateText(value: model.Date) store.DateText {
 }
 
 // -------------------------------------------------------------------------
-// Synthetic-only persistence/reopen tests.
+// Exact persistence/reopen tests.
 
 fn syntheticPlaintextTestCapability() *const key_custody.SyntheticPlaintextTestCapability {
     return key_custody.acquireSyntheticPlaintextForTest();
+}
+
+fn developmentPlaintextCapability() *const key_custody.DevelopmentPlaintextStorageCapability {
+    return key_custody.bootstrapCurrentArtifactStorage().development_plaintext;
 }
 
 fn testHistoricalProfile(
@@ -1162,11 +2200,43 @@ fn expectCandidateSummaryEqual(
     try std.testing.expectEqualSlices(u8, &left.sha256, &right.sha256);
 }
 
-test "exact persistence boundary is plaintext synthetic-only and has no submission surface" {
-    try std.testing.expect(synthetic_test_only_at_rest);
+fn annualSelectionProvenance(
+    rate: year_settings.IncomeTaxRateElection,
+    deduction: ?year_settings.DeductionMethod,
+) draft_provenance.DraftProvenance {
+    var result: draft_provenance.DraftProvenance = undefined;
+    result.source_snapshot_count = 1;
+    result.source_snapshots_storage[0] = .{
+        .key = .{ .taxpayer_year_setting = .{
+            .role = .filer,
+            .key = .income_tax_rate_election,
+        } },
+        .copied_value = .{ .income_tax_rate_election = rate },
+    };
+    if (deduction) |method| {
+        result.source_snapshots_storage[1] = .{
+            .key = .{ .taxpayer_year_setting = .{
+                .role = .filer,
+                .key = .deduction_method,
+            } },
+            .copied_value = .{ .deduction_method = method },
+        };
+        result.source_snapshot_count = 2;
+    }
+    return result;
+}
+
+test "exact persistence boundary is development-only plaintext and has no submission surface" {
+    try std.testing.expect(!synthetic_test_only_at_rest);
+    try std.testing.expect(development_plaintext_at_rest);
     try std.testing.expectEqual(
         key_custody.PlaintextStorageState.synthetic_plaintext_test_only,
         SecurityBoundary.plaintext_storage_state,
+    );
+    try std.testing.expectEqual(
+        key_custody.ArtifactStorageClassification
+            .development_only_plaintext_not_production,
+        SecurityBoundary.development_storage_classification,
     );
     try std.testing.expectEqual(
         key_custody.ProductionStorageState
@@ -1180,8 +2250,12 @@ test "exact persistence boundary is plaintext synthetic-only and has no submissi
     try std.testing.expect(
         SecurityBoundary.synthetic_plaintext_persistence_enabled,
     );
+    try std.testing.expect(
+        SecurityBoundary.development_plaintext_persistence_enabled,
+    );
     try std.testing.expect(SecurityBoundary.sqlite_values_are_plaintext);
-    try std.testing.expect(SecurityBoundary.synthetic_test_only);
+    try std.testing.expect(SecurityBoundary.development_only);
+    try std.testing.expect(!SecurityBoundary.synthetic_test_only);
     try std.testing.expect(
         !SecurityBoundary.production_key_custody_qualified,
     );
@@ -1192,6 +2266,371 @@ test "exact persistence boundary is plaintext synthetic-only and has no submissi
     try std.testing.expect(!@hasDecl(@This(), "submit"));
     try std.testing.expect(!@hasDecl(@This(), "encrypt"));
     try std.testing.expect(!@hasDecl(@This(), "upload"));
+}
+
+test "strict exact persistence validates filer annual controls against frozen taxpayer-year sources" {
+    const allocator = std.testing.allocator;
+    var repository = try store.Store.openMemory(allocator);
+    defer repository.close();
+    var profile = try testMixedHistoricalProfile(
+        "persistence-synthetic-filer-r1",
+        try test_context.profileAsOf(),
+    );
+    var state: ui.State = undefined;
+    try openSyntheticState(
+        &state,
+        allocator,
+        try repository.generateDraftWorkspaceId(),
+        &profile,
+    );
+    defer state.deinit();
+    try selectRequiredSyntheticElections(&state);
+
+    const graduated_itemized = annualSelectionProvenance(
+        .graduated,
+        .itemized_deduction,
+    );
+    try validateFilerAnnualSelections(&state, &graduated_itemized);
+
+    const graduated_osd = annualSelectionProvenance(
+        .graduated,
+        .optional_standard_deduction,
+    );
+    try std.testing.expectError(
+        error.ExactAnnualSelectionMismatch,
+        validateFilerAnnualSelections(&state, &graduated_osd),
+    );
+
+    // The exact legacy interaction derives Item 16 from the chosen ATC. Use a
+    // fresh state so this assertion is about an eight-percent workspace, not
+    // the separate legacy transition from a previously chosen deduction.
+    var eight_state: ui.State = undefined;
+    try openSyntheticState(
+        &eight_state,
+        allocator,
+        try repository.generateDraftWorkspaceId(),
+        &profile,
+    );
+    defer eight_state.deinit();
+    try eight_state.setRadio("frm1701q:optType_1", true);
+    try eight_state.setRadio("frm1701q:optATC_4", true);
+    const eight_percent = annualSelectionProvenance(
+        .eight_percent,
+        null,
+    );
+    try validateFilerAnnualSelections(&eight_state, &eight_percent);
+    const invalid_eight_percent = annualSelectionProvenance(
+        .eight_percent,
+        .itemized_deduction,
+    );
+    try std.testing.expectError(
+        error.UnexpectedFilerDeductionMethodSource,
+        validateFilerAnnualSelections(&eight_state, &invalid_eight_percent),
+    );
+}
+
+test "development exact persistence APIs require the explicit development capability" {
+    const persist = @typeInfo(
+        @TypeOf(persistCurrentCandidateDevelopmentPlaintext),
+    ).@"fn";
+    const load = @typeInfo(
+        @TypeOf(loadWorkspaceIntoDevelopmentPlaintext),
+    ).@"fn";
+    const reopen = @typeInfo(
+        @TypeOf(reopenStateIntoDevelopmentPlaintext),
+    ).@"fn";
+    const alternates = @typeInfo(
+        @TypeOf(listAlternateWorkspacesDevelopmentPlaintext),
+    ).@"fn";
+    inline for (.{ persist, load, reopen, alternates }) |api| {
+        try std.testing.expect(
+            api.params[0].type.? ==
+                *const key_custody.DevelopmentPlaintextStorageCapability,
+        );
+        try std.testing.expect(
+            api.params[0].type.? !=
+                *const key_custody.ProductionStorageCapability,
+        );
+    }
+}
+
+test "development exact persistence round trip resumes and lists alternate workspaces without a coarse draft" {
+    const allocator = std.testing.allocator;
+    const plaintext_capability = developmentPlaintextCapability();
+    var repository = try store.Store.openMemory(allocator);
+    defer repository.close();
+    try seedSyntheticProfileRepository(&repository);
+
+    var profile = try testMixedHistoricalProfile(
+        "persistence-synthetic-filer-r1",
+        try test_context.profileAsOf(),
+    );
+    defer sensitive_memory.wipeValue(projection.Snapshot, &profile);
+    const qualified_blur_context: ui.QualifiedBlurContext = .{
+        .current_year = 2026,
+        .schedule_date = .{
+            .current_date = .{ .year = 2026, .month = 7, .day = 30 },
+            .empty_default_input_was_later = false,
+        },
+    };
+
+    const workspace_id = try repository.generateDraftWorkspaceId();
+    var original: ui.State = undefined;
+    try openSyntheticState(
+        &original,
+        allocator,
+        workspace_id,
+        &profile,
+    );
+    defer original.deinit();
+    try selectRequiredSyntheticElections(&original);
+    _ = try original.commitAndBlurQualified(
+        "frm1701q:txtSheets",
+        "1",
+        qualified_blur_context,
+    );
+    try original.calculate();
+    try savePassed(&original);
+    try original.generateEditableCandidate(.create);
+    const first_snapshot = try original.candidateSnapshot();
+    const first_receipt = try persistCurrentCandidateDevelopmentPlaintext(
+        plaintext_capability,
+        &repository,
+        &original,
+        .{
+            .historical_profile = &profile,
+            .role_instances = &test_role_instances,
+            .recorded_at_unix_seconds = 1_750_100_001,
+            .guard = .create,
+        },
+    );
+
+    var first_loaded: LoadedWorkspace = undefined;
+    try loadWorkspaceIntoDevelopmentPlaintext(
+        plaintext_capability,
+        &first_loaded,
+        &repository,
+        allocator,
+        workspace_id,
+        "persistence-synthetic-filer",
+        test_context,
+    );
+    defer first_loaded.deinit();
+    const first_persisted = first_loaded.currentPersistedRevision(
+        .editable_save,
+    ).?;
+    try std.testing.expect(first_persisted.profile_snapshot_digest.eql(
+        &first_snapshot.profile_snapshot_digest,
+    ));
+    try std.testing.expect(first_persisted.transaction_state_digest.eql(
+        &first_snapshot.transaction_state_digest,
+    ));
+    try std.testing.expect(first_persisted.ordered_values_digest.eql(
+        &first_snapshot.ordered_values_digest,
+    ));
+    try std.testing.expectEqualStrings(
+        "historical_profile_projection",
+        first_persisted.bindings[0].provenance,
+    );
+    var saw_profile_provenance = false;
+    var saw_transaction_provenance = false;
+    for (first_persisted.occurrences) |value| {
+        switch (value.origin) {
+            .profile => {
+                try std.testing.expectEqualStrings(
+                    "immutable_profile_revision_binding",
+                    value.provenance,
+                );
+                saw_profile_provenance = true;
+            },
+            .transaction => {
+                try std.testing.expectEqualStrings(
+                    "form_transaction",
+                    value.provenance,
+                );
+                saw_transaction_provenance = true;
+            },
+            else => {},
+        }
+    }
+    try std.testing.expect(saw_profile_provenance);
+    try std.testing.expect(saw_transaction_provenance);
+
+    var resumed: ui.State = undefined;
+    switch (try reopenStateIntoDevelopmentPlaintext(
+        plaintext_capability,
+        &resumed,
+        &first_loaded,
+        .editable_save,
+        test_context,
+        &profile,
+        &test_role_instances,
+    )) {
+        .opened => {},
+        .blocked => return error.UnexpectedProfileMappingBlock,
+    }
+    defer resumed.deinit();
+    _ = try resumed.commitAndBlurQualified(
+        "frm1701q:txtSheets",
+        "2",
+        qualified_blur_context,
+    );
+    try resumed.calculate();
+    try savePassed(&resumed);
+    try resumed.generateEditableCandidate(.{
+        .match = first_receipt.revision,
+    });
+    const resumed_summary = try resumed.candidateSummary();
+    const second_receipt = try persistCurrentCandidateDevelopmentPlaintext(
+        plaintext_capability,
+        &repository,
+        &resumed,
+        .{
+            .historical_profile = &profile,
+            .role_instances = &test_role_instances,
+            .recorded_at_unix_seconds = 1_750_100_002,
+            .guard = .{ .match = first_receipt.revision },
+        },
+    );
+    try std.testing.expectEqual(@as(u64, 2), second_receipt.revision.value);
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        second_receipt.parent_revision.?.value,
+    );
+
+    var resumed_history = (try repository
+        .getExactDraftHistoryDevelopmentPlaintext(
+        plaintext_capability,
+        allocator,
+        second_receipt.draft_identity,
+    )).?;
+    defer resumed_history.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), resumed_history.revisions.len);
+    const editable_manifest = try occurrences.editableManifest();
+    const expected_sheets = editable_manifest.findKeyOccurrence(
+        "frm1701q:txtSheets",
+        1,
+    ).?;
+    const resumed_sheets = blk: {
+        for (resumed_history.revisions[1].occurrences) |*value| {
+            if (value.same_key_occurrence ==
+                expected_sheets.same_key_occurrence and
+                std.mem.eql(
+                    u8,
+                    value.serialized_key,
+                    expected_sheets.serialized_key,
+                ))
+            {
+                break :blk value;
+            }
+        }
+        return error.ExpectedPersistedSchedulesCount;
+    };
+    try std.testing.expectEqual(expected_sheets.ordinal, resumed_sheets.ordinal);
+    try std.testing.expectEqualStrings(
+        "frm1701q:txtSheets",
+        resumed_sheets.serialized_key,
+    );
+    try std.testing.expectEqual(
+        @as(u16, 1),
+        resumed_sheets.same_key_occurrence,
+    );
+    try std.testing.expectEqualStrings(
+        "2",
+        resumed_sheets.raw_value,
+    );
+    try std.testing.expectEqual(
+        occurrence.OriginKind.filing_context,
+        resumed_sheets.origin,
+    );
+    try std.testing.expectEqualStrings(
+        "explicit_filing_context",
+        resumed_sheets.provenance,
+    );
+
+    const alternate_workspace_id = try repository.generateDraftWorkspaceId();
+    var alternate: ui.State = undefined;
+    try openSyntheticState(
+        &alternate,
+        allocator,
+        alternate_workspace_id,
+        &profile,
+    );
+    defer alternate.deinit();
+    try selectRequiredSyntheticElections(&alternate);
+    try alternate.calculate();
+    try savePassed(&alternate);
+    try alternate.generateEditableCandidate(.create);
+    _ = try persistCurrentCandidateDevelopmentPlaintext(
+        plaintext_capability,
+        &repository,
+        &alternate,
+        .{
+            .historical_profile = &profile,
+            .role_instances = &test_role_instances,
+            .recorded_at_unix_seconds = 1_750_100_003,
+            .guard = .create,
+        },
+    );
+
+    var alternates = try listAlternateWorkspacesDevelopmentPlaintext(
+        plaintext_capability,
+        &repository,
+        allocator,
+        "persistence-synthetic-filer",
+        test_context,
+        workspace_id,
+    );
+    defer alternates.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), alternates.items.len);
+    try std.testing.expect(alternates.items[0].workspace_id.eql(
+        &alternate_workspace_id,
+    ));
+    try std.testing.expectEqual(@as(u32, 1), alternates.items[0].schema_stream_count);
+
+    var reloaded: LoadedWorkspace = undefined;
+    try loadWorkspaceIntoDevelopmentPlaintext(
+        plaintext_capability,
+        &reloaded,
+        &repository,
+        allocator,
+        workspace_id,
+        "persistence-synthetic-filer",
+        test_context,
+    );
+    defer reloaded.deinit();
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        reloaded.revisionCount(.editable_save),
+    );
+    var reopened: ui.State = undefined;
+    switch (try reopenStateIntoDevelopmentPlaintext(
+        plaintext_capability,
+        &reopened,
+        &reloaded,
+        .editable_save,
+        test_context,
+        &profile,
+        &test_role_instances,
+    )) {
+        .opened => {},
+        .blocked => return error.UnexpectedProfileMappingBlock,
+    }
+    defer reopened.deinit();
+    try expectCandidateSummaryEqual(
+        resumed_summary,
+        try reopened.candidateSummary(),
+    );
+
+    // The exact 1701Q path is deliberately disjoint from the coarse draft
+    // aggregate and its v17 provenance sidecar.
+    var coarse = try repository.listDraftSummariesForProfile(
+        allocator,
+        "persistence-synthetic-filer",
+        2025,
+    );
+    defer coarse.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), coarse.items.len);
 }
 
 test "editable and Final sibling streams persist, replay, and reopen exactly" {

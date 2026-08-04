@@ -1,0 +1,218 @@
+<template name="tax-form-read-value" args="label value">
+  <column gap="4"><text size="sm" foreground="text_muted">{label}</text><text wrap="true">{value}</text></column>
+</template>
+
+<template name="tax-form-profile-year-rate-buttons">
+  <column>
+    <if test="{constrainedLayout}"><column gap="8"><button height="44" variant="outline" selected="{taxpayerYearGraduatedSelected}" on-press="taxpayer_year_rate_graduated">Graduated</button><button height="44" variant="outline" selected="{taxpayerYearEightPercentSelected}" on-press="taxpayer_year_rate_eight_percent">8%</button></column></if>
+    <else><row gap="8"><button height="44" variant="outline" selected="{taxpayerYearGraduatedSelected}" on-press="taxpayer_year_rate_graduated">Graduated</button><button height="44" variant="outline" selected="{taxpayerYearEightPercentSelected}" on-press="taxpayer_year_rate_eight_percent">8%</button></row></else>
+  </column>
+</template>
+
+<template name="tax-form-profile-year-deduction-buttons">
+  <column>
+    <if test="{constrainedLayout}"><column gap="8"><button height="44" variant="outline" selected="{taxpayerYearItemizedSelected}" on-press="taxpayer_year_deduction_itemized">Itemized</button><button height="44" variant="outline" selected="{taxpayerYearOsdSelected}" on-press="taxpayer_year_deduction_osd">OSD</button></column></if>
+    <else><row gap="8"><button height="44" variant="outline" selected="{taxpayerYearItemizedSelected}" on-press="taxpayer_year_deduction_itemized">Itemized</button><button height="44" variant="outline" selected="{taxpayerYearOsdSelected}" on-press="taxpayer_year_deduction_osd">OSD</button></row></else>
+  </column>
+</template>
+
+<template name="tax-form-profile-year-save-actions">
+  <column>
+    <if test="{constrainedLayout}"><column gap="8"><button height="44" variant="outline" disabled="{taxpayerYearCancelDisabled}" on-press="taxpayer_year_cancel">Cancel</button><button height="44" variant="primary" disabled="{taxpayerYearSaveDisabled}" on-press="taxpayer_year_save">Save Year Settings</button></column></if>
+    <else><row gap="8" main="end"><button height="44" variant="outline" disabled="{taxpayerYearCancelDisabled}" on-press="taxpayer_year_cancel">Cancel</button><button height="44" variant="primary" disabled="{taxpayerYearSaveDisabled}" on-press="taxpayer_year_save">Save Year Settings</button></row></else>
+  </column>
+</template>
+
+<template name="tax-form-profile-page-actions">
+  <column>
+    <if test="{constrainedLayout}">
+      <column gap="10">
+        <if test="{taxFormProfileEditTaxProfileVisible}"><button height="44" variant="outline" on-press="tax_form_profile_edit_tax_profile">Edit Tax Profile</button></if>
+        <if test="{taxFormProfileEditing}"><column gap="10"><button height="44" variant="outline" disabled="{taxFormProfileCancelDisabled}" on-press="cancel_tax_form_profile">Cancel</button><button height="44" variant="primary" disabled="{taxFormProfileSaveDisabled}" on-press="save_tax_form_profile">Save Tax Form Profile</button></column></if>
+        <else><if test="{taxFormProfileEditVisible}"><button height="44" variant="primary" on-press="edit_tax_form_profile">Edit Tax Form Profile</button></if></else>
+      </column>
+    </if>
+    <else>
+      <row gap="10" main="end">
+        <if test="{taxFormProfileEditTaxProfileVisible}"><button height="44" variant="outline" on-press="tax_form_profile_edit_tax_profile">Edit Tax Profile</button></if>
+        <if test="{taxFormProfileEditing}"><row gap="10"><button height="44" variant="outline" disabled="{taxFormProfileCancelDisabled}" on-press="cancel_tax_form_profile">Cancel</button><button height="44" variant="primary" disabled="{taxFormProfileSaveDisabled}" on-press="save_tax_form_profile">Save Tax Form Profile</button></row></if>
+        <else><if test="{taxFormProfileEditVisible}"><button height="44" variant="primary" on-press="edit_tax_form_profile">Edit Tax Form Profile</button></if></else>
+      </row>
+    </else>
+  </column>
+</template>
+
+<template name="tax-form-profile-discard-content">
+  <column padding="20" gap="14">
+    <text><span weight="bold" scale="1.25">Discard unsaved changes?</span></text>
+    <text wrap="true" foreground="text_muted">Leaving restores the saved Tax Form Profile.</text>
+    <if test="{constrainedLayout}">
+      <column gap="8">
+        <button height="44" variant="outline" on-press="tax_form_profile_keep_editing">Keep editing</button>
+        <button height="44" variant="destructive" on-press="tax_form_profile_discard_navigation">Discard</button>
+      </column>
+    </if>
+    <else>
+      <row gap="8" main="end">
+        <button height="44" variant="outline" on-press="tax_form_profile_keep_editing">Keep editing</button>
+        <button height="44" variant="destructive" on-press="tax_form_profile_discard_navigation">Discard</button>
+      </row>
+    </else>
+  </column>
+</template>
+
+<template name="tax-form-profile-page">
+  <stack grow="1">
+    <scroll grow="1" label="Tax Form Profile">
+      <column padding="24" gap="16">
+        <row gap="12" cross="start">
+          <button width="44" height="44" size="icon" variant="ghost" icon="chevron-left" label="{taxFormProfileBackLabel}" on-press="close_tax_form_profile"></button>
+          <column grow="1" gap="5">
+            <row gap="8" cross="center"><badge variant="secondary">{taxFormProfileCode}</badge><badge variant="{taxFormProfileStatusTone}">{taxFormProfileStatus}</badge></row>
+            <text><span weight="bold" scale="1.5">{taxFormProfileTitle}</span></text>
+            <text foreground="text_muted">{taxFormProfileYear} - {taxFormProfileRevision}</text>
+            <text wrap="true" foreground="text_muted">{taxFormProfileActivationLabel}</text>
+          </column>
+        </row>
+        <text wrap="true" foreground="text_muted">{taxFormProfileDescription}</text>
+        <if test="{taxFormProfileMissingInheritedVisible}">
+          <card padding="0" background="surface_subtle">
+            <column padding="14" gap="10">
+              <text><span weight="bold">Tax Profile details still needed</span></text>
+              <text wrap="true" foreground="text_muted">{taxFormProfileMissingInheritedSummary}</text>
+              <for each="taxFormProfileMissingInheritedRows" key="id" as="fact">
+                <row gap="8" cross="center">
+                  <text grow="1" wrap="true">{fact.label}</text>
+                  <badge variant="destructive">Required</badge>
+                </row>
+              </for>
+              <button height="44" variant="outline" on-press="tax_form_profile_edit_tax_profile">Edit Tax Profile</button>
+            </column>
+          </card>
+        </if>
+        <if test="{taxFormProfileSegmentNavigationVisible}"><row gap="8"><button grow="1" height="44" variant="outline" disabled="{taxFormProfilePreviousSegmentDisabled}" on-press="tax_form_profile_previous_segment">Previous interval</button><button grow="1" height="44" variant="outline" disabled="{taxFormProfileNextSegmentDisabled}" on-press="tax_form_profile_next_segment">Next interval</button></row></if>
+
+        <card padding="0">
+          <column padding="16" gap="12">
+            <column gap="4">
+              <text><span weight="bold">Inherited Tax Profile details</span></text>
+              <text wrap="true" foreground="text_muted">Read-only values resolved for this tax year from {taxFormProfileBaseRevision}.</text>
+            </column>
+            <grid columns="{profileReadColumns}" gap="12">
+              <for each="taxFormProfileInheritedRows" key="id" as="fact"><use template="tax-form-read-value" label="{fact.label}" value="{fact.value}"/></for>
+            </grid>
+          </column>
+        </card>
+        <if test="{taxFormProfileConflictVisible}">
+          <card padding="0"><column padding="16" gap="10">
+            <text><span weight="bold">A newer revision was saved</span></text>
+            <text wrap="true" foreground="text_muted">Your draft is preserved. Review the latest stream sequence, or reload this interval and discard the draft.</text>
+            <if test="{constrainedLayout}"><column gap="8"><button height="44" variant="primary" disabled="{taxFormProfileConflictKeepDraftDisabled}" on-press="tax_form_profile_keep_draft_after_conflict">Keep my draft</button><button height="44" variant="outline" disabled="{taxFormProfileConflictReloadDisabled}" on-press="tax_form_profile_reload_after_conflict">Reload this interval</button></column></if>
+            <else><row gap="8"><button height="44" variant="primary" disabled="{taxFormProfileConflictKeepDraftDisabled}" on-press="tax_form_profile_keep_draft_after_conflict">Keep my draft</button><button height="44" variant="outline" disabled="{taxFormProfileConflictReloadDisabled}" on-press="tax_form_profile_reload_after_conflict">Reload this interval</button></row></else>
+          </column></card>
+        </if>
+
+        <if test="{taxpayerYearSettingsVisible}">
+          <card padding="0"><column padding="16" gap="10">
+            <row gap="8" cross="center"><text grow="1"><span weight="bold">Taxpayer-Year Settings</span></text><badge variant="{taxpayerYearStatusTone}">{taxpayerYearStatus}</badge></row>
+            <text wrap="true" foreground="text_muted">Shared by active forms for this taxpayer and tax year; never copied into one form's profile.</text>
+            <if test="{taxpayerYearConflictVisible}">
+              <card padding="0"><column padding="12" gap="8"><text><span weight="bold">A newer year-settings revision was saved</span></text><text wrap="true" foreground="text_muted">Your draft is preserved. Keep it after reviewing the latest saved revision, or reload the saved revision and discard this draft.</text><if test="{constrainedLayout}"><column gap="8"><button height="44" variant="primary" disabled="{taxpayerYearConflictKeepDraftDisabled}" on-press="taxpayer_year_keep_draft_after_conflict">Keep my draft</button><button height="44" variant="outline" disabled="{taxpayerYearConflictReloadDisabled}" on-press="taxpayer_year_reload_after_conflict">Reload saved revision</button></column></if><else><row gap="8"><button height="44" variant="primary" disabled="{taxpayerYearConflictKeepDraftDisabled}" on-press="taxpayer_year_keep_draft_after_conflict">Keep my draft</button><button height="44" variant="outline" disabled="{taxpayerYearConflictReloadDisabled}" on-press="taxpayer_year_reload_after_conflict">Reload saved revision</button></row></else></column></card>
+            </if>
+            <if test="{taxpayerYearEditing}">
+              <column gap="8">
+                <text>Income-tax-rate election</text>
+                <use template="tax-form-profile-year-rate-buttons"/>
+              </column>
+              <if test="{taxpayerYearDeductionVisible}">
+                <column gap="8">
+                  <text>Deduction method</text>
+                  <use template="tax-form-profile-year-deduction-buttons"/>
+                </column>
+              </if>
+              <if test="{taxpayerYearReviewVisible}"><button height="44" variant="outline" on-press="taxpayer_year_acknowledge_review">Mark reviewed</button></if>
+              <use template="tax-form-profile-year-save-actions"/>
+            </if>
+            <else>
+              <if test="{constrainedLayout}"><column gap="8"><text wrap="true">{taxpayerYearRateLabel}</text><if test="{taxpayerYearCopyPriorYearVisible}"><button height="44" variant="outline" on-press="taxpayer_year_copy_prior_year">{taxpayerYearCopyPriorYearLabel}</button></if><if test="{taxpayerYearEditVisible}"><button height="44" variant="outline" on-press="taxpayer_year_edit">Edit Year Settings</button></if></column></if>
+              <else><row gap="8" cross="center"><text grow="1">{taxpayerYearRateLabel}</text><if test="{taxpayerYearCopyPriorYearVisible}"><button height="44" variant="outline" on-press="taxpayer_year_copy_prior_year">{taxpayerYearCopyPriorYearLabel}</button></if><if test="{taxpayerYearEditVisible}"><button height="44" variant="outline" on-press="taxpayer_year_edit">Edit Year Settings</button></if></row></else>
+            </else>
+          </column></card>
+        </if>
+
+        <if test="{taxFormProfileSetupVisible}">
+          <column gap="10">
+            <text><span weight="bold">Form-specific details</span></text>
+            <for each="taxFormProfileFieldRows" key="id" as="field">
+              <card padding="0">
+                <column padding="14" gap="8">
+                  <row gap="8" cross="center"><text grow="1"><span weight="bold">{field.label}</span></text><badge variant="secondary">{field.requiredLabel}</badge></row>
+                  <text wrap="true">{field.value}</text>
+                  <text wrap="true" foreground="text_muted">{field.helper}</text>
+                  <if test="{field.editable}">
+                    <if test="{constrainedLayout}">
+                      <column gap="8">
+                        <button height="44" variant="outline" on-press="tax_form_profile_toggle_picker:{field.id}">{field.pickerLabel}</button>
+                        <if test="{field.hasValue}"><button height="44" variant="ghost" on-press="tax_form_profile_clear_value:{field.id}">Clear</button></if>
+                      </column>
+                    </if>
+                    <else>
+                      <row gap="8">
+                        <button grow="1" height="44" variant="outline" on-press="tax_form_profile_toggle_picker:{field.id}">{field.pickerLabel}</button>
+                        <if test="{field.hasValue}"><button height="44" variant="ghost" on-press="tax_form_profile_clear_value:{field.id}">Clear</button></if>
+                      </row>
+                    </else>
+                    <if test="{field.pickerOpen}">
+                      <card padding="0"><column padding="8" gap="4">
+                        <if test="{taxFormProfileChoicesEmpty}"><column gap="8"><text wrap="true" foreground="text_muted">No eligible saved values.</text><if test="{taxFormProfileChoicesRegistrationRepairVisible}"><button height="44" variant="outline" on-press="tax_form_profile_edit_registration">Add or edit Registration</button></if></column></if>
+                        <else><for each="taxFormProfileChoiceRows" key="id" as="choice"><button height="44" variant="ghost" selected="{choice.selected}" on-press="tax_form_profile_select_choice:{choice.id}">{choice.label}</button></for></else>
+                      </column></card>
+                    </if>
+                  </if>
+                </column>
+              </card>
+            </for>
+          </column>
+        </if>
+
+        <if test="{taxFormProfileReviewVisible}">
+          <card padding="0">
+            <if test="{constrainedLayout}"><column padding="14" gap="10"><text wrap="true">{taxFormProfileReviewText}</text><button height="44" variant="outline" on-press="tax_form_profile_acknowledge_review">Mark reviewed</button></column></if>
+            <else><row padding="14" gap="10" cross="center"><text grow="1" wrap="true">{taxFormProfileReviewText}</text><button height="44" variant="outline" on-press="tax_form_profile_acknowledge_review">Mark reviewed</button></row></else>
+          </card>
+        </if>
+        <if test="{taxFormProfileCopyPriorYearVisible}">
+          <card padding="0">
+            <if test="{constrainedLayout}"><column padding="14" gap="10"><text wrap="true" foreground="text_muted">Reuse is never automatic. The prior setup opens as an unsaved draft and must be reviewed before Save.</text><button height="44" variant="outline" on-press="tax_form_profile_copy_prior_year">{taxFormProfileCopyPriorYearLabel}</button></column></if>
+            <else><row padding="14" gap="10" cross="center"><text grow="1" wrap="true" foreground="text_muted">Reuse is never automatic. The prior setup opens as an unsaved draft and must be reviewed before Save.</text><button height="44" variant="outline" on-press="tax_form_profile_copy_prior_year">{taxFormProfileCopyPriorYearLabel}</button></row></else>
+          </card>
+        </if>
+        <if test="{taxFormProfileReactivationReuseVisible}">
+          <card padding="0">
+            <if test="{constrainedLayout}"><column padding="14" gap="10"><text wrap="true" foreground="text_muted">Another active interval has compatible setup. Review it before saving it for this interval.</text><button height="44" variant="outline" on-press="tax_form_profile_reuse_after_reactivation">{taxFormProfileReactivationReuseLabel}</button></column></if>
+            <else><row padding="14" gap="10" cross="center"><text grow="1" wrap="true" foreground="text_muted">Another active interval has compatible setup. Review it before saving it for this interval.</text><button height="44" variant="outline" on-press="tax_form_profile_reuse_after_reactivation">{taxFormProfileReactivationReuseLabel}</button></row></else>
+          </card>
+        </if>
+        <if test="{taxFormProfileHistoryVisible}">
+          <card padding="0"><column padding="16" gap="10">
+            <column gap="4"><text><span weight="bold">Tax Form Profile history</span></text><text wrap="true" foreground="text_muted">Saved annual revisions remain visible after deactivation and are never overwritten.</text></column>
+            <for each="taxFormProfileHistoryRows" key="id" as="revision">
+              <card padding="0"><column padding="12" gap="4"><row gap="8" cross="center"><text grow="1"><span weight="bold">Revision {revision.sequence}</span></text><if test="{revision.currentVisible}"><badge variant="secondary">Current view</badge></if></row><text foreground="text_muted">{revision.effectiveLabel}</text><text wrap="true" foreground="text_muted">{revision.sourceLabel}</text></column></card>
+            </for>
+            <if test="{taxFormProfileHistoryTruncatedVisible}"><text wrap="true" foreground="text_muted">Showing the 24 most recent revisions.</text></if>
+          </column></card>
+        </if>
+        <use template="tax-form-profile-page-actions"/>
+      </column>
+    </scroll>
+    <if test="{taxFormProfileDiscardPromptOpen}">
+      <column grow="1" padding="16" main="center" cross="center">
+        <if test="{phoneLayout}"><dialog width="288" on-dismiss="tax_form_profile_keep_editing"><use template="tax-form-profile-discard-content"/></dialog></if>
+        <else>
+          <if test="{constrainedLayout}"><dialog width="400" on-dismiss="tax_form_profile_keep_editing"><use template="tax-form-profile-discard-content"/></dialog></if>
+          <else><dialog width="480" on-dismiss="tax_form_profile_keep_editing"><use template="tax-form-profile-discard-content"/></dialog></else>
+        </else>
+      </column>
+    </if>
+  </stack>
+</template>

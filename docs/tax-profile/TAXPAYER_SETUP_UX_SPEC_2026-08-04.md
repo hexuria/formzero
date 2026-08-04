@@ -802,6 +802,14 @@ duplicate check is best-effort in the create transaction.
 
 ## 13. Form requirement and override specification
 
+> **Partially superseded on 2026-08-04.** The rejection of all year-scoped
+> per-form profile state below no longer controls implementation. The approved
+> replacement is a generated, typed Tax Form Profile contract that stores only
+> genuine annual form setup and selections; it cannot duplicate base taxpayer
+> facts, taxpayer-year settings, filing transactions, calculations, payments,
+> or explicit `no_setup` forms. See
+> [the current execution plan](TAX_PROFILE_AND_FORM_PROFILE_EXECUTION_PLAN_2026-08-04.md).
+
 **Layers (exhaustive).** Every value a form shows comes from exactly one:
 
 | Layer | Authority | Example | UI provenance chip |
@@ -1187,7 +1195,7 @@ Each phase independently passes the repository's verification gates
 | D10 | History: summary card + Record a change / Fix a mistake + disclosure; no history tab; diff-empty saves append nothing |
 | D11 | TIN + legal class locked in ordinary edits; audited correction flow (existing store support); class-boundary change → new linked profile |
 | D12 | Branch = separate profile; TIN root locked; subject kind locked; safe-copy vs confirm-first matrix per §12; one-time copy, said explicitly |
-| D13 | No year-scoped per-form profile override layer; filing exceptions live with the draft, with provenance and `Use profile value` |
+| D13 | **Partially superseded.** No free-form `(year, form, field)` override map; generated typed Tax Form Profiles may persist only reviewed annual setup keys. Filing exceptions remain draft-owned. |
 | D14 | No auto-save on any navigation (year, tab, profile, branch) |
 | D15 | Cloud COR processing opt-in per document; local path always available |
 | D16 | Responsive per §14/§17 using existing layout predicates only |
@@ -1315,8 +1323,9 @@ generated `app.native` at 260,119 bytes against its 262,144-byte limit.
   are unmet by design.
 - **Filing-scoped exceptions (§13, L4).** Provenance chips and
   `Use profile value` need changes inside the exact 2551Q and 1701Q
-  transaction-value contracts. Scenario 12 is unmet. The decision *not* to add
-  a year-scoped per-form override layer is implemented by omission and holds.
+  transaction-value contracts. Scenario 12 is unmet. A free-form override map
+  remains prohibited; the separate typed Tax Form Profile contract is governed
+  by the superseding execution plan.
 - **Gap G3 durable branch grouping.** Sidebar grouping is presentation-only, as
   §12 permits for phase one. The duplicate-TIN check covers the loaded profile
   set; a `branch_of` relationship kind and a uniqueness constraint remain

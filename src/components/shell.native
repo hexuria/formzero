@@ -25,7 +25,7 @@
       <text><span weight="bold">{name}</span></text>
       <text foreground="text_muted">{tin}</text>
       <if test="{active}">
-        <text foreground="text_muted">{branch} - RDO: {selectedTaxpayerRdo}</text>
+        <text foreground="text_muted">{branch}</text>
       </if>
       <else>
         <text foreground="text_muted">{branch}</text>
@@ -561,56 +561,13 @@
         </row>
       </if>
 
-      <if test="{formProfileNeedsActivitySelection}">
-        <column gap="8">
-          <separator/>
-          <text><span weight="bold">Registered activity for this filing</span></text>
-          <text wrap="true" foreground="text_muted">
-            This profile has more than one effective activity. Choose the activity whose reusable facts belong on this form.
-          </text>
-          <for each="formActivityRows" key="idLabel" as="activity">
-            <button
-              size="sm"
-              variant="outline"
-              selected="{activity.selected}"
-              on-press="select_form_activity:{activity.id}">
-              {activity.name}
-            </button>
-          </for>
-          <else>
-            <text foreground="text_muted">No effective registered activities are available.</text>
-          </else>
-        </column>
-      </if>
-
-      <if test="{formProfileHasSpouseRole}">
-        <column gap="8">
-          <separator/>
-          <row gap="8" cross="center">
-            <column grow="1" gap="2">
-              <text><span weight="bold">Optional spouse tax profile</span></text>
-              <text wrap="true" foreground="text_muted">
-                Bind a different qualified individual profile when this return includes spouse information.
-              </text>
-            </column>
-            <if test="{formProfileHasSpouseBinding}">
-              <button size="sm" variant="ghost" on-press="clear_form_spouse">Clear spouse</button>
-            </if>
-          </row>
-          <for each="formSpouseRows" key="idLabel" as="spouse">
-            <button
-              size="sm"
-              variant="outline"
-              selected="{spouse.selected}"
-              on-press="select_form_spouse:{spouse.id}">
-              {spouse.name}
-            </button>
-          </for>
-          <else>
-            <text foreground="text_muted">No other qualified individual profile is available.</text>
-          </else>
-        </column>
-      </if>
+      <separator/>
+      <column gap="2">
+        <text><span weight="bold">Reusable form bindings</span></text>
+        <text wrap="true" foreground="text_muted">
+          Registered activity and spouse bindings are managed in the Tax Form Profile for this tax year.
+        </text>
+      </column>
     </column>
   </card>
 </template>

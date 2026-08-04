@@ -77,8 +77,28 @@ pub const RegisteredContact = struct {
     email_address: ?field.EmailAddress = null,
 };
 
+/// Filing classification for a natural-person taxpayer.
+///
+/// This is deliberately separate from `SubjectKind`: "Individual" answers
+/// what legal person owns the profile, while this value records whether that
+/// person has compensation, business/professional, or mixed income. Existing
+/// records whose old `individual`/`sole_proprietor` tag does not prove the
+/// answer migrate to `classification_unknown` and require review rather than
+/// being guessed into a filing class.
+pub const NaturalPersonClassification = enum {
+    classification_unknown,
+    pure_compensation,
+    self_employed,
+    mixed_income,
+};
+
 pub const Individual = struct {
     name: field.TaxpayerName,
+    classification: NaturalPersonClassification = .classification_unknown,
+    /// Optional registered business/trade name for a self-employed or
+    /// mixed-income natural person. It is separate from the person's legal
+    /// taxpayer name and is inapplicable to pure compensation.
+    trade_name: ?field.RegisteredName = null,
     date_of_birth: ?Date = null,
     citizenship: ?field.Citizenship = null,
     foreign_tax_number: ?field.ForeignTaxNumber = null,
@@ -100,6 +120,7 @@ pub const LegalEntityKind = enum {
 
 pub const LegalEntity = struct {
     registered_name: field.RegisteredName,
+    trade_name: ?field.RegisteredName = null,
     kind: LegalEntityKind,
 };
 
@@ -148,9 +169,17 @@ pub const Subject = union(enum) {
 
     pub fn registeredName(self: *const Subject) ?field.RegisteredName {
         return switch (self.*) {
-            .individual => null,
+            .individual => |person| person.trade_name,
             .sole_proprietor => |proprietor| proprietor.trade_name,
             .legal_entity => |entity| entity.registered_name,
+        };
+    }
+
+    pub fn tradeName(self: *const Subject) ?field.RegisteredName {
+        return switch (self.*) {
+            .individual => |person| person.trade_name,
+            .sole_proprietor => |proprietor| proprietor.trade_name,
+            .legal_entity => |entity| entity.trade_name,
         };
     }
 
@@ -158,6 +187,18 @@ pub const Subject = union(enum) {
         return switch (self.*) {
             .individual => |*person| person,
             .sole_proprietor => |*proprietor| &proprietor.person,
+            .legal_entity => null,
+        };
+    }
+
+    pub fn naturalPersonClassification(
+        self: *const Subject,
+    ) ?NaturalPersonClassification {
+        return switch (self.*) {
+            .individual => |person| person.classification,
+            // Compatibility-only legacy subject rows carry enough evidence
+            // to migrate to Individual + self-employed without guessing.
+            .sole_proprietor => .self_employed,
             .legal_entity => null,
         };
     }
@@ -382,6 +423,8 @@ fn contactEquals(
 
 fn individualEquals(left: *const Individual, right: *const Individual) bool {
     if (!left.name.eql(&right.name)) return false;
+    if (left.classification != right.classification) return false;
+    if (!optionalFieldEquals(left.trade_name, right.trade_name)) return false;
     if (left.date_of_birth) |value| {
         const other = right.date_of_birth orelse return false;
         if (!value.eql(other)) return false;
@@ -408,7 +451,8 @@ fn subjectEquals(left: *const Subject, right: *const Subject) bool {
         },
         .legal_entity => |*entity| switch (right.*) {
             .legal_entity => |*other| entity.kind == other.kind and
-                entity.registered_name.eql(&other.registered_name),
+                entity.registered_name.eql(&other.registered_name) and
+                optionalFieldEquals(entity.trade_name, other.trade_name),
             else => false,
         },
     };

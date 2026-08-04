@@ -27,6 +27,7 @@ const sourceGroups = [
       "src/pages/global-dashboard.fragment",
       "src/pages/taxpayer-dashboard.native",
       "src/pages/profile-setup.native",
+      "src/pages/tax-form-profile.native",
       "src/pages/taxpayer-dashboard-page.native",
       "src/pages/import-data.native",
       "src/pages/background-tasks.native",
@@ -89,11 +90,103 @@ function normalizeFragment(source) {
 // fragments readable, but remove generated-only indentation and blank lines so
 // a hot reload never truncates an otherwise valid document.
 function compactGeneratedMarkup(source) {
-  return source
+  return minifyTemplateNames(source)
     .split("\n")
     .map((line) => line.trimStart())
     .filter((line) => line.length > 0)
-    .join("\n");
+    .join("\n")
+    // Inter-element line breaks are source formatting, not rendered text.
+    // Removing only `>\n<` boundaries preserves multi-line attribute and
+    // text content while reclaiming enough of the watcher's fixed 256 KiB
+    // budget for independently editable page fragments.
+    .replace(/>\n(?=<)/gu, ">")
+    // Attribute layout is also source-only. Collapse whitespace inside tags
+    // while preserving quoted values and all text-node whitespace. This buys
+    // room for additional independently testable templates without changing
+    // what the Native parser or accessibility tree receives.
+    .replace(/<[^>]*>/gsu, compactTagWhitespace)
+    // Native text nodes render ordinary source line breaks as ordinary
+    // spacing. Normalize those generated-only boundaries to one space and
+    // drop indentation at the node edges; editable fragments stay readable.
+    .replace(/>([^<]+)</gsu, (_, text) => {
+      const compact = text.replace(/\s+/gu, " ").trim();
+      return `>${compact}<`;
+    });
+}
+
+function minifyTemplateNames(source) {
+  const names = [];
+  const seen = new Set();
+  for (const match of source.matchAll(/<template\s+name="([^"]+)"/gu)) {
+    const name = match[1];
+    if (seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
+  }
+  const aliases = new Map(
+    names.map((name, index) => [name, compactTemplateAlias(index)]),
+  );
+  return source
+    .replace(
+      /<template(\s+)name\s*=\s*"([^"]+)"/gu,
+      (match, spacing, name) =>
+        aliases.has(name)
+          ? `<template${spacing}name="${aliases.get(name)}"`
+          : match,
+    )
+    .replace(/\btemplate\s*=\s*"([^"]+)"/gu, (match, name) =>
+      aliases.has(name) ? `template="${aliases.get(name)}"` : match,
+    );
+}
+
+// Template names are generated-only linkage. A base-26 identifier is both
+// valid Native markup and shorter than the previous `t0`/`t10` sequence,
+// which matters because the runtime watcher has a hard 256 KiB ceiling.
+function compactTemplateAlias(index) {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz";
+  let value = index;
+  let alias = "";
+  do {
+    alias = alphabet[value % alphabet.length] + alias;
+    value = Math.floor(value / alphabet.length) - 1;
+  } while (value >= 0);
+  return alias;
+}
+
+function compactTagWhitespace(tag) {
+  if (tag.startsWith("<!--")) return tag;
+  let output = "";
+  let quote = null;
+  let pendingSpace = false;
+  for (const character of tag) {
+    if (quote !== null) {
+      output += character;
+      if (character === quote) quote = null;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      if (pendingSpace && output.at(-1) !== "<") output += " ";
+      pendingSpace = false;
+      quote = character;
+      output += character;
+      continue;
+    }
+    if (/\s/u.test(character)) {
+      pendingSpace = true;
+      continue;
+    }
+    if (
+      pendingSpace &&
+      output.at(-1) !== "<" &&
+      character !== ">" &&
+      character !== "/"
+    ) {
+      output += " ";
+    }
+    pendingSpace = false;
+    output += character;
+  }
+  return output;
 }
 
 /**
@@ -185,10 +278,7 @@ function rejectXmlEntities(source, relativePath) {
 // concatenation order lives in `sourceGroups` above, which is its own
 // authority; repeating all 28 entries here only spent runtime budget.
 function generatedHeader() {
-  return [
-    "<!-- GENERATED FILE - DO NOT EDIT. Edit the sources listed in",
-    "     scripts/flatten-native.mjs, then run `npm run generate`. -->",
-  ].join("\n");
+  return "<!-- GENERATED; edit fragments and run npm run generate. -->";
 }
 
 async function main() {

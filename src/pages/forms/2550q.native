@@ -9,6 +9,10 @@
     <!-- @include-template form-field-bound label="TIN" v="{formFilerTin}" ph="000-000-000-000" -->
     <!-- @include-template form-field-bound label="RDO Code" v="{formFilerRdo}" ph="RDO" -->
     <!-- @include-template form-field-bound label="Taxpayer Name" v="{formFilerTaxpayerName}" ph="Registered taxpayer name" -->
+    <!-- @include-template form-field-bound label="Registered Address" v="{formFilerRegisteredAddress}" ph="-" -->
+    <!-- @include-template form-field-bound label="ZIP Code" v="{formFilerZipCode}" ph="-" -->
+    <!-- @include-template form-field-bound label="Contact Number" v="{formFilerContactNumber}" ph="-" -->
+    <!-- @include-template form-field-bound label="Email Address" v="{formFilerEmailAddress}" ph="-" -->
   </grid>
 </template>
 

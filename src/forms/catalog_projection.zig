@@ -729,7 +729,12 @@ test "closed generated key vocabulary maps exhaustively to ReusableField" {
             );
         }
     }
-    try std.testing.expectEqual(@as(usize, 16), observed.count());
+    // The closed reusable vocabulary remains broader than the fields projected
+    // by the ten current editors. ATC and tax type are no longer direct profile
+    // targets: their former controls are filing data or locked form policy.
+    try std.testing.expectEqual(@as(usize, 14), observed.count());
+    try std.testing.expect(!observed.contains(.atc));
+    try std.testing.expect(!observed.contains(.tax_type));
 
     inline for (std.meta.tags(catalog.ProfileSubjectKind)) |kind| {
         try std.testing.expectEqualStrings(
@@ -738,12 +743,12 @@ test "closed generated key vocabulary maps exhaustively to ReusableField" {
         );
     }
     try std.testing.expectEqual(
-        @as(usize, 9),
+        @as(usize, 34),
         catalog.optional_profile_target_count,
     );
 }
 
-test "all ten editor revisions project all seventy-two profile targets" {
+test "all ten editor revisions project all ninety-one profile targets" {
     const allocator = std.testing.allocator;
     const on = try model.Date.parseIso("2026-03-31");
     const activities = [_]model.BusinessActivity{.{
@@ -871,8 +876,106 @@ test "all ten editor revisions project all seventy-two profile targets" {
 
     try std.testing.expectEqual(@as(usize, 10), editor_count);
     try std.testing.expectEqual(catalog.editor_count, editor_count);
-    try std.testing.expectEqual(@as(usize, 72), target_count);
+    try std.testing.expectEqual(@as(usize, 91), target_count);
     try std.testing.expectEqual(catalog.profile_target_count, target_count);
+}
+
+test "corrected ownership source contracts stay outside direct profile projection" {
+    const Contract = struct {
+        code: []const u8,
+        id: []const u8,
+        provenance: catalog.Provenance,
+        source_key: ?[]const u8 = null,
+        fixed_value: ?[]const u8 = null,
+        optional_seed_source: ?[]const u8 = null,
+    };
+    const contracts = [_]Contract{
+        .{
+            .code = "0605",
+            .id = "0605.1999-07-ENCS.input.atc_only_source_proven_pairs",
+            .provenance = .transaction,
+        },
+        .{
+            .code = "0605",
+            .id = "0605.1999-07-ENCS.input.tax_type_only_source_proven_pairs",
+            .provenance = .transaction,
+        },
+        .{
+            .code = "0605",
+            .id = "0605.1999-07-ENCS.input.line_of_business_occupation",
+            .provenance = .transaction,
+            .optional_seed_source = "business_activity.line_of_business",
+        },
+        .{
+            .code = "1601C",
+            .id = "1601C.2018-01-ENCS.input.atc",
+            .provenance = .form_policy,
+            .source_key = "form_policy.atc",
+            .fixed_value = "WW010",
+        },
+        .{
+            .code = "0619F",
+            .id = "0619F.2018-01-ENCS.input.tax_type_code",
+            .provenance = .form_policy,
+            .source_key = "form_policy.tax_type",
+            .fixed_value = "WB",
+        },
+        .{
+            .code = "0619E",
+            .id = "0619E.2018-01-ENCS.input.atc",
+            .provenance = .form_policy,
+            .source_key = "form_policy.atc",
+            .fixed_value = "WME10",
+        },
+        .{
+            .code = "0619E",
+            .id = "0619E.2018-01-ENCS.input.tax_type_code",
+            .provenance = .form_policy,
+            .source_key = "form_policy.tax_type",
+            .fixed_value = "WE",
+        },
+        .{
+            .code = "1701Q",
+            .id = "1701Q.2018-01-ENCS.input.income_tax_rate_election",
+            .provenance = .taxpayer_year,
+            .source_key = "income_tax_rate_election",
+        },
+        .{
+            .code = "2551Q",
+            .id = "2551Q.2018-01-ENCS.input.income_tax_rate_election",
+            .provenance = .taxpayer_year,
+            .source_key = "income_tax_rate_election",
+        },
+    };
+
+    for (contracts) |expected| {
+        const definition = catalog.findForm(expected.code).?;
+        var matched: ?*const catalog.FieldDefinition = null;
+        for (definition.fields) |*catalog_field| {
+            if (std.mem.eql(u8, catalog_field.id, expected.id)) {
+                matched = catalog_field;
+                break;
+            }
+        }
+        const actual = matched orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqual(expected.provenance, actual.provenance);
+        try std.testing.expect(actual.profile_key == null);
+        if (expected.source_key) |value| {
+            try std.testing.expectEqualStrings(value, actual.source_key.?);
+        } else try std.testing.expect(actual.source_key == null);
+        if (expected.fixed_value) |value| {
+            try std.testing.expectEqualStrings(value, actual.fixed_value.?);
+        } else try std.testing.expect(actual.fixed_value == null);
+        if (expected.optional_seed_source) |value| {
+            try std.testing.expectEqualStrings(
+                value,
+                actual.optional_seed_source.?,
+            );
+        } else try std.testing.expect(actual.optional_seed_source == null);
+    }
+
+    try std.testing.expectEqual(@as(usize, 2), catalog.taxpayer_year_target_count);
+    try std.testing.expectEqual(@as(usize, 4), catalog.form_policy_target_count);
 }
 
 test "exact 2551Q and 1701Q typed specs cannot drift from catalog policy" {
@@ -1260,9 +1363,9 @@ test "missing capability identifies the exact concrete target" {
     }
 }
 
-test "ambiguous activities are reported per target without choosing one" {
+test "ambiguous activities are reported only for activity-owned profile targets" {
     const allocator = std.testing.allocator;
-    const definition = catalog.findForm("0605").?;
+    const definition = catalog.findForm("1601C").?;
     const on = try model.Date.parseIso("2026-03-31");
     const activities = [_]model.BusinessActivity{
         .{
@@ -1317,14 +1420,14 @@ test "ambiguous activities are reported per target without choosing one" {
     for (rejected.issues) |issue| {
         switch (issue) {
             .ambiguous_business_activity => |context| {
-                try std.testing.expect(
-                    context.reusable_field == .atc or
-                        context.reusable_field == .line_of_business,
+                try std.testing.expectEqual(
+                    field.ReusableField.line_of_business,
+                    context.reusable_field,
                 );
                 ambiguous_count += 1;
             },
             else => {},
         }
     }
-    try std.testing.expectEqual(@as(usize, 2), ambiguous_count);
+    try std.testing.expectEqual(@as(usize, 1), ambiguous_count);
 }

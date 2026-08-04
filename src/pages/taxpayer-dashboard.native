@@ -473,24 +473,24 @@
         <text size="sm" foreground="text_muted">DESCRIPTION</text>
         <text wrap="true">{title}</text>
       </column>
-      <grid columns="2" gap="12">
+      <column gap="12">
         <column gap="4">
           <text size="sm" foreground="text_muted">TAX TYPE</text>
-          <text><span weight="bold">{category}</span></text>
+          <text wrap="true">{category}</text>
         </column>
         <column gap="4">
           <text size="sm" foreground="text_muted">FILING FREQUENCY</text>
-          <text><span weight="bold">{cadence}</span></text>
+          <text wrap="true">{cadence}</text>
         </column>
         <column gap="4">
           <text size="sm" foreground="text_muted">CATALOG REVISION</text>
-          <text><span mono="true">{revision}</span></text>
+          <text wrap="true">{revision}</text>
         </column>
         <column gap="4">
           <text size="sm" foreground="text_muted">AVAILABILITY</text>
-          <text><span weight="bold">{capability}</span></text>
+          <text wrap="true">{capability}</text>
         </column>
-      </grid>
+      </column>
     </column>
   </column>
 </template>
@@ -617,7 +617,7 @@
               <icon name="search" foreground="text_muted" width="28" height="28"/>
               <text text-alignment="center"><span weight="bold">No active forms</span></text>
               <text wrap="true" text-alignment="center" foreground="text_muted">Activate forms for this profile and tax year to add them to the library.</text>
-              <text wrap="true" text-alignment="center" foreground="text_muted">Open Profile Settings → Tax Forms to activate a yearly form set.</text>
+              <text wrap="true" text-alignment="center" foreground="text_muted">Open Profile Settings → Registration & Forms to activate a yearly form set.</text>
             </column>
           </card>
         </if>
@@ -653,7 +653,18 @@
                   </row>
                   <text wrap="true">{form.title}</text>
                   <text wrap="true" foreground="text_muted">{form.categoryLabel} - {form.cadenceLabel}</text>
-                  <text wrap="true" foreground="text_muted">{form.capability}</text>
+                  <badge variant="outline">{form.capability}</badge>
+                  <text wrap="true" size="sm" foreground="text_muted">Fileability: {form.fileability}</text>
+                  <if test="{form.taxFormProfileActionVisible}">
+                    <column gap="6">
+                      <text wrap="true" size="sm" foreground="text_muted">{form.taxFormProfileStatus}</text>
+                      <button
+                        height="36"
+                        variant="outline"
+                        disabled="{form.taxFormProfileActionDisabled}"
+                        on-press="open_tax_form_profile:{form.id}">{form.taxFormProfileAction}</button>
+                    </column>
+                  </if>
                 </column>
               </row>
             </card>
@@ -677,6 +688,20 @@
                     label="{form.infoLabel}"
                     on-press="profile_forms_show_info:{form.id}"></button>
                 </row>
+                <text wrap="true">{form.title}</text>
+                <row gap="6" cross="center"><badge variant="secondary">{form.activeLabel}</badge><badge variant="outline">{form.cadenceLabel}</badge><badge variant="outline">{form.capability}</badge></row>
+                <text wrap="true" size="sm" foreground="text_muted">Fileability: {form.fileability}</text>
+                <text wrap="true" size="sm" foreground="text_muted">{form.activationLabel}</text>
+                <column gap="8" cross="stretch">
+                  <text wrap="true" size="sm" foreground="text_muted">{form.taxFormProfileStatus}</text>
+                  <if test="{form.taxFormProfileActionVisible}">
+                    <button
+                      height="36"
+                      variant="outline"
+                      disabled="{form.taxFormProfileActionDisabled}"
+                      on-press="open_tax_form_profile:{form.id}">{form.taxFormProfileAction}</button>
+                  </if>
+                </column>
                 <if test="{form.hasPeriodCells}">
                   <grid columns="{form.periodGridColumns}" gap="6">
                     <if test="{form.period1.available}"><use template="t-fp" a="{form.period1.actionLabel}" i="{form.period1.actionId}" x="{form.period1.selected}" d="{form.period1.disabled}" l="{form.period1.label}" s="{form.period1.visualStatus}" v="{form.period1.visible}" c="{form.period1.statusColor}" w="{form.period1.tileWidth}"/></if>
