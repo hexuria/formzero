@@ -1550,3 +1550,88 @@ must, in the same change, add owner qualification to `listProfiles`,
 `searchProfiles`, `findProfileWithCanonicalTin`, and `canonicalTinIsTaken` — this
 table is the checklist. G4 is closed for the single-owner design; it reopens only
 with that migration.
+
+---
+
+## 25. One-decision COR apply, the mid-year surface, and the field templates (2026-08-04)
+
+Four commits landed after the §24 audit, scoped by three ratified decisions:
+key custody deferred with findings recorded, the COR apply fixed for both
+atomicity and durable provenance, and the G5 surface built as record + review
+only.
+
+### Applying a reviewed COR is now one transaction (`f7d6454`, `63d62c6`)
+
+§11's "Apply is one transaction" was promised but not structurally true: the
+apply reused the profile save and the forms save wholesale, two separate
+commits — and restructuring exposed a **latent data bug** between them. The
+profile save's tail reloads the year workspace, which wiped the staged form
+selection before the forms half ran, so accepting details and forms together
+wrote an *empty* form set for a draft year. No test covered the combined path;
+now one pins it.
+
+The store gained an `applyCorReview` composite (the writers were factored into
+transaction-free bodies under thin transactional wrappers), so both halves
+land or neither does. On failure the review stays open, the staged choices
+survive, and a year set up in another window becomes the same recoverable
+conflict card the standalone save shows. One reconciled semantic: the
+retroactive-facts guard now runs before commit, and the pending revision
+itself may be what gives the year its facts — where the old flow would commit
+the revision and then refuse the forms, the new flow refuses everything.
+
+Provenance is durable now: schema v10 adds `cor_document_id` to revisions,
+alongside the readable free-text reference. A RESTRICT foreign key pins cited
+evidence for as long as the revision exists (for append-only revisions,
+forever — §11's conditional-deletion rule, enforced), and a guard trigger
+refuses a link to another taxpayer's document or from a non-imported revision.
+Re-applying the same decision still appends nothing. **Deferred, one line:**
+§11 says "link both" — the year-forms side has no durable document link yet;
+only the revision side does.
+
+### Recording a mid-year Forms Set change (`97a7c10`, G5's first surface)
+
+A configured year's save now carries a "When does this apply?" scope: *Whole
+year* is today's save unchanged; *From a date* reveals an effective-from field
+and records the staged catalog draft into the interval tables, leaving the
+year's base setup untouched by construction. Afterwards the catalog
+deliberately snaps back to the saved year — anything else would read as a lost
+save — while a notice names what was recorded and a review list under the save
+buttons opens itself showing the new row ("From {date} · {n} active forms",
+with a "Covers today" badge computed by plain range check, not date-scoped
+resolution).
+
+Honest limits, stated in the UI's own copy: **deadlines and the calendar
+still resolve by year** (`resolveFormSetOn` has no callers; the calendar is a
+scoped-out follow-up), and **a year holds one recorded change** through this
+surface, because a recorded change runs open through year end and overlap is
+rejected — lifting that needs supersede/void semantics in the store. Drafts
+keep the old flow: an interval over a nonexistent base set is not a story this
+slice creates. Errors are named in plain words: malformed date, a date outside
+the open year (a UI pre-check; the store constraint is defense-in-depth), and
+the overlap collision naming the existing change's date.
+
+### The field templates and the generator contract (`2e74eca`)
+
+The ten form pages repeated one label+input block 239 times — 14% of the
+flattened markup. Two args-only shared templates in the shell (`form-field`,
+`form-field-bound`) now carry the shape, referenced through the
+`@include-template` directive so each page still lints standalone. Reclaimed
+11.6 KiB; headroom stands at **14.2 KiB** of the 256 KiB ceiling.
+
+**New contract:** `scripts/tax-catalog/generate.ts` reads the form pages as
+the source of truth for the 299-input catalog. It now parses the directive
+shape (label and placeholder from the directive's attributes) in addition to
+bare label+input pairs. Anyone adding form fields must use one of those
+shapes — a third shape is invisible to the catalog and the per-form
+`expectedInputCount` check will fail the build, which is the intended tripwire.
+
+### Key custody: deferred, with the map drawn
+
+Nothing was built, per decision. What the exploration established is recorded
+in `docs/security/SDK-CREDENTIAL-STORE-FINDINGS-2026-08-04.md`: the SDK ships
+real OS credential stores (Keychain / Credential Manager / libsecret) behind
+`PlatformServices`, reachable through the same `Effects.services` seam the COR
+dialog uses; the `credentials` manifest permission is undeclared; and the SDK
+primitive is Credential Manager, not the decision packet's DPAPI — a decision
+the custody ADR must make, not a drop-in. The gate itself stays closed on the
+backend half, which is external approval, not engineering.
