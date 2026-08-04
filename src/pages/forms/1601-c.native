@@ -1,132 +1,48 @@
 <template name="form-1601-c-grid-1" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">TIN</text>
-      <input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">RDO Code</text>
-      <input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Taxpayer Name</text>
-      <input text="{formFilerTaxpayerName}" placeholder="Registered taxpayer name" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Registered Address</text>
-      <input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Line of Business</text>
-      <input text="{formFilerLineOfBusiness}" placeholder="Business activity" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Contact Number</text>
-      <input text="{formFilerContactNumber}" placeholder="Contact number" disabled="true" />
-    </column>
+    <!-- @include-template form-field-bound label="TIN" v="{formFilerTin}" ph="000-000-000-000" -->
+    <!-- @include-template form-field-bound label="RDO Code" v="{formFilerRdo}" ph="RDO" -->
+    <!-- @include-template form-field-bound label="Taxpayer Name" v="{formFilerTaxpayerName}" ph="Registered taxpayer name" -->
+    <!-- @include-template form-field-bound label="Registered Address" v="{formFilerRegisteredAddress}" ph="Registered address" -->
+    <!-- @include-template form-field-bound label="Line of Business" v="{formFilerLineOfBusiness}" ph="Business activity" -->
+    <!-- @include-template form-field-bound label="Contact Number" v="{formFilerContactNumber}" ph="Contact number" -->
   </grid>
 </template>
 
 <template name="form-1601-c-grid-2" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">For the Month of</text>
-      <input text="{formFilingMonthYear}" placeholder="MM / YYYY" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Amended Return?</text>
-      <input placeholder="No" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Any Taxes Withheld?</text>
-      <input placeholder="Yes / No" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Number of Sheets Attached</text>
-      <input placeholder="Enter number" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">ATC</text>
-      <input text="{formFilerAtc}" placeholder="Select ATC" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">13 Tax Relief</text>
-      <input placeholder="Relief code or details" />
-    </column>
+    <!-- @include-template form-field-bound label="For the Month of" v="{formFilingMonthYear}" ph="MM / YYYY" -->
+    <!-- @include-template form-field label="Amended Return?" ph="No" -->
+    <!-- @include-template form-field label="Any Taxes Withheld?" ph="Yes / No" -->
+    <!-- @include-template form-field label="Number of Sheets Attached" ph="Enter number" -->
+    <!-- @include-template form-field-bound label="ATC" v="{formFilerAtc}" ph="Select ATC" -->
+    <!-- @include-template form-field label="13 Tax Relief" ph="Relief code or details" -->
   </grid>
 </template>
 
 <template name="form-1601-c-grid-3" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">14 Total Amount of Compensation</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">15 Statutory Minimum Wage</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">16 Holiday, Overtime and Night Shift Pay</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">17 13th Month Pay and Other Benefits</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">18 De Minimis Benefits</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">19 SSS, GSIS, PHIC and Pag-IBIG Contributions</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">20 Other Non-Taxable Compensation</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">21 Total Non-Taxable / Exempt Compensation</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">22 Total Taxable Compensation</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">25 Tax Required to be Withheld</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">26 Schedule Adjustment</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">31 Tax Still Due</text>
-      <input placeholder="Enter amount" />
-    </column>
+    <!-- @include-template form-field label="14 Total Amount of Compensation" ph="Enter amount" -->
+    <!-- @include-template form-field label="15 Statutory Minimum Wage" ph="Enter amount" -->
+    <!-- @include-template form-field label="16 Holiday, Overtime and Night Shift Pay" ph="Enter amount" -->
+    <!-- @include-template form-field label="17 13th Month Pay and Other Benefits" ph="Enter amount" -->
+    <!-- @include-template form-field label="18 De Minimis Benefits" ph="Enter amount" -->
+    <!-- @include-template form-field label="19 SSS, GSIS, PHIC and Pag-IBIG Contributions" ph="Enter amount" -->
+    <!-- @include-template form-field label="20 Other Non-Taxable Compensation" ph="Enter amount" -->
+    <!-- @include-template form-field label="21 Total Non-Taxable / Exempt Compensation" ph="Enter amount" -->
+    <!-- @include-template form-field label="22 Total Taxable Compensation" ph="Enter amount" -->
+    <!-- @include-template form-field label="25 Tax Required to be Withheld" ph="Enter amount" -->
+    <!-- @include-template form-field label="26 Schedule Adjustment" ph="Enter amount" -->
+    <!-- @include-template form-field label="31 Tax Still Due" ph="Enter amount" -->
   </grid>
 </template>
 
 <template name="form-1601-c-grid-4" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">32 Surcharge</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">33 Interest</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">34 Compromise</text>
-      <input placeholder="Enter amount" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">35 Total Penalties</text>
-      <input placeholder="Enter amount" />
-    </column>
+    <!-- @include-template form-field label="32 Surcharge" ph="Enter amount" -->
+    <!-- @include-template form-field label="33 Interest" ph="Enter amount" -->
+    <!-- @include-template form-field label="34 Compromise" ph="Enter amount" -->
+    <!-- @include-template form-field label="35 Total Penalties" ph="Enter amount" -->
   </grid>
 </template>
 

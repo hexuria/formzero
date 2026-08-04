@@ -80,7 +80,7 @@ const fields_0605_1999_07_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0605.native",
-        .source_line = 5,
+        .source_line = 3,
         .control = .input,
     },
     .{
@@ -93,7 +93,7 @@ const fields_0605_1999_07_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0605.native",
-        .source_line = 9,
+        .source_line = 4,
         .control = .input,
     },
     .{
@@ -106,7 +106,7 @@ const fields_0605_1999_07_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0605.native",
-        .source_line = 13,
+        .source_line = 5,
         .control = .input,
     },
     .{
@@ -119,7 +119,7 @@ const fields_0605_1999_07_encs = [_]FieldDefinition{
         .profile_key = "atc",
         .profile_presence = .required,
         .source_path = "src/pages/forms/0605.native",
-        .source_line = 17,
+        .source_line = 6,
         .control = .input,
     },
     .{
@@ -132,7 +132,7 @@ const fields_0605_1999_07_encs = [_]FieldDefinition{
         .profile_key = "tax_type",
         .profile_presence = .required,
         .source_path = "src/pages/forms/0605.native",
-        .source_line = 21,
+        .source_line = 7,
         .control = .input,
     },
     .{
@@ -145,7 +145,7 @@ const fields_0605_1999_07_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0605.native",
-        .source_line = 25,
+        .source_line = 8,
         .control = .input,
     },
     .{
@@ -158,7 +158,7 @@ const fields_0605_1999_07_encs = [_]FieldDefinition{
         .profile_key = "tin",
         .profile_presence = .required,
         .source_path = "src/pages/forms/0605.native",
-        .source_line = 34,
+        .source_line = 14,
         .control = .input,
     },
     .{
@@ -171,7 +171,7 @@ const fields_0605_1999_07_encs = [_]FieldDefinition{
         .profile_key = "rdo_code",
         .profile_presence = .required,
         .source_path = "src/pages/forms/0605.native",
-        .source_line = 38,
+        .source_line = 15,
         .control = .input,
     },
     .{
@@ -184,7 +184,7 @@ const fields_0605_1999_07_encs = [_]FieldDefinition{
         .profile_key = "line_of_business",
         .profile_presence = .required,
         .source_path = "src/pages/forms/0605.native",
-        .source_line = 42,
+        .source_line = 16,
         .control = .input,
     },
     .{
@@ -197,7 +197,7 @@ const fields_0605_1999_07_encs = [_]FieldDefinition{
         .profile_key = "taxpayer_name",
         .profile_presence = .required,
         .source_path = "src/pages/forms/0605.native",
-        .source_line = 46,
+        .source_line = 17,
         .control = .input,
     },
     .{
@@ -210,7 +210,7 @@ const fields_0605_1999_07_encs = [_]FieldDefinition{
         .profile_key = "registered_address",
         .profile_presence = .required,
         .source_path = "src/pages/forms/0605.native",
-        .source_line = 50,
+        .source_line = 18,
         .control = .input,
     },
     .{
@@ -223,7 +223,7 @@ const fields_0605_1999_07_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0605.native",
-        .source_line = 54,
+        .source_line = 19,
         .control = .input,
     },
     .{
@@ -236,7 +236,7 @@ const fields_0605_1999_07_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0605.native",
-        .source_line = 63,
+        .source_line = 25,
         .control = .input,
     },
     .{
@@ -249,7 +249,7 @@ const fields_0605_1999_07_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0605.native",
-        .source_line = 67,
+        .source_line = 26,
         .control = .input,
     },
     .{
@@ -262,7 +262,7 @@ const fields_0605_1999_07_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0605.native",
-        .source_line = 71,
+        .source_line = 27,
         .control = .input,
     },
     .{
@@ -275,7 +275,7 @@ const fields_0605_1999_07_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0605.native",
-        .source_line = 75,
+        .source_line = 28,
         .control = .input,
     },
     .{
@@ -288,7 +288,7 @@ const fields_0605_1999_07_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0605.native",
-        .source_line = 298,
+        .source_line = 248,
         .control = .input,
     },
     .{
@@ -373,7 +373,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = "tin",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 5,
+        .source_line = 3,
         .control = .input,
     },
     .{
@@ -386,7 +386,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = "rdo_code",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 9,
+        .source_line = 4,
         .control = .input,
     },
     .{
@@ -399,7 +399,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = "taxpayer_name",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 13,
+        .source_line = 5,
         .control = .input,
     },
     .{
@@ -412,7 +412,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = "registered_address",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 17,
+        .source_line = 6,
         .control = .input,
     },
     .{
@@ -425,7 +425,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = "line_of_business",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 21,
+        .source_line = 7,
         .control = .input,
     },
     .{
@@ -438,7 +438,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = "contact_number",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 25,
+        .source_line = 8,
         .control = .input,
     },
     .{
@@ -451,7 +451,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 34,
+        .source_line = 14,
         .control = .input,
     },
     .{
@@ -464,7 +464,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 38,
+        .source_line = 15,
         .control = .input,
     },
     .{
@@ -477,7 +477,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 42,
+        .source_line = 16,
         .control = .input,
     },
     .{
@@ -490,7 +490,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 46,
+        .source_line = 17,
         .control = .input,
     },
     .{
@@ -503,7 +503,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = "atc",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 50,
+        .source_line = 18,
         .control = .input,
     },
     .{
@@ -516,7 +516,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 54,
+        .source_line = 19,
         .control = .input,
     },
     .{
@@ -529,7 +529,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 63,
+        .source_line = 25,
         .control = .input,
     },
     .{
@@ -542,7 +542,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 67,
+        .source_line = 26,
         .control = .input,
     },
     .{
@@ -555,7 +555,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 71,
+        .source_line = 27,
         .control = .input,
     },
     .{
@@ -568,7 +568,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 75,
+        .source_line = 28,
         .control = .input,
     },
     .{
@@ -581,7 +581,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 79,
+        .source_line = 29,
         .control = .input,
     },
     .{
@@ -594,7 +594,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 83,
+        .source_line = 30,
         .control = .input,
     },
     .{
@@ -607,7 +607,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 87,
+        .source_line = 31,
         .control = .input,
     },
     .{
@@ -620,7 +620,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 91,
+        .source_line = 32,
         .control = .input,
     },
     .{
@@ -633,7 +633,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 95,
+        .source_line = 33,
         .control = .input,
     },
     .{
@@ -646,7 +646,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 99,
+        .source_line = 34,
         .control = .input,
     },
     .{
@@ -659,7 +659,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 103,
+        .source_line = 35,
         .control = .input,
     },
     .{
@@ -672,7 +672,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 107,
+        .source_line = 36,
         .control = .input,
     },
     .{
@@ -685,7 +685,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 116,
+        .source_line = 42,
         .control = .input,
     },
     .{
@@ -698,7 +698,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 120,
+        .source_line = 43,
         .control = .input,
     },
     .{
@@ -711,7 +711,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 124,
+        .source_line = 44,
         .control = .input,
     },
     .{
@@ -724,7 +724,7 @@ const fields_1601c_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1601-c.native",
-        .source_line = 128,
+        .source_line = 45,
         .control = .input,
     },
     .{
@@ -849,7 +849,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 5,
+        .source_line = 3,
         .control = .input,
     },
     .{
@@ -862,7 +862,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 9,
+        .source_line = 4,
         .control = .input,
     },
     .{
@@ -875,7 +875,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 13,
+        .source_line = 5,
         .control = .input,
     },
     .{
@@ -888,7 +888,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = "tax_type",
         .profile_presence = .required,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 17,
+        .source_line = 6,
         .control = .input,
     },
     .{
@@ -901,7 +901,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 21,
+        .source_line = 7,
         .control = .input,
     },
     .{
@@ -914,7 +914,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = "government_withholding_agent",
         .profile_presence = .required,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 25,
+        .source_line = 8,
         .control = .input,
     },
     .{
@@ -927,7 +927,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = "tin",
         .profile_presence = .required,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 29,
+        .source_line = 9,
         .control = .input,
     },
     .{
@@ -940,7 +940,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = "rdo_code",
         .profile_presence = .required,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 33,
+        .source_line = 10,
         .control = .input,
     },
     .{
@@ -953,7 +953,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = "taxpayer_name",
         .profile_presence = .required,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 37,
+        .source_line = 11,
         .control = .input,
     },
     .{
@@ -966,7 +966,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 46,
+        .source_line = 17,
         .control = .input,
     },
     .{
@@ -979,7 +979,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 50,
+        .source_line = 18,
         .control = .input,
     },
     .{
@@ -992,7 +992,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 54,
+        .source_line = 19,
         .control = .input,
     },
     .{
@@ -1005,7 +1005,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 58,
+        .source_line = 20,
         .control = .input,
     },
     .{
@@ -1018,7 +1018,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 62,
+        .source_line = 21,
         .control = .input,
     },
     .{
@@ -1031,7 +1031,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 66,
+        .source_line = 22,
         .control = .input,
     },
     .{
@@ -1044,7 +1044,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 70,
+        .source_line = 23,
         .control = .input,
     },
     .{
@@ -1057,7 +1057,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 74,
+        .source_line = 24,
         .control = .input,
     },
     .{
@@ -1070,7 +1070,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 83,
+        .source_line = 30,
         .control = .input,
     },
     .{
@@ -1083,7 +1083,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 87,
+        .source_line = 31,
         .control = .input,
     },
     .{
@@ -1096,7 +1096,7 @@ const fields_0619f_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-f.native",
-        .source_line = 91,
+        .source_line = 32,
         .control = .input,
     },
     .{
@@ -1750,7 +1750,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 5,
+        .source_line = 3,
         .control = .input,
     },
     .{
@@ -1763,7 +1763,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 9,
+        .source_line = 4,
         .control = .input,
     },
     .{
@@ -1776,7 +1776,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 13,
+        .source_line = 5,
         .control = .input,
     },
     .{
@@ -1789,7 +1789,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = "tin",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 17,
+        .source_line = 6,
         .control = .input,
     },
     .{
@@ -1802,7 +1802,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = "rdo_code",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 21,
+        .source_line = 7,
         .control = .input,
     },
     .{
@@ -1815,7 +1815,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = "taxpayer_name",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 25,
+        .source_line = 8,
         .control = .input,
     },
     .{
@@ -1828,7 +1828,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = "registered_address",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 29,
+        .source_line = 9,
         .control = .input,
     },
     .{
@@ -1841,7 +1841,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = "zip_code",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 33,
+        .source_line = 10,
         .control = .input,
     },
     .{
@@ -1854,7 +1854,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = "date_of_birth",
         .profile_presence = .optional,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 37,
+        .source_line = 11,
         .control = .input,
     },
     .{
@@ -1867,7 +1867,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = "email_address",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 41,
+        .source_line = 12,
         .control = .input,
     },
     .{
@@ -1880,7 +1880,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = "citizenship",
         .profile_presence = .optional,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 45,
+        .source_line = 13,
         .control = .input,
     },
     .{
@@ -1893,7 +1893,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = "foreign_tax_number",
         .profile_presence = .optional,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 49,
+        .source_line = 14,
         .control = .input,
     },
     .{
@@ -1906,7 +1906,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = "contact_number",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 53,
+        .source_line = 15,
         .control = .input,
     },
     .{
@@ -1919,7 +1919,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = "tin",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 62,
+        .source_line = 21,
         .control = .input,
     },
     .{
@@ -1932,7 +1932,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = "rdo_code",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 66,
+        .source_line = 22,
         .control = .input,
     },
     .{
@@ -1945,7 +1945,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = "taxpayer_name",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 70,
+        .source_line = 23,
         .control = .input,
     },
     .{
@@ -1958,7 +1958,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 79,
+        .source_line = 29,
         .control = .input,
     },
     .{
@@ -1971,7 +1971,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 83,
+        .source_line = 30,
         .control = .input,
     },
     .{
@@ -1984,7 +1984,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 87,
+        .source_line = 31,
         .control = .input,
     },
     .{
@@ -1997,7 +1997,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 96,
+        .source_line = 37,
         .control = .input,
     },
     .{
@@ -2010,7 +2010,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 100,
+        .source_line = 38,
         .control = .input,
     },
     .{
@@ -2023,7 +2023,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 104,
+        .source_line = 39,
         .control = .input,
     },
     .{
@@ -2036,7 +2036,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 108,
+        .source_line = 40,
         .control = .input,
     },
     .{
@@ -2049,7 +2049,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 112,
+        .source_line = 41,
         .control = .input,
     },
     .{
@@ -2062,7 +2062,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 116,
+        .source_line = 42,
         .control = .input,
     },
     .{
@@ -2075,7 +2075,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 125,
+        .source_line = 48,
         .control = .input,
     },
     .{
@@ -2088,7 +2088,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 129,
+        .source_line = 49,
         .control = .input,
     },
     .{
@@ -2101,7 +2101,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 138,
+        .source_line = 55,
         .control = .input,
     },
     .{
@@ -2114,7 +2114,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 142,
+        .source_line = 56,
         .control = .input,
     },
     .{
@@ -2127,7 +2127,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 146,
+        .source_line = 57,
         .control = .input,
     },
     .{
@@ -2140,7 +2140,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 155,
+        .source_line = 63,
         .control = .input,
     },
     .{
@@ -2153,7 +2153,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 159,
+        .source_line = 64,
         .control = .input,
     },
     .{
@@ -2166,7 +2166,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 163,
+        .source_line = 65,
         .control = .input,
     },
     .{
@@ -2179,7 +2179,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 172,
+        .source_line = 71,
         .control = .input,
     },
     .{
@@ -2192,7 +2192,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 176,
+        .source_line = 72,
         .control = .input,
     },
     .{
@@ -2205,7 +2205,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 180,
+        .source_line = 73,
         .control = .input,
     },
     .{
@@ -2218,7 +2218,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 189,
+        .source_line = 79,
         .control = .input,
     },
     .{
@@ -2231,7 +2231,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 193,
+        .source_line = 80,
         .control = .input,
     },
     .{
@@ -2244,7 +2244,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 202,
+        .source_line = 86,
         .control = .input,
     },
     .{
@@ -2257,7 +2257,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 206,
+        .source_line = 87,
         .control = .input,
     },
     .{
@@ -2270,7 +2270,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 215,
+        .source_line = 93,
         .control = .input,
     },
     .{
@@ -2283,7 +2283,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 219,
+        .source_line = 94,
         .control = .input,
     },
     .{
@@ -2296,7 +2296,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 223,
+        .source_line = 95,
         .control = .input,
     },
     .{
@@ -2309,7 +2309,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 227,
+        .source_line = 96,
         .control = .input,
     },
     .{
@@ -2322,7 +2322,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 236,
+        .source_line = 102,
         .control = .input,
     },
     .{
@@ -2335,7 +2335,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 240,
+        .source_line = 103,
         .control = .input,
     },
     .{
@@ -2348,7 +2348,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 244,
+        .source_line = 104,
         .control = .input,
     },
     .{
@@ -2361,7 +2361,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 253,
+        .source_line = 110,
         .control = .input,
     },
     .{
@@ -2374,7 +2374,7 @@ const fields_1701_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1701.native",
-        .source_line = 257,
+        .source_line = 111,
         .control = .input,
     },
     .{
@@ -2602,7 +2602,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 5,
+        .source_line = 3,
         .control = .input,
     },
     .{
@@ -2615,7 +2615,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 9,
+        .source_line = 4,
         .control = .input,
     },
     .{
@@ -2628,7 +2628,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 13,
+        .source_line = 5,
         .control = .input,
     },
     .{
@@ -2641,7 +2641,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = "tin",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 17,
+        .source_line = 6,
         .control = .input,
     },
     .{
@@ -2654,7 +2654,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = "rdo_code",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 21,
+        .source_line = 7,
         .control = .input,
     },
     .{
@@ -2667,7 +2667,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = "registered_name",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 25,
+        .source_line = 8,
         .control = .input,
     },
     .{
@@ -2680,7 +2680,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = "registered_address",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 29,
+        .source_line = 9,
         .control = .input,
     },
     .{
@@ -2693,7 +2693,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = "line_of_business",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 33,
+        .source_line = 10,
         .control = .input,
     },
     .{
@@ -2706,7 +2706,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 37,
+        .source_line = 11,
         .control = .input,
     },
     .{
@@ -2719,7 +2719,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 46,
+        .source_line = 17,
         .control = .input,
     },
     .{
@@ -2732,7 +2732,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 50,
+        .source_line = 18,
         .control = .input,
     },
     .{
@@ -2745,7 +2745,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 54,
+        .source_line = 19,
         .control = .input,
     },
     .{
@@ -2758,7 +2758,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 58,
+        .source_line = 20,
         .control = .input,
     },
     .{
@@ -2771,7 +2771,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 62,
+        .source_line = 21,
         .control = .input,
     },
     .{
@@ -2784,7 +2784,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 66,
+        .source_line = 22,
         .control = .input,
     },
     .{
@@ -2797,7 +2797,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 75,
+        .source_line = 28,
         .control = .input,
     },
     .{
@@ -2810,7 +2810,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 79,
+        .source_line = 29,
         .control = .input,
     },
     .{
@@ -2823,7 +2823,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 83,
+        .source_line = 30,
         .control = .input,
     },
     .{
@@ -2836,7 +2836,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 87,
+        .source_line = 31,
         .control = .input,
     },
     .{
@@ -2849,7 +2849,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 91,
+        .source_line = 32,
         .control = .input,
     },
     .{
@@ -2862,7 +2862,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 95,
+        .source_line = 33,
         .control = .input,
     },
     .{
@@ -2875,7 +2875,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 104,
+        .source_line = 39,
         .control = .input,
     },
     .{
@@ -2888,7 +2888,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 108,
+        .source_line = 40,
         .control = .input,
     },
     .{
@@ -2901,7 +2901,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 112,
+        .source_line = 41,
         .control = .input,
     },
     .{
@@ -2914,7 +2914,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 116,
+        .source_line = 42,
         .control = .input,
     },
     .{
@@ -2927,7 +2927,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 120,
+        .source_line = 43,
         .control = .input,
     },
     .{
@@ -2940,7 +2940,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 124,
+        .source_line = 44,
         .control = .input,
     },
     .{
@@ -2953,7 +2953,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 133,
+        .source_line = 50,
         .control = .input,
     },
     .{
@@ -2966,7 +2966,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 137,
+        .source_line = 51,
         .control = .input,
     },
     .{
@@ -2979,7 +2979,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 141,
+        .source_line = 52,
         .control = .input,
     },
     .{
@@ -2992,7 +2992,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 150,
+        .source_line = 58,
         .control = .input,
     },
     .{
@@ -3005,7 +3005,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 154,
+        .source_line = 59,
         .control = .input,
     },
     .{
@@ -3018,7 +3018,7 @@ const fields_1702rt_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-rt.native",
-        .source_line = 158,
+        .source_line = 60,
         .control = .input,
     },
     .{
@@ -3090,7 +3090,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 5,
+        .source_line = 3,
         .control = .input,
     },
     .{
@@ -3103,7 +3103,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 9,
+        .source_line = 4,
         .control = .input,
     },
     .{
@@ -3116,7 +3116,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 13,
+        .source_line = 5,
         .control = .input,
     },
     .{
@@ -3129,7 +3129,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = "tin",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 17,
+        .source_line = 6,
         .control = .input,
     },
     .{
@@ -3142,7 +3142,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = "rdo_code",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 21,
+        .source_line = 7,
         .control = .input,
     },
     .{
@@ -3155,7 +3155,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = "registered_name",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 25,
+        .source_line = 8,
         .control = .input,
     },
     .{
@@ -3168,7 +3168,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = "registered_address",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 29,
+        .source_line = 9,
         .control = .input,
     },
     .{
@@ -3181,7 +3181,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = "line_of_business",
         .profile_presence = .required,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 33,
+        .source_line = 10,
         .control = .input,
     },
     .{
@@ -3194,7 +3194,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = "special_rate_basis",
         .profile_presence = .optional,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 37,
+        .source_line = 11,
         .control = .input,
     },
     .{
@@ -3207,7 +3207,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 46,
+        .source_line = 17,
         .control = .input,
     },
     .{
@@ -3220,7 +3220,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 50,
+        .source_line = 18,
         .control = .input,
     },
     .{
@@ -3233,7 +3233,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 54,
+        .source_line = 19,
         .control = .input,
     },
     .{
@@ -3246,7 +3246,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 58,
+        .source_line = 20,
         .control = .input,
     },
     .{
@@ -3259,7 +3259,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 62,
+        .source_line = 21,
         .control = .input,
     },
     .{
@@ -3272,7 +3272,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 66,
+        .source_line = 22,
         .control = .input,
     },
     .{
@@ -3285,7 +3285,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 75,
+        .source_line = 28,
         .control = .input,
     },
     .{
@@ -3298,7 +3298,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 79,
+        .source_line = 29,
         .control = .input,
     },
     .{
@@ -3311,7 +3311,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 83,
+        .source_line = 30,
         .control = .input,
     },
     .{
@@ -3324,7 +3324,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 87,
+        .source_line = 31,
         .control = .input,
     },
     .{
@@ -3337,7 +3337,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 91,
+        .source_line = 32,
         .control = .input,
     },
     .{
@@ -3350,7 +3350,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 100,
+        .source_line = 38,
         .control = .input,
     },
     .{
@@ -3363,7 +3363,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 104,
+        .source_line = 39,
         .control = .input,
     },
     .{
@@ -3376,7 +3376,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 108,
+        .source_line = 40,
         .control = .input,
     },
     .{
@@ -3389,7 +3389,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 112,
+        .source_line = 41,
         .control = .input,
     },
     .{
@@ -3402,7 +3402,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 121,
+        .source_line = 47,
         .control = .input,
     },
     .{
@@ -3415,7 +3415,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 125,
+        .source_line = 48,
         .control = .input,
     },
     .{
@@ -3428,7 +3428,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 129,
+        .source_line = 49,
         .control = .input,
     },
     .{
@@ -3441,7 +3441,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 138,
+        .source_line = 55,
         .control = .input,
     },
     .{
@@ -3454,7 +3454,7 @@ const fields_1702mx_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/1702-mx.native",
-        .source_line = 142,
+        .source_line = 56,
         .control = .input,
     },
     .{
@@ -3554,7 +3554,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 5,
+        .source_line = 3,
         .control = .input,
     },
     .{
@@ -3567,7 +3567,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 9,
+        .source_line = 4,
         .control = .input,
     },
     .{
@@ -3580,7 +3580,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 13,
+        .source_line = 5,
         .control = .input,
     },
     .{
@@ -3593,7 +3593,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 17,
+        .source_line = 6,
         .control = .input,
     },
     .{
@@ -3606,7 +3606,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 21,
+        .source_line = 7,
         .control = .input,
     },
     .{
@@ -3619,7 +3619,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 25,
+        .source_line = 8,
         .control = .input,
     },
     .{
@@ -3632,7 +3632,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = "tin",
         .profile_presence = .required,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 29,
+        .source_line = 9,
         .control = .input,
     },
     .{
@@ -3645,7 +3645,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = "rdo_code",
         .profile_presence = .required,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 33,
+        .source_line = 10,
         .control = .input,
     },
     .{
@@ -3658,7 +3658,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = "taxpayer_name",
         .profile_presence = .required,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 37,
+        .source_line = 11,
         .control = .input,
     },
     .{
@@ -3671,7 +3671,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 46,
+        .source_line = 17,
         .control = .input,
     },
     .{
@@ -3684,7 +3684,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 50,
+        .source_line = 18,
         .control = .input,
     },
     .{
@@ -3697,7 +3697,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 54,
+        .source_line = 19,
         .control = .input,
     },
     .{
@@ -3710,7 +3710,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 58,
+        .source_line = 20,
         .control = .input,
     },
     .{
@@ -3723,7 +3723,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 62,
+        .source_line = 21,
         .control = .input,
     },
     .{
@@ -3736,7 +3736,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 66,
+        .source_line = 22,
         .control = .input,
     },
     .{
@@ -3749,7 +3749,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 75,
+        .source_line = 28,
         .control = .input,
     },
     .{
@@ -3762,7 +3762,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 79,
+        .source_line = 29,
         .control = .input,
     },
     .{
@@ -3775,7 +3775,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 83,
+        .source_line = 30,
         .control = .input,
     },
     .{
@@ -3788,7 +3788,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 87,
+        .source_line = 31,
         .control = .input,
     },
     .{
@@ -3801,7 +3801,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 91,
+        .source_line = 32,
         .control = .input,
     },
     .{
@@ -3814,7 +3814,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 95,
+        .source_line = 33,
         .control = .input,
     },
     .{
@@ -3827,7 +3827,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 104,
+        .source_line = 39,
         .control = .input,
     },
     .{
@@ -3840,7 +3840,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 108,
+        .source_line = 40,
         .control = .input,
     },
     .{
@@ -3853,7 +3853,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 112,
+        .source_line = 41,
         .control = .input,
     },
     .{
@@ -3866,7 +3866,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 121,
+        .source_line = 47,
         .control = .input,
     },
     .{
@@ -3879,7 +3879,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 125,
+        .source_line = 48,
         .control = .input,
     },
     .{
@@ -3892,7 +3892,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 129,
+        .source_line = 49,
         .control = .input,
     },
     .{
@@ -3905,7 +3905,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 133,
+        .source_line = 50,
         .control = .input,
     },
     .{
@@ -3918,7 +3918,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 137,
+        .source_line = 51,
         .control = .input,
     },
     .{
@@ -3931,7 +3931,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 141,
+        .source_line = 52,
         .control = .input,
     },
     .{
@@ -3944,7 +3944,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 150,
+        .source_line = 58,
         .control = .input,
     },
     .{
@@ -3957,7 +3957,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 154,
+        .source_line = 59,
         .control = .input,
     },
     .{
@@ -3970,7 +3970,7 @@ const fields_2550q_2024_04_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2550q.native",
-        .source_line = 158,
+        .source_line = 60,
         .control = .input,
     },
     .{
@@ -4198,7 +4198,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 33,
+        .source_line = 31,
         .control = .input,
     },
     .{
@@ -4211,7 +4211,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 37,
+        .source_line = 32,
         .control = .input,
     },
     .{
@@ -4224,7 +4224,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 41,
+        .source_line = 35,
         .control = .input,
     },
     .{
@@ -4237,7 +4237,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 49,
+        .source_line = 41,
         .control = .input,
     },
     .{
@@ -4250,7 +4250,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 53,
+        .source_line = 42,
         .control = .input,
     },
     .{
@@ -4263,7 +4263,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 57,
+        .source_line = 45,
         .control = .input,
     },
     .{
@@ -4276,7 +4276,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 77,
+        .source_line = 65,
         .control = .input,
     },
     .{
@@ -4289,7 +4289,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 85,
+        .source_line = 73,
         .control = .input,
     },
     .{
@@ -4302,7 +4302,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = "tin",
         .profile_presence = .required,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 110,
+        .source_line = 96,
         .control = .input,
     },
     .{
@@ -4315,7 +4315,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = "rdo_code",
         .profile_presence = .required,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 114,
+        .source_line = 97,
         .control = .input,
     },
     .{
@@ -4328,7 +4328,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = "taxpayer_name",
         .profile_presence = .required,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 118,
+        .source_line = 98,
         .control = .input,
     },
     .{
@@ -4341,7 +4341,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = "registered_address",
         .profile_presence = .required,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 122,
+        .source_line = 101,
         .control = .input,
     },
     .{
@@ -4354,7 +4354,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = "zip_code",
         .profile_presence = .required,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 126,
+        .source_line = 105,
         .control = .input,
     },
     .{
@@ -4367,7 +4367,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = "contact_number",
         .profile_presence = .required,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 130,
+        .source_line = 109,
         .control = .input,
     },
     .{
@@ -4380,7 +4380,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = "email_address",
         .profile_presence = .required,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 134,
+        .source_line = 113,
         .control = .input,
     },
     .{
@@ -4393,7 +4393,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 155,
+        .source_line = 134,
         .control = .input,
     },
     .{
@@ -4406,7 +4406,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 163,
+        .source_line = 142,
         .control = .input,
     },
     .{
@@ -4419,7 +4419,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 171,
+        .source_line = 150,
         .control = .input,
     },
     .{
@@ -4432,7 +4432,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 179,
+        .source_line = 156,
         .control = .input,
     },
     .{
@@ -4445,7 +4445,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 183,
+        .source_line = 159,
         .control = .input,
     },
     .{
@@ -4458,7 +4458,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 191,
+        .source_line = 167,
         .control = .input,
     },
     .{
@@ -4471,7 +4471,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 199,
+        .source_line = 175,
         .control = .input,
     },
     .{
@@ -4484,7 +4484,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 207,
+        .source_line = 181,
         .control = .input,
     },
     .{
@@ -4497,7 +4497,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 217,
+        .source_line = 188,
         .control = .input,
     },
     .{
@@ -4510,7 +4510,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 221,
+        .source_line = 191,
         .control = .input,
     },
     .{
@@ -4523,7 +4523,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 229,
+        .source_line = 199,
         .control = .input,
     },
     .{
@@ -4536,7 +4536,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 237,
+        .source_line = 207,
         .control = .input,
     },
     .{
@@ -4549,7 +4549,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 245,
+        .source_line = 213,
         .control = .input,
     },
     .{
@@ -4562,7 +4562,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 249,
+        .source_line = 214,
         .control = .input,
     },
     .{
@@ -4575,7 +4575,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 253,
+        .source_line = 217,
         .control = .input,
     },
     .{
@@ -4588,7 +4588,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 261,
+        .source_line = 225,
         .control = .input,
     },
     .{
@@ -4601,7 +4601,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 269,
+        .source_line = 233,
         .control = .input,
     },
     .{
@@ -4614,7 +4614,7 @@ const fields_2551q_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/2551q.native",
-        .source_line = 277,
+        .source_line = 241,
         .control = .input,
     },
     .{
@@ -4700,7 +4700,7 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-e.native",
-        .source_line = 5,
+        .source_line = 3,
         .control = .input,
     },
     .{
@@ -4713,7 +4713,7 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-e.native",
-        .source_line = 9,
+        .source_line = 4,
         .control = .input,
     },
     .{
@@ -4726,7 +4726,7 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-e.native",
-        .source_line = 13,
+        .source_line = 5,
         .control = .input,
     },
     .{
@@ -4739,7 +4739,7 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
         .profile_key = "atc",
         .profile_presence = .required,
         .source_path = "src/pages/forms/0619-e.native",
-        .source_line = 17,
+        .source_line = 6,
         .control = .input,
     },
     .{
@@ -4752,7 +4752,7 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
         .profile_key = "tax_type",
         .profile_presence = .required,
         .source_path = "src/pages/forms/0619-e.native",
-        .source_line = 21,
+        .source_line = 7,
         .control = .input,
     },
     .{
@@ -4765,7 +4765,7 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-e.native",
-        .source_line = 25,
+        .source_line = 8,
         .control = .input,
     },
     .{
@@ -4778,7 +4778,7 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
         .profile_key = "tin",
         .profile_presence = .required,
         .source_path = "src/pages/forms/0619-e.native",
-        .source_line = 29,
+        .source_line = 9,
         .control = .input,
     },
     .{
@@ -4791,7 +4791,7 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
         .profile_key = "rdo_code",
         .profile_presence = .required,
         .source_path = "src/pages/forms/0619-e.native",
-        .source_line = 33,
+        .source_line = 10,
         .control = .input,
     },
     .{
@@ -4804,7 +4804,7 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
         .profile_key = "government_withholding_agent",
         .profile_presence = .required,
         .source_path = "src/pages/forms/0619-e.native",
-        .source_line = 37,
+        .source_line = 11,
         .control = .input,
     },
     .{
@@ -4817,7 +4817,7 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-e.native",
-        .source_line = 46,
+        .source_line = 17,
         .control = .input,
     },
     .{
@@ -4830,7 +4830,7 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-e.native",
-        .source_line = 50,
+        .source_line = 18,
         .control = .input,
     },
     .{
@@ -4843,7 +4843,7 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-e.native",
-        .source_line = 54,
+        .source_line = 19,
         .control = .input,
     },
     .{
@@ -4856,7 +4856,7 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-e.native",
-        .source_line = 58,
+        .source_line = 20,
         .control = .input,
     },
     .{
@@ -4869,7 +4869,7 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-e.native",
-        .source_line = 62,
+        .source_line = 21,
         .control = .input,
     },
     .{
@@ -4882,7 +4882,7 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-e.native",
-        .source_line = 66,
+        .source_line = 22,
         .control = .input,
     },
     .{
@@ -4895,7 +4895,7 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-e.native",
-        .source_line = 75,
+        .source_line = 28,
         .control = .input,
     },
     .{
@@ -4908,7 +4908,7 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-e.native",
-        .source_line = 79,
+        .source_line = 29,
         .control = .input,
     },
     .{
@@ -4921,7 +4921,7 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
         .profile_key = null,
         .profile_presence = null,
         .source_path = "src/pages/forms/0619-e.native",
-        .source_line = 83,
+        .source_line = 30,
         .control = .input,
     },
     .{

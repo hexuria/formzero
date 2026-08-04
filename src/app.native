@@ -1,5 +1,17 @@
 <!-- GENERATED FILE - DO NOT EDIT. Edit the sources listed in
 scripts/flatten-native.mjs, then run `npm run generate`. -->
+<template name="form-field" args="label ph">
+<column gap="4">
+<text foreground="text_muted">{label}</text>
+<input placeholder="{ph}" />
+</column>
+</template>
+<template name="form-field-bound" args="label v ph">
+<column gap="4">
+<text foreground="text_muted">{label}</text>
+<input text="{v}" placeholder="{ph}" disabled="true" />
+</column>
+</template>
 <template name="sidebar-profile" args="name tin profile branch active=false">
 <list-item
 width="255"
@@ -3819,78 +3831,46 @@ Reviewer-only index for every reconstructed eBIRForms surface. This page is not 
 </template>
 <template name="form-0605-grid-1" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">2 Year Ended month (independent)</text>
-<input placeholder="MM / YYYY" />
-</column>
-<column gap="4">
-<text foreground="text_muted">4 Due Date (MM/DD/YYYY)</text>
-<input placeholder="MM / DD / YYYY" />
-</column>
-<column gap="4">
-<text foreground="text_muted">5 Number of Sheets Attached</text>
-<input placeholder="Enter number" />
-</column>
-<column gap="4">
-<text foreground="text_muted">6 ATC - only source-proven pairs</text>
-<input text="{formFilerAtc}" placeholder="Select ATC" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">8 Tax Type - only source-proven pairs</text>
-<input text="{formFilerTaxType}" placeholder="Select tax type" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">17 Manner of Payment</text>
-<input placeholder="Select manner" />
-</column>
+<use template="form-field"
+label="2 Year Ended month (independent)" ph="MM / YYYY"/>
+<use template="form-field"
+label="4 Due Date (MM/DD/YYYY)" ph="MM / DD / YYYY"/>
+<use template="form-field"
+label="5 Number of Sheets Attached" ph="Enter number"/>
+<use template="form-field-bound"
+label="6 ATC - only source-proven pairs" v="{formFilerAtc}" ph="Select ATC"/>
+<use template="form-field-bound"
+label="8 Tax Type - only source-proven pairs" v="{formFilerTaxType}" ph="Select tax type"/>
+<use template="form-field"
+label="17 Manner of Payment" ph="Select manner"/>
 </grid>
 </template>
 <template name="form-0605-grid-2" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">9 TIN</text>
-<input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">10 RDO Code</text>
-<input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">12 Line of Business / Occupation</text>
-<input text="{formFilerLineOfBusiness}" placeholder="Business or occupation" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">13 Taxpayer Name</text>
-<input text="{formFilerTaxpayerName}" placeholder="Registered taxpayer name" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">15 Registered Address</text>
-<input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">18 Type of Payment</text>
-<input placeholder="Select payment type" />
-</column>
+<use template="form-field-bound"
+label="9 TIN" v="{formFilerTin}" ph="000-000-000-000"/>
+<use template="form-field-bound"
+label="10 RDO Code" v="{formFilerRdo}" ph="RDO"/>
+<use template="form-field-bound"
+label="12 Line of Business / Occupation" v="{formFilerLineOfBusiness}" ph="Business or occupation"/>
+<use template="form-field-bound"
+label="13 Taxpayer Name" v="{formFilerTaxpayerName}" ph="Registered taxpayer name"/>
+<use template="form-field-bound"
+label="15 Registered Address" v="{formFilerRegisteredAddress}" ph="Registered address"/>
+<use template="form-field"
+label="18 Type of Payment" ph="Select payment type"/>
 </grid>
 </template>
 <template name="form-0605-grid-3" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">19 Basic Tax / Deposit / Advance Payment</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">20A Surcharge (manual)</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">20B Interest (manual)</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">20C Compromise (manual)</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="19 Basic Tax / Deposit / Advance Payment" ph="Enter amount"/>
+<use template="form-field"
+label="20A Surcharge (manual)" ph="Enter amount"/>
+<use template="form-field"
+label="20B Interest (manual)" ph="Enter amount"/>
+<use template="form-field"
+label="20C Compromise (manual)" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-0605-table-1">
@@ -4100,10 +4080,8 @@ Reviewer-only index for every reconstructed eBIRForms surface. This page is not 
 <card>
 <column padding="20" gap="12">
 <text size="heading">ITEM 22 - SIGNATURE DETAILS</text>
-<column gap="4">
-<text foreground="text_muted">22A Taxpayer / Authorized Representative</text>
-<input placeholder="Name and capacity" />
-</column>
+<use template="form-field"
+label="22A Taxpayer / Authorized Representative" ph="Name and capacity"/>
 </column>
 </card>
 <card>
@@ -4117,86 +4095,50 @@ Reviewer-only index for every reconstructed eBIRForms surface. This page is not 
 </template>
 <template name="form-0619-e-grid-1" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">1 For the Month of (MM/YYYY)</text>
-<input text="{formFilingMonthYear}" placeholder="MM / YYYY" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">3 Amended Form?</text>
-<input placeholder="No" />
-</column>
-<column gap="4">
-<text foreground="text_muted">4 Any Taxes Withheld?</text>
-<input placeholder="Yes / No" />
-</column>
-<column gap="4">
-<text foreground="text_muted">5 ATC</text>
-<input text="{formFilerAtc}" placeholder="Select ATC" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">6 Tax Type Code</text>
-<input text="{formFilerTaxType}" placeholder="Tax type code" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Due date day</text>
-<input placeholder="DD" />
-</column>
-<column gap="4">
-<text foreground="text_muted">TIN</text>
-<input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">RDO Code</text>
-<input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">12 Government withholding agent?</text>
-<input text="{formFilerGovernmentWithholdingAgent}" placeholder="Yes / No" disabled="true" />
-</column>
+<use template="form-field-bound"
+label="1 For the Month of (MM/YYYY)" v="{formFilingMonthYear}" ph="MM / YYYY"/>
+<use template="form-field"
+label="3 Amended Form?" ph="No"/>
+<use template="form-field"
+label="4 Any Taxes Withheld?" ph="Yes / No"/>
+<use template="form-field-bound"
+label="5 ATC" v="{formFilerAtc}" ph="Select ATC"/>
+<use template="form-field-bound"
+label="6 Tax Type Code" v="{formFilerTaxType}" ph="Tax type code"/>
+<use template="form-field"
+label="Due date day" ph="DD"/>
+<use template="form-field-bound"
+label="TIN" v="{formFilerTin}" ph="000-000-000-000"/>
+<use template="form-field-bound"
+label="RDO Code" v="{formFilerRdo}" ph="RDO"/>
+<use template="form-field-bound"
+label="12 Government withholding agent?" v="{formFilerGovernmentWithholdingAgent}" ph="Yes / No"/>
 </grid>
 </template>
 <template name="form-0619-e-grid-2" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">14 Amount of Remittance</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">15 Less: Amount Remitted from Previously Filed Form</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">16 Net Amount of Remittance (14 - 15)</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">17A Surcharge</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">17B Interest</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">17C Compromise</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="14 Amount of Remittance" ph="Enter amount"/>
+<use template="form-field"
+label="15 Less: Amount Remitted from Previously Filed Form" ph="Enter amount"/>
+<use template="form-field"
+label="16 Net Amount of Remittance (14 - 15)" ph="Enter amount"/>
+<use template="form-field"
+label="17A Surcharge" ph="Enter amount"/>
+<use template="form-field"
+label="17B Interest" ph="Enter amount"/>
+<use template="form-field"
+label="17C Compromise" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-0619-e-grid-3" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Tax Agent Accreditation / Attorney Roll No.</text>
-<input placeholder="Accreditation number" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Date Issued</text>
-<input placeholder="MM / DD / YYYY" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Date of Expiry</text>
-<input placeholder="MM / DD / YYYY" />
-</column>
+<use template="form-field"
+label="Tax Agent Accreditation / Attorney Roll No." ph="Accreditation number"/>
+<use template="form-field"
+label="Date Issued" ph="MM / DD / YYYY"/>
+<use template="form-field"
+label="Date of Expiry" ph="MM / DD / YYYY"/>
 </grid>
 </template>
 <template name="form-0619-e-table-1">
@@ -4414,94 +4356,54 @@ Reviewer-only index for every reconstructed eBIRForms surface. This page is not 
 </template>
 <template name="form-0619-f-grid-1" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">1 For the Month of (MM/YYYY)</text>
-<input text="{formFilingMonthYear}" placeholder="MM / YYYY" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">3 Amended Form?</text>
-<input placeholder="No" />
-</column>
-<column gap="4">
-<text foreground="text_muted">4 Any Taxes Withheld?</text>
-<input placeholder="Yes / No" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Tax Type Code</text>
-<input text="{formFilerTaxType}" placeholder="Tax type code" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Due date day</text>
-<input placeholder="DD" />
-</column>
-<column gap="4">
-<text foreground="text_muted">12 Government withholding agent?</text>
-<input text="{formFilerGovernmentWithholdingAgent}" placeholder="Yes / No" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">TIN</text>
-<input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">RDO Code</text>
-<input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Registered Taxpayer Name</text>
-<input text="{formFilerTaxpayerName}" placeholder="Taxpayer name" disabled="true" />
-</column>
+<use template="form-field-bound"
+label="1 For the Month of (MM/YYYY)" v="{formFilingMonthYear}" ph="MM / YYYY"/>
+<use template="form-field"
+label="3 Amended Form?" ph="No"/>
+<use template="form-field"
+label="4 Any Taxes Withheld?" ph="Yes / No"/>
+<use template="form-field-bound"
+label="Tax Type Code" v="{formFilerTaxType}" ph="Tax type code"/>
+<use template="form-field"
+label="Due date day" ph="DD"/>
+<use template="form-field-bound"
+label="12 Government withholding agent?" v="{formFilerGovernmentWithholdingAgent}" ph="Yes / No"/>
+<use template="form-field-bound"
+label="TIN" v="{formFilerTin}" ph="000-000-000-000"/>
+<use template="form-field-bound"
+label="RDO Code" v="{formFilerRdo}" ph="RDO"/>
+<use template="form-field-bound"
+label="Registered Taxpayer Name" v="{formFilerTaxpayerName}" ph="Taxpayer name"/>
 </grid>
 </template>
 <template name="form-0619-f-grid-2" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">13 Final tax withheld on interest, deposits and trusts</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">14 Other final income taxes withheld</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">15 Total final income taxes withheld</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">16 Less: Amount Remitted from Previously Filed Form</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">17 Net Amount of Remittance</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">18A Surcharge</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">18B Interest</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">18C Compromise</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="13 Final tax withheld on interest, deposits and trusts" ph="Enter amount"/>
+<use template="form-field"
+label="14 Other final income taxes withheld" ph="Enter amount"/>
+<use template="form-field"
+label="15 Total final income taxes withheld" ph="Enter amount"/>
+<use template="form-field"
+label="16 Less: Amount Remitted from Previously Filed Form" ph="Enter amount"/>
+<use template="form-field"
+label="17 Net Amount of Remittance" ph="Enter amount"/>
+<use template="form-field"
+label="18A Surcharge" ph="Enter amount"/>
+<use template="form-field"
+label="18B Interest" ph="Enter amount"/>
+<use template="form-field"
+label="18C Compromise" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-0619-f-grid-3" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Tax Agent Accreditation / Attorney Roll No.</text>
-<input placeholder="Accreditation number" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Date Issued</text>
-<input placeholder="MM / DD / YYYY" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Date of Expiry</text>
-<input placeholder="MM / DD / YYYY" />
-</column>
+<use template="form-field"
+label="Tax Agent Accreditation / Attorney Roll No." ph="Accreditation number"/>
+<use template="form-field"
+label="Date Issued" ph="MM / DD / YYYY"/>
+<use template="form-field"
+label="Date of Expiry" ph="MM / DD / YYYY"/>
 </grid>
 </template>
 <template name="form-0619-f-table-1">
@@ -4719,130 +4621,74 @@ Reviewer-only index for every reconstructed eBIRForms surface. This page is not 
 </template>
 <template name="form-1601-c-grid-1" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">TIN</text>
-<input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">RDO Code</text>
-<input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Taxpayer Name</text>
-<input text="{formFilerTaxpayerName}" placeholder="Registered taxpayer name" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Registered Address</text>
-<input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Line of Business</text>
-<input text="{formFilerLineOfBusiness}" placeholder="Business activity" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Contact Number</text>
-<input text="{formFilerContactNumber}" placeholder="Contact number" disabled="true" />
-</column>
+<use template="form-field-bound"
+label="TIN" v="{formFilerTin}" ph="000-000-000-000"/>
+<use template="form-field-bound"
+label="RDO Code" v="{formFilerRdo}" ph="RDO"/>
+<use template="form-field-bound"
+label="Taxpayer Name" v="{formFilerTaxpayerName}" ph="Registered taxpayer name"/>
+<use template="form-field-bound"
+label="Registered Address" v="{formFilerRegisteredAddress}" ph="Registered address"/>
+<use template="form-field-bound"
+label="Line of Business" v="{formFilerLineOfBusiness}" ph="Business activity"/>
+<use template="form-field-bound"
+label="Contact Number" v="{formFilerContactNumber}" ph="Contact number"/>
 </grid>
 </template>
 <template name="form-1601-c-grid-2" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">For the Month of</text>
-<input text="{formFilingMonthYear}" placeholder="MM / YYYY" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Amended Return?</text>
-<input placeholder="No" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Any Taxes Withheld?</text>
-<input placeholder="Yes / No" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Number of Sheets Attached</text>
-<input placeholder="Enter number" />
-</column>
-<column gap="4">
-<text foreground="text_muted">ATC</text>
-<input text="{formFilerAtc}" placeholder="Select ATC" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">13 Tax Relief</text>
-<input placeholder="Relief code or details" />
-</column>
+<use template="form-field-bound"
+label="For the Month of" v="{formFilingMonthYear}" ph="MM / YYYY"/>
+<use template="form-field"
+label="Amended Return?" ph="No"/>
+<use template="form-field"
+label="Any Taxes Withheld?" ph="Yes / No"/>
+<use template="form-field"
+label="Number of Sheets Attached" ph="Enter number"/>
+<use template="form-field-bound"
+label="ATC" v="{formFilerAtc}" ph="Select ATC"/>
+<use template="form-field"
+label="13 Tax Relief" ph="Relief code or details"/>
 </grid>
 </template>
 <template name="form-1601-c-grid-3" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">14 Total Amount of Compensation</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">15 Statutory Minimum Wage</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">16 Holiday, Overtime and Night Shift Pay</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">17 13th Month Pay and Other Benefits</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">18 De Minimis Benefits</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">19 SSS, GSIS, PHIC and Pag-IBIG Contributions</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">20 Other Non-Taxable Compensation</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">21 Total Non-Taxable / Exempt Compensation</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">22 Total Taxable Compensation</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">25 Tax Required to be Withheld</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">26 Schedule Adjustment</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">31 Tax Still Due</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="14 Total Amount of Compensation" ph="Enter amount"/>
+<use template="form-field"
+label="15 Statutory Minimum Wage" ph="Enter amount"/>
+<use template="form-field"
+label="16 Holiday, Overtime and Night Shift Pay" ph="Enter amount"/>
+<use template="form-field"
+label="17 13th Month Pay and Other Benefits" ph="Enter amount"/>
+<use template="form-field"
+label="18 De Minimis Benefits" ph="Enter amount"/>
+<use template="form-field"
+label="19 SSS, GSIS, PHIC and Pag-IBIG Contributions" ph="Enter amount"/>
+<use template="form-field"
+label="20 Other Non-Taxable Compensation" ph="Enter amount"/>
+<use template="form-field"
+label="21 Total Non-Taxable / Exempt Compensation" ph="Enter amount"/>
+<use template="form-field"
+label="22 Total Taxable Compensation" ph="Enter amount"/>
+<use template="form-field"
+label="25 Tax Required to be Withheld" ph="Enter amount"/>
+<use template="form-field"
+label="26 Schedule Adjustment" ph="Enter amount"/>
+<use template="form-field"
+label="31 Tax Still Due" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1601-c-grid-4" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">32 Surcharge</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">33 Interest</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">34 Compromise</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">35 Total Penalties</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="32 Surcharge" ph="Enter amount"/>
+<use template="form-field"
+label="33 Interest" ph="Enter amount"/>
+<use template="form-field"
+label="34 Compromise" ph="Enter amount"/>
+<use template="form-field"
+label="35 Total Penalties" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1601-c-table-1">
@@ -5068,250 +4914,152 @@ Reviewer-only index for every reconstructed eBIRForms surface. This page is not 
 </template>
 <template name="form-1701-grid-1" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Taxable Year</text>
-<input text="{formFilingYear}" placeholder="YYYY" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Amended Return?</text>
-<input placeholder="No" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Number of Sheets Attached</text>
-<input placeholder="Enter number" />
-</column>
-<column gap="4">
-<text foreground="text_muted">TIN</text>
-<input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">RDO Code</text>
-<input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Taxpayer Name</text>
-<input text="{formFilerTaxpayerName}" placeholder="Registered name" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Registered Address</text>
-<input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">ZIP Code</text>
-<input text="{formFilerZipCode}" placeholder="ZIP code" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Date of Birth</text>
-<input text="{formFilerDateOfBirth}" placeholder="MM / DD / YYYY" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Email Address</text>
-<input text="{formFilerEmailAddress}" placeholder="name@example.com" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Citizenship</text>
-<input text="{formFilerCitizenship}" placeholder="Citizenship" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Foreign Tax Number</text>
-<input text="{formFilerForeignTaxNumber}" placeholder="Foreign tax number" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Contact Number</text>
-<input text="{formFilerContactNumber}" placeholder="Contact number" disabled="true" />
-</column>
+<use template="form-field-bound"
+label="Taxable Year" v="{formFilingYear}" ph="YYYY"/>
+<use template="form-field"
+label="Amended Return?" ph="No"/>
+<use template="form-field"
+label="Number of Sheets Attached" ph="Enter number"/>
+<use template="form-field-bound"
+label="TIN" v="{formFilerTin}" ph="000-000-000-000"/>
+<use template="form-field-bound"
+label="RDO Code" v="{formFilerRdo}" ph="RDO"/>
+<use template="form-field-bound"
+label="Taxpayer Name" v="{formFilerTaxpayerName}" ph="Registered name"/>
+<use template="form-field-bound"
+label="Registered Address" v="{formFilerRegisteredAddress}" ph="Registered address"/>
+<use template="form-field-bound"
+label="ZIP Code" v="{formFilerZipCode}" ph="ZIP code"/>
+<use template="form-field-bound"
+label="Date of Birth" v="{formFilerDateOfBirth}" ph="MM / DD / YYYY"/>
+<use template="form-field-bound"
+label="Email Address" v="{formFilerEmailAddress}" ph="name@example.com"/>
+<use template="form-field-bound"
+label="Citizenship" v="{formFilerCitizenship}" ph="Citizenship"/>
+<use template="form-field-bound"
+label="Foreign Tax Number" v="{formFilerForeignTaxNumber}" ph="Foreign tax number"/>
+<use template="form-field-bound"
+label="Contact Number" v="{formFilerContactNumber}" ph="Contact number"/>
 </grid>
 </template>
 <template name="form-1701-grid-2" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Spouse TIN</text>
-<input text="{formSpouseTin}" placeholder="000-000-000-000" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Spouse RDO Code</text>
-<input text="{formSpouseRdo}" placeholder="RDO" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Spouse Name</text>
-<input text="{formSpouseName}" placeholder="Registered spouse name" disabled="true" />
-</column>
+<use template="form-field-bound"
+label="Spouse TIN" v="{formSpouseTin}" ph="000-000-000-000"/>
+<use template="form-field-bound"
+label="Spouse RDO Code" v="{formSpouseRdo}" ph="RDO"/>
+<use template="form-field-bound"
+label="Spouse Name" v="{formSpouseName}" ph="Registered spouse name"/>
 </grid>
 </template>
 <template name="form-1701-grid-3" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Taxable Compensation Income</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Income Tax Due</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Tax Withheld on Compensation</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Taxable Compensation Income" ph="Enter amount"/>
+<use template="form-field"
+label="Income Tax Due" ph="Enter amount"/>
+<use template="form-field"
+label="Tax Withheld on Compensation" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1701-grid-4" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Sales / Revenues / Receipts / Fees</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Returns, Allowances and Discounts</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Cost of Sales / Services</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Gross Income</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Allowable Deductions</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Net Taxable Income</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Sales / Revenues / Receipts / Fees" ph="Enter amount"/>
+<use template="form-field"
+label="Returns, Allowances and Discounts" ph="Enter amount"/>
+<use template="form-field"
+label="Cost of Sales / Services" ph="Enter amount"/>
+<use template="form-field"
+label="Gross Income" ph="Enter amount"/>
+<use template="form-field"
+label="Allowable Deductions" ph="Enter amount"/>
+<use template="form-field"
+label="Net Taxable Income" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1701-grid-5" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Other Taxable Income Description</text>
-<input placeholder="Specify source" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Other Taxable Income Amount</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Other Taxable Income Description" ph="Specify source"/>
+<use template="form-field"
+label="Other Taxable Income Amount" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1701-grid-6" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Salaries, Wages and Benefits</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Rent, Repairs and Utilities</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Other Ordinary Deductions</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Salaries, Wages and Benefits" ph="Enter amount"/>
+<use template="form-field"
+label="Rent, Repairs and Utilities" ph="Enter amount"/>
+<use template="form-field"
+label="Other Ordinary Deductions" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1701-grid-7" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Tax on Compensation Income</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Tax on Business / Profession Income</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Total Income Tax Due</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Tax on Compensation Income" ph="Enter amount"/>
+<use template="form-field"
+label="Tax on Business / Profession Income" ph="Enter amount"/>
+<use template="form-field"
+label="Total Income Tax Due" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1701-grid-8" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Quarterly Income Tax Payments</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Creditable Tax Withheld (BIR Form 2307)</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Tax Withheld on Compensation</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Quarterly Income Tax Payments" ph="Enter amount"/>
+<use template="form-field"
+label="Creditable Tax Withheld (BIR Form 2307)" ph="Enter amount"/>
+<use template="form-field"
+label="Tax Withheld on Compensation" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1701-grid-9" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Other Tax Credit Description</text>
-<input placeholder="Specify credit" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Other Tax Credit Amount</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Other Tax Credit Description" ph="Specify credit"/>
+<use template="form-field"
+label="Other Tax Credit Amount" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1701-grid-10" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Tax Relief / Special Rate</text>
-<input placeholder="Relief code or basis" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Tax Relief Amount</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Tax Relief / Special Rate" ph="Relief code or basis"/>
+<use template="form-field"
+label="Tax Relief Amount" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1701-grid-11" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Net Income per Books</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Add: Non-Deductible Expenses</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Less: Non-Taxable Income</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Taxable Net Income</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Net Income per Books" ph="Enter amount"/>
+<use template="form-field"
+label="Add: Non-Deductible Expenses" ph="Enter amount"/>
+<use template="form-field"
+label="Less: Non-Taxable Income" ph="Enter amount"/>
+<use template="form-field"
+label="Taxable Net Income" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1701-grid-12" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Tax Due</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Less: Total Tax Credits / Payments</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Penalties</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Tax Due" ph="Enter amount"/>
+<use template="form-field"
+label="Less: Total Tax Credits / Payments" ph="Enter amount"/>
+<use template="form-field"
+label="Penalties" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1701-grid-13" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">32 Overpayment Disposition</text>
-<input placeholder="Refund / Tax Credit / Carry Over" />
-</column>
-<column gap="4">
-<text foreground="text_muted">33 Required Attachments</text>
-<input placeholder="Attachment summary" />
-</column>
+<use template="form-field"
+label="32 Overpayment Disposition" ph="Refund / Tax Credit / Carry Over"/>
+<use template="form-field"
+label="33 Required Attachments" ph="Attachment summary"/>
 </grid>
 </template>
 <template name="form-1701-table-1">
@@ -6109,142 +5857,84 @@ Resolve the tax-profile projection or Windows runtime failure shown above. No fa
 </template>
 <template name="form-1702-mx-grid-1" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Taxable Year</text>
-<input text="{formFilingYear}" placeholder="YYYY" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Amended Return?</text>
-<input placeholder="No" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Number of Sheets Attached</text>
-<input placeholder="Enter number" />
-</column>
-<column gap="4">
-<text foreground="text_muted">TIN</text>
-<input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">RDO Code</text>
-<input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Registered Name</text>
-<input text="{formFilerRegisteredName}" placeholder="Corporation name" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Registered Address</text>
-<input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Line of Business</text>
-<input text="{formFilerLineOfBusiness}" placeholder="Business activity" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Special / Preferential Rate Basis</text>
-<input text="{formFilerSpecialRateBasis}" placeholder="Legal basis or registration" disabled="true" />
-</column>
+<use template="form-field-bound"
+label="Taxable Year" v="{formFilingYear}" ph="YYYY"/>
+<use template="form-field"
+label="Amended Return?" ph="No"/>
+<use template="form-field"
+label="Number of Sheets Attached" ph="Enter number"/>
+<use template="form-field-bound"
+label="TIN" v="{formFilerTin}" ph="000-000-000-000"/>
+<use template="form-field-bound"
+label="RDO Code" v="{formFilerRdo}" ph="RDO"/>
+<use template="form-field-bound"
+label="Registered Name" v="{formFilerRegisteredName}" ph="Corporation name"/>
+<use template="form-field-bound"
+label="Registered Address" v="{formFilerRegisteredAddress}" ph="Registered address"/>
+<use template="form-field-bound"
+label="Line of Business" v="{formFilerLineOfBusiness}" ph="Business activity"/>
+<use template="form-field-bound"
+label="Special / Preferential Rate Basis" v="{formFilerSpecialRateBasis}" ph="Legal basis or registration"/>
 </grid>
 </template>
 <template name="form-1702-mx-grid-2" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Gross Income Subject to Regular Rate</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Gross Income Subject to Special Rate</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Special / Preferential Tax Rate</text>
-<input placeholder="Rate" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Schedule 2 Regular-Rate Tax Due</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Schedule 2 Special-Rate Tax Due</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Schedule 3 Total Tax Credits</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Gross Income Subject to Regular Rate" ph="Enter amount"/>
+<use template="form-field"
+label="Gross Income Subject to Special Rate" ph="Enter amount"/>
+<use template="form-field"
+label="Special / Preferential Tax Rate" ph="Rate"/>
+<use template="form-field"
+label="Schedule 2 Regular-Rate Tax Due" ph="Enter amount"/>
+<use template="form-field"
+label="Schedule 2 Special-Rate Tax Due" ph="Enter amount"/>
+<use template="form-field"
+label="Schedule 3 Total Tax Credits" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1702-mx-grid-3" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Income Tax at Regular Rate</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Income Tax at Special Rate</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Total Income Tax Due</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Total Tax Credits / Payments</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Net Tax Payable / (Overpayment)</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Income Tax at Regular Rate" ph="Enter amount"/>
+<use template="form-field"
+label="Income Tax at Special Rate" ph="Enter amount"/>
+<use template="form-field"
+label="Total Income Tax Due" ph="Enter amount"/>
+<use template="form-field"
+label="Total Tax Credits / Payments" ph="Enter amount"/>
+<use template="form-field"
+label="Net Tax Payable / (Overpayment)" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1702-mx-grid-4" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Surcharge</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Interest</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Compromise</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Total Amount Payable</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Surcharge" ph="Enter amount"/>
+<use template="form-field"
+label="Interest" ph="Enter amount"/>
+<use template="form-field"
+label="Compromise" ph="Enter amount"/>
+<use template="form-field"
+label="Total Amount Payable" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1702-mx-grid-5" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Refund</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Tax Credit Certificate</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Carry Over to Next Period</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Refund" ph="Enter amount"/>
+<use template="form-field"
+label="Tax Credit Certificate" ph="Enter amount"/>
+<use template="form-field"
+label="Carry Over to Next Period" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1702-mx-grid-6" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Attachment Description</text>
-<input placeholder="Supporting schedule" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Attachment Reference</text>
-<input placeholder="Filename or reference" />
-</column>
+<use template="form-field"
+label="Attachment Description" ph="Supporting schedule"/>
+<use template="form-field"
+label="Attachment Reference" ph="Filename or reference"/>
 </grid>
 </template>
 <template name="form-1702-mx-table-1">
@@ -6522,158 +6212,92 @@ Resolve the tax-profile projection or Windows runtime failure shown above. No fa
 </template>
 <template name="form-1702-rt-grid-1" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Taxable Year</text>
-<input text="{formFilingYear}" placeholder="YYYY" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Amended Return?</text>
-<input placeholder="No" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Number of Sheets Attached</text>
-<input placeholder="Enter number" />
-</column>
-<column gap="4">
-<text foreground="text_muted">TIN</text>
-<input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">RDO Code</text>
-<input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Registered Name</text>
-<input text="{formFilerRegisteredName}" placeholder="Corporation name" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Registered Address</text>
-<input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Line of Business</text>
-<input text="{formFilerLineOfBusiness}" placeholder="Business activity" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Tax Relief / Special Law</text>
-<input placeholder="Relief details" />
-</column>
+<use template="form-field-bound"
+label="Taxable Year" v="{formFilingYear}" ph="YYYY"/>
+<use template="form-field"
+label="Amended Return?" ph="No"/>
+<use template="form-field"
+label="Number of Sheets Attached" ph="Enter number"/>
+<use template="form-field-bound"
+label="TIN" v="{formFilerTin}" ph="000-000-000-000"/>
+<use template="form-field-bound"
+label="RDO Code" v="{formFilerRdo}" ph="RDO"/>
+<use template="form-field-bound"
+label="Registered Name" v="{formFilerRegisteredName}" ph="Corporation name"/>
+<use template="form-field-bound"
+label="Registered Address" v="{formFilerRegisteredAddress}" ph="Registered address"/>
+<use template="form-field-bound"
+label="Line of Business" v="{formFilerLineOfBusiness}" ph="Business activity"/>
+<use template="form-field"
+label="Tax Relief / Special Law" ph="Relief details"/>
 </grid>
 </template>
 <template name="form-1702-rt-grid-2" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">27 Sales / Receipts / Revenues / Fees</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">28 Returns / Allowances / Discounts</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">30 Cost of Sales / Services</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">32 Other Taxable Income</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Itemized / Optional Standard Deduction</text>
-<input placeholder="Select deduction method" />
-</column>
-<column gap="4">
-<text foreground="text_muted">40 Regular Income Tax Rate</text>
-<input placeholder="Rate" />
-</column>
+<use template="form-field"
+label="27 Sales / Receipts / Revenues / Fees" ph="Enter amount"/>
+<use template="form-field"
+label="28 Returns / Allowances / Discounts" ph="Enter amount"/>
+<use template="form-field"
+label="30 Cost of Sales / Services" ph="Enter amount"/>
+<use template="form-field"
+label="32 Other Taxable Income" ph="Enter amount"/>
+<use template="form-field"
+label="Itemized / Optional Standard Deduction" ph="Select deduction method"/>
+<use template="form-field"
+label="40 Regular Income Tax Rate" ph="Rate"/>
 </grid>
 </template>
 <template name="form-1702-rt-grid-3" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Net Sales / Receipts</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Gross Income</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Total Taxable Income</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Normal Income Tax</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Minimum Corporate Income Tax</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Income Tax Due</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Net Sales / Receipts" ph="Enter amount"/>
+<use template="form-field"
+label="Gross Income" ph="Enter amount"/>
+<use template="form-field"
+label="Total Taxable Income" ph="Enter amount"/>
+<use template="form-field"
+label="Normal Income Tax" ph="Enter amount"/>
+<use template="form-field"
+label="Minimum Corporate Income Tax" ph="Enter amount"/>
+<use template="form-field"
+label="Income Tax Due" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1702-rt-grid-4" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">44 Prior-Year Excess Credits</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">45 Quarterly Income Tax Payments</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">46 Creditable Tax Withheld</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">47 Foreign Tax Credits</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">48-53 Other Credits / Payments</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">54 Total Tax Credits / Payments</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="44 Prior-Year Excess Credits" ph="Enter amount"/>
+<use template="form-field"
+label="45 Quarterly Income Tax Payments" ph="Enter amount"/>
+<use template="form-field"
+label="46 Creditable Tax Withheld" ph="Enter amount"/>
+<use template="form-field"
+label="47 Foreign Tax Credits" ph="Enter amount"/>
+<use template="form-field"
+label="48-53 Other Credits / Payments" ph="Enter amount"/>
+<use template="form-field"
+label="54 Total Tax Credits / Payments" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1702-rt-grid-5" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Tax Payable / (Overpayment)</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Add: Surcharge, Interest and Compromise</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Total Amount Payable</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Tax Payable / (Overpayment)" ph="Enter amount"/>
+<use template="form-field"
+label="Add: Surcharge, Interest and Compromise" ph="Enter amount"/>
+<use template="form-field"
+label="Total Amount Payable" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1702-rt-grid-6" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Refund</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Tax Credit Certificate</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Carry Over to Next Period</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Refund" ph="Enter amount"/>
+<use template="form-field"
+label="Tax Credit Certificate" ph="Enter amount"/>
+<use template="form-field"
+label="Carry Over to Next Period" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-1702-rt-table-1">
@@ -6903,158 +6527,92 @@ Resolve the tax-profile projection or Windows runtime failure shown above. No fa
 </template>
 <template name="form-2550q-grid-1" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Year-end month</text>
-<input placeholder="Month" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Taxable year (raw)</text>
-<input text="{formFilingYear}" placeholder="YYYY" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Return Period From</text>
-<input text="{formFilingPeriodStart}" placeholder="MM / DD / YYYY" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Return Period To</text>
-<input text="{formFilingPeriodEnd}" placeholder="MM / DD / YYYY" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Amended Return?</text>
-<input placeholder="No" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Tax Relief?</text>
-<input placeholder="No / Specify" />
-</column>
-<column gap="4">
-<text foreground="text_muted">TIN</text>
-<input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">RDO Code</text>
-<input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Taxpayer Name</text>
-<input text="{formFilerTaxpayerName}" placeholder="Registered taxpayer name" disabled="true" />
-</column>
+<use template="form-field"
+label="Year-end month" ph="Month"/>
+<use template="form-field-bound"
+label="Taxable year (raw)" v="{formFilingYear}" ph="YYYY"/>
+<use template="form-field-bound"
+label="Return Period From" v="{formFilingPeriodStart}" ph="MM / DD / YYYY"/>
+<use template="form-field-bound"
+label="Return Period To" v="{formFilingPeriodEnd}" ph="MM / DD / YYYY"/>
+<use template="form-field"
+label="Amended Return?" ph="No"/>
+<use template="form-field"
+label="Tax Relief?" ph="No / Specify"/>
+<use template="form-field-bound"
+label="TIN" v="{formFilerTin}" ph="000-000-000-000"/>
+<use template="form-field-bound"
+label="RDO Code" v="{formFilerRdo}" ph="RDO"/>
+<use template="form-field-bound"
+label="Taxpayer Name" v="{formFilerTaxpayerName}" ph="Registered taxpayer name"/>
 </grid>
 </template>
 <template name="form-2550q-grid-2" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">31A Vatable Sales / Receipts</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">31B Output Tax Due</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">32A Zero-Rated Sales / Receipts</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">33A Exempt Sales / Receipts</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Output VAT Adjustments</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Total Output Tax Due</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="31A Vatable Sales / Receipts" ph="Enter amount"/>
+<use template="form-field"
+label="31B Output Tax Due" ph="Enter amount"/>
+<use template="form-field"
+label="32A Zero-Rated Sales / Receipts" ph="Enter amount"/>
+<use template="form-field"
+label="33A Exempt Sales / Receipts" ph="Enter amount"/>
+<use template="form-field"
+label="Output VAT Adjustments" ph="Enter amount"/>
+<use template="form-field"
+label="Total Output Tax Due" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-2550q-grid-3" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">44 Domestic Purchases / Input Tax</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">45 Services Rendered by Non-Residents</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">46 Importation of Goods</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">47 Other Purchases</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">48 Domestic Purchases Without Input Tax</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">49 Exempt Importations</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="44 Domestic Purchases / Input Tax" ph="Enter amount"/>
+<use template="form-field"
+label="45 Services Rendered by Non-Residents" ph="Enter amount"/>
+<use template="form-field"
+label="46 Importation of Goods" ph="Enter amount"/>
+<use template="form-field"
+label="47 Other Purchases" ph="Enter amount"/>
+<use template="form-field"
+label="48 Domestic Purchases Without Input Tax" ph="Enter amount"/>
+<use template="form-field"
+label="49 Exempt Importations" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-2550q-grid-4" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Input Tax Directly Attributable to Exempt Sales</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Input Tax Not Directly Attributable</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Ratable Input Tax to Exempt Sales</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Input Tax Directly Attributable to Exempt Sales" ph="Enter amount"/>
+<use template="form-field"
+label="Input Tax Not Directly Attributable" ph="Enter amount"/>
+<use template="form-field"
+label="Ratable Input Tax to Exempt Sales" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-2550q-grid-5" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Prior Return Payment</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Other Tax Credit / Payment</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Net VAT Payable / (Overpayment)</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Surcharge</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Interest</text>
-<input placeholder="Enter amount" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Compromise</text>
-<input placeholder="Enter amount" />
-</column>
+<use template="form-field"
+label="Prior Return Payment" ph="Enter amount"/>
+<use template="form-field"
+label="Other Tax Credit / Payment" ph="Enter amount"/>
+<use template="form-field"
+label="Net VAT Payable / (Overpayment)" ph="Enter amount"/>
+<use template="form-field"
+label="Surcharge" ph="Enter amount"/>
+<use template="form-field"
+label="Interest" ph="Enter amount"/>
+<use template="form-field"
+label="Compromise" ph="Enter amount"/>
 </grid>
 </template>
 <template name="form-2550q-grid-6" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">Taxpayer / Authorized Representative</text>
-<input placeholder="Name and capacity" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Payment Method</text>
-<input placeholder="Cash / Check / Tax Debit Memo" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Payment Reference</text>
-<input placeholder="Reference number" />
-</column>
+<use template="form-field"
+label="Taxpayer / Authorized Representative" ph="Name and capacity"/>
+<use template="form-field"
+label="Payment Method" ph="Cash / Check / Tax Debit Memo"/>
+<use template="form-field"
+label="Payment Reference" ph="Reference number"/>
 </grid>
 </template>
 <template name="form-2550q-table-1">
@@ -7503,14 +7061,10 @@ placeholder="Month"
 disabled="{not percentageTaxEditable}"
 on-input="percentage_tax_year_end_month_input"/>
 </column>
-<column gap="4">
-<text foreground="text_muted">Taxable Quarter</text>
-<input text="{percentageTaxQuarter}" placeholder="Quarter" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Taxable Year</text>
-<input text="{percentageTaxYear}" placeholder="YYYY" disabled="true" />
-</column>
+<use template="form-field-bound"
+label="Taxable Quarter" v="{percentageTaxQuarter}" ph="Quarter"/>
+<use template="form-field-bound"
+label="Taxable Year" v="{percentageTaxYear}" ph="YYYY"/>
 <column gap="4">
 <text foreground="text_muted">5 Number of Sheets Attached</text>
 <input
@@ -7519,14 +7073,10 @@ placeholder="Enter number"
 disabled="{not percentageTaxEditable}"
 on-input="percentage_tax_sheets_attached_input"/>
 </column>
-<column gap="4">
-<text foreground="text_muted">Return Options</text>
-<input text="{percentageTaxReturnOption}" placeholder="Original / Amended" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Amended Return?</text>
-<input text="{percentageTaxAmendedReturn}" placeholder="No" disabled="true" />
-</column>
+<use template="form-field-bound"
+label="Return Options" v="{percentageTaxReturnOption}" ph="Original / Amended"/>
+<use template="form-field-bound"
+label="Amended Return?" v="{percentageTaxAmendedReturn}" ph="No"/>
 <column gap="4">
 <text foreground="text_muted">Tax Relief?</text>
 <input text="{percentageTaxRelief}" placeholder="No / Specify" disabled="true" />
@@ -7579,18 +7129,12 @@ on-press="percentage_tax_election_eight_percent">
 </template>
 <template name="form-2551q-grid-2" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">TIN</text>
-<input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">RDO Code</text>
-<input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">Taxpayer's Name</text>
-<input text="{formFilerTaxpayerName}" placeholder="Registered taxpayer name" disabled="true" />
-</column>
+<use template="form-field-bound"
+label="TIN" v="{formFilerTin}" ph="000-000-000-000"/>
+<use template="form-field-bound"
+label="RDO Code" v="{formFilerRdo}" ph="RDO"/>
+<use template="form-field-bound"
+label="Taxpayer's Name" v="{formFilerTaxpayerName}" ph="Registered taxpayer name"/>
 <column gap="4">
 <text foreground="text_muted">Registered Address</text>
 <input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="{not formFilingContactEditable}" on-input="form_filing_address_input"/>
@@ -7646,10 +7190,8 @@ placeholder="Rate"
 disabled="{not percentageTaxEditable}"
 on-input="percentage_tax_line_1_rate_input"/>
 </column>
-<column gap="4">
-<text foreground="text_muted">Schedule 1 Line 1 Percentage Tax Due</text>
-<input text="{percentageTaxLine1Due}" placeholder="Enter amount" disabled="true" />
-</column>
+<use template="form-field-bound"
+label="Schedule 1 Line 1 Percentage Tax Due" v="{percentageTaxLine1Due}" ph="Enter amount"/>
 <column gap="4">
 <text foreground="text_muted">Schedule 1 Line 2 Percentage-tax Code</text>
 <input
@@ -7674,19 +7216,15 @@ placeholder="Rate"
 disabled="{not percentageTaxEditable}"
 on-input="percentage_tax_line_2_rate_input"/>
 </column>
-<column gap="4">
-<text foreground="text_muted">Schedule 1 Line 2 Percentage Tax Due</text>
-<input text="{percentageTaxLine2Due}" placeholder="Enter amount" disabled="true" />
-</column>
+<use template="form-field-bound"
+label="Schedule 1 Line 2 Percentage Tax Due" v="{percentageTaxLine2Due}" ph="Enter amount"/>
 </grid>
 </column>
 </template>
 <template name="form-2551q-grid-3" args="columns">
 <grid columns="{columns}" gap="12">
-<column gap="4">
-<text foreground="text_muted">14 Total Percentage Tax Due</text>
-<input text="{percentageTaxTotalDue}" placeholder="Enter amount" disabled="true" />
-</column>
+<use template="form-field-bound"
+label="14 Total Percentage Tax Due" v="{percentageTaxTotalDue}" ph="Enter amount"/>
 <column gap="4">
 <text foreground="text_muted">15 Creditable Percentage Tax Withheld</text>
 <input
@@ -7711,14 +7249,10 @@ placeholder="Enter amount"
 disabled="{not percentageTaxEditable}"
 on-input="percentage_tax_other_credit_input"/>
 </column>
-<column gap="4">
-<text foreground="text_muted">18 Total Tax Credits / Payments</text>
-<input text="{percentageTaxTotalCredits}" placeholder="Enter amount" disabled="true" />
-</column>
-<column gap="4">
-<text foreground="text_muted">19 Tax Payable / (Overpayment)</text>
-<input text="{percentageTaxNetTax}" placeholder="Enter amount" disabled="true" />
-</column>
+<use template="form-field-bound"
+label="18 Total Tax Credits / Payments" v="{percentageTaxTotalCredits}" ph="Enter amount"/>
+<use template="form-field-bound"
+label="19 Tax Payable / (Overpayment)" v="{percentageTaxNetTax}" ph="Enter amount"/>
 <column gap="4">
 <text foreground="text_muted">20 Surcharge (manual)</text>
 <input

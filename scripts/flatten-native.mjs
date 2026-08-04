@@ -72,6 +72,8 @@ const generatedTemplateIncludes = new Set([
   "multi-select-combobox",
   "tax-profile-form-context",
   "taxpayer-form-library-section",
+  "form-field",
+  "form-field-bound",
 ]);
 
 function normalizeFragment(source) {

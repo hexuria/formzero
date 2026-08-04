@@ -28,14 +28,8 @@
         disabled="{not percentageTaxEditable}"
         on-input="percentage_tax_year_end_month_input"/>
     </column>
-    <column gap="4">
-      <text foreground="text_muted">Taxable Quarter</text>
-      <input text="{percentageTaxQuarter}" placeholder="Quarter" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Taxable Year</text>
-      <input text="{percentageTaxYear}" placeholder="YYYY" disabled="true" />
-    </column>
+    <!-- @include-template form-field-bound label="Taxable Quarter" v="{percentageTaxQuarter}" ph="Quarter" -->
+    <!-- @include-template form-field-bound label="Taxable Year" v="{percentageTaxYear}" ph="YYYY" -->
     <column gap="4">
       <text foreground="text_muted">5 Number of Sheets Attached</text>
       <input
@@ -44,14 +38,8 @@
         disabled="{not percentageTaxEditable}"
         on-input="percentage_tax_sheets_attached_input"/>
     </column>
-    <column gap="4">
-      <text foreground="text_muted">Return Options</text>
-      <input text="{percentageTaxReturnOption}" placeholder="Original / Amended" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Amended Return?</text>
-      <input text="{percentageTaxAmendedReturn}" placeholder="No" disabled="true" />
-    </column>
+    <!-- @include-template form-field-bound label="Return Options" v="{percentageTaxReturnOption}" ph="Original / Amended" -->
+    <!-- @include-template form-field-bound label="Amended Return?" v="{percentageTaxAmendedReturn}" ph="No" -->
     <column gap="4">
       <text foreground="text_muted">Tax Relief?</text>
       <input text="{percentageTaxRelief}" placeholder="No / Specify" disabled="true" />
@@ -105,18 +93,9 @@
 
 <template name="form-2551q-grid-2" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">TIN</text>
-      <input text="{formFilerTin}" placeholder="000-000-000-000" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">RDO Code</text>
-      <input text="{formFilerRdo}" placeholder="RDO" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">Taxpayer's Name</text>
-      <input text="{formFilerTaxpayerName}" placeholder="Registered taxpayer name" disabled="true" />
-    </column>
+    <!-- @include-template form-field-bound label="TIN" v="{formFilerTin}" ph="000-000-000-000" -->
+    <!-- @include-template form-field-bound label="RDO Code" v="{formFilerRdo}" ph="RDO" -->
+    <!-- @include-template form-field-bound label="Taxpayer's Name" v="{formFilerTaxpayerName}" ph="Registered taxpayer name" -->
     <column gap="4">
       <text foreground="text_muted">Registered Address</text>
       <input text="{formFilerRegisteredAddress}" placeholder="Registered address" disabled="{not formFilingContactEditable}" on-input="form_filing_address_input"/>
@@ -174,10 +153,7 @@
           disabled="{not percentageTaxEditable}"
           on-input="percentage_tax_line_1_rate_input"/>
       </column>
-      <column gap="4">
-        <text foreground="text_muted">Schedule 1 Line 1 Percentage Tax Due</text>
-        <input text="{percentageTaxLine1Due}" placeholder="Enter amount" disabled="true" />
-      </column>
+      <!-- @include-template form-field-bound label="Schedule 1 Line 1 Percentage Tax Due" v="{percentageTaxLine1Due}" ph="Enter amount" -->
       <column gap="4">
         <text foreground="text_muted">Schedule 1 Line 2 Percentage-tax Code</text>
         <input
@@ -202,20 +178,14 @@
           disabled="{not percentageTaxEditable}"
           on-input="percentage_tax_line_2_rate_input"/>
       </column>
-      <column gap="4">
-        <text foreground="text_muted">Schedule 1 Line 2 Percentage Tax Due</text>
-        <input text="{percentageTaxLine2Due}" placeholder="Enter amount" disabled="true" />
-      </column>
+      <!-- @include-template form-field-bound label="Schedule 1 Line 2 Percentage Tax Due" v="{percentageTaxLine2Due}" ph="Enter amount" -->
     </grid>
   </column>
 </template>
 
 <template name="form-2551q-grid-3" args="columns">
   <grid columns="{columns}" gap="12">
-    <column gap="4">
-      <text foreground="text_muted">14 Total Percentage Tax Due</text>
-      <input text="{percentageTaxTotalDue}" placeholder="Enter amount" disabled="true" />
-    </column>
+    <!-- @include-template form-field-bound label="14 Total Percentage Tax Due" v="{percentageTaxTotalDue}" ph="Enter amount" -->
     <column gap="4">
       <text foreground="text_muted">15 Creditable Percentage Tax Withheld</text>
       <input
@@ -240,14 +210,8 @@
         disabled="{not percentageTaxEditable}"
         on-input="percentage_tax_other_credit_input"/>
     </column>
-    <column gap="4">
-      <text foreground="text_muted">18 Total Tax Credits / Payments</text>
-      <input text="{percentageTaxTotalCredits}" placeholder="Enter amount" disabled="true" />
-    </column>
-    <column gap="4">
-      <text foreground="text_muted">19 Tax Payable / (Overpayment)</text>
-      <input text="{percentageTaxNetTax}" placeholder="Enter amount" disabled="true" />
-    </column>
+    <!-- @include-template form-field-bound label="18 Total Tax Credits / Payments" v="{percentageTaxTotalCredits}" ph="Enter amount" -->
+    <!-- @include-template form-field-bound label="19 Tax Payable / (Overpayment)" v="{percentageTaxNetTax}" ph="Enter amount" -->
     <column gap="4">
       <text foreground="text_muted">20 Surcharge (manual)</text>
       <input

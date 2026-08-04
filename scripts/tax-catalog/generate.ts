@@ -114,8 +114,11 @@ function sourceLineAt(source: string, offset: number): number {
 }
 
 function parseInputs(spec: EditorFormSpec, source: string): FieldDefinition[] {
+  // A form field is one of three shapes: a bare <input> paired with the
+  // preceding <text> label, or a form-field / form-field-bound template
+  // include, which carries its label and placeholder as attributes.
   const tokenPattern =
-    /<text\b[^>]*>([^<]*)<\/text>|<input\b([^>]*)\/?>/gu;
+    /<text\b[^>]*>([^<]*)<\/text>|<input\b([^>]*)\/?>|<!--\s*@include-template\s+form-field(?:-bound)?\b([\s\S]*?)-->/gu;
   const duplicateIds = new Map<string, number>();
   const fields: FieldDefinition[] = [];
   let lastLabel = "";
@@ -127,13 +130,23 @@ function parseInputs(spec: EditorFormSpec, source: string): FieldDefinition[] {
       continue;
     }
 
-    if (match[2] === undefined) continue;
+    let placeholder: string;
+    if (match[3] !== undefined) {
+      const includeLabel = /\blabel="([^"]*)"/u.exec(match[3]);
+      if (!includeLabel) {
+        fail(`${spec.sourcePath}:${sourceLineAt(source, match.index)} form-field include has no label`);
+      }
+      lastLabel = decodeText(includeLabel[1]);
+      placeholder = decodeText(/\bph="([^"]*)"/u.exec(match[3])?.[1] ?? "");
+    } else if (match[2] !== undefined) {
+      const placeholderMatch = /\bplaceholder="([^"]*)"/u.exec(match[2]);
+      placeholder = decodeText(placeholderMatch?.[1] ?? "");
+    } else {
+      continue;
+    }
     if (!lastLabel) {
       fail(`${spec.sourcePath}:${sourceLineAt(source, match.index)} input has no label`);
     }
-
-    const placeholderMatch = /\bplaceholder="([^"]*)"/u.exec(match[2]);
-    const placeholder = decodeText(placeholderMatch?.[1] ?? "");
     const baseId = slug(lastLabel);
     const occurrence = (duplicateIds.get(baseId) ?? 0) + 1;
     duplicateIds.set(baseId, occurrence);

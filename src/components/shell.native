@@ -1,3 +1,17 @@
+<template name="form-field" args="label ph">
+  <column gap="4">
+    <text foreground="text_muted">{label}</text>
+    <input placeholder="{ph}" />
+  </column>
+</template>
+
+<template name="form-field-bound" args="label v ph">
+  <column gap="4">
+    <text foreground="text_muted">{label}</text>
+    <input text="{v}" placeholder="{ph}" disabled="true" />
+  </column>
+</template>
+
 <template name="sidebar-profile" args="name tin profile branch active=false">
   <list-item
     width="255"
