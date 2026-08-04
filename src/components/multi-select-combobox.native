@@ -1,20 +1,7 @@
-<!--
-  Reusable view contract for the app's bounded multi-select state.
-
-  The host supplies derived option rows and summary flags. The fixed
-  multi_select_* messages form the adapter seam to the host model:
-    - multi_select_open / multi_select_close
-    - multi_select_query_changed
-    - multi_select_toggle_option:{option.id}
-    - multi_select_select_all_filtered / multi_select_clear_all
--->
 <template
   name="multi-select-combobox"
   args="placeholder label">
   <stack width="{globalCalendarFormPickerWidth}">
-    <!-- The summary trigger and search editor are deliberately separate.
-         Mounting a menu around the same editor that initiated the click
-         creates a focus/dismiss race on AppKit. -->
     <select
       size="sm"
       height="{globalCalendarFormRowHeight}"
@@ -30,8 +17,6 @@
         anchor-offset="4"
         height="{globalCalendarFormMenuHeight}"
         on-dismiss="multi_select_close">
-        <!-- Search and bulk actions remain pinned; only the supplied option
-             rows participate in the bounded scrolling region below. -->
         <search-field
           size="sm"
           height="{globalCalendarFormRowHeight}"
