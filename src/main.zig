@@ -421,6 +421,13 @@ pub const ProfileFilingState = enum {
             .new, .paid, .calendar_only, .unknown => false,
         };
     }
+
+    fn needsAction(self: ProfileFilingState) bool {
+        return switch (self) {
+            .new, .draft, .queued, .sent, .confirmed => true,
+            .paid, .calendar_only, .unknown => false,
+        };
+    }
 };
 
 pub const ProfileDeadlineAction = enum(u8) {
@@ -648,6 +655,13 @@ pub const ProfileCalendarDeadlineRow = struct {
         return self.deadline.form_name;
     }
 
+    pub fn periodLabel(
+        self: *const ProfileCalendarDeadlineRow,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return self.deadline.periodLabel(arena);
+    }
+
     pub fn dueLabel(
         self: *const ProfileCalendarDeadlineRow,
         arena: std.mem.Allocator,
@@ -756,6 +770,10 @@ pub const ProfileCalendarDeadlineRow = struct {
 
     pub fn primaryActionVisible(self: *const ProfileCalendarDeadlineRow) bool {
         return self.actions.count != 0;
+    }
+
+    fn needsAction(self: *const ProfileCalendarDeadlineRow) bool {
+        return self.filing_state.needsAction() and self.actions.count != 0;
     }
 
     pub fn primaryActionLabel(self: *const ProfileCalendarDeadlineRow) []const u8 {
@@ -5107,7 +5125,7 @@ fn profileDeadlineStubBody(self: *const Model) []const u8 {
                 deadline,
                 .action_required,
             );
-            if (!row.filing_state.isSavedOpen()) continue;
+            if (!row.needsAction()) continue;
             rows[count] = row;
             count += 1;
         }
@@ -5147,7 +5165,7 @@ fn profileDeadlineStubBody(self: *const Model) []const u8 {
                 deadline,
                 .overdue,
             );
-            if (row.filing_state == .paid) continue;
+            if (!row.needsAction()) continue;
             if (deadline.final_deadline.month != self.profileCalendar.selected_month and
                 !row.filing_state.isSavedOpen()) continue;
             rows[count] = row;
@@ -15033,6 +15051,14 @@ test "profile deadline action matrix is lifecycle and capability derived" {
         @as(u8, 0),
         profileDeadlineActionsFor(.unknown, .none, false).count,
     );
+    try std.testing.expect(ProfileFilingState.new.needsAction());
+    try std.testing.expect(ProfileFilingState.draft.needsAction());
+    try std.testing.expect(ProfileFilingState.queued.needsAction());
+    try std.testing.expect(ProfileFilingState.sent.needsAction());
+    try std.testing.expect(ProfileFilingState.confirmed.needsAction());
+    try std.testing.expect(!ProfileFilingState.paid.needsAction());
+    try std.testing.expect(!ProfileFilingState.calendar_only.needsAction());
+    try std.testing.expect(!ProfileFilingState.unknown.needsAction());
 
     for (std.meta.tags(ProfileDeadlineAction)) |action| {
         if (action == .none) continue;
@@ -15128,19 +15154,6 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
     }});
     try profile_store_fixture.replaceFormSet(profile_id, 2025, &.{});
     refreshSelectedProfileFormSet(&model);
-    try model.formProfiles.open(.{
-        .form = editorRevision("2551Q").?,
-        .filer_profile_id = model.taxProfiles.selectedProfileDomainId().?,
-        .tax_year = 2026,
-        .quarter = 2,
-        .filing_period = .{ .quarterly = .{
-            .tax_year = 2026,
-            .quarter = 2,
-        } },
-    });
-    const original_draft_id =
-        (try model.formProfiles.saveRecurringDraft()).id;
-    try model.taxProfiles.refreshDraftSummaries();
     try std.testing.expect(model.profileCalendarIncludesForm("2551Q"));
     try std.testing.expect(!model.profileCalendarIncludesForm("1701Q"));
 
@@ -15167,6 +15180,57 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+
+    // A New obligation belongs to exactly one workflow lane: Action Required
+    // through its due date, then Overdue. The monthly schedule remains visible
+    // independently, and an unsaved New item does not become cross-month
+    // backlog.
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        model.taxProfiles.draftSummaries().len,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        model.profileMonthlyDeadlineRows(arena).len,
+    );
+    const new_action_rows = model.profileActionRequiredRows(arena);
+    try std.testing.expectEqual(@as(usize, 1), new_action_rows.len);
+    try std.testing.expectEqualStrings("New", new_action_rows[0].filingStatus());
+    try std.testing.expect(new_action_rows[0].primaryActionVisible());
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        model.profileOverdueDeadlineRows(arena).len,
+    );
+    model.calendarToday = try matching_deadline.?.final_deadline.addDays(1);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        model.profileActionRequiredRows(arena).len,
+    );
+    const new_overdue_rows = model.profileOverdueDeadlineRows(arena);
+    try std.testing.expectEqual(@as(usize, 1), new_overdue_rows.len);
+    try std.testing.expectEqualStrings("New", new_overdue_rows[0].filingStatus());
+    const selected_month = model.profileCalendar.selected_month;
+    model.profileCalendar.selected_month = if (selected_month == 1) 2 else 1;
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        model.profileOverdueDeadlineRows(arena).len,
+    );
+    model.profileCalendar.selected_month = selected_month;
+    model.calendarToday = matching_deadline.?.final_deadline;
+
+    try model.formProfiles.open(.{
+        .form = editorRevision("2551Q").?,
+        .filer_profile_id = model.taxProfiles.selectedProfileDomainId().?,
+        .tax_year = 2026,
+        .quarter = 2,
+        .filing_period = .{ .quarterly = .{
+            .tax_year = 2026,
+            .quarter = 2,
+        } },
+    });
+    const original_draft_id =
+        (try model.formProfiles.saveRecurringDraft()).id;
+    try model.taxProfiles.refreshDraftSummaries();
     try std.testing.expectEqual(
         @as(usize, 1),
         model.taxProfiles.draftSummaries().len,
@@ -15635,6 +15699,15 @@ test "profile dashboard markup builds with the three calendar lanes" {
     );
     try std.testing.expect(
         std.mem.indexOf(u8, app_markup, "open_profile_deadline") == null,
+    );
+    const profile_source = @embedFile("pages/taxpayer-dashboard.native");
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        std.mem.count(u8, profile_source, "<use template=\"t-l\""),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        std.mem.count(u8, profile_source, "@include-template d-s"),
     );
 }
 

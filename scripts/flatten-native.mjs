@@ -70,6 +70,7 @@ const sourceGroups = [
 
 const sourceFiles = sourceGroups.flatMap((group) => group.files);
 const generatedTemplateIncludes = new Set([
+  "d-s",
   "multi-select-combobox",
   "profile-calendar-multi-select-combobox",
   "tax-profile-form-context",

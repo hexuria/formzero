@@ -243,9 +243,18 @@
       <badge variant="secondary">{profileMonthlyDeadlineCountLabel}</badge>
     </row>
     <use template="taxpayer-compact-calendar"/>
-    <use template="t-l" r="{profileMonthlyDeadlineRows}" h="{profileMonthlyHasDeadlines}">
-      <use template="t-e" i="clock" t="No deadlines" b="There are no open deadlines for the selected date or month."/>
-    </use>
+    <if test="{profileMonthlyHasDeadlines}">
+      <column gap="8">
+        <for each="profileMonthlyDeadlineRows" key="id" as="deadline">
+          <column>
+            <!-- @include-template d-s d="{deadline.dateLabel}" y="{deadline.yearLabel}" c="{deadline.compactLabel}" t="{deadline.formName}" p="{deadline.periodLabel}" -->
+          </column>
+        </for>
+      </column>
+    </if>
+    <else>
+      <use template="t-e" i="clock" t="No deadlines" b="No forms are scheduled for this date or month."/>
+    </else>
   </column>
 </template>
 
@@ -256,7 +265,7 @@
       <badge variant="secondary">{profileActionRequiredCount}</badge>
     </row>
     <use template="t-l" r="{profileActionRequiredRows}" h="{profileActionRequiredHasRows}">
-      <use template="t-e" i="check-circle" t="All caught up" b="Saved filing work that still needs attention will appear here."/>
+      <use template="t-e" i="check-circle" t="All caught up" b="Forms that need attention appear here."/>
     </use>
   </column>
 </template>

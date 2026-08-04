@@ -1,21 +1,15 @@
-<template name="global-deadline-row" args="date year form status tone title period adjusted adjustment">
+<template name="d-s" args="d y c t p">
   <card padding="0">
     <row padding="12" gap="14" cross="center">
       <column width="58" gap="2" cross="center">
-        <text><span weight="bold">{date}</span></text>
-        <text foreground="text_muted">{year}</text>
+        <text><span weight="bold">{d}</span></text>
+        <text foreground="text_muted">{y}</text>
       </column>
       <column width="1" height="54" background="border"></column>
       <column grow="1" gap="4">
-        <row gap="8" cross="center">
-          <badge variant="secondary">{form}</badge>
-          <badge variant="{tone}">{status}</badge>
-        </row>
-        <text><span weight="bold">{title}</span></text>
-        <text wrap="true" foreground="text_muted">Taxable period: {period}</text>
-        <if test="{adjusted}">
-          <text wrap="true" foreground="text_muted">{adjustment}</text>
-        </if>
+        <row gap="8" cross="center"><badge variant="secondary">{c}</badge><slot/></row>
+        <text><span weight="bold">{t}</span></text>
+        <text wrap="true" foreground="text_muted">Taxable period: {p}</text>
       </column>
     </row>
   </card>
@@ -164,17 +158,9 @@
     </row>
     <if test="{globalCalendarHasDeadlines}">
       <for each="globalDeadlines" key="id" as="deadline">
-        <use
-          template="global-deadline-row"
-          date="{deadline.dateLabel}"
-          year="{deadline.yearLabel}"
-          form="{deadline.display_form_no}"
-          status="{deadline.statusLabel}"
-          tone="{deadline.tone}"
-          title="{deadline.form_name}"
-          period="{deadline.periodLabel}"
-          adjusted="{deadline.adjustmentVisible}"
-          adjustment="{deadline.adjustmentLabel}"/>
+        <use template="d-s" d="{deadline.dateLabel}" y="{deadline.yearLabel}" c="{deadline.display_form_no}" t="{deadline.form_name}" p="{deadline.periodLabel}">
+          <badge variant="{deadline.tone}">{deadline.statusLabel}</badge>
+        </use>
       </for>
     </if>
     <else>
