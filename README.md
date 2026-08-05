@@ -20,7 +20,7 @@ global form/deadline dashboard, and a functional tax-calendar engine.
 | Grounded 1701Q core | Exact 173-control contract, calculations, ordered validation, immutable profile mapping, candidate plaintext codecs, decrypt-only Artifact Lab, and schema-v4 draft streams under test |
 | Other form editors and print previews | UI/projection coverage only; not filing-ready |
 | Import, authentication, filing payment, and submission | UI only |
-| Distribution | macOS development build and Windows ARM64 development executable; neither is signed or production-ready |
+| Distribution | macOS development bundle, Linux package, and Windows ARM64 directory package; none is signed or production-ready |
 
 **Do not use this app as an authoritative filing plan yet.** The taxpayer
 calendar is limited to an explicitly configured, per-tax-year Forms Set and
@@ -38,31 +38,58 @@ because source-app captures may contain private taxpayer data.
 
 ## Quick start
 
-Requirements: Node.js 22.15+ and Zig 0.16.0. macOS is the original development
-host. Windows ARM64 uses a pinned host-tool workaround documented in the
-[Windows development guide](docs/WINDOWS_DEVELOPMENT.md).
+Requirements: Node.js 22.15+, Zig 0.16.0, and [Just](https://just.systems/).
+Linux also needs `pkg-config` and GTK4 development files. macOS is the
+original development host. Windows ARM64 uses a pinned host-tool workaround
+documented in the [Windows development guide](docs/WINDOWS_DEVELOPMENT.md).
 
-On macOS or Linux, `scripts/setup-dev-env.sh` provisions the pinned Zig
-compiler (verified against its published SHA-256), checks the Node runtime, and
-installs the locked npm dependencies. It is idempotent, and it is the same
-script CI and the development container run:
+On macOS or Linux, `just setup` provisions the pinned Zig compiler (verified
+against its published SHA-256), checks the Node runtime, and installs the locked
+npm dependencies. It is idempotent, and wraps the same script CI and the
+development container run:
 
 ```sh
-scripts/setup-dev-env.sh
+just setup
 ```
 
-Otherwise, install the toolchain yourself and start from `npm ci`:
+Then use the short command surface:
 
 ```sh
-npm ci
-npm run generate
-npx native test --yes -Dplatform=null
-npx native check . --strict
-npx native build . --yes
-npx native dev . --yes
+just run
 ```
 
 `@native-sdk/cli` is pinned to 0.6.1 in `package-lock.json`.
+
+### Just commands
+
+```sh
+just run       # local Debug app with hot reload
+just build     # ReleaseFast binary in zig-out/bin/
+just package   # macOS .app, Linux package, or Windows ARM64 package
+just app       # package, then open/launch it
+just install   # install for the current user on macOS, Linux, or Windows
+just check     # catalog, markup, and manifest checks
+just test      # headless Native SDK tests
+just verify    # check, test, build, and whitespace validation
+```
+
+`just install` keeps the previous user-level app as a timestamped sibling. On
+macOS it installs to `~/Applications/eBIRForms.app` by default. On Linux it
+installs the package under `~/.local/lib/ebirforms-zero`, adds a launcher at
+`~/.local/bin/ebirforms-zero`, and installs the desktop entry under
+`~/.local/share/applications`. On Windows it installs the unsigned package to
+`%LOCALAPPDATA%\Programs\eBIRForms` and creates a Start Menu shortcut. Set
+`EBIRFORMS_INSTALL_DIR` to override the install prefix on Linux or the parent
+directory on macOS and Windows.
+
+Linux builds require GTK4 development files because the Native SDK uses the
+system GTK host. Install them with `sudo apt-get install pkg-config libgtk-4-dev` on
+Debian/Ubuntu (the command prints Fedora and Arch equivalents). The Linux
+artifact is a relocatable Native SDK directory; AppImage, Flatpak, and tarball
+generation are still future release work. The Windows path is for the audited
+Windows ARM64 environment; load it with the [Windows development guide](docs/WINDOWS_DEVELOPMENT.md)
+before running the Windows build/package commands. Its package is unsigned
+and is a copied application directory, not an MSI/MSIX installer.
 
 ## Development rule
 
@@ -70,7 +97,7 @@ npx native dev . --yes
 `src/pages/`, or `src/app-root.fragment`, then run:
 
 ```sh
-npm run generate
+just generate
 ```
 
 Commit the regenerated `src/app.native`. The generator is deterministic and
@@ -104,12 +131,7 @@ idempotent.
 Before merging:
 
 ```sh
-npm run generate
-npm run check:tax-catalog
-git diff --check main...HEAD
-npx native test --yes -Dplatform=null
-npx native check . --strict
-npx native build . --yes
+just verify
 ```
 
 For visible changes, rebuild and relaunch the app before reviewing screenshots;
