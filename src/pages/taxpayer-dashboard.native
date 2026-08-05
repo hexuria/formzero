@@ -48,10 +48,10 @@
                 selected="{cell.selected}"
                 on-press="profile_calendar_select_day:{cell.day}">
                 <if test="{cell.selected}">
-                  <text text-alignment="end"><span weight="bold">{cell.dayLabel}</span></text>
+                  <text text-alignment="center"><span weight="bold">{cell.dayLabel}</span></text>
                 </if>
                 <else>
-                  <text text-alignment="end">{cell.dayLabel}</text>
+                  <text text-alignment="center">{cell.dayLabel}</text>
                 </else>
                 <if test="{cell.hasDeadlines}">
                   <row grow="1" main="center" cross="center">

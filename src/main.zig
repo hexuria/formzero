@@ -24275,6 +24275,57 @@ test "dashboard calendar geometry stays bounded at representative widths" {
     try std.testing.expectEqual(@as(u16, 32), model.taxpayerDashboardPagePadding());
 }
 
+test "calendar day labels and markers share centered day-cell lanes" {
+    const global_source = @embedFile("pages/global-dashboard.fragment");
+    const profile_source = @embedFile("pages/taxpayer-dashboard.native");
+
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            global_source,
+            "<row main=\"center\">\n                      <badge variant=\"primary\">{cell.dayLabel}",
+        ) != null,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            global_source,
+            "<text text-alignment=\"center\">{cell.dayLabel}</text>",
+        ) != null,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            profile_source,
+            "<text text-alignment=\"center\"><span weight=\"bold\">{cell.dayLabel}</span></text>",
+        ) != null,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            profile_source,
+            "<text text-alignment=\"center\">{cell.dayLabel}</text>",
+        ) != null,
+    );
+
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        std.mem.count(
+            u8,
+            global_source,
+            "<row grow=\"1\" main=\"center\" cross=\"center\">",
+        ),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        std.mem.count(
+            u8,
+            profile_source,
+            "<row grow=\"1\" main=\"center\" cross=\"center\">",
+        ),
+    );
+}
+
 test "taxpayer navigation selection is hidden on global routes" {
     var model = Model{};
     const global_pages = [_]Page{
