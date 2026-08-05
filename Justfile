@@ -11,11 +11,7 @@ default:
 # Provision the pinned Zig toolchain and locked npm dependencies.
 [unix]
 setup:
-    bash scripts/setup-dev-env.sh
-
-[linux]
-setup:
-    bash scripts/check-linux-deps.sh
+    if [ "{{ os() }}" = "linux" ]; then bash scripts/check-linux-deps.sh; fi
     bash scripts/setup-dev-env.sh
 
 # Windows toolchains are pinned and loaded by the Windows development guide.
