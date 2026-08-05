@@ -3,7 +3,7 @@
   "kind": "human-approved-form-field-ownership",
   "approval": {
     "status": "human_approved",
-    "basis": "2551Q and Complete Tax Profile Remediation locked decisions, 2026-08-05"
+    "basis": "Tax Profile and Tax Form Profile Simplification, 2026-08-05"
   },
   "publicationPolicy": {
     "semanticOwnershipMayBeAutoInferred": false,
@@ -42,14 +42,13 @@
       "officialItemId": "13",
       "officialLabel": "Only for individual taxpayers whose sales/receipts are subject to Percentage Tax under Section 116 of the Tax Code, as amended: What income tax rates are you availing? (choose one)",
       "semanticKey": "income_tax_rate_election",
-      "owner": "annual",
+      "owner": "form-specific",
       "applicability": "eligible individual Section 116 taxpayer; project only on the initial applicable quarter of the taxable year",
       "options": ["graduated", "eight_percent"],
-      "annualPolicy": {
-        "storageScope": "taxpayer_tax_year",
+      "formProfilePolicy": {
+        "storageScope": "taxpayer_form_revision_tax_year",
         "initialProjection": "initial_applicable_quarter_only",
-        "laterQuarterDisplay": "inherited_read_only",
-        "missingEligibilityFacts": "fail_closed"
+        "laterQuarterDisplay": "inherited_read_only"
       },
       "evidence": {
         "page": 1,
@@ -57,17 +56,17 @@
         "officialInstruction": "To be filled out only on the initial quarter of the taxable year"
       }
     },
-    {"officialItemId":"14","officialLabel":"Total Tax Due (From Schedule 1 Item 7)","semanticKey":"total_tax_due","owner":"derived","applicability":"always","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
+    {"officialItemId":"14","officialLabel":"Total Tax Due (From Schedule 1 Item 7)","semanticKey":"total_tax_due","owner":"transaction","applicability":"always","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
     {"officialItemId":"15","officialLabel":"Creditable Percentage Tax Withheld per BIR Form No. 2307","semanticKey":"creditable_percentage_tax_withheld","owner":"transaction","applicability":"when supported by Form 2307 evidence","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
     {"officialItemId":"16","officialLabel":"Tax Paid in Return Previously Filed, if this is an Amended Return","semanticKey":"prior_return_payment","owner":"transaction","applicability":"amended return only","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
     {"officialItemId":"17","officialLabel":"Other Tax Credit/Payment (specify)","semanticKey":"other_tax_credit_payment","owner":"transaction","applicability":"when another credit or payment applies","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
-    {"officialItemId":"18","officialLabel":"Total Tax Credits/Payments (Sum of Items 15 to 17)","semanticKey":"total_tax_credits_payments","owner":"derived","applicability":"always","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
-    {"officialItemId":"19","officialLabel":"Tax Still Payable/(Overpayment) (Item 14 Less Item 18)","semanticKey":"tax_payable_overpayment","owner":"derived","applicability":"always","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
+    {"officialItemId":"18","officialLabel":"Total Tax Credits/Payments (Sum of Items 15 to 17)","semanticKey":"total_tax_credits_payments","owner":"transaction","applicability":"always","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
+    {"officialItemId":"19","officialLabel":"Tax Still Payable/(Overpayment) (Item 14 Less Item 18)","semanticKey":"tax_payable_overpayment","owner":"transaction","applicability":"always","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
     {"officialItemId":"20","officialLabel":"Surcharge","semanticKey":"penalty_surcharge","owner":"transaction","applicability":"when a surcharge applies","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
     {"officialItemId":"21","officialLabel":"Interest","semanticKey":"penalty_interest","owner":"transaction","applicability":"when interest applies","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
     {"officialItemId":"22","officialLabel":"Compromise","semanticKey":"penalty_compromise","owner":"transaction","applicability":"when a compromise penalty applies","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
-    {"officialItemId":"23","officialLabel":"Total Penalties (Sum of Items 20 to 22)","semanticKey":"total_penalties","owner":"derived","applicability":"always","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
-    {"officialItemId":"24","officialLabel":"TOTAL AMOUNT PAYABLE/(Overpayment) (Sum of Items 19 and 23)","semanticKey":"total_amount_payable_overpayment","owner":"derived","applicability":"always","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
+    {"officialItemId":"23","officialLabel":"Total Penalties (Sum of Items 20 to 22)","semanticKey":"total_penalties","owner":"transaction","applicability":"always","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
+    {"officialItemId":"24","officialLabel":"TOTAL AMOUNT PAYABLE/(Overpayment) (Sum of Items 19 and 23)","semanticKey":"total_amount_payable_overpayment","owner":"transaction","applicability":"always","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
     {"officialItemId":"24.disposition","officialLabel":"If overpayment: To be refunded / To be issued a Tax Credit Certificate","semanticKey":"overpayment_disposition","owner":"transaction","applicability":"when Item 24 is an overpayment","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
     {"officialItemId":"25","officialLabel":"Cash/Bank Debit Memo","semanticKey":"payment_cash_bank_debit_memo","owner":"transaction","applicability":"when used","evidence":{"page":1,"region":"Part III - Details of Payment"}},
     {"officialItemId":"26","officialLabel":"Check","semanticKey":"payment_check","owner":"transaction","applicability":"when used","evidence":{"page":1,"region":"Part III - Details of Payment"}},
@@ -75,9 +74,9 @@
     {"officialItemId":"28","officialLabel":"Others (Specify below)","semanticKey":"payment_other","owner":"transaction","applicability":"when used","evidence":{"page":1,"region":"Part III - Details of Payment"}},
     {"officialItemId":"Schedule1.1-6.ATC","officialLabel":"Alphanumeric Tax Code (ATC)","semanticKey":"percentage_tax_line_atc","owner":"transaction","applicability":"for each entered Schedule 1 line","evidence":{"page":2,"region":"Schedule 1 - Computation of Tax"}},
     {"officialItemId":"Schedule1.1-6.TaxableAmount","officialLabel":"Taxable Amount","semanticKey":"percentage_tax_line_taxable_amount","owner":"transaction","applicability":"for each entered Schedule 1 line","evidence":{"page":2,"region":"Schedule 1 - Computation of Tax"}},
-    {"officialItemId":"Schedule1.1-6.TaxRate","officialLabel":"Tax Rate","semanticKey":"percentage_tax_line_rate","owner":"derived","applicability":"resolved from the selected ATC and exact revision's Table 1","evidence":{"page":2,"region":"Schedule 1 - Computation of Tax"}},
-    {"officialItemId":"Schedule1.1-6.TaxDue","officialLabel":"Tax Due","semanticKey":"percentage_tax_line_tax_due","owner":"derived","applicability":"for each entered Schedule 1 line","evidence":{"page":2,"region":"Schedule 1 - Computation of Tax"}},
-    {"officialItemId":"Schedule1.7","officialLabel":"Total Tax Due (Sum of Items 1 to 6) (To Part II Item 14)","semanticKey":"schedule_1_total_tax_due","owner":"derived","applicability":"always","evidence":{"page":2,"region":"Schedule 1 - Computation of Tax"}}
+    {"officialItemId":"Schedule1.1-6.TaxRate","officialLabel":"Tax Rate","semanticKey":"percentage_tax_line_rate","owner":"transaction","applicability":"resolved from the selected ATC and exact revision's Table 1","evidence":{"page":2,"region":"Schedule 1 - Computation of Tax"}},
+    {"officialItemId":"Schedule1.1-6.TaxDue","officialLabel":"Tax Due","semanticKey":"percentage_tax_line_tax_due","owner":"transaction","applicability":"for each entered Schedule 1 line","evidence":{"page":2,"region":"Schedule 1 - Computation of Tax"}},
+    {"officialItemId":"Schedule1.7","officialLabel":"Total Tax Due (Sum of Items 1 to 6) (To Part II Item 14)","semanticKey":"schedule_1_total_tax_due","owner":"transaction","applicability":"always","evidence":{"page":2,"region":"Schedule 1 - Computation of Tax"}}
   ],
   "repeatedProjections": [
     {"page":2,"officialLabel":"TIN","semanticKey":"tin","owner":"base"},

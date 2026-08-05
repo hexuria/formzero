@@ -44,9 +44,9 @@ pub const Error = error{
     MissingActiveFormsSetSegment,
 };
 
-/// Owns the v15 history backing the exact decision pointer. `Composition` is
-/// already fixed-storage and remains valid after all other loaded histories
-/// and Registration aggregates are released inside `prepare`.
+/// Owns the history backing the exact Forms Set decision pointer. `Composition`
+/// is fixed-storage and remains valid after other loaded histories are
+/// released inside `prepare`.
 pub const OwnedComposition = struct {
     composition: adapter.Composition,
     exact_forms_set: profile_persistence.OwnedFormSetDecisionResolution,
@@ -136,12 +136,6 @@ pub fn prepare(
         return error.MissingActiveFormsSetSegment;
     }
 
-    var owned_registrations =
-        [_]?profile_persistence.OwnedRegistrationAggregate{null} **
-        runtime.max_role_bindings;
-    defer for (&owned_registrations) |*owned| {
-        if (owned.*) |*value| value.deinit(allocator);
-    };
     var resolved_profiles: [runtime.max_role_bindings]adapter.ResolvedProfile =
         undefined;
     const bindings = state.roleBindings().slice();
@@ -156,18 +150,9 @@ pub fn prepare(
         {
             return error.ProfileRevisionBindingMismatch;
         }
-        owned_registrations[index] =
-            try profile_persistence.loadRegistrationAggregateOn(
-                store,
-                allocator,
-                profile_revision.profile_id,
-                applicability_date,
-            );
         resolved_profiles[index] = .{
             .role = role,
             .revision = profile_revision,
-            .legacy_business_activity_id = binding.business_activity_id,
-            .registration = &owned_registrations[index].?.aggregate,
         };
     }
 
@@ -341,14 +326,6 @@ fn persistTestProfile(
         try model.Date.parseIso("2020-01-01"),
         null,
     );
-    const activities = [_]model.BusinessActivity{.{
-        .id = try model.BusinessActivityId.parse("legacy-activity"),
-        .line_of_business = try field.LineOfBusiness.parse(
-            "Legacy profile consulting",
-        ),
-        .atc = try field.Atc.parse("PT010"),
-        .effective = effective,
-    }};
     const base: profile_editor.Base = .{
         .profile_id = profile_id,
         .revision_id = try model.RevisionId.parse("profile-revision-1"),
@@ -370,14 +347,20 @@ fn persistTestProfile(
             ),
         },
     };
-    const revision = try profile_editor.begin(base).soleProprietor(.{
+    var revision = try profile_editor.begin(base).soleProprietor(.{
         .person = .{
             .name = try field.TaxpayerName.parse("MARIA SANTOS"),
             .date_of_birth = try model.Date.parseIso("1990-01-02"),
             .citizenship = try field.Citizenship.parse("Filipino"),
         },
         .trade_name = try field.RegisteredName.parse("SANTOS CONSULTING"),
-    }).withBusinessActivities(&activities).build();
+    }).build();
+    revision.accounting_period_basis = .calendar;
+    revision.eopt_tier = .micro;
+    revision.primary_line_of_business = try field.LineOfBusiness.parse(
+        "Base profile consulting",
+    );
+    try revision.validate();
     try profile_persistence.createProfileWithRevision(
         store,
         allocator,
@@ -406,7 +389,51 @@ fn createWholeYearFormsSet(
     try store.createFormSet(profile_id.asSlice(), 2026, &forms);
 }
 
-test "2551Q prepares SQLite-resolved no_setup and taxpayer-year provenance" {
+fn persist2551QTaxFormProfile(
+    allocator: std.mem.Allocator,
+    store: *store_module.Store,
+    profile_id: model.ProfileId,
+    definition: *const catalog.FormDefinition,
+    choice: []const u8,
+) !void {
+    const values = [_]tax_form_profile.SetupValue{.{
+        .semantic_key = .income_tax_rate_election,
+        .role = .filer,
+        .value = .{ .choice = try tax_form_profile.TextValue.parse(choice) },
+    }};
+    const revision: tax_form_profile.Revision = .{
+        .id = try tax_form_profile.RevisionId.parse("setup-2551q-2026"),
+        .stream = .{
+            .profile_id = profile_id,
+            .tax_year = 2026,
+            .form_code = try tax_form_profile.FormCode.parse(definition.code),
+            .form_revision = try tax_form_profile.FormRevision.parse(
+                definition.revision.?,
+            ),
+        },
+        .sequence = 1,
+        .effective = try model.EffectivePeriod.init(
+            try model.Date.parseIso("2026-01-01"),
+            try model.Date.parseIso("2026-12-31"),
+        ),
+        .spec_revision = definition.tax_form_profile.spec_revision.?,
+        .spec_hash = try tax_form_profile.SpecHash.parse(
+            definition.tax_form_profile.spec_hash.?,
+        ),
+        .review_state = .confirmed,
+        .confirmed_at_unix = 1,
+        .source = .manual_entry,
+        .values = &values,
+    };
+    try profile_persistence.appendTaxFormProfileRevision(
+        store,
+        allocator,
+        0,
+        &revision,
+    );
+}
+
+test "2551Q prepares SQLite-resolved generic Tax Form Profile provenance" {
     const allocator = std.testing.allocator;
     var store = try store_module.Store.openMemory(allocator);
     defer store.close();
@@ -417,25 +444,12 @@ test "2551Q prepares SQLite-resolved no_setup and taxpayer-year provenance" {
     );
     const definition = catalog.findForm("2551Q").?;
     try createWholeYearFormsSet(&store, profile_id, definition);
-
-    const year_values = [_]taxpayer_year.SettingValue{.{
-        .income_tax_rate_election = .eight_percent,
-    }};
-    const year_revision: taxpayer_year.Revision = .{
-        .id = try taxpayer_year.RevisionId.parse("year-settings-2026"),
-        .stream = .{ .profile_id = profile_id, .tax_year = 2026 },
-        .sequence = 1,
-        .effective = try taxpayer_year.fullTaxYearPeriod(2026),
-        .review_state = .confirmed,
-        .confirmed_at_unix_seconds = 1,
-        .source = .manual_entry,
-        .values = &year_values,
-    };
-    try profile_persistence.appendTaxpayerYearRevision(
-        &store,
+    try persist2551QTaxFormProfile(
         allocator,
-        0,
-        &year_revision,
+        &store,
+        profile_id,
+        definition,
+        "eight_percent",
     );
 
     const period: filing_period.FilingPeriod = .{
@@ -483,22 +497,21 @@ test "2551Q prepares SQLite-resolved no_setup and taxpayer-year provenance" {
         catalog.catalog_sha256,
         snapshot.identity.catalog.sha256.asSlice(),
     );
-    try std.testing.expect(snapshot.taxpayer_year_revision != null);
+    try std.testing.expect(snapshot.taxpayer_year_revision == null);
+    try std.testing.expect(snapshot.tax_form_profile_revision != null);
     try std.testing.expectEqual(
         @as(u32, 1),
-        snapshot.taxpayer_year_revision.?.revision_sequence,
+        snapshot.tax_form_profile_revision.?.revision_sequence,
     );
-    try std.testing.expect(snapshot.tax_form_profile_revision == null);
-    try std.testing.expectEqual(@as(usize, 0), snapshot.components().len);
     try std.testing.expectEqual(@as(usize, 0), snapshot.transactionSeeds().len);
 
     var found_election = false;
     for (snapshot.sourceSnapshots()) |source| switch (source.key) {
-        .taxpayer_year_setting => |key| {
+        .tax_form_profile_value => |key| {
             if (key.key != .income_tax_rate_election) continue;
-            try std.testing.expectEqual(
-                taxpayer_year.IncomeTaxRateElection.eight_percent,
-                source.copied_value.income_tax_rate_election,
+            try std.testing.expectEqualStrings(
+                "eight_percent",
+                source.copied_value.choice.asSlice(),
             );
             found_election = true;
         },
@@ -621,24 +634,12 @@ test "v15 review-required Forms Set proposal blocks otherwise active 2551Q" {
     );
     const definition = catalog.findForm("2551Q").?;
     try createWholeYearFormsSet(&store, profile_id, definition);
-    const year_values = [_]taxpayer_year.SettingValue{.{
-        .income_tax_rate_election = .graduated,
-    }};
-    const year_revision: taxpayer_year.Revision = .{
-        .id = try taxpayer_year.RevisionId.parse("review-year-settings"),
-        .stream = .{ .profile_id = profile_id, .tax_year = 2026 },
-        .sequence = 1,
-        .effective = try taxpayer_year.fullTaxYearPeriod(2026),
-        .review_state = .confirmed,
-        .confirmed_at_unix_seconds = 1,
-        .source = .manual_entry,
-        .values = &year_values,
-    };
-    try profile_persistence.appendTaxpayerYearRevision(
-        &store,
+    try persist2551QTaxFormProfile(
         allocator,
-        0,
-        &year_revision,
+        &store,
+        profile_id,
+        definition,
+        "graduated",
     );
     const stream: forms_set_history.StreamIdentity = .{
         .profile_id = profile_id,
@@ -681,7 +682,7 @@ test "v15 review-required Forms Set proposal blocks otherwise active 2551Q" {
     );
 }
 
-test "1601C optional setup composes sole confirmed activity without annual revision" {
+test "1601C composes from the Forms Set and Base Profile without registration" {
     const allocator = std.testing.allocator;
     var store = try store_module.Store.openMemory(allocator);
     defer store.close();
@@ -704,26 +705,6 @@ test "1601C optional setup composes sole confirmed activity without annual revis
         .effective_from = "2026-01-01",
         .effective_until = "2026-06-30",
         .forms = &interval_forms,
-    });
-
-    const registration_activities =
-        [_]store_module.RegistrationActivityRevisionWrite{.{
-            .anchor_id = "registration-activity",
-            .metadata = .{
-                .id = "registration-activity-v1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2026-01-01".* },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 1,
-            },
-            .line_of_business = "Exact registration consulting",
-            .atc = "PT010",
-        }};
-    _ = try store.appendRegistrationCommit(.{
-        .profile_id = profile_id.asSlice(),
-        .expected_current_sequence = 0,
-        .activities = &registration_activities,
     });
 
     const period: filing_period.FilingPeriod = .{
@@ -760,66 +741,5 @@ test "1601C optional setup composes sole confirmed activity without annual revis
     const snapshot = &prepared.composition.provenance_snapshot;
     try std.testing.expect(snapshot.taxpayer_year_revision == null);
     try std.testing.expect(snapshot.tax_form_profile_revision == null);
-    try std.testing.expectEqual(@as(usize, 1), snapshot.components().len);
-    const component = snapshot.components()[0].business_activity;
-    try std.testing.expectEqualStrings(
-        "registration-activity",
-        component.anchor.id.asSlice(),
-    );
-    try std.testing.expectEqualStrings(
-        "registration-activity-v1",
-        component.component_revision_id.asSlice(),
-    );
-    try std.testing.expectEqual(@as(u32, 1), component.component_revision_sequence);
     try std.testing.expectEqual(@as(usize, 0), snapshot.transactionSeeds().len);
-
-    var found_registration_line = false;
-    for (snapshot.sourceSnapshots()) |source| switch (source.key) {
-        .business_activity_fact => |key| {
-            if (key.key != .line_of_business) continue;
-            try std.testing.expectEqualStrings(
-                "Exact registration consulting",
-                source.copied_value.text.asSlice(),
-            );
-            found_registration_line = true;
-        },
-        else => {},
-    };
-    try std.testing.expect(found_registration_line);
-
-    const second_activity = [_]store_module.RegistrationActivityRevisionWrite{.{
-        .anchor_id = "registration-activity-2",
-        .metadata = .{
-            .id = "registration-activity-2-v1",
-            .expected_component_sequence = 0,
-            .effective = .{ .from = "2026-01-01".* },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 2,
-        },
-        .line_of_business = "Second exact activity",
-        .atc = "PT020",
-    }};
-    _ = try store.appendRegistrationCommit(.{
-        .profile_id = profile_id.asSlice(),
-        .expected_current_sequence = 1,
-        .activities = &second_activity,
-    });
-    try state.open(.{
-        .form = try typedForm(definition),
-        .filer_profile_id = profile_id,
-        .tax_year = 2026,
-        .quarter = 1,
-        .filing_period = period,
-    });
-    // A concrete filing-time projection can name one of the two activities,
-    // but that does not replace the required annual Tax Form Profile binding.
-    try state.setBusinessActivity(
-        .filer,
-        try model.BusinessActivityId.parse("registration-activity"),
-    );
-    try std.testing.expectError(
-        error.MissingTaxFormProfileRevision,
-        prepare(allocator, &store, &state, definition, period, null),
-    );
 }

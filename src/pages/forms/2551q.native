@@ -3,30 +3,15 @@
     <column gap="4">
       <text foreground="text_muted">1 Taxable-period basis</text>
       <input text="{percentageTaxPeriodBasis}" placeholder="Calendar / Fiscal" disabled="true" />
-      <row gap="8">
-        <button
-          variant="outline"
-          selected="{percentageTaxPeriodCalendarSelected}"
-          disabled="{not percentageTaxEditable}"
-          on-press="percentage_tax_period_calendar">
-          Calendar
-        </button>
-        <button
-          variant="outline"
-          selected="{percentageTaxPeriodFiscalSelected}"
-          disabled="true"
-          on-press="percentage_tax_period_fiscal">
-          Fiscal (not yet supported)
-        </button>
-      </row>
+      <text wrap="true" foreground="text_muted">Read-only from the frozen Base Tax Profile revision.</text>
     </column>
     <column gap="4">
       <text foreground="text_muted">2 Year-end month</text>
       <input
         text="{percentageTaxYearEndMonth}"
         placeholder="Month"
-        disabled="{not percentageTaxEditable}"
-        on-input="percentage_tax_year_end_month_input"/>
+        disabled="true"/>
+      <text wrap="true" foreground="text_muted">Derived from the frozen Base Tax Profile revision.</text>
     </column>
     <!-- @include-template form-field-bound label="Taxable Quarter" v="{percentageTaxQuarter}" ph="Quarter" -->
     <!-- @include-template form-field-bound label="Taxable Year" v="{percentageTaxYear}" ph="YYYY" -->
@@ -68,11 +53,13 @@
         disabled="{not percentageTaxEditable}"
         on-input="percentage_tax_relief_reference_input"/>
     </column>
-    <column gap="4">
-      <text foreground="text_muted">13 What income tax rates are you availing?</text>
-      <input height="44" text="{percentageTaxElection}" placeholder="Set in the annual Income tax rate profile" disabled="true" />
-      <text wrap="true" foreground="text_muted">The eligible initial quarter sets this choice for the taxable year. Later quarters inherit the saved annual rate.</text>
-    </column>
+    <if test="{percentageTaxElectionVisible}">
+      <column gap="4">
+        <text foreground="text_muted">13 What income tax rates are you availing?</text>
+        <input height="44" text="{percentageTaxElection}" placeholder="Set in the 2551Q Tax Form Profile" disabled="true" />
+        <text wrap="true" foreground="text_muted">Item 13 is projected only for Q1 from the exact saved 2551Q Tax Form Profile revision.</text>
+      </column>
+    </if>
   </grid>
 </template>
 

@@ -66,7 +66,6 @@ interface FieldDefinition {
   readonly profilePresence: ProfilePresence | null;
   readonly sourceKey: string | null;
   readonly fixedValue: string | null;
-  readonly optionalSeedSource: string | null;
   readonly sourcePath: string;
   readonly sourceLine: number | null;
   readonly control: "input" | "table";
@@ -117,17 +116,17 @@ const generatedMarkdownPath = "docs/tax-profile/FORM_FIELD_CATALOG.md";
 const expectedRegistryCount = 51;
 const expectedEditorCount = 10;
 const expectedCalendarOnlyCount = 41;
-const expectedInputCount = 325;
+const expectedInputCount = 326;
 const expectedProfileTargetCount = 91;
-const expectedOptionalProfileTargetCount = 34;
-const expectedTaxpayerYearTargetCount = 2;
-const expectedTaxpayerYearConsumerFormCount = 3;
-const expectedTaxpayerYearConsumptionCount = 5;
+const expectedOptionalProfileTargetCount = 33;
+const expectedTaxpayerYearTargetCount = 1;
+const expectedTaxpayerYearConsumerFormCount = 2;
+const expectedTaxpayerYearConsumptionCount = 4;
 const expectedFormPolicyTargetCount = 4;
-const expectedSetupContractCount = 7;
-const expectedNoSetupContractCount = 3;
-const expectedSetupValueCount = 12;
-const expectedEvidenceRequiredSetupValueCount = 5;
+const expectedSetupContractCount = 4;
+const expectedNoSetupContractCount = 6;
+const expectedSetupValueCount = 4;
+const expectedEvidenceRequiredSetupValueCount = 0;
 
 function fail(message: string): never {
   throw new Error(message);
@@ -224,7 +223,6 @@ function parseInputs(spec: EditorFormSpec, source: string): FieldDefinition[] {
           : null,
       sourceKey: metadata.sourceKey ?? null,
       fixedValue: metadata.fixedValue ?? null,
-      optionalSeedSource: metadata.optionalSeedSource ?? null,
       sourcePath: spec.sourcePath,
       sourceLine: sourceLineAt(source, match.index),
       control: "input",
@@ -323,15 +321,9 @@ function validateTaxFormProfileVocabulary(): void {
     );
   }
 
-  const referenceTypes = new Set<TaxFormProfileValueType>([
-    "profile_id",
-    "business_activity_anchor_id",
-    "registration_obligation_anchor_id",
-  ]);
+  const referenceTypes = new Set<TaxFormProfileValueType>(["profile_id"]);
   const bindingSources = new Set<TaxFormProfileSourceKind>([
     "named_profile_role",
-    "business_activity_anchor",
-    "registration_obligation_anchor",
   ]);
   const authoredSources = new Set<TaxFormProfileSourceKind>([
     "user_entry",
@@ -528,7 +520,6 @@ async function loadEditorForm(spec: EditorFormSpec): Promise<FormDefinition> {
         : null,
     sourceKey: null,
     fixedValue: null,
-    optionalSeedSource: null,
     sourcePath: spec.sourcePath,
     sourceLine: null,
     control: "table",
@@ -870,14 +861,12 @@ function validateCatalog(forms: readonly FormDefinition[]): void {
     id: string,
     sourceKey: string | null,
     fixedValue: string | null,
-    optionalSeedSource: string | null,
   ): void => {
     const field = fieldById.get(id);
     if (!field) fail(`Source guardrail targets missing field ${id}`);
     if (
       field.sourceKey !== sourceKey ||
-      field.fixedValue !== fixedValue ||
-      field.optionalSeedSource !== optionalSeedSource
+      field.fixedValue !== fixedValue
     ) {
       fail(`${id} explicit source contract drifted`);
     }
@@ -894,21 +883,14 @@ function validateCatalog(forms: readonly FormDefinition[]): void {
   );
   expectOwnership(
     "0605.1999-07-ENCS.input.line_of_business_occupation",
-    "transaction",
-    "filing",
-  );
-  expectSourceContract(
-    "0605.1999-07-ENCS.input.line_of_business_occupation",
-    null,
-    null,
-    "business_activity.line_of_business",
+    "profile",
+    "filer",
   );
   expectOwnership("1601C.2018-01-ENCS.input.atc", "form_policy", "system");
   expectSourceContract(
     "1601C.2018-01-ENCS.input.atc",
     "form_policy.atc",
     "WW010",
-    null,
   );
   expectOwnership(
     "0619F.2018-01-ENCS.input.tax_type_code",
@@ -919,14 +901,12 @@ function validateCatalog(forms: readonly FormDefinition[]): void {
     "0619F.2018-01-ENCS.input.tax_type_code",
     "form_policy.tax_type",
     "WB",
-    null,
   );
   expectOwnership("0619E.2018-01-ENCS.input.atc", "form_policy", "system");
   expectSourceContract(
     "0619E.2018-01-ENCS.input.atc",
     "form_policy.atc",
     "WME10",
-    null,
   );
   expectOwnership(
     "0619E.2018-01-ENCS.input.tax_type_code",
@@ -937,7 +917,6 @@ function validateCatalog(forms: readonly FormDefinition[]): void {
     "0619E.2018-01-ENCS.input.tax_type_code",
     "form_policy.tax_type",
     "WE",
-    null,
   );
   expectOwnership(
     "1701Q.2018-01-ENCS.input.income_tax_rate_election",
@@ -948,35 +927,17 @@ function validateCatalog(forms: readonly FormDefinition[]): void {
     "1701Q.2018-01-ENCS.input.income_tax_rate_election",
     "income_tax_rate_election",
     null,
-    null,
   );
   expectOwnership(
     "2551Q.2018-01-ENCS.input.what_income_tax_rates_are_you_availing",
-    "taxpayer_year",
-    "filing",
+    "tax_form_profile",
+    "filer",
   );
   expectSourceContract(
     "2551Q.2018-01-ENCS.input.what_income_tax_rates_are_you_availing",
     "income_tax_rate_election",
     null,
-    null,
   );
-
-  for (const code of ["0619E", "0619F"] as const) {
-    const form = forms.find((candidate) => candidate.code === code);
-    const activity = form?.taxFormProfile.values.find(
-      (value) => value.semanticKey === "business_activity_anchor_id",
-    );
-    if (
-      !activity ||
-      activity.availability !== "evidence_required" ||
-      !activity.evidenceGate
-    ) {
-      fail(
-        `${code} missing-header activity binding must remain evidence-required`,
-      );
-    }
-  }
 
   for (const form of forms) {
     validateUnique(form.roles, `${form.code} roles`);
@@ -996,9 +957,7 @@ function validateCatalog(forms: readonly FormDefinition[]): void {
     const expectedTaxpayerYearSettings: readonly TaxpayerYearSettingKey[] =
       form.code === "1701" || form.code === "1701Q"
         ? ["income_tax_rate_election", "deduction_method"]
-        : form.code === "2551Q"
-          ? ["income_tax_rate_election"]
-          : [];
+        : [];
     if (
       JSON.stringify(form.consumedTaxpayerYearSettings) !==
       JSON.stringify(expectedTaxpayerYearSettings)
@@ -1193,11 +1152,12 @@ function validateCatalog(forms: readonly FormDefinition[]): void {
       }
       if (
         (field.provenance === "taxpayer_year" ||
+          field.provenance === "tax_form_profile" ||
           field.provenance === "form_policy") !==
         (field.sourceKey !== null)
       ) {
         fail(
-          `${field.id} taxpayer-year/form-policy ownership must have exactly ` +
+          `${field.id} taxpayer-year/form-profile/form-policy ownership must have exactly ` +
             "one explicit source key",
         );
       }
@@ -1220,6 +1180,28 @@ function validateCatalog(forms: readonly FormDefinition[]): void {
         fail(`${field.id} taxpayer-year setting must be consumed by filing`);
       }
       if (
+        field.provenance === "tax_form_profile" &&
+        field.role !== "filer" &&
+        field.role !== "spouse"
+      ) {
+        fail(`${field.id} Tax Form Profile value must use a named profile role`);
+      }
+      if (
+        field.provenance === "tax_form_profile" &&
+        (!field.sourceKey ||
+          !taxFormProfileSemanticKeyValues.includes(
+            field.sourceKey as TaxFormProfileSemanticKey,
+          ) ||
+          !form.taxFormProfile.values.some(
+            (value) => value.semanticKey === field.sourceKey,
+          ))
+      ) {
+        fail(
+          `${field.id} visible Tax Form Profile source is absent from the form's ` +
+            "closed setup contract",
+        );
+      }
+      if (
         field.provenance === "taxpayer_year" &&
         (!field.sourceKey ||
           !taxpayerYearSettingKeyValues.includes(
@@ -1232,17 +1214,6 @@ function validateCatalog(forms: readonly FormDefinition[]): void {
         fail(
           `${field.id} visible taxpayer-year source is absent from the form's ` +
             "closed consumer contract",
-        );
-      }
-      if (
-        field.optionalSeedSource !== null &&
-        (field.provenance !== "transaction" ||
-          !field.optionalSeedSource.trim() ||
-          field.sourceKey !== null ||
-          field.fixedValue !== null)
-      ) {
-        fail(
-          `${field.id} optional seed must target filing-owned transaction data`,
         );
       }
       if (
@@ -1402,7 +1373,6 @@ function generateZig(forms: readonly FormDefinition[]): string {
     "    profile_presence: ?ProfilePresence,",
     "    source_key: ?[]const u8,",
     "    fixed_value: ?[]const u8,",
-    "    optional_seed_source: ?[]const u8,",
     "    source_path: []const u8,",
     "    source_line: ?u32,",
     "    control: enum { input, table },",
@@ -1526,7 +1496,6 @@ function generateZig(forms: readonly FormDefinition[]): string {
         `        .profile_presence = ${field.profilePresence === null ? "null" : `.${field.profilePresence}`},`,
         `        .source_key = ${field.sourceKey === null ? "null" : zigString(field.sourceKey)},`,
         `        .fixed_value = ${field.fixedValue === null ? "null" : zigString(field.fixedValue)},`,
-        `        .optional_seed_source = ${field.optionalSeedSource === null ? "null" : zigString(field.optionalSeedSource)},`,
         `        .source_path = ${zigString(field.sourcePath)},`,
         `        .source_line = ${field.sourceLine ?? "null"},`,
         `        .control = .${field.control},`,
@@ -1857,8 +1826,8 @@ function generateMarkdown(forms: readonly FormDefinition[]): string {
     }
     lines.push(
       "",
-      "| Stable field ID | Label | Provenance | Profile key | Presence | Source key | Fixed value | Optional seed source | Role | Type | Status | Source |",
-      "|---|---|---|---|---|---|---|---|---|---|---|---|",
+      "| Stable field ID | Label | Provenance | Profile key | Presence | Source key | Fixed value | Role | Type | Status | Source |",
+      "|---|---|---|---|---|---|---|---|---|---|---|",
     );
 
     for (const field of form.fields) {
@@ -1867,7 +1836,7 @@ function generateMarkdown(forms: readonly FormDefinition[]): string {
           ? `${field.sourcePath} (table schema)`
           : `${field.sourcePath}:${field.sourceLine}`;
       lines.push(
-        `| \`${field.id}\` | ${markdownCell(field.label)} | ${field.provenance} | ${field.profileField ?? "—"} | ${field.profilePresence ?? "—"} | ${field.sourceKey ?? "—"} | ${field.fixedValue ?? "—"} | ${field.optionalSeedSource ?? "—"} | ${field.role} | ${field.valueType} | ${field.status} | \`${location}\` |`,
+        `| \`${field.id}\` | ${markdownCell(field.label)} | ${field.provenance} | ${field.profileField ?? "—"} | ${field.profilePresence ?? "—"} | ${field.sourceKey ?? "—"} | ${field.fixedValue ?? "—"} | ${field.role} | ${field.valueType} | ${field.status} | \`${location}\` |`,
       );
     }
     lines.push("");
@@ -1910,8 +1879,42 @@ async function main(): Promise<void> {
   ].filter(Boolean).length;
 
   if (checkOnly) {
+    const profileTargetCount = forms
+      .flatMap((form) => form.fields)
+      .filter((field) => field.provenance === "profile").length;
+    const optionalProfileTargetCount = forms
+      .flatMap((form) => form.fields)
+      .filter(
+        (field) =>
+          field.provenance === "profile" && field.profilePresence === "optional",
+      ).length;
+    const taxpayerYearTargetCount = forms
+      .flatMap((form) => form.fields)
+      .filter((field) => field.provenance === "taxpayer_year").length;
+    const taxpayerYearConsumerForms = forms.filter(
+      (form) => form.consumedTaxpayerYearSettings.length !== 0,
+    );
+    const taxpayerYearConsumptionCount = taxpayerYearConsumerForms.reduce(
+      (count, form) => count + form.consumedTaxpayerYearSettings.length,
+      0,
+    );
+    const formPolicyTargetCount = forms
+      .flatMap((form) => form.fields)
+      .filter((field) => field.provenance === "form_policy").length;
+    const setupContracts = forms.filter(
+      (form) => form.taxFormProfile.mode === "setup",
+    );
+    const noSetupContracts = forms.filter(
+      (form) => form.taxFormProfile.mode === "no_setup",
+    );
+    const setupValues = setupContracts.flatMap(
+      (form) => form.taxFormProfile.values,
+    );
+    const evidenceRequiredSetupValues = setupValues.filter(
+      (value) => value.availability === "evidence_required",
+    );
     process.stdout.write(
-      `tax-catalog: verified ${forms.length} codes, 10 editors, 41 calendar-only forms, 325 explicitly owned Native inputs, 91 profile targets (34 optional), 2 visible taxpayer-year targets, 3 taxpayer-year consumer forms (5 setting consumptions), 4 form-policy targets, 7 setup contracts, 3 no_setup contracts, and 12 setup values (5 evidence-required).\n`,
+      `tax-catalog: verified ${forms.length} codes, ${forms.filter((form) => form.status === "static_layout").length} editors, ${forms.filter((form) => form.status === "calendar_only").length} calendar-only forms, ${forms.flatMap((form) => form.fields).length} explicitly owned Native inputs, ${profileTargetCount} profile targets (${optionalProfileTargetCount} optional), ${taxpayerYearTargetCount} visible taxpayer-year targets, ${taxpayerYearConsumerForms.length} taxpayer-year consumer forms (${taxpayerYearConsumptionCount} setting consumptions), ${formPolicyTargetCount} form-policy targets, ${setupContracts.length} setup contracts, ${noSetupContracts.length} no_setup contracts, and ${setupValues.length} setup values (${evidenceRequiredSetupValues.length} evidence-required).\n`,
     );
   } else if (changed === 0) {
     process.stdout.write("tax-catalog: generated outputs are already up to date.\n");

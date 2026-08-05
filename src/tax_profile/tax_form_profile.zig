@@ -1,7 +1,7 @@
 //! Typed, append-only annual Tax Form Profile domain.
 //!
 //! The generated catalog is the only authority for which setup values exist.
-//! Base taxpayer facts never enter this aggregate; values are annual binding
+//! Base taxpayer facts never enter this aggregate; values are named profile
 //! selections or catalog-approved yearly/default values. `no_setup` and
 //! calendar-only forms deliberately have no revision stream.
 
@@ -30,6 +30,7 @@ pub const Error = error{
     UnknownSemanticKey,
     WrongRole,
     WrongValueType,
+    InvalidCatalogChoice,
     UnsupportedOwnership,
     EvidenceRequired,
     MissingRequiredValue,
@@ -81,7 +82,6 @@ fn Identifier(comptime capacity: usize) type {
 }
 
 pub const RevisionId = Identifier(64);
-pub const ComponentAnchorId = Identifier(64);
 pub const FormCode = Identifier(16);
 pub const FormRevision = Identifier(48);
 pub const SpecHash = Identifier(64);
@@ -103,8 +103,6 @@ pub const StreamKey = struct {
 
 pub const ScalarValue = union(enum) {
     profile_id: model.ProfileId,
-    business_activity_anchor_id: ComponentAnchorId,
-    registration_obligation_anchor_id: ComponentAnchorId,
     text: TextValue,
     boolean: bool,
     integer: i64,
@@ -115,8 +113,6 @@ pub const ScalarValue = union(enum) {
     pub fn valueType(self: ScalarValue) catalog.TaxFormProfileValueType {
         return switch (self) {
             .profile_id => .profile_id,
-            .business_activity_anchor_id => .business_activity_anchor_id,
-            .registration_obligation_anchor_id => .registration_obligation_anchor_id,
             .text => .text,
             .boolean => .boolean,
             .integer => .integer,
@@ -248,6 +244,11 @@ pub const Revision = struct {
             if (value.value.valueType() != definition.value_type) {
                 return error.WrongValueType;
             }
+            if (definition.validation_rule == .catalog_choice and
+                !validCatalogChoice(value.semantic_key, value.value))
+            {
+                return error.InvalidCatalogChoice;
+            }
         }
 
         for (spec.values) |definition| {
@@ -365,6 +366,21 @@ fn findDefinition(
     return null;
 }
 
+fn validCatalogChoice(
+    semantic_key: catalog.TaxFormProfileSemanticKey,
+    value: ScalarValue,
+) bool {
+    const choice = switch (value) {
+        .choice => |selected| selected.asSlice(),
+        else => return false,
+    };
+    return switch (semantic_key) {
+        .income_tax_rate_election => std.mem.eql(u8, choice, "graduated") or
+            std.mem.eql(u8, choice, "eight_percent"),
+        else => false,
+    };
+}
+
 fn periodWithinTaxYear(period: EffectivePeriod, tax_year: u16) bool {
     if (period.from.year != tax_year) return false;
     if (period.until) |until| return until.year == tax_year;
@@ -379,14 +395,14 @@ fn fixtureRevision(
     from: []const u8,
     until: ?[]const u8,
 ) !Revision {
-    const form = catalog.findForm("1601C").?;
-    const activity = SetupValue{
-        .semantic_key = .business_activity_anchor_id,
+    const form = catalog.findForm("2551Q").?;
+    const election = SetupValue{
+        .semantic_key = .income_tax_rate_election,
         .role = .filer,
-        .value = .{ .business_activity_anchor_id = try ComponentAnchorId.parse("activity-primary") },
+        .value = .{ .choice = try TextValue.parse("graduated") },
     };
     const values = try std.testing.allocator.alloc(SetupValue, 1);
-    values[0] = activity;
+    values[0] = election;
     return .{
         .id = try RevisionId.parse(id),
         .stream = .{
@@ -410,20 +426,23 @@ fn fixtureRevision(
 }
 
 test "no-setup and calendar-only forms cannot manufacture revision streams" {
-    try std.testing.expect(!revisionStreamAllowed(catalog.findForm("2551Q").?));
+    try std.testing.expect(revisionStreamAllowed(catalog.findForm("2551Q").?));
     try std.testing.expect(!revisionStreamAllowed(catalog.findForm("0605").?));
     try std.testing.expect(!revisionStreamAllowed(catalog.findForm("1905").?));
-    try std.testing.expect(revisionStreamAllowed(catalog.findForm("1601C").?));
+    try std.testing.expect(!revisionStreamAllowed(catalog.findForm("1601C").?));
 }
 
-test "generated setup contract validates exact typed binding and an optional clear" {
+test "generated setup contract validates exact typed yearly choice" {
     var revision = try fixtureRevision("setup-1", 1, "2026-01-01", null);
     defer std.testing.allocator.free(revision.values);
-    try revision.validate(catalog.findForm("1601C").?);
+    try revision.validate(catalog.findForm("2551Q").?);
 
     var empty = revision;
     empty.values = &.{};
-    try empty.validate(catalog.findForm("1601C").?);
+    try std.testing.expectError(
+        error.MissingRequiredValue,
+        empty.validate(catalog.findForm("2551Q").?),
+    );
 
     var wrong = revision;
     var wrong_values = [_]SetupValue{revision.values[0]};
@@ -431,19 +450,19 @@ test "generated setup contract validates exact typed binding and an optional cle
     wrong.values = &wrong_values;
     try std.testing.expectError(
         error.WrongValueType,
-        wrong.validate(catalog.findForm("1601C").?),
+        wrong.validate(catalog.findForm("2551Q").?),
     );
-}
 
-test "evidence-gated binding cannot become editable annual data" {
-    const form = catalog.findForm("0619E").?;
-    var revision = try fixtureRevision("setup-1", 1, "2026-01-01", null);
-    defer std.testing.allocator.free(revision.values);
-    revision.stream.form_code = try FormCode.parse(form.code);
-    revision.stream.form_revision = try FormRevision.parse(form.revision.?);
-    revision.spec_revision = form.tax_form_profile.spec_revision.?;
-    revision.spec_hash = try SpecHash.parse(form.tax_form_profile.spec_hash.?);
-    try std.testing.expectError(error.EvidenceRequired, revision.validate(form));
+    var unknown_choice = revision;
+    var unknown_choice_values = [_]SetupValue{revision.values[0]};
+    unknown_choice_values[0].value = .{
+        .choice = try TextValue.parse("some_other_rate"),
+    };
+    unknown_choice.values = &unknown_choice_values;
+    try std.testing.expectError(
+        error.InvalidCatalogChoice,
+        unknown_choice.validate(catalog.findForm("2551Q").?),
+    );
 }
 
 test "annual stream rejects overlap and resolves only confirmed effective row" {
@@ -461,7 +480,7 @@ test "annual stream rejects overlap and resolves only confirmed effective row" {
         .stream = first.stream,
         .revisions = &revisions,
     };
-    const form = catalog.findForm("1601C").?;
+    const form = catalog.findForm("2551Q").?;
     try history.validate(form);
     try std.testing.expectEqual(@as(u32, 2), history.currentSequence());
     try std.testing.expectEqual(
@@ -500,7 +519,7 @@ test "annual stream keeps same-period corrections and resolves newest sequence" 
         .stream = first.stream,
         .revisions = &revisions,
     };
-    const form = catalog.findForm("1601C").?;
+    const form = catalog.findForm("2551Q").?;
     try history.validate(form);
     try std.testing.expectEqual(
         @as(u32, 2),
@@ -523,16 +542,16 @@ test "copy provenance requires a prior year and survives confirmation" {
         .source_spec_hash = revision.spec_hash,
         .source_revision_id = try RevisionId.parse("setup-2025"),
     } };
-    try revision.validate(catalog.findForm("1601C").?);
+    try revision.validate(catalog.findForm("2551Q").?);
 
     revision.review_state = .confirmed;
     revision.confirmed_at_unix = 2;
-    try revision.validate(catalog.findForm("1601C").?);
+    try revision.validate(catalog.findForm("2551Q").?);
 
     revision.source.copied_from_prior_year.source_tax_year = 2026;
     try std.testing.expectError(
         error.InvalidCopySource,
-        revision.validate(catalog.findForm("1601C").?),
+        revision.validate(catalog.findForm("2551Q").?),
     );
 }
 

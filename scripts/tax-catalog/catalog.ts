@@ -10,6 +10,7 @@
 
 export const provenanceValues = [
   "profile",
+  "tax_form_profile",
   "taxpayer_year",
   "form_policy",
   "transaction",
@@ -132,7 +133,9 @@ export const profileFieldKeyValues = [
   "date_of_birth",
   "citizenship",
   "foreign_tax_number",
+  "accounting_period_basis",
   "line_of_business",
+  "eopt_tier",
   "atc",
   "tax_type",
   "government_withholding_agent",
@@ -191,8 +194,6 @@ export type TaxFormProfilePresence =
 
 export const taxFormProfileValueTypeValues = [
   "profile_id",
-  "business_activity_anchor_id",
-  "registration_obligation_anchor_id",
   "text",
   "boolean",
   "integer",
@@ -209,8 +210,6 @@ export type TaxFormProfileValueType =
  */
 export const taxFormProfileSourceKindValues = [
   "named_profile_role",
-  "business_activity_anchor",
-  "registration_obligation_anchor",
   "user_entry",
   "catalog_default",
 ] as const;
@@ -219,8 +218,6 @@ export type TaxFormProfileSourceKind =
 
 export const taxFormProfileValidationRuleValues = [
   "distinct_profile_role",
-  "effective_business_activity",
-  "effective_registration_obligation",
   "nonempty_text",
   "catalog_choice",
 ] as const;
@@ -228,10 +225,9 @@ export type TaxFormProfileValidationRule =
   (typeof taxFormProfileValidationRuleValues)[number];
 
 export const taxFormProfileSemanticKeyValues = [
-  "business_activity_anchor_id",
   "spouse_profile_id",
-  "spouse_business_activity_anchor_id",
-  "special_rate_obligation_anchor_id",
+  "income_tax_rate_election",
+  "special_rate_basis",
 ] as const;
 export type TaxFormProfileSemanticKey =
   (typeof taxFormProfileSemanticKeyValues)[number];
@@ -250,14 +246,6 @@ export interface TaxFormProfileSemanticDefinition {
  * keys; they cannot redefine ownership or alias the selected source value.
  */
 export const taxFormProfileSemanticDefinitions = {
-  business_activity_anchor_id: {
-    valueType: "business_activity_anchor_id",
-    role: "filer",
-    presence: "conditional",
-    validationRule: "effective_business_activity",
-    ownership: "binding_selection",
-    sourceKind: "business_activity_anchor",
-  },
   spouse_profile_id: {
     valueType: "profile_id",
     role: "spouse",
@@ -266,21 +254,21 @@ export const taxFormProfileSemanticDefinitions = {
     ownership: "binding_selection",
     sourceKind: "named_profile_role",
   },
-  spouse_business_activity_anchor_id: {
-    valueType: "business_activity_anchor_id",
-    role: "spouse",
-    presence: "conditional",
-    validationRule: "effective_business_activity",
-    ownership: "binding_selection",
-    sourceKind: "business_activity_anchor",
+  income_tax_rate_election: {
+    valueType: "choice",
+    role: "filer",
+    presence: "required",
+    validationRule: "catalog_choice",
+    ownership: "yearly_value",
+    sourceKind: "user_entry",
   },
-  special_rate_obligation_anchor_id: {
-    valueType: "registration_obligation_anchor_id",
+  special_rate_basis: {
+    valueType: "text",
     role: "filer",
     presence: "conditional",
-    validationRule: "effective_registration_obligation",
-    ownership: "binding_selection",
-    sourceKind: "registration_obligation_anchor",
+    validationRule: "nonempty_text",
+    ownership: "yearly_value",
+    sourceKind: "user_entry",
   },
 } as const satisfies Readonly<
   Record<TaxFormProfileSemanticKey, TaxFormProfileSemanticDefinition>
@@ -348,8 +336,6 @@ export interface InputFieldSpec {
   readonly sourceKey?: string;
   /** Locked value when the source is exact-revision form policy. */
   readonly fixedValue?: string;
-  /** Optional convenience seed; the resulting draft value stays filing-owned. */
-  readonly optionalSeedSource?: string;
 }
 
 interface InputFieldGroupSpec extends InputFieldSpec {
@@ -405,9 +391,6 @@ function defineInputFields(
         : { profileField: group.profileField }),
       ...(group.sourceKey === undefined ? {} : { sourceKey: group.sourceKey }),
       ...(group.fixedValue === undefined ? {} : { fixedValue: group.fixedValue }),
-      ...(group.optionalSeedSource === undefined
-        ? {}
-        : { optionalSeedSource: group.optionalSeedSource }),
     };
     for (const id of group.ids) {
       if (result[id]) throw new Error(`Duplicate explicit input field ${id}`);
@@ -488,21 +471,8 @@ function supportedSetupValue(
   };
 }
 
-function evidenceRequiredSetupValue(
-  semanticKey: TaxFormProfileSemanticKey,
-  sourceEvidence: string,
-  evidenceGate: string,
-): TaxFormProfileValueSpec {
-  return {
-    semanticKey,
-    availability: "evidence_required",
-    sourceEvidence,
-    evidenceGate,
-  };
-}
-
 /**
- * Exhaustive ownership/type review of the 325 Native input controls.
+ * Exhaustive ownership/type review of the 326 Native input controls.
  *
  * Grouping keeps the source reviewable without weakening exact-ID coverage:
  * the generator rejects a discovered control missing from this table and an
@@ -664,7 +634,8 @@ const explicitInputFields = defineInputFields([
     ],
   },
   {
-    provenance: "filing_context", role: "filing", valueType: "choice",
+    provenance: "profile", role: "filer", valueType: "choice",
+    profileField: "accounting_period_basis",
     ids: ["2551Q.2018-01-ENCS.input.taxable_period_basis"],
   },
   {
@@ -732,13 +703,6 @@ const explicitInputFields = defineInputFields([
     provenance: "form_policy", role: "system", valueType: "choice",
     sourceKey: "form_policy.tax_type", fixedValue: "WE",
     ids: ["0619E.2018-01-ENCS.input.tax_type_code"],
-  },
-  {
-    provenance: "profile", role: "filer", valueType: "boolean", profileField: "government_withholding_agent",
-    ids: [
-      "0619F.2018-01-ENCS.input.government_withholding_agent",
-      "0619E.2018-01-ENCS.input.government_withholding_agent",
-    ],
   },
   {
     provenance: "profile", role: "filer", valueType: "date", profileField: "date_of_birth",
@@ -828,7 +792,12 @@ const explicitInputFields = defineInputFields([
       "0619F.2018-01-ENCS.input.line_of_business",
       "1702RT.2018-01-ENCS.input.line_of_business",
       "1702MX.2018-01-ENCS.input.line_of_business",
+      "0605.1999-07-ENCS.input.line_of_business_occupation",
     ],
+  },
+  {
+    provenance: "profile", role: "filer", valueType: "choice", profileField: "eopt_tier",
+    ids: ["2550Q.2024-04-ENCS.input.eopt_taxpayer_classification"],
   },
   {
     provenance: "profile", role: "filer", valueType: "text", profileField: "registered_address",
@@ -853,7 +822,8 @@ const explicitInputFields = defineInputFields([
     ],
   },
   {
-    provenance: "profile", role: "filer", valueType: "text", profileField: "special_rate_basis",
+    provenance: "tax_form_profile", role: "filer", valueType: "text",
+    sourceKey: "special_rate_basis",
     ids: ["1702MX.2018-01-ENCS.input.special_preferential_rate_basis"],
   },
   {
@@ -916,10 +886,12 @@ const explicitInputFields = defineInputFields([
   {
     provenance: "taxpayer_year", role: "filing", valueType: "choice",
     sourceKey: "income_tax_rate_election",
-    ids: [
-      "1701Q.2018-01-ENCS.input.income_tax_rate_election",
-      "2551Q.2018-01-ENCS.input.what_income_tax_rates_are_you_availing",
-    ],
+    ids: ["1701Q.2018-01-ENCS.input.income_tax_rate_election"],
+  },
+  {
+    provenance: "tax_form_profile", role: "filer", valueType: "choice",
+    sourceKey: "income_tax_rate_election",
+    ids: ["2551Q.2018-01-ENCS.input.what_income_tax_rates_are_you_availing"],
   },
   {
     provenance: "transaction", role: "filing", valueType: "atc_code",
@@ -934,9 +906,11 @@ const explicitInputFields = defineInputFields([
     ids: [
       "1601C.2018-01-ENCS.input.any_taxes_withheld",
       "0619F.2018-01-ENCS.input.any_taxes_withheld",
+      "0619F.2018-01-ENCS.input.government_withholding_agent",
       "2550Q.2024-04-ENCS.input.tax_relief",
       "2551Q.2018-01-ENCS.input.tax_relief",
       "0619E.2018-01-ENCS.input.any_taxes_withheld",
+      "0619E.2018-01-ENCS.input.government_withholding_agent",
     ],
   },
   {
@@ -1031,11 +1005,6 @@ const explicitInputFields = defineInputFields([
     ],
   },
   {
-    provenance: "transaction", role: "filing", valueType: "text",
-    optionalSeedSource: "business_activity.line_of_business",
-    ids: ["0605.1999-07-ENCS.input.line_of_business_occupation"],
-  },
-  {
     provenance: "transaction", role: "payment", valueType: "choice",
     ids: [
       "0605.1999-07-ENCS.input.manner_of_payment",
@@ -1107,16 +1076,11 @@ export const editorForms: readonly EditorFormSpec[] = [
     profileRoles: [exactlyOneFiler()],
     consumedTaxpayerYearSettings: [],
     taxFormProfile: {
-      mode: "setup",
+      mode: "no_setup",
       specRevision: 1,
-      sourceEvidence: "Ownership matrix § 0619E",
-      values: [
-        evidenceRequiredSetupValue(
-          "business_activity_anchor_id",
-          "Legacy form_0619e.rs:254-279 projects line of business; the Native inherited header now preserves that source-backed field",
-          "Reconcile the exact official 0619E header before enabling this activity binding",
-        ),
-      ],
+      sourceEvidence:
+        "Line of business is inherited from the Base Tax Profile; 0619E has no form-specific yearly setup",
+      values: [],
     },
     profileTargetPresence: {
       "0619E.2018-01-ENCS.input.line_of_business": "optional",
@@ -1140,16 +1104,11 @@ export const editorForms: readonly EditorFormSpec[] = [
     profileRoles: [exactlyOneFiler()],
     consumedTaxpayerYearSettings: [],
     taxFormProfile: {
-      mode: "setup",
+      mode: "no_setup",
       specRevision: 1,
-      sourceEvidence: "Ownership matrix § 0619F",
-      values: [
-        evidenceRequiredSetupValue(
-          "business_activity_anchor_id",
-          "Legacy form_0619f.rs:257-280 projects line of business; the Native inherited header now preserves that source-backed field",
-          "Reconcile the exact official 0619F header before enabling this activity binding",
-        ),
-      ],
+      sourceEvidence:
+        "Line of business is inherited from the Base Tax Profile; 0619F has no form-specific yearly setup",
+      values: [],
     },
     profileTargetPresence: {
       "0619F.2018-01-ENCS.input.line_of_business": "optional",
@@ -1210,15 +1169,11 @@ export const editorForms: readonly EditorFormSpec[] = [
     profileRoles: [exactlyOneFiler()],
     consumedTaxpayerYearSettings: [],
     taxFormProfile: {
-      mode: "setup",
+      mode: "no_setup",
       specRevision: 1,
-      sourceEvidence: "Ownership matrix § 1601C",
-      values: [
-        supportedSetupValue(
-          "business_activity_anchor_id",
-          "src/pages/forms/1601-c.native:7 and legacy form_1601c.rs:225-246",
-        ),
-      ],
+      sourceEvidence:
+        "Line of business is inherited from the Base Tax Profile; 1601C has no form-specific yearly setup",
+      values: [],
     },
     profileTargetPresence: {
       "1601C.2018-01-ENCS.input.zip_code": "optional",
@@ -1333,15 +1288,6 @@ export const editorForms: readonly EditorFormSpec[] = [
         supportedSetupValue(
           "spouse_profile_id",
           "src/pages/forms/1701.native:21-23 declares the optional distinct spouse role",
-        ),
-        supportedSetupValue(
-          "business_activity_anchor_id",
-          "Legacy form_1701.rs:495-503 selects the filer's recognized activity ATC before deriving taxpayer type",
-        ),
-        evidenceRequiredSetupValue(
-          "spouse_business_activity_anchor_id",
-          "Ownership matrix limits spouse activity binding to official-evidence approval",
-          "Confirm whether the exact 1701 revision needs a stable spouse activity binding",
         ),
       ],
     },
@@ -1465,15 +1411,6 @@ export const editorForms: readonly EditorFormSpec[] = [
           "spouse_profile_id",
           "src/pages/forms/1701q.native:113-127 declares the optional distinct spouse role",
         ),
-        supportedSetupValue(
-          "business_activity_anchor_id",
-          "Legacy form_1701q.rs:573-577 and 613 select the filer's recognized activity ATC and line of business",
-        ),
-        evidenceRequiredSetupValue(
-          "spouse_business_activity_anchor_id",
-          "Ownership matrix limits spouse activity binding to official-evidence approval",
-          "Confirm whether the exact 1701Q revision needs a stable spouse activity binding",
-        ),
       ],
     },
     profileTargetPresence: {
@@ -1509,18 +1446,12 @@ export const editorForms: readonly EditorFormSpec[] = [
       sourceEvidence: "Ownership matrix § 1702MX",
       values: [
         supportedSetupValue(
-          "business_activity_anchor_id",
-          "src/pages/forms/1702-mx.native:10 declares line of business",
-        ),
-        evidenceRequiredSetupValue(
-          "special_rate_obligation_anchor_id",
-          "src/pages/forms/1702-mx.native:11 has an optional special/preferential-rate basis",
-          "Confirm that the exact 1702MX revision permits multiple effective special-rate obligations before requiring a selector",
+          "special_rate_basis",
+          "src/pages/forms/1702-mx.native:11 records an optional form-specific special/preferential-rate basis",
         ),
       ],
     },
     profileTargetPresence: {
-      "1702MX.2018-01-ENCS.input.special_preferential_rate_basis": "optional",
       "1702MX.2018-01-ENCS.input.zip_code": "optional",
       "1702MX.2018-01-ENCS.input.contact_number": "optional",
       "1702MX.2018-01-ENCS.input.email_address": "optional",
@@ -1576,15 +1507,11 @@ export const editorForms: readonly EditorFormSpec[] = [
     profileRoles: [exactlyOneFiler(corporateReturnSubjectKinds)],
     consumedTaxpayerYearSettings: [],
     taxFormProfile: {
-      mode: "setup",
+      mode: "no_setup",
       specRevision: 1,
-      sourceEvidence: "Ownership matrix § 1702RT",
-      values: [
-        supportedSetupValue(
-          "business_activity_anchor_id",
-          "src/pages/forms/1702-rt.native:10 declares line of business",
-        ),
-      ],
+      sourceEvidence:
+        "Line of business is inherited from the Base Tax Profile; 1702RT has no form-specific yearly setup",
+      values: [],
     },
     profileTargetPresence: {
       "1702RT.2018-01-ENCS.input.zip_code": "optional",
@@ -1621,7 +1548,7 @@ export const editorForms: readonly EditorFormSpec[] = [
     revisionLabel: "April 2024 (ENCS)",
     sourcePath: "src/pages/forms/2550q.native",
     inputFields: inputFieldsFor("2550Q", "2024-04-ENCS"),
-    expectedInputCount: 37,
+    expectedInputCount: 38,
     expectedTableCount: 3,
     expectedTableHeaders: [
       "Description",
@@ -1768,13 +1695,18 @@ export const editorForms: readonly EditorFormSpec[] = [
     expectedTableHeaders: ["ATC", "Tax Base / Taxable Amount", "Tax Rate", "Percentage Tax Due"],
     roles: ["filer", "filing", "payment", "evidence", "system"],
     profileRoles: [exactlyOneFiler()],
-    consumedTaxpayerYearSettings: ["income_tax_rate_election"],
+    consumedTaxpayerYearSettings: [],
     taxFormProfile: {
-      mode: "no_setup",
-      specRevision: 1,
+      mode: "setup",
+      specRevision: 2,
       sourceEvidence:
-        "Architecture § 2551Q boundary and ownership matrix § 2551Q keep the inherited header, taxpayer-year election, and Schedule 1 out of annual setup",
-      values: [],
+        "2551Q January 2018 ENCS Item 13 is a form-specific yearly choice projected only on the initial applicable quarter",
+      values: [
+        supportedSetupValue(
+          "income_tax_rate_election",
+          "2551Q January 2018 ENCS Item 13 asks the taxpayer to select graduated or 8% income tax rates",
+        ),
+      ],
     },
     tableFields: [
       {

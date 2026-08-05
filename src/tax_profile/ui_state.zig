@@ -12,8 +12,6 @@ const editor = @import("editor.zig");
 const fields = @import("field.zig");
 const model = @import("model.zig");
 const applicability = @import("applicability.zig");
-const registration = @import("registration.zig");
-const registration_ui = @import("registration_ui.zig");
 const rdo_reference = @import("rdo_reference.zig");
 const catalog = @import("../forms/generated/catalog.zig");
 const multi_select = @import("../components/multi_select.zig");
@@ -47,10 +45,8 @@ pub const Error = error{
     TooManyForms,
     PersonalFieldsNotApplicable,
     TradeNameNotApplicable,
-    ActivityRequiresBusinessLine,
     ManualSourceHasReference,
     SourceReferenceRequired,
-    UnsupportedRepeatedComponents,
     ProfileCapacityExceeded,
     NotAttached,
     NoSelectedProfile,
@@ -81,12 +77,6 @@ pub const SourceKind = enum {
     manual_entry,
     imported,
     migrated,
-};
-
-pub const GovernmentWithholdingChoice = enum {
-    unset,
-    no,
-    yes,
 };
 
 /// The taxpayer details a COR states, which the user transcribes and reviews
@@ -260,8 +250,12 @@ const ProfileEditorSnapshot = struct {
     subject_kind: model.SubjectKind = .individual,
     natural_person_classification: model.NaturalPersonClassification =
         .classification_unknown,
+    accounting_period_basis: ?model.AccountingPeriodBasis = null,
+    fiscal_year_end_month: canvas.TextBuffer(2) = .{},
+    eopt_tier: ?model.EoptTier = null,
+    primary_line_of_business: canvas.TextBuffer(160) = .{},
+    consolidation_review_state: model.ConsolidationReviewState = .confirmed,
     source_kind: SourceKind = .manual_entry,
-    government_withholding_agent: GovernmentWithholdingChoice = .unset,
     tin: canvas.TextBuffer(32) = .{},
     rdo: canvas.TextBuffer(8) = .{},
     display_name: canvas.TextBuffer(160) = .{},
@@ -273,10 +267,6 @@ const ProfileEditorSnapshot = struct {
     birth_date: canvas.TextBuffer(10) = .{},
     citizenship: canvas.TextBuffer(80) = .{},
     foreign_tax_number: canvas.TextBuffer(64) = .{},
-    business_line: canvas.TextBuffer(160) = .{},
-    atc: canvas.TextBuffer(16) = .{},
-    tax_type: canvas.TextBuffer(80) = .{},
-    special_rate_basis: canvas.TextBuffer(160) = .{},
     effective_from: canvas.TextBuffer(10) = .{},
     effective_until: canvas.TextBuffer(10) = .{},
     source_reference: canvas.TextBuffer(160) = .{},
@@ -443,17 +433,18 @@ pub const State = struct {
     attachment_selection_policy: AttachmentSelectionPolicy = .implicit_first,
     selected_revision_id: StableIdText = .{},
     selected_revision_sequence: ?u32 = null,
-    selected_activity_id: StableIdText = .{},
-    has_selected_activity: bool = false,
-
     editing_new: bool = true,
     profile_mode: ProfileMode = .creating,
     loaded_shape_supported: bool = true,
     subject_kind: model.SubjectKind = .individual,
     natural_person_classification: model.NaturalPersonClassification =
         .classification_unknown,
+    accounting_period_basis: ?model.AccountingPeriodBasis = null,
+    fiscal_year_end_month: canvas.TextBuffer(2) = .{},
+    eopt_tier: ?model.EoptTier = null,
+    primary_line_of_business: canvas.TextBuffer(160) = .{},
+    consolidation_review_state: model.ConsolidationReviewState = .confirmed,
     source_kind: SourceKind = .manual_entry,
-    government_withholding_agent: GovernmentWithholdingChoice = .unset,
     tin: canvas.TextBuffer(32) = .{},
     rdo: canvas.TextBuffer(8) = .{},
     display_name: canvas.TextBuffer(160) = .{},
@@ -465,10 +456,6 @@ pub const State = struct {
     birth_date: canvas.TextBuffer(10) = .{},
     citizenship: canvas.TextBuffer(80) = .{},
     foreign_tax_number: canvas.TextBuffer(64) = .{},
-    business_line: canvas.TextBuffer(160) = .{},
-    atc: canvas.TextBuffer(16) = .{},
-    tax_type: canvas.TextBuffer(80) = .{},
-    special_rate_basis: canvas.TextBuffer(160) = .{},
     effective_from: canvas.TextBuffer(10) = .{},
     effective_until: canvas.TextBuffer(10) = .{},
     source_reference: canvas.TextBuffer(160) = .{},
@@ -516,13 +503,6 @@ pub const State = struct {
     facts_missing_for_year: bool = false,
     facts_changed_during_year: bool = false,
     facts_same_as_prior_year: bool = false,
-    /// Persisted registered tax type for header display, kept separate from
-    /// the editable buffer so unsaved typing never reads as recorded fact.
-    selected_tax_type: FixedText(80) = .{},
-    /// How many tax-type registrations the loaded revision carries. More than
-    /// one is a real state the single-value editor cannot show, and reporting
-    /// it as "not recorded" would deny a fact the taxpayer actually has.
-    selected_tax_type_count: usize = 0,
     cor_state: CorEvidenceState = .none,
     cor_file_name: FixedText(160) = .{},
     cor_attached_at: i64 = 0,
@@ -755,6 +735,24 @@ pub const State = struct {
         if (optionalTrimmed(self.email.text())) |raw| {
             _ = fields.EmailAddress.parse(raw) catch return false;
         }
+        if (optionalTrimmed(self.primary_line_of_business.text())) |raw| {
+            _ = fields.LineOfBusiness.parse(raw) catch return false;
+        }
+        if (self.accounting_period_basis == null) {
+            return optionalTrimmed(self.fiscal_year_end_month.text()) == null;
+        }
+        switch (self.accounting_period_basis.?) {
+            .calendar => if (optionalTrimmed(
+                self.fiscal_year_end_month.text(),
+            ) != null) return false,
+            .fiscal => {
+                const raw = optionalTrimmed(
+                    self.fiscal_year_end_month.text(),
+                ) orelse return false;
+                const month = std.fmt.parseInt(u8, raw, 10) catch return false;
+                if (month < 1 or month > 12) return false;
+            },
+        }
         return true;
     }
 
@@ -826,15 +824,69 @@ pub const State = struct {
         );
     }
 
+    pub fn setAccountingPeriodBasis(
+        self: *State,
+        basis: ?model.AccountingPeriodBasis,
+    ) void {
+        self.accounting_period_basis = basis;
+        if (basis != .fiscal) clearEditorBuffer(&self.fiscal_year_end_month);
+    }
+
+    pub fn accountingPeriodBasisSelected(
+        self: *const State,
+        basis: model.AccountingPeriodBasis,
+    ) bool {
+        return self.accounting_period_basis == basis;
+    }
+
+    pub fn accountingPeriodBasisLabel(self: *const State) []const u8 {
+        return if (self.accounting_period_basis) |basis|
+            basis.label()
+        else
+            "Not recorded";
+    }
+
+    pub fn fiscalYearEndMonthValue(self: *const State) ?u8 {
+        const raw = optionalTrimmed(self.fiscal_year_end_month.text()) orelse
+            return null;
+        const month = std.fmt.parseInt(u8, raw, 10) catch return null;
+        return if (month >= 1 and month <= 12) month else null;
+    }
+
+    pub fn setEoptTier(self: *State, tier: ?model.EoptTier) void {
+        self.eopt_tier = tier;
+    }
+
+    pub fn eoptTierSelected(
+        self: *const State,
+        tier: model.EoptTier,
+    ) bool {
+        return self.eopt_tier == tier;
+    }
+
+    pub fn eoptTierLabel(self: *const State) []const u8 {
+        return if (self.eopt_tier) |tier| tier.label() else "Not recorded";
+    }
+
+    pub fn primaryLineOfBusinessText(self: *const State) []const u8 {
+        return trimmed(self.primary_line_of_business.text());
+    }
+
+    pub fn consolidationReviewRequired(self: *const State) bool {
+        return self.consolidation_review_state == .requires_review;
+    }
+
+    /// An ambiguous legacy registration migration must be acknowledged by a
+    /// person after the consolidated fields have been corrected. Merely
+    /// opening or re-saving the profile never clears the review marker.
+    pub fn confirmConsolidatedProfileFacts(self: *State) void {
+        self.consolidation_review_state = .confirmed;
+    }
+
     fn applicabilityContext(self: *const State) applicability.Context {
         return .{
             .subject_kind = self.subject_kind,
             .natural_person_classification = self.natural_person_classification,
-            // An existing activity remains reachable even if a classification
-            // switch would ordinarily hide business fields. Selectors never
-            // destroy a truthful loaded activity merely by hiding its editor.
-            .has_business_activity = optionalTrimmed(self.business_line.text()) != null or
-                optionalTrimmed(self.atc.text()) != null,
             .has_trade_name = optionalTrimmed(self.trade_name.text()) != null,
         };
     }
@@ -854,10 +906,10 @@ pub const State = struct {
     }
 
     pub fn businessFieldsVisible(self: *const State) bool {
-        return applicability.fieldGroupVisible(
-            self.applicabilityContext(),
-            .business_activities,
-        );
+        // Compatibility alias for generated markup while the old activity
+        // editor bindings are removed. Business visibility now belongs to
+        // the single Base Tax Profile Line of Business field.
+        return self.lineOfBusinessVisible();
     }
 
     pub fn lineOfBusinessVisible(self: *const State) bool {
@@ -884,10 +936,8 @@ pub const State = struct {
             trimmed(self.birth_date.text()),
             trimmed(self.citizenship.text()),
             trimmed(self.foreign_tax_number.text()),
-            trimmed(self.business_line.text()),
-            trimmed(self.atc.text()),
-            trimmed(self.tax_type.text()),
-            trimmed(self.special_rate_basis.text()),
+            trimmed(self.fiscal_year_end_month.text()),
+            trimmed(self.primary_line_of_business.text()),
             trimmed(self.effective_from.text()),
             trimmed(self.effective_until.text()),
             trimmed(self.source_reference.text()),
@@ -900,7 +950,15 @@ pub const State = struct {
             @intFromEnum(self.subject_kind),
             @intFromEnum(self.natural_person_classification),
             @intFromEnum(self.source_kind),
-            @intFromEnum(self.government_withholding_agent),
+            if (self.accounting_period_basis) |basis|
+                @as(u8, @intFromEnum(basis)) + 1
+            else
+                0,
+            if (self.eopt_tier) |tier|
+                @as(u8, @intFromEnum(tier)) + 1
+            else
+                0,
+            @intFromEnum(self.consolidation_review_state),
         });
         return hasher.final();
     }
@@ -915,8 +973,12 @@ pub const State = struct {
             .loaded_shape_supported = self.loaded_shape_supported,
             .subject_kind = self.subject_kind,
             .natural_person_classification = self.natural_person_classification,
+            .accounting_period_basis = self.accounting_period_basis,
+            .fiscal_year_end_month = self.fiscal_year_end_month,
+            .eopt_tier = self.eopt_tier,
+            .primary_line_of_business = self.primary_line_of_business,
+            .consolidation_review_state = self.consolidation_review_state,
             .source_kind = self.source_kind,
-            .government_withholding_agent = self.government_withholding_agent,
             .tin = self.tin,
             .rdo = self.rdo,
             .display_name = self.display_name,
@@ -928,10 +990,6 @@ pub const State = struct {
             .birth_date = self.birth_date,
             .citizenship = self.citizenship,
             .foreign_tax_number = self.foreign_tax_number,
-            .business_line = self.business_line,
-            .atc = self.atc,
-            .tax_type = self.tax_type,
-            .special_rate_basis = self.special_rate_basis,
             .effective_from = self.effective_from,
             .effective_until = self.effective_until,
             .source_reference = self.source_reference,
@@ -949,9 +1007,12 @@ pub const State = struct {
         self.subject_kind = baseline.subject_kind;
         self.natural_person_classification =
             baseline.natural_person_classification;
+        self.accounting_period_basis = baseline.accounting_period_basis;
+        self.fiscal_year_end_month = baseline.fiscal_year_end_month;
+        self.eopt_tier = baseline.eopt_tier;
+        self.primary_line_of_business = baseline.primary_line_of_business;
+        self.consolidation_review_state = baseline.consolidation_review_state;
         self.source_kind = baseline.source_kind;
-        self.government_withholding_agent =
-            baseline.government_withholding_agent;
         self.tin = baseline.tin;
         self.rdo = baseline.rdo;
         self.display_name = baseline.display_name;
@@ -963,10 +1024,6 @@ pub const State = struct {
         self.birth_date = baseline.birth_date;
         self.citizenship = baseline.citizenship;
         self.foreign_tax_number = baseline.foreign_tax_number;
-        self.business_line = baseline.business_line;
-        self.atc = baseline.atc;
-        self.tax_type = baseline.tax_type;
-        self.special_rate_basis = baseline.special_rate_basis;
         self.effective_from = baseline.effective_from;
         self.effective_until = baseline.effective_until;
         self.source_reference = baseline.source_reference;
@@ -1016,18 +1073,24 @@ pub const State = struct {
             .zip_code => trimmed(self.zip_code.text()),
             .contact_number => trimmed(self.phone.text()),
             .email_address => trimmed(self.email.text()),
+            .accounting_period_basis => if (self.accounting_period_basis) |basis|
+                basis.label()
+            else
+                "",
             .date_of_birth => trimmed(self.birth_date.text()),
             .citizenship => trimmed(self.citizenship.text()),
             .foreign_tax_number => trimmed(self.foreign_tax_number.text()),
-            .line_of_business => trimmed(self.business_line.text()),
-            .atc => trimmed(self.atc.text()),
-            .tax_type => trimmed(self.tax_type.text()),
-            // Recorded either way; only "not recorded" counts as missing.
-            .government_withholding_agent => if (self.government_withholding_agent == .unset)
-                ""
-            else
-                "recorded",
-            .special_rate_basis => trimmed(self.special_rate_basis.text()),
+            .line_of_business => trimmed(
+                self.primary_line_of_business.text(),
+            ),
+            .eopt_tier => if (self.eopt_tier) |tier| tier.label() else "",
+            // These values belong to form policy, a Tax Form Profile, or the
+            // filing transaction. They are not Base Tax Profile fields.
+            .atc,
+            .tax_type,
+            .government_withholding_agent,
+            .special_rate_basis,
+            => "",
         };
     }
 
@@ -1177,13 +1240,6 @@ pub const State = struct {
             .revision_id = revision_id,
             .sequence = sequence,
         };
-    }
-
-    pub fn selectedActivityId(self: *const State) ?model.BusinessActivityId {
-        if (!self.has_selected_activity) return null;
-        return model.BusinessActivityId.parse(
-            self.selected_activity_id.text(),
-        ) catch null;
     }
 
     /// The row when loaded, else the captured display: a search narrowing the
@@ -1465,7 +1521,7 @@ pub const State = struct {
         _ = self.saveFallible(.{
             .document_id = document_id,
             .include_forms = true,
-        }, null) catch |err| {
+        }) catch |err| {
             if (err == error.NoProfileChanges) return self.saveYearWorkspace();
             if (creating_year and err == persistence.Error.FormSetAlreadyExists) {
                 self.year_workspace = .conflict;
@@ -1498,20 +1554,15 @@ pub const State = struct {
             .taxpayer_name => setEditorBuffer(&self.display_name, value),
             .registered_address => setEditorBuffer(&self.registered_address, value),
             .zip_code => setEditorBuffer(&self.zip_code, value),
-            .tax_type => setEditorBuffer(&self.tax_type, value),
+            // A COR tax-type transcription is retained only as evidence. It
+            // is no longer copied into the Base Tax Profile or readiness.
+            .tax_type => {},
         }
     }
 
-    /// The registered tax type as persisted, never as currently typed. A
-    /// header states what is on file, so it must not echo an unsaved edit and
-    /// must not assert a classification that was never recorded.
     pub fn selectedTaxTypeLabel(self: *const State) []const u8 {
-        if (!self.has_selection) return "Tax type not recorded";
-        // Several registered tax types is a truthful state this header has no
-        // room for; saying "not recorded" would deny facts that exist.
-        if (self.selected_tax_type_count > 1) return "Multiple registered tax types";
-        const value = self.selected_tax_type.text();
-        return if (value.len == 0) "Tax type not recorded" else value;
+        _ = self;
+        return "Tax type not recorded";
     }
 
     pub fn draftSummaries(self: *const State) []const DraftSummaryRow {
@@ -1812,13 +1863,6 @@ pub const State = struct {
         }
     }
 
-    pub fn setGovernmentWithholdingAgent(
-        self: *State,
-        value: GovernmentWithholdingChoice,
-    ) void {
-        self.government_withholding_agent = value;
-    }
-
     /// What a save carries when it applies a reviewed COR decision: the
     /// durable document key, and whether the accepted forms ride in the same
     /// store transaction.
@@ -1831,65 +1875,6 @@ pub const State = struct {
         return self.saveWithCor(null);
     }
 
-    /// Saves the complete editor. The immutable base revision and normalized
-    /// Registration changes share one store transaction whenever both
-    /// changed. A registration-only edit advances only that stream; a
-    /// base-only edit advances only the profile stream. During creation the
-    /// intent's placeholder profile id is rebound to the newly generated id,
-    /// then shell, revision 1, and registration stream commit atomically.
-    ///
-    /// The returned sequence lets the caller acknowledge the same
-    /// `registration_ui.SaveIntent` with `saveSucceeded` without re-reading or
-    /// guessing the stream position.
-    pub fn saveCompleteProfile(
-        self: *State,
-        intent: *const registration_ui.SaveIntent,
-    ) ?u32 {
-        const was_new = self.editing_new;
-        if (!was_new) {
-            const selected = self.selectedProfileDomainId() orelse {
-                self.setError(error.NoSelectedProfile);
-                return null;
-            };
-            if (!selected.eql(&intent.profile_id)) {
-                self.setError(persistence.Error.InvalidValue);
-                return null;
-            }
-        }
-
-        const profile_was_dirty = self.profileDirty();
-        const registration_sequence = self.saveFallible(
-            null,
-            intent,
-        ) catch |err| {
-            if (err == error.NoProfileChanges or
-                err == persistence.Error.RegistrationNoChanges)
-            {
-                _ = self.restoreEditorSnapshot();
-                self.profile_mode = .viewing;
-                self.setNotice(.neutral, "No changes to save.");
-                return intent.expected_sequence;
-            }
-            self.setError(err);
-            return null;
-        } orelse intent.expected_sequence;
-
-        self.branch_mode = false;
-        self.branch_source_root.clear();
-        self.branch_source_name.clear();
-        self.profile_mode = .viewing;
-        self.setNotice(
-            .success,
-            if (was_new)
-                "Taxpayer and registration details were created."
-            else if (profile_was_dirty)
-                "Tax Profile and registration details were saved."
-            else
-                "Registration details were saved.",
-        );
-        return registration_sequence;
-    }
-
     fn saveWithCor(self: *State, cor: ?CorApply) bool {
         const was_new = self.editing_new;
         // Reopening a taxpayer and saving must not record a change that did
@@ -1899,7 +1884,7 @@ pub const State = struct {
             return true;
         }
 
-        _ = self.saveFallible(cor, null) catch |err| {
+        self.saveFallible(cor) catch |err| {
             // Nothing to record is a successful outcome, not a failure: the
             // taxpayer's details already say what the user wants them to say.
             if (err == error.NoProfileChanges) {
@@ -1933,13 +1918,9 @@ pub const State = struct {
     fn saveFallible(
         self: *State,
         cor: ?CorApply,
-        registration_intent: ?*const registration_ui.SaveIntent,
-    ) !?u32 {
+    ) !void {
         const allocator = self.allocator orelse return error.NotAttached;
         const store = self.store orelse return error.NotAttached;
-        if (!self.loaded_shape_supported) {
-            return error.UnsupportedRepeatedComponents;
-        }
         if (self.input_was_truncated or self.inputsTruncated()) {
             return error.FieldTooLong;
         }
@@ -2050,12 +2031,35 @@ pub const State = struct {
         };
 
         const ready = try self.buildSubject(base);
-        // v1 profile-attached activities and registration facts are a legacy
-        // read model only. Existing rows remain on their immutable historical
-        // revisions, while every newly written base revision is intentionally
-        // component-free. Mutable activity/EOPT/obligation data belongs to
-        // the normalized Registration stream passed as `registration_intent`.
-        const revision = try ready.build();
+        // Historical activity/obligation component rows remain readable, but
+        // all reusable fields now belong to this one effective-dated Base Tax
+        // Profile revision. New revisions deliberately carry no legacy
+        // repeated component writes.
+        var revision = try ready.build();
+        revision.accounting_period_basis = self.accounting_period_basis;
+        revision.fiscal_year_end_month = if (self.accounting_period_basis == .fiscal) blk: {
+            const raw = optionalTrimmed(
+                self.fiscal_year_end_month.text(),
+            ) orelse return error.InvalidAccountingPeriod;
+            const month = std.fmt.parseInt(u8, raw, 10) catch
+                return error.InvalidAccountingPeriod;
+            if (month < 1 or month > 12) {
+                return error.InvalidAccountingPeriod;
+            }
+            break :blk month;
+        } else blk: {
+            if (optionalTrimmed(self.fiscal_year_end_month.text()) != null) {
+                return error.InvalidAccountingPeriod;
+            }
+            break :blk null;
+        };
+        revision.eopt_tier = self.eopt_tier;
+        revision.primary_line_of_business = if (optionalTrimmed(
+            self.primary_line_of_business.text(),
+        )) |line| try fields.LineOfBusiness.parse(line) else null;
+        revision.consolidation_review_state =
+            self.consolidation_review_state;
+        try revision.validate();
 
         // The authority on "did anything change": the editor's text can differ
         // from what was loaded while parsing to the very same facts, and a
@@ -2070,46 +2074,18 @@ pub const State = struct {
             if (current) |*owned| {
                 defer owned.deinit(allocator);
                 if (revision.contentEquals(&owned.revision)) {
-                    if (registration_intent) |intent| {
-                        const registration_sequence =
-                            profile_persistence.saveRegistrationIntent(
-                                store,
-                                allocator,
-                                intent,
-                            ) catch |err| switch (err) {
-                                persistence.Error.RegistrationNoChanges => intent.expected_sequence,
-                                else => return err,
-                            };
-                        try self.reloadRows();
-                        try self.loadSelectedRevision(true);
-                        return registration_sequence;
-                    }
                     return error.NoProfileChanges;
                 }
             }
         }
 
-        var registration_sequence: ?u32 = null;
         if (creating) {
-            if (registration_intent) |intent| {
-                var rebound_intent = intent.*;
-                rebound_intent.profile_id = profile_id;
-                registration_sequence = try profile_persistence
-                    .createProfileAndRegistrationIntent(
-                    store,
-                    allocator,
-                    .active,
-                    &revision,
-                    &rebound_intent,
-                );
-            } else {
-                try profile_persistence.createProfileWithRevision(
-                    store,
-                    allocator,
-                    .active,
-                    &revision,
-                );
-            }
+            try profile_persistence.createProfileWithRevision(
+                store,
+                allocator,
+                .active,
+                &revision,
+            );
         } else if (cor) |apply| {
             if (apply.include_forms) {
                 // Staged writes and the create-vs-update mode are computed
@@ -2146,15 +2122,6 @@ pub const State = struct {
                     apply.document_id,
                 );
             }
-        } else if (registration_intent) |intent| {
-            registration_sequence =
-                try profile_persistence.saveProfileAndRegistrationIntent(
-                    store,
-                    allocator,
-                    &revision,
-                    observed_sequence,
-                    intent,
-                );
         } else {
             try profile_persistence.appendRevision(
                 store,
@@ -2173,7 +2140,7 @@ pub const State = struct {
         try self.refreshCalendarFormSet(year);
         try self.refreshFormSetSummaries();
         try self.refreshDraftSummariesForYear(year);
-        return registration_sequence;
+        return;
     }
 
     /// Compatibility wrapper for screens that still follow the application's
@@ -3232,9 +3199,9 @@ pub const State = struct {
         return output;
     }
 
-    /// Successfully queried, unconfigured years use the catalog fallback.
-    /// Configured sets are authoritative, including when empty; unavailable
-    /// or uncached years are also authoritative-empty until a refresh succeeds.
+    /// Only an explicitly configured Forms Set can activate a form. The
+    /// legacy catalog-default marker remains available to the migration UI,
+    /// but it never grants filing or setup access by itself.
     pub fn formAvailable(
         self: *const State,
         tax_year: i32,
@@ -3242,7 +3209,7 @@ pub const State = struct {
     ) bool {
         const cache = self.calendarFormSetCache(tax_year) orelse return false;
         if (cache.resolution == .unavailable) return false;
-        if (cache.resolution == .catalog_fallback) return true;
+        if (cache.resolution == .catalog_fallback) return false;
         for (cache.codes[0..cache.count]) |*code| {
             if (std.ascii.eqlIgnoreCase(code.text(), form_code)) return true;
         }
@@ -3506,8 +3473,6 @@ pub const State = struct {
         self.selected_id.clear();
         self.selected_revision_id.clear();
         self.selected_revision_sequence = null;
-        self.has_selected_activity = false;
-        self.selected_activity_id.clear();
     }
 
     /// Remembers how the selected taxpayer presents, so the header stays
@@ -3558,21 +3523,13 @@ pub const State = struct {
 
         try self.selected_revision_id.set(revision.id.asSlice());
         self.selected_revision_sequence = revision.sequence;
-        // A sole activity is unambiguous. Repeated effective activities must
-        // be selected explicitly by the form session; never silently choose
-        // array position zero.
-        self.has_selected_activity = revision.business_activities.len == 1;
-        if (revision.business_activities.len == 1) {
-            try self.selected_activity_id.set(
-                revision.business_activities[0].id.asSlice(),
-            );
-        } else {
-            self.selected_activity_id.clear();
-        }
         if (!load_editor) return;
 
         self.editing_new = false;
-        self.loaded_shape_supported = editorSupports(revision);
+        // Legacy Registration arrays remain readable only through the
+        // explicit migration/export boundary. Normal Base editing neither
+        // selects nor reconstructs them.
+        self.loaded_shape_supported = true;
         self.subject_kind = switch (revision.subject) {
             // Compatibility-only persisted rows present as the canonical
             // legal subject. Their old tag proves self-employment.
@@ -3629,6 +3586,24 @@ pub const State = struct {
             &self.email,
             revision.contact.email_address,
         );
+        self.accounting_period_basis = revision.accounting_period_basis;
+        if (revision.fiscal_year_end_month) |month| {
+            var month_buffer: [2]u8 = undefined;
+            setEditorBuffer(
+                &self.fiscal_year_end_month,
+                std.fmt.bufPrint(&month_buffer, "{d}", .{month}) catch
+                    unreachable,
+            );
+        } else {
+            clearEditorBuffer(&self.fiscal_year_end_month);
+        }
+        self.eopt_tier = revision.eopt_tier;
+        setOptionalBoundedBuffer(
+            &self.primary_line_of_business,
+            revision.primary_line_of_business,
+        );
+        self.consolidation_review_state =
+            revision.consolidation_review_state;
 
         var date_buffer: [10]u8 = undefined;
         const loaded_from = revision.effective.from.writeIso(&date_buffer);
@@ -3665,58 +3640,6 @@ pub const State = struct {
             },
         }
 
-        clearEditorBuffer(&self.business_line);
-        clearEditorBuffer(&self.atc);
-        if (revision.business_activities.len == 1) {
-            const activity = revision.business_activities[0];
-            setEditorBuffer(
-                &self.business_line,
-                activity.line_of_business.asSlice(),
-            );
-            setOptionalBoundedBuffer(&self.atc, activity.atc);
-        }
-
-        clearEditorBuffer(&self.tax_type);
-        clearEditorBuffer(&self.special_rate_basis);
-        self.selected_tax_type.clear();
-        self.selected_tax_type_count = registrationFactKindCount(
-            revision,
-            .tax_type,
-        );
-        self.government_withholding_agent = .unset;
-        for (revision.registration_facts) |fact| {
-            switch (fact.value) {
-                .tax_type => |value| {
-                    if (registrationFactKindCount(revision, .tax_type) == 1) {
-                        setEditorBuffer(&self.tax_type, value.asSlice());
-                        try self.selected_tax_type.set(value.asSlice());
-                    }
-                },
-                .government_withholding_agent => |value| {
-                    if (registrationFactKindCount(
-                        revision,
-                        .government_withholding_agent,
-                    ) == 1) {
-                        self.government_withholding_agent = switch (value) {
-                            .no => .no,
-                            .yes => .yes,
-                        };
-                    }
-                },
-                .special_rate_basis => |value| {
-                    if (registrationFactKindCount(
-                        revision,
-                        .special_rate_basis,
-                    ) == 1) {
-                        setEditorBuffer(
-                            &self.special_rate_basis,
-                            value.asSlice(),
-                        );
-                    }
-                },
-            }
-        }
-
         setTaxYearBuffer(&self.tax_year, self.default_tax_year);
         try self.loadEditorFormSet(self.default_tax_year);
         self.input_was_truncated = false;
@@ -3724,12 +3647,6 @@ pub const State = struct {
         self.captureEditorSnapshot();
         self.refreshFactsSummary(self.default_tax_year);
         self.refreshCorEvidence();
-        if (!self.loaded_shape_supported) {
-            self.setNotice(
-                .failure,
-                "This revision has repeated activities or effective-dated facts. It is preserved losslessly, but this single-activity editor cannot revise it.",
-            );
-        }
     }
 
     fn loadEditorFormSet(self: *State, tax_year: i32) !void {
@@ -3816,10 +3733,8 @@ pub const State = struct {
         clearEditorBuffer(&self.birth_date);
         clearEditorBuffer(&self.citizenship);
         clearEditorBuffer(&self.foreign_tax_number);
-        clearEditorBuffer(&self.business_line);
-        clearEditorBuffer(&self.atc);
-        clearEditorBuffer(&self.tax_type);
-        clearEditorBuffer(&self.special_rate_basis);
+        clearEditorBuffer(&self.fiscal_year_end_month);
+        clearEditorBuffer(&self.primary_line_of_business);
         clearEditorBuffer(&self.effective_from);
         clearEditorBuffer(&self.effective_until);
         clearEditorBuffer(&self.source_reference);
@@ -3827,8 +3742,10 @@ pub const State = struct {
         clearEditorBuffer(&self.forms_set);
         self.subject_kind = .individual;
         self.natural_person_classification = .classification_unknown;
+        self.accounting_period_basis = null;
+        self.eopt_tier = null;
+        self.consolidation_review_state = .confirmed;
         self.source_kind = .manual_entry;
-        self.government_withholding_agent = .unset;
         self.forms_set_configured = false;
         self.form_set_state = .needs_configuration;
         self.legacy_form_set_reset_allowed = false;
@@ -3843,8 +3760,6 @@ pub const State = struct {
         self.branch_source_root.clear();
         self.branch_source_name.clear();
         self.change_intent = .record_change;
-        self.selected_tax_type.clear();
-        self.selected_tax_type_count = 0;
         self.resetFormFilters();
         self.input_was_truncated = false;
     }
@@ -3866,10 +3781,8 @@ pub const State = struct {
             self.birth_date.truncated or
             self.citizenship.truncated or
             self.foreign_tax_number.truncated or
-            self.business_line.truncated or
-            self.atc.truncated or
-            self.tax_type.truncated or
-            self.special_rate_basis.truncated or
+            self.fiscal_year_end_month.truncated or
+            self.primary_line_of_business.truncated or
             self.effective_from.truncated or
             self.effective_until.truncated or
             self.source_reference.truncated or
@@ -3910,15 +3823,12 @@ pub const State = struct {
         }
         const message = switch (err) {
             persistence.Error.RevisionConflict => "This profile changed elsewhere. Reload it before saving a new revision.",
-            persistence.Error.RegistrationStreamConflict => "Registration details changed elsewhere. Reload them before saving the complete Tax Profile.",
             error.UnknownFormCode => "One of the chosen forms is not in the 51-form catalog.",
             error.InvalidTaxYear => "Tax year must be a four-digit year from 0001 through 9999.",
-            error.ActivityRequiresBusinessLine => "An activity ATC requires a line of business. Tax type remains an independent registration fact.",
             error.PersonalFieldsNotApplicable => "Birth date, citizenship, and foreign tax number apply only to individual subjects.",
             error.TradeNameNotApplicable => "A trade name is not applicable to the selected taxpayer classification.",
             error.SourceReferenceRequired => "Imported and migrated revisions require a source reference.",
             error.ManualSourceHasReference => "Manual entry has no external source reference. Choose Imported or Migrated.",
-            error.UnsupportedRepeatedComponents => "This repeated-component revision is preserved, but cannot be rewritten by the single-activity editor.",
             error.UnsavedFormSetChanges => "Save or cancel your unsaved form changes before switching taxpayers.",
             error.UnsavedProfileChanges => "Save or cancel your unsaved taxpayer details before switching taxpayers.",
             error.DuplicateTaxpayerIdentifier,
@@ -3942,46 +3852,6 @@ pub const State = struct {
         self.setNotice(.failure, message);
     }
 };
-
-fn editorSupports(revision: *const model.ProfileRevision) bool {
-    if (revision.business_activities.len > 1) return false;
-    for (revision.business_activities) |activity| {
-        if (!effectivePeriodsEqual(activity.effective, revision.effective)) {
-            return false;
-        }
-    }
-    inline for (std.meta.tags(model.RegistrationFactKind)) |kind| {
-        if (registrationFactKindCount(revision, kind) > 1) return false;
-    }
-    for (revision.registration_facts) |fact| {
-        if (!effectivePeriodsEqual(fact.effective, revision.effective)) {
-            return false;
-        }
-    }
-    return true;
-}
-
-fn effectivePeriodsEqual(
-    left: model.EffectivePeriod,
-    right: model.EffectivePeriod,
-) bool {
-    if (!left.from.eql(right.from)) return false;
-    if (left.until == null or right.until == null) {
-        return left.until == null and right.until == null;
-    }
-    return left.until.?.eql(right.until.?);
-}
-
-fn registrationFactKindCount(
-    revision: *const model.ProfileRevision,
-    kind: model.RegistrationFactKind,
-) usize {
-    var count: usize = 0;
-    for (revision.registration_facts) |fact| {
-        if (fact.kind() == kind) count += 1;
-    }
-    return count;
-}
 
 fn loadIndividualFields(state: *State, person: *const model.Individual) void {
     if (person.date_of_birth) |birth_date| {
@@ -4121,10 +3991,12 @@ pub fn reusableFieldLabel(key: fields.ReusableField) []const u8 {
         .zip_code => "ZIP code",
         .contact_number => "Contact number",
         .email_address => "Registered email address",
+        .accounting_period_basis => "Accounting-period basis",
         .date_of_birth => "Birth date",
         .citizenship => "Citizenship",
         .foreign_tax_number => "Foreign tax number",
         .line_of_business => "Line of business",
+        .eopt_tier => "EOPT tier",
         .atc => "Alphanumeric Tax Code (ATC)",
         .tax_type => "Registered tax type",
         .government_withholding_agent => "Government withholding agent",
@@ -4408,7 +4280,7 @@ test "form availability distinguishes unavailable fallback and configured sets" 
     try std.testing.expect(state.calendarFormSetConfigured(2026));
 
     state.cached_calendar_form_sets[0].resolution = .catalog_fallback;
-    try std.testing.expect(state.formAvailable(2026, "2551Q"));
+    try std.testing.expect(!state.formAvailable(2026, "2551Q"));
     try std.testing.expect(!state.calendarFormSetConfigured(2026));
 
     state.cached_calendar_form_sets[0].resolution = .configured;
@@ -4589,7 +4461,8 @@ test "profile state builds domain revision and explicit empty Forms Set" {
     state.registered_address.set("Quezon City");
     state.email.set("maria@example.ph");
     state.effective_from.set("2026-01-01");
-    state.tax_type.set("Percentage Tax");
+    state.accounting_period_basis = .calendar;
+    state.primary_line_of_business.set("Professional services");
     try std.testing.expect(state.save());
     try std.testing.expect(state.openYearWorkspace(2026));
     try std.testing.expectEqual(YearWorkspaceMode.draft_choice, state.year_workspace);
@@ -4612,13 +4485,6 @@ test "profile state builds domain revision and explicit empty Forms Set" {
     )).?;
     defer loaded.deinit(allocator);
     try std.testing.expectEqual(@as(u32, 1), loaded.revision.sequence);
-    // The old Tax Type buffer is migration input only. New base revisions do
-    // not create hidden profile-attached registration components.
-    try std.testing.expectEqual(
-        @as(usize, 0),
-        loaded.revision.registration_facts.len,
-    );
-    try std.testing.expectEqual(@as(usize, 0), loaded.revision.business_activities.len);
 
     const maybe_set = try store.getFormSet(
         allocator,
@@ -4875,64 +4741,7 @@ fn workspaceFixture(
     try std.testing.expect(state.save());
 }
 
-test "complete profile save rolls back base when registration stream is stale" {
-    const allocator = std.testing.allocator;
-    var store = try persistence.Store.openMemory(allocator);
-    defer store.close();
-
-    var state = State{};
-    try workspaceFixture(&state, allocator, &store);
-    const profile_id = state.selectedProfileDomainId().?;
-    const primary = [_]persistence.RegistrationActivityRevisionWrite{.{
-        .anchor_id = "primary",
-        .metadata = .{
-            .id = "complete-save-primary-v1",
-            .expected_component_sequence = 0,
-            .effective = .{ .from = "2020-01-01".* },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 1,
-        },
-        .line_of_business = "Consulting",
-    }};
-    _ = try store.appendRegistrationCommit(.{
-        .profile_id = profile_id.asSlice(),
-        .expected_current_sequence = 0,
-        .activities = &primary,
-    });
-
-    state.editSelected();
-    state.display_name.set("Must Roll Back");
-    const stale_intent: registration_ui.SaveIntent = .{
-        .profile_id = profile_id,
-        .viewed_on = try model.Date.parseIso("2026-12-31"),
-        .selected_tax_year = 2026,
-        .expected_sequence = 0,
-        .business_activities = &.{},
-        .registration_obligations = &.{},
-        .retained_review_rows = &.{},
-    };
-    try std.testing.expect(state.saveCompleteProfile(&stale_intent) == null);
-    try std.testing.expect(state.noticeFailure());
-
-    var current = (try profile_persistence.loadCurrentRevision(
-        &store,
-        allocator,
-        profile_id,
-    )).?;
-    defer current.deinit(allocator);
-    try std.testing.expectEqual(@as(u32, 1), current.revision.sequence);
-    try std.testing.expectEqualStrings(
-        "Workspace Taxpayer",
-        current.revision.subject.taxpayerName().asSlice(),
-    );
-    try std.testing.expectEqual(
-        @as(u32, 1),
-        try store.registrationStreamSequence(profile_id.asSlice()),
-    );
-}
-
-test "complete profile creation commits base and normalized registration together" {
+test "complete profile creation stores consolidated reusable fields" {
     const allocator = std.testing.allocator;
     var store = try persistence.Store.openMemory(allocator);
     defer store.close();
@@ -4945,33 +4754,11 @@ test "complete profile creation commits base and normalized registration togethe
     state.setNaturalPersonClassification(.self_employed);
     state.registered_address.set("Quezon City");
     state.effective_from.set("2026-01-01");
-
-    const activity = [_]registration_ui.BusinessActivityRow{.{
-        .anchor_id = try registration.ActivityAnchorId.parse("primary"),
-        .effective = try registration.EffectivePeriod.init(
-            try model.Date.parseIso("2026-01-01"),
-            null,
-        ),
-        .line_of_business = try fields.LineOfBusiness.parse(
-            "Professional services",
-        ),
-        .atc = try fields.Atc.parse("PT010"),
-    }};
-    const intent: registration_ui.SaveIntent = .{
-        // Creation rebinds this typed placeholder to the generated profile id
-        // before entering the one store transaction.
-        .profile_id = try model.ProfileId.parse("new-profile-placeholder"),
-        .viewed_on = try model.Date.parseIso("2026-08-05"),
-        .selected_tax_year = 2026,
-        .expected_sequence = 0,
-        .business_activities = &activity,
-        .registration_obligations = &.{},
-        .retained_review_rows = &.{},
-    };
-    try std.testing.expectEqual(
-        @as(u32, 1),
-        state.saveCompleteProfile(&intent).?,
-    );
+    state.setAccountingPeriodBasis(.fiscal);
+    state.fiscal_year_end_month.set("6");
+    state.setEoptTier(.micro);
+    state.primary_line_of_business.set("Professional services");
+    try std.testing.expect(state.save());
 
     const profile_id = state.selectedProfileDomainId().?;
     var base = (try profile_persistence.loadCurrentRevision(
@@ -4981,139 +4768,25 @@ test "complete profile creation commits base and normalized registration togethe
     )).?;
     defer base.deinit(allocator);
     try std.testing.expectEqual(@as(u32, 1), base.revision.sequence);
-    try std.testing.expectEqual(@as(usize, 0), base.business_activities.len);
-    try std.testing.expectEqual(@as(usize, 0), base.registration_facts.len);
+    try std.testing.expectEqual(
+        model.AccountingPeriodBasis.fiscal,
+        base.revision.accounting_period_basis.?,
+    );
+    try std.testing.expectEqual(@as(?u8, 6), base.revision.fiscal_year_end_month);
+    try std.testing.expectEqual(model.EoptTier.micro, base.revision.eopt_tier.?);
+    try std.testing.expectEqualStrings(
+        "Professional services",
+        base.revision.primary_line_of_business.?.asSlice(),
+    );
 
-    var history = try store.listRegistrationHistory(
+    var history = try persistence.testing.listLegacyRegistrationHistory(
+        &store,
         allocator,
         profile_id.asSlice(),
     );
     defer history.deinit(allocator);
-    try std.testing.expectEqual(@as(u32, 1), history.stream_sequence);
-    try std.testing.expectEqual(@as(usize, 1), history.activities.len);
-    try std.testing.expectEqualStrings(
-        "Professional services",
-        history.activities[0].line_of_business,
-    );
-}
-
-test "complete profile save leaves legacy components on history only" {
-    const allocator = std.testing.allocator;
-    var store = try persistence.Store.openMemory(allocator);
-    defer store.close();
-
-    var state = State{};
-    try workspaceFixture(&state, allocator, &store);
-    const profile_id = state.selectedProfileDomainId().?;
-    var current = (try profile_persistence.loadCurrentRevision(
-        &store,
-        allocator,
-        profile_id,
-    )).?;
-    defer current.deinit(allocator);
-
-    const legacy_activity = [_]model.BusinessActivity{.{
-        .id = try model.BusinessActivityId.parse("legacy-primary"),
-        .line_of_business = try fields.LineOfBusiness.parse(
-            "Legacy consulting",
-        ),
-        .atc = try fields.Atc.parse("PT010"),
-        .effective = current.revision.effective,
-    }};
-    const legacy_fact = [_]model.RegistrationFact{.{
-        .id = try model.RegistrationFactId.parse("legacy-tax-type"),
-        .effective = current.revision.effective,
-        .value = .{
-            .tax_type = try fields.TaxType.parse("Percentage Tax"),
-        },
-    }};
-    const legacy_revision_id_text = try store.generateOpaqueId();
-    const legacy_revision_id = try model.RevisionId.parse(
-        &legacy_revision_id_text,
-    );
-    var legacy_revision = current.revision;
-    legacy_revision.id = legacy_revision_id;
-    legacy_revision.sequence = 2;
-    legacy_revision.business_activities = &legacy_activity;
-    legacy_revision.registration_facts = &legacy_fact;
-    try profile_persistence.appendRevision(
-        &store,
-        allocator,
-        &legacy_revision,
-        1,
-    );
-
-    try state.attach(allocator, &store, "2026-01-01", 2026);
-    try std.testing.expectEqualStrings(
-        "Legacy consulting",
-        state.business_line.text(),
-    );
-    try std.testing.expectEqualStrings("Percentage Tax", state.tax_type.text());
-    state.editSelected();
-    state.registered_address.set("Makati City");
-
-    const normalized_activity = [_]registration_ui.BusinessActivityRow{.{
-        .anchor_id = try registration.ActivityAnchorId.parse("primary"),
-        .effective = try registration.EffectivePeriod.init(
-            try model.Date.parseIso("2020-01-01"),
-            null,
-        ),
-        .line_of_business = try fields.LineOfBusiness.parse("Consulting"),
-        .atc = try fields.Atc.parse("PT010"),
-    }};
-    const intent: registration_ui.SaveIntent = .{
-        .profile_id = profile_id,
-        .viewed_on = try model.Date.parseIso("2026-12-31"),
-        .selected_tax_year = 2026,
-        .expected_sequence = 0,
-        .business_activities = &normalized_activity,
-        .registration_obligations = &.{},
-        .retained_review_rows = &.{},
-    };
-    try std.testing.expectEqual(
-        @as(u32, 1),
-        state.saveCompleteProfile(&intent).?,
-    );
-
-    var saved = (try profile_persistence.loadCurrentRevision(
-        &store,
-        allocator,
-        profile_id,
-    )).?;
-    defer saved.deinit(allocator);
-    try std.testing.expectEqual(@as(u32, 3), saved.revision.sequence);
-    try std.testing.expectEqual(@as(usize, 0), saved.business_activities.len);
-    try std.testing.expectEqual(@as(usize, 0), saved.registration_facts.len);
-
-    var historical = (try profile_persistence.loadRevision(
-        &store,
-        allocator,
-        profile_id,
-        legacy_revision_id,
-    )).?;
-    defer historical.deinit(allocator);
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        historical.business_activities.len,
-    );
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        historical.registration_facts.len,
-    );
-
-    var registration_history = try store.listRegistrationHistory(
-        allocator,
-        profile_id.asSlice(),
-    );
-    defer registration_history.deinit(allocator);
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        registration_history.activities.len,
-    );
-    try std.testing.expectEqualStrings(
-        "Consulting",
-        registration_history.activities[0].line_of_business,
-    );
+    try std.testing.expectEqual(@as(u32, 0), history.stream_sequence);
+    try std.testing.expectEqual(@as(usize, 0), history.activities.len);
 }
 
 test "tax profile view edit dirty and cancel lifecycle is explicit" {
@@ -5251,46 +4924,38 @@ test "editor visibility exhaustively delegates to central applicability" {
     var state = State{};
     for (std.meta.tags(model.SubjectKind)) |subject_kind| {
         for (std.meta.tags(model.NaturalPersonClassification)) |classification| {
-            for ([_]bool{ false, true }) |has_activity| {
-                for ([_]bool{ false, true }) |has_trade_name| {
-                    state.subject_kind = subject_kind;
-                    state.natural_person_classification = classification;
-                    clearEditorBuffer(&state.business_line);
-                    clearEditorBuffer(&state.trade_name);
-                    if (has_activity) state.business_line.set("Preserved activity");
-                    if (has_trade_name) state.trade_name.set("Preserved trade");
-                    const context: applicability.Context = .{
-                        .subject_kind = subject_kind,
-                        .natural_person_classification = classification,
-                        .has_business_activity = has_activity,
-                        .has_trade_name = has_trade_name,
-                    };
-                    try std.testing.expectEqual(
-                        applicability.fieldGroupVisible(
-                            context,
-                            .natural_person_details,
-                        ),
-                        state.naturalPersonFieldsVisible(),
-                    );
-                    try std.testing.expectEqual(
-                        applicability.fieldGroupVisible(context, .trade_name),
-                        state.tradeNameVisible(),
-                    );
-                    try std.testing.expectEqual(
-                        applicability.fieldGroupVisible(
-                            context,
-                            .business_activities,
-                        ),
-                        state.businessFieldsVisible(),
-                    );
-                    try std.testing.expectEqual(
-                        applicability.fieldGroupVisible(
-                            context,
-                            .line_of_business,
-                        ),
-                        state.lineOfBusinessVisible(),
-                    );
-                }
+            for ([_]bool{ false, true }) |has_trade_name| {
+                state.subject_kind = subject_kind;
+                state.natural_person_classification = classification;
+                clearEditorBuffer(&state.trade_name);
+                if (has_trade_name) state.trade_name.set("Preserved trade");
+                const context: applicability.Context = .{
+                    .subject_kind = subject_kind,
+                    .natural_person_classification = classification,
+                    .has_trade_name = has_trade_name,
+                };
+                try std.testing.expectEqual(
+                    applicability.fieldGroupVisible(
+                        context,
+                        .natural_person_details,
+                    ),
+                    state.naturalPersonFieldsVisible(),
+                );
+                try std.testing.expectEqual(
+                    applicability.fieldGroupVisible(context, .trade_name),
+                    state.tradeNameVisible(),
+                );
+                try std.testing.expectEqual(
+                    applicability.fieldGroupVisible(
+                        context,
+                        .line_of_business,
+                    ),
+                    state.lineOfBusinessVisible(),
+                );
+                try std.testing.expectEqual(
+                    state.lineOfBusinessVisible(),
+                    state.businessFieldsVisible(),
+                );
             }
         }
     }
@@ -5301,8 +4966,7 @@ test "classification and subject switches preserve conditional editor data" {
     state.birth_date.set("1990-01-02");
     state.citizenship.set("Filipino");
     state.trade_name.set("Sample Trading");
-    state.business_line.set("Professional services");
-    state.atc.set("PT010");
+    state.primary_line_of_business.set("Professional services");
 
     state.setSubjectKind(.sole_proprietor);
     try std.testing.expect(state.subjectKindSelected(.individual));
@@ -5320,17 +4984,17 @@ test "classification and subject switches preserve conditional editor data" {
     try std.testing.expect(state.tradeNameVisible());
     try std.testing.expect(state.lineOfBusinessVisible());
 
-    // A truthful loaded activity keeps the business editor reachable through
-    // a classification change; no selector clears any buffered fact.
+    // Direct Base fields remain buffered through selector changes; visibility
+    // follows the chosen taxpayer type and classification.
     state.setNaturalPersonClassification(.pure_compensation);
-    try std.testing.expect(state.businessFieldsVisible());
-    try std.testing.expect(state.lineOfBusinessVisible());
+    try std.testing.expect(!state.businessFieldsVisible());
+    try std.testing.expect(!state.lineOfBusinessVisible());
     try std.testing.expect(state.tradeNameVisible());
 
     state.setSubjectKind(.estate);
     try std.testing.expect(!state.naturalPersonFieldsVisible());
     try std.testing.expect(!state.tradeNameVisible());
-    try std.testing.expect(state.businessFieldsVisible());
+    try std.testing.expect(!state.businessFieldsVisible());
     state.setSubjectKind(.corporation);
     try std.testing.expect(state.tradeNameVisible());
 
@@ -5339,9 +5003,8 @@ test "classification and subject switches preserve conditional editor data" {
     try std.testing.expectEqualStrings("Sample Trading", state.trade_name.text());
     try std.testing.expectEqualStrings(
         "Professional services",
-        state.business_line.text(),
+        state.primary_line_of_business.text(),
     );
-    try std.testing.expectEqualStrings("PT010", state.atc.text());
 }
 
 test "classification labels and selected state cover every classification" {
@@ -5918,7 +5581,7 @@ test "saving unchanged taxpayer details records no new revision" {
     try std.testing.expect(!state.factsDirty());
 }
 
-test "the header states several registered tax types rather than none" {
+test "normal profile header does not infer a registered tax type" {
     const allocator = std.testing.allocator;
     var store = try persistence.Store.openMemory(allocator);
     defer store.close();
@@ -5930,70 +5593,12 @@ test "the header states several registered tax types rather than none" {
         state.selectedTaxTypeLabel(),
     );
 
-    state.tax_type.set("Percentage Tax");
     try std.testing.expect(state.save());
     try std.testing.expectEqualStrings(
         "Tax type not recorded",
         state.selectedTaxTypeLabel(),
     );
     try std.testing.expectEqualStrings("No changes to save.", state.noticeText());
-
-    // A taxpayer registered for two tax types has facts the single-value
-    // editor cannot show; the header must not report that as having none.
-    const profile_id = state.selectedProfileDomainId().?;
-    const observed = state.selectedRevisionSequence().?;
-    const generated = try store.generateOpaqueId();
-    const facts = [_]model.RegistrationFact{
-        .{
-            .id = try model.RegistrationFactId.parse("tax-type-percentage"),
-            .effective = try model.EffectivePeriod.init(
-                try model.Date.parseIso("2026-01-01"),
-                try model.Date.parseIso("2026-06-30"),
-            ),
-            .value = .{ .tax_type = try fields.TaxType.parse("Percentage Tax") },
-        },
-        .{
-            .id = try model.RegistrationFactId.parse("tax-type-vat"),
-            .effective = try model.EffectivePeriod.init(
-                try model.Date.parseIso("2026-07-01"),
-                null,
-            ),
-            .value = .{ .tax_type = try fields.TaxType.parse("Value Added Tax") },
-        },
-    };
-    const revision: model.ProfileRevision = .{
-        .profile_id = profile_id,
-        .id = try model.RevisionId.parse(&generated),
-        .sequence = observed + 1,
-        .effective = try model.EffectivePeriod.init(
-            try model.Date.parseIso("2026-01-01"),
-            null,
-        ),
-        .source = .manual_entry,
-        .identity = .{
-            .tin = try fields.Tin.parse("123-456-789-00000"),
-            .rdo_code = try fields.RdoCode.parse("040"),
-        },
-        .contact = .{
-            .address = try fields.RegisteredAddress.parse("Quezon City"),
-        },
-        .subject = .{ .individual = .{
-            .name = try fields.TaxpayerName.parse("Workspace Taxpayer"),
-            .classification = .pure_compensation,
-        } },
-        .registration_facts = &facts,
-    };
-    try profile_persistence.appendRevision(
-        &store,
-        allocator,
-        &revision,
-        observed,
-    );
-    try state.attach(allocator, &store, "2026-01-01", 2026);
-    try std.testing.expectEqualStrings(
-        "Multiple registered tax types",
-        state.selectedTaxTypeLabel(),
-    );
 }
 
 test "an attached COR is a checked reference, not a copy" {
@@ -6678,7 +6283,7 @@ test "a taxpayer registered mid-year is not treated as missing details" {
     try std.testing.expect(state.saveYearWorkspace());
 }
 
-test "a branch reuses safe details and requires its own registration facts" {
+test "a branch reuses safe details and clears branch-specific base facts" {
     const allocator = std.testing.allocator;
     var store = try persistence.Store.openMemory(allocator);
     defer store.close();
@@ -6687,7 +6292,7 @@ test "a branch reuses safe details and requires its own registration facts" {
     try workspaceFixture(&state, allocator, &store);
     state.phone.set("+639171234567");
     state.email.set("head@example.ph");
-    state.business_line.set("Retail");
+    state.primary_line_of_business.set("Retail");
     try std.testing.expect(state.save());
     // Copy: the selection buffer is reused when the branch becomes selected.
     var head_office_storage: [64]u8 = undefined;
@@ -6711,8 +6316,10 @@ test "a branch reuses safe details and requires its own registration facts" {
     // Everything branch-specific starts blank so it must be reviewed.
     try std.testing.expectEqualStrings("", state.rdo.text());
     try std.testing.expectEqualStrings("", state.registered_address.text());
-    try std.testing.expectEqualStrings("", state.business_line.text());
-    try std.testing.expectEqualStrings("", state.tax_type.text());
+    try std.testing.expectEqualStrings(
+        "",
+        state.primary_line_of_business.text(),
+    );
 
     // Saving without a branch code would create a duplicate registration.
     state.rdo.set("043");

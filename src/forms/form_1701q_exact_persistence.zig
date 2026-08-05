@@ -18,7 +18,6 @@ const field = @import("../tax_profile/field.zig");
 const forms_set_history = @import("../tax_profile/forms_set_history.zig");
 const model = @import("../tax_profile/model.zig");
 const projection = @import("../tax_profile/projection.zig");
-const registration = @import("../tax_profile/registration.zig");
 const store = @import("../tax_profile/store.zig");
 const annual_profile = @import("../tax_profile/tax_form_profile.zig");
 const year_settings = @import("../tax_profile/taxpayer_year_settings.zig");
@@ -101,7 +100,6 @@ pub const Error =
 pub const RoleInstanceBinding = struct {
     role: ids.Role,
     instance_id: []const u8,
-    business_activity_id: ?[]const u8 = null,
     provenance: []const u8 = "historical_profile_projection",
 };
 
@@ -144,7 +142,6 @@ comptime {
 
 const ExactProvenanceWriteBuffers = struct {
     taxpayers: [draft_provenance.max_taxpayer_roles]store.DraftProvenanceTaxpayerRevisionWrite = undefined,
-    components: [draft_provenance.max_component_bindings]store.DraftProvenanceComponentWrite = undefined,
     sources: [draft_provenance.max_source_snapshots]store.DraftProvenanceSourceSnapshotWrite = undefined,
     seeds: [draft_provenance.max_transaction_seeds]store.DraftProvenanceTransactionSeedWrite = undefined,
     applicability_text: store.DateText = undefined,
@@ -163,7 +160,6 @@ fn exactProvenanceWrite(
         .taxpayer_revisions = snapshot.taxpayerRevisions(),
         .taxpayer_year_revision = snapshot.taxpayer_year_revision,
         .tax_form_profile_revision = snapshot.tax_form_profile_revision,
-        .components = snapshot.components(),
         .source_snapshots = snapshot.sourceSnapshots(),
         .transaction_seeds = snapshot.transactionSeeds(),
     };
@@ -184,9 +180,6 @@ fn exactProvenanceWrite(
             .revision_id = binding.revision_id.asSlice(),
             .revision_sequence = binding.revision_sequence,
         };
-    }
-    for (snapshot.components(), 0..) |*component, index| {
-        buffers.components[index] = provenanceComponentWrite(component);
     }
     for (snapshot.sourceSnapshots(), 0..) |*source, index| {
         buffers.sources[index] = .{
@@ -258,7 +251,6 @@ fn exactProvenanceWrite(
             }
         else
             null,
-        .components = buffers.components[0..snapshot.components().len],
         .source_snapshots = buffers.sources[0..snapshot.sourceSnapshots().len],
         .transaction_seeds = buffers.seeds[0..snapshot.transactionSeeds().len],
     };
@@ -289,29 +281,6 @@ fn validateFormsSetDecision(
     }
 }
 
-fn provenanceComponentWrite(
-    component: *const draft_provenance.ComponentBinding,
-) store.DraftProvenanceComponentWrite {
-    return switch (component.*) {
-        .business_activity => |*binding| .{ .business_activity = .{
-            .role = binding.role,
-            .profile_id = binding.anchor.owner_profile_id.asSlice(),
-            .anchor_id = binding.anchor.id.asSlice(),
-            .revision_id = binding.component_revision_id.asSlice(),
-            .revision_sequence = binding.component_revision_sequence,
-        } },
-        .registration_obligation => |*binding| .{
-            .registration_obligation = .{
-                .role = binding.role,
-                .profile_id = binding.anchor.owner_profile_id.asSlice(),
-                .anchor_id = binding.anchor.id.asSlice(),
-                .revision_id = binding.component_revision_id.asSlice(),
-                .revision_sequence = binding.component_revision_sequence,
-            },
-        },
-    };
-}
-
 fn provenanceSourceKeyWrite(
     key: *const draft_provenance.SourceKey,
 ) store.DraftProvenanceSourceKeyWrite {
@@ -336,26 +305,6 @@ fn provenanceSourceKeyWrite(
                 .key = value.key,
             },
         },
-        .business_activity_fact => |*value| .{
-            .business_activity_fact = .{
-                .role = value.role,
-                .anchor_id = value.anchor_id.asSlice(),
-                .key = std.meta.stringToEnum(
-                    store.DraftProvenanceActivityFactKey,
-                    @tagName(value.key),
-                ).?,
-            },
-        },
-        .registration_obligation_fact => |*value| .{
-            .registration_obligation_fact = .{
-                .role = value.role,
-                .anchor_id = value.anchor_id.asSlice(),
-                .key = std.meta.stringToEnum(
-                    store.DraftProvenanceObligationFactKey,
-                    @tagName(value.key),
-                ).?,
-            },
-        },
     };
 }
 
@@ -374,12 +323,6 @@ fn provenanceValueWrite(
         },
         .year => |year| .{ .year = year },
         .profile_id => |*id| .{ .profile_id = id.asSlice() },
-        .business_activity_anchor_id => |*id| .{
-            .business_activity_anchor_id = id.asSlice(),
-        },
-        .registration_obligation_anchor_id => |*id| .{
-            .registration_obligation_anchor_id = id.asSlice(),
-        },
         .income_tax_rate_election => |election| .{
             .income_tax_rate_election = switch (election) {
                 .graduated => .graduated,
@@ -409,7 +352,6 @@ pub fn decodeOwnedExactProvenance(
     raw: *const store.OwnedExactDraftProvenance,
 ) anyerror!DecodedExactProvenance {
     if (raw.taxpayer_revisions.len > draft_provenance.max_taxpayer_roles or
-        raw.components.len > draft_provenance.max_component_bindings or
         raw.source_snapshots.len > draft_provenance.max_source_snapshots or
         raw.transaction_seeds.len > draft_provenance.max_transaction_seeds)
     {
@@ -441,42 +383,6 @@ pub fn decodeOwnedExactProvenance(
             .profile_id = try model.ProfileId.parse(binding.profile_id),
             .revision_id = try model.RevisionId.parse(binding.revision_id),
             .revision_sequence = binding.revision_sequence,
-        };
-    }
-    var components: [draft_provenance.max_component_bindings]draft_provenance.ComponentBinding = undefined;
-    for (raw.components, 0..) |component, index| {
-        components[index] = switch (component.kind) {
-            .business_activity => .{ .business_activity = .{
-                .role = component.role,
-                .anchor = .{
-                    .owner_profile_id = try model.ProfileId.parse(
-                        component.profile_id,
-                    ),
-                    .id = try registration.ActivityAnchorId.parse(
-                        component.anchor_id,
-                    ),
-                },
-                .component_revision_id = try registration.ComponentRevisionId.parse(
-                    component.revision_id,
-                ),
-                .component_revision_sequence = component.revision_sequence,
-            } },
-            .registration_obligation => .{ .registration_obligation = .{
-                .role = component.role,
-                .anchor = .{
-                    .owner_profile_id = try model.ProfileId.parse(
-                        component.profile_id,
-                    ),
-                    .id = try registration.ObligationAnchorId.parse(
-                        component.anchor_id,
-                    ),
-                },
-                .component_revision_id = try registration.ComponentRevisionId.parse(
-                    component.revision_id,
-                ),
-                .component_revision_sequence = component.revision_sequence,
-            } },
-            else => return error.InvalidExactDraftProvenance,
         };
     }
     var sources: [draft_provenance.max_source_snapshots]draft_provenance.SourceSnapshot = undefined;
@@ -553,7 +459,6 @@ pub fn decodeOwnedExactProvenance(
         .taxpayer_revisions = taxpayers[0..raw.taxpayer_revisions.len],
         .taxpayer_year_revision = taxpayer_year_revision,
         .tax_form_profile_revision = tax_form_profile_revision,
-        .components = components[0..raw.components.len],
         .source_snapshots = sources[0..raw.source_snapshots.len],
         .transaction_seeds = seeds[0..raw.transaction_seeds.len],
     };
@@ -603,30 +508,6 @@ fn provenanceSourceKeyFromOwned(
             .role = value.role,
             .key = value.key,
         } },
-        .business_activity_fact => |value| .{
-            .business_activity_fact = .{
-                .role = value.role,
-                .anchor_id = try registration.ActivityAnchorId.parse(
-                    value.anchor_id,
-                ),
-                .key = std.meta.stringToEnum(
-                    draft_provenance.ActivityFactKey,
-                    @tagName(value.key),
-                ) orelse return error.InvalidExactDraftProvenance,
-            },
-        },
-        .registration_obligation_fact => |value| .{
-            .registration_obligation_fact = .{
-                .role = value.role,
-                .anchor_id = try registration.ObligationAnchorId.parse(
-                    value.anchor_id,
-                ),
-                .key = std.meta.stringToEnum(
-                    draft_provenance.ObligationFactKey,
-                    @tagName(value.key),
-                ) orelse return error.InvalidExactDraftProvenance,
-            },
-        },
     };
 }
 
@@ -643,16 +524,6 @@ fn provenanceValueFromOwned(
         .date => |date| .{ .date = try model.Date.parseIso(date) },
         .year => |year| .{ .year = year },
         .profile_id => |id| .{ .profile_id = try model.ProfileId.parse(id) },
-        .business_activity_anchor_id => |id| .{
-            .business_activity_anchor_id = try registration.ActivityAnchorId.parse(
-                id,
-            ),
-        },
-        .registration_obligation_anchor_id => |id| .{
-            .registration_obligation_anchor_id = try registration.ObligationAnchorId.parse(
-                id,
-            ),
-        },
         .income_tax_rate_election => |election| .{
             .income_tax_rate_election = switch (election) {
                 .graduated => .graduated,
@@ -1680,18 +1551,15 @@ fn buildRoleBindingWrites(
             }
         }
 
-        const historical = try provenanceForRole(
-            profile,
-            binding.role,
-            binding.business_activity_id,
-        );
+        const historical = try provenanceForRole(profile, binding.role);
         output[index] = .{
             .role = @tagName(binding.role),
             .instance_id = binding.instance_id,
             .profile_id = historical.profile_id.asSlice(),
             .profile_revision_id = historical.revision_id.asSlice(),
             .profile_revision_sequence = historical.revision_sequence,
-            .business_activity_id = binding.business_activity_id,
+            // Retained physical column for pre-simplification history only.
+            .business_activity_id = null,
             .provenance = binding.provenance,
         };
     }
@@ -1711,7 +1579,6 @@ fn buildRoleBindingWrites(
 fn provenanceForRole(
     profile: *const projection.Snapshot,
     role: ids.Role,
-    expected_business_activity_id: ?[]const u8,
 ) Error!*const projection.Provenance {
     var representative: ?*const projection.Provenance = null;
     for (profile.slice()) |*entry| {
@@ -1730,13 +1597,6 @@ fn provenanceForRole(
             }
         } else {
             representative = &entry.provenance;
-        }
-        if (entry.provenance.business_activity_id) |activity| {
-            const expected = expected_business_activity_id orelse
-                return error.HistoricalProfileBindingMismatch;
-            if (!std.mem.eql(u8, activity.asSlice(), expected)) {
-                return error.HistoricalProfileBindingMismatch;
-            }
         }
     }
     return representative orelse
@@ -1856,10 +1716,10 @@ fn ownedBindingsMatch(
             ) or
             left.profile_revision_sequence !=
                 right.profile_revision_sequence or
-            !optionalTextEql(
-                left.business_activity_id,
-                right.business_activity_id,
-            ) or
+            // Current exact provenance writes NULL. A historical component
+            // binding is not silently coerced into the simplified model.
+            left.business_activity_id != null or
+            right.business_activity_id != null or
             !std.mem.eql(u8, left.provenance, right.provenance))
         {
             return false;
@@ -2186,7 +2046,6 @@ fn seedSyntheticProfileRepository(repository: *store.Store) !void {
                 ),
             } },
         },
-        .{},
     );
 }
 

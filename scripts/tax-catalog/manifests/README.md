@@ -23,20 +23,19 @@ not write generated files or mutate `catalog.ts`.
 
 ## Owner vocabulary
 
-- `base`: effective-dated taxpayer identity and contact facts
-- `registration`: registration facts and bindings, including EOPT tier
-- `annual`: taxpayer-and-tax-year values shared by forms
+- `base`: effective-dated taxpayer identity, contact, accounting, EOPT, and
+  primary Line of Business facts
 - `form-specific`: a genuine form/revision/year profile value
 - `filing-context`: filing route and period identity
-- `transaction`: one return's declarations, schedules, payments, or evidence
-- `derived`: values calculated from owned source values
+- `transaction`: one return's declarations, schedules, payments, evidence, and
+  values calculated from that return's owned source values
 
 ## Pilot decisions
 
-- 2551Q January 2018 ENCS Item 13 is `annual`, stored once per taxpayer and tax
-  year, and projected onto the official return only for the initial applicable
-  quarter. Later quarters may display the inherited selection read-only.
-- 2550Q April 2024 ENCS Item 13 is the registration-owned EOPT tier.
+- 2551Q January 2018 ENCS Item 13 is `form-specific`, stored once per taxpayer,
+  exact form revision, and tax year. It is projected onto the official return
+  only for the initial applicable quarter; later quarters display it read-only.
+- 2550Q April 2024 ENCS Item 13 is the Base Tax Profile EOPT tier.
 - 2550Q April 2024 ENCS contains no Line of Business field on either page. The
   manifest therefore forbids projecting Base Tax Profile Line of Business into
   that exact revision.

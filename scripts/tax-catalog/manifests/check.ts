@@ -7,12 +7,9 @@ import { fileURLToPath } from "node:url";
 
 const ownerValues = new Set([
   "base",
-  "registration",
-  "annual",
   "form-specific",
   "filing-context",
   "transaction",
-  "derived",
 ]);
 
 interface Evidence {
@@ -21,11 +18,10 @@ interface Evidence {
   readonly officialInstruction?: string;
 }
 
-interface AnnualPolicy {
+interface FormProfilePolicy {
   readonly storageScope: string;
   readonly initialProjection: string;
   readonly laterQuarterDisplay: string;
-  readonly missingEligibilityFacts: string;
 }
 
 interface FieldOwnership {
@@ -36,7 +32,7 @@ interface FieldOwnership {
   readonly applicability: string;
   readonly evidence: Evidence;
   readonly options?: readonly string[];
-  readonly annualPolicy?: AnnualPolicy;
+  readonly formProfilePolicy?: FormProfilePolicy;
 }
 
 interface AbsenceAssertion {
@@ -231,15 +227,18 @@ function validate2551Q(manifest: OwnershipManifest): void {
   const item13 = requireField(manifest, "13");
   if (
     item13.semanticKey !== "income_tax_rate_election" ||
-    item13.owner !== "annual" ||
-    item13.annualPolicy?.storageScope !== "taxpayer_tax_year" ||
-    item13.annualPolicy.initialProjection !== "initial_applicable_quarter_only" ||
-    item13.annualPolicy.laterQuarterDisplay !== "inherited_read_only" ||
-    item13.annualPolicy.missingEligibilityFacts !== "fail_closed" ||
+    item13.owner !== "form-specific" ||
+    item13.formProfilePolicy?.storageScope !==
+      "taxpayer_form_revision_tax_year" ||
+    item13.formProfilePolicy.initialProjection !==
+      "initial_applicable_quarter_only" ||
+    item13.formProfilePolicy.laterQuarterDisplay !== "inherited_read_only" ||
     item13.evidence.officialInstruction !==
       "To be filled out only on the initial quarter of the taxable year"
   ) {
-    fail("2551Q Item 13 must remain an annual taxpayer-year election projected only initially");
+    fail(
+      "2551Q Item 13 must remain a form-specific yearly choice projected only initially",
+    );
   }
   if (item13.options?.join(",") !== "graduated,eight_percent") {
     fail("2551Q Item 13 must contain exactly the two official election choices");
@@ -260,10 +259,10 @@ function validate2550Q(manifest: OwnershipManifest): void {
   const item13 = requireField(manifest, "13");
   if (
     item13.semanticKey !== "eopt_tier" ||
-    item13.owner !== "registration" ||
+    item13.owner !== "base" ||
     item13.options?.join(",") !== "micro,small,medium,large"
   ) {
-    fail("2550Q Item 13 must map to the effective registration-owned EOPT tier");
+    fail("2550Q Item 13 must map to the effective Base Tax Profile EOPT tier");
   }
   if (manifest.fields.some((field) => field.semanticKey === "line_of_business")) {
     fail("2550Q 2024-04-ENCS must not project Line of Business");

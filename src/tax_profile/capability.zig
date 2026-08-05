@@ -8,17 +8,12 @@ const std = @import("std");
 const field = @import("field.zig");
 const model = @import("model.zig");
 
-pub const Selection = struct {
-    /// Required only when more than one business activity is effective for
-    /// the filing period. A sole effective activity is selected implicitly.
-    business_activity_id: ?model.BusinessActivityId = null,
-};
+/// Current profile projection has no activity or obligation selection. Keep an
+/// empty value so call sites retain one stable binding shape while historical
+/// component identifiers remain confined to persistence/export decoders.
+pub const Selection = struct {};
 
-pub const ResolveError = error{
-    BusinessActivitySelectionRequired,
-    UnknownBusinessActivity,
-    InactiveBusinessActivity,
-};
+pub const ResolveError = error{};
 
 /// Capabilities the revision can truthfully provide without considering a
 /// filing date or disambiguating a repeated business activity.
@@ -43,42 +38,14 @@ pub fn provided(revision: *const model.ProfileRevision) field.FieldSet {
             result.insert(.foreign_tax_number);
         }
     }
-    if (revision.business_activities.len > 0) {
+    if (revision.accounting_period_basis != null) {
+        result.insert(.accounting_period_basis);
+    }
+    if (revision.primary_line_of_business != null) {
         result.insert(.line_of_business);
-        for (revision.business_activities) |activity| {
-            if (activity.atc != null) {
-                result.insert(.atc);
-                break;
-            }
-        }
     }
-    for (revision.registration_facts) |*fact| {
-        result.insert(switch (fact.kind()) {
-            .tax_type => .tax_type,
-            .government_withholding_agent => .government_withholding_agent,
-            .special_rate_basis => .special_rate_basis,
-        });
-    }
+    if (revision.eopt_tier != null) result.insert(.eopt_tier);
     return result;
-}
-
-pub fn resolveBusinessActivity(
-    revision: *const model.ProfileRevision,
-    on: model.Date,
-    selection: Selection,
-) ResolveError!?*const model.BusinessActivity {
-    if (selection.business_activity_id) |id| {
-        const activity = revision.businessActivity(id) orelse
-            return error.UnknownBusinessActivity;
-        if (!activity.isEffective(on)) return error.InactiveBusinessActivity;
-        return activity;
-    }
-
-    return switch (revision.effectiveBusinessActivityCount(on)) {
-        0 => null,
-        1 => revision.soleEffectiveBusinessActivity(on).?,
-        else => error.BusinessActivitySelectionRequired,
-    };
 }
 
 pub fn valueFor(
@@ -87,6 +54,8 @@ pub fn valueFor(
     on: model.Date,
     selection: Selection,
 ) ResolveError!?field.Value {
+    _ = selection;
+    _ = on;
     return switch (reusable_field) {
         .tin => .{ .tin = revision.identity.tin },
         .rdo_code => .{ .rdo_code = revision.identity.rdo_code },
@@ -133,45 +102,24 @@ pub fn valueFor(
                 null
         else
             null,
-        .line_of_business => if (try resolveBusinessActivity(
-            revision,
-            on,
-            selection,
-        )) |activity|
-            .{ .line_of_business = activity.line_of_business }
+        .accounting_period_basis => if (revision.accounting_period_basis) |basis|
+            .{ .accounting_period_basis = basis }
         else
             null,
-        .atc => if (try resolveBusinessActivity(
-            revision,
-            on,
-            selection,
-        )) |activity|
-            if (activity.atc) |value|
-                .{ .atc = value }
-            else
-                null
+        .line_of_business => if (revision.primary_line_of_business) |value|
+            .{ .line_of_business = value }
         else
             null,
-        .tax_type => if (revision.registrationFact(.tax_type, on)) |fact|
-            .{ .tax_type = fact.value.tax_type }
+        .eopt_tier => if (revision.eopt_tier) |tier|
+            .{ .eopt_tier = field.EoptTier.parse(tier.label()) catch unreachable }
         else
             null,
-        .government_withholding_agent => if (revision.registrationFact(
-            .government_withholding_agent,
-            on,
-        )) |fact|
-            .{
-                .government_withholding_agent = fact.value.government_withholding_agent,
-            }
-        else
-            null,
-        .special_rate_basis => if (revision.registrationFact(
-            .special_rate_basis,
-            on,
-        )) |fact|
-            .{ .special_rate_basis = fact.value.special_rate_basis }
-        else
-            null,
+        // ATC is form policy or filing-transaction data. It is never inferred
+        // from a legacy Registration activity.
+        .atc => null,
+        // These variants remain decodable for historical catalog snapshots,
+        // but normal Base projection no longer reads Registration rows.
+        .tax_type, .government_withholding_agent, .special_rate_basis => null,
     };
 }
 
@@ -202,35 +150,25 @@ test "capability set follows the subject variant rather than nullable answers" {
             ),
             .kind = .corporation,
         } },
+        .eopt_tier = .micro,
     };
 
     const set = provided(&revision);
     try std.testing.expect(set.contains(.tin));
     try std.testing.expect(set.contains(.registered_name));
+    try std.testing.expect(set.contains(.eopt_tier));
     try std.testing.expect(!set.contains(.date_of_birth));
     try std.testing.expect(!set.contains(.atc));
+    const tier = (try valueFor(
+        &revision,
+        .eopt_tier,
+        try model.Date.parseIso("2026-01-01"),
+        .{},
+    )).?;
+    try std.testing.expectEqualStrings("Micro", tier.eopt_tier.asSlice());
 }
 
-test "business capability requires disambiguation only when necessary" {
-    const activity_one: model.BusinessActivity = .{
-        .id = try model.BusinessActivityId.parse("activity-1"),
-        .line_of_business = try field.LineOfBusiness.parse("Retail"),
-        .atc = try field.Atc.parse("PT010"),
-        .effective = try model.EffectivePeriod.init(
-            try model.Date.parseIso("2026-01-01"),
-            null,
-        ),
-    };
-    const activity_two: model.BusinessActivity = .{
-        .id = try model.BusinessActivityId.parse("activity-2"),
-        .line_of_business = try field.LineOfBusiness.parse("Services"),
-        .atc = try field.Atc.parse("PT040"),
-        .effective = try model.EffectivePeriod.init(
-            try model.Date.parseIso("2026-01-01"),
-            null,
-        ),
-    };
-    const activities = [_]model.BusinessActivity{ activity_one, activity_two };
+test "Line of Business comes only from the Base Tax Profile" {
     const revision: model.ProfileRevision = .{
         .profile_id = try model.ProfileId.parse("profile-maria"),
         .id = try model.RevisionId.parse("revision-1"),
@@ -246,97 +184,25 @@ test "business capability requires disambiguation only when necessary" {
         },
         .contact = .{
             .address = try field.RegisteredAddress.parse("1 Taxpayer Street"),
-            .zip_code = try field.ZipCode.parse("1000"),
-            .contact_number = try field.ContactNumber.parse("09171234567"),
-            .email_address = try field.EmailAddress.parse("maria@example.ph"),
         },
         .subject = .{ .sole_proprietor = .{
             .person = .{
                 .name = try field.TaxpayerName.parse("MARIA SANTOS"),
-                .date_of_birth = try model.Date.parseIso("1995-06-01"),
-                .citizenship = try field.Citizenship.parse("Filipino"),
             },
         } },
-        .business_activities = &activities,
+        .primary_line_of_business = try field.LineOfBusiness.parse("Base consulting"),
     };
     const on = try model.Date.parseIso("2026-02-01");
 
-    try std.testing.expectError(
-        error.BusinessActivitySelectionRequired,
-        valueFor(&revision, .atc, on, .{}),
-    );
-    const selected = (try valueFor(
+    const line = (try valueFor(
         &revision,
-        .atc,
-        on,
-        .{ .business_activity_id = activity_two.id },
-    )).?;
-    try std.testing.expectEqualStrings("PT040", selected.atc.asSlice());
-}
-
-test "effective registration facts extend the reusable union" {
-    const facts = [_]model.RegistrationFact{
-        .{
-            .id = try model.RegistrationFactId.parse("registration-tax-type"),
-            .effective = try model.EffectivePeriod.init(
-                try model.Date.parseIso("2026-01-01"),
-                null,
-            ),
-            .value = .{
-                .tax_type = try field.TaxType.parse("Percentage Tax"),
-            },
-        },
-        .{
-            .id = try model.RegistrationFactId.parse("registration-gwa"),
-            .effective = try model.EffectivePeriod.init(
-                try model.Date.parseIso("2026-01-01"),
-                null,
-            ),
-            .value = .{ .government_withholding_agent = .yes },
-        },
-    };
-    var revision: model.ProfileRevision = .{
-        .profile_id = try model.ProfileId.parse("profile-corporation"),
-        .id = try model.RevisionId.parse("revision-1"),
-        .sequence = 1,
-        .effective = try model.EffectivePeriod.init(
-            try model.Date.parseIso("2026-01-01"),
-            null,
-        ),
-        .source = .manual_entry,
-        .identity = .{
-            .tin = try field.Tin.parse("123-456-789-000"),
-            .rdo_code = try field.RdoCode.parse("019"),
-        },
-        .contact = .{
-            .address = try field.RegisteredAddress.parse("1 Corporate Way"),
-            .zip_code = try field.ZipCode.parse("1000"),
-            .contact_number = try field.ContactNumber.parse("81234567"),
-            .email_address = try field.EmailAddress.parse("tax@corp.example"),
-        },
-        .subject = .{ .legal_entity = .{
-            .registered_name = try field.RegisteredName.parse(
-                "EXAMPLE CORPORATION",
-            ),
-            .kind = .corporation,
-        } },
-        .registration_facts = &facts,
-    };
-    try revision.validate();
-    const on = try model.Date.parseIso("2026-03-31");
-    const tax_type = (try valueFor(&revision, .tax_type, on, .{})).?;
-    const gwa = (try valueFor(
-        &revision,
-        .government_withholding_agent,
+        .line_of_business,
         on,
         .{},
     )).?;
     try std.testing.expectEqualStrings(
-        "Percentage Tax",
-        tax_type.tax_type.asSlice(),
+        "Base consulting",
+        line.line_of_business.asSlice(),
     );
-    try std.testing.expectEqual(
-        field.GovernmentWithholdingAgent.yes,
-        gwa.government_withholding_agent,
-    );
+    try std.testing.expect((try valueFor(&revision, .atc, on, .{})) == null);
 }

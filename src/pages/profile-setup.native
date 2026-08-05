@@ -210,11 +210,6 @@
             <input height="44" text="{profileCorZipValue}" placeholder="What the COR says" label="{profileCorZipLabel}" on-input="profile_cor_zip_input"/>
             <checkbox height="44" checked="{profileCorZipAccepted}" text="Use this value" on-toggle="profile_cor_toggle_zip"/>
           </column>
-          <column gap="6">
-            <text wrap="true" foreground="text_muted">{profileCorTaxTypeLabel}</text>
-            <input height="44" text="{profileCorTaxTypeValue}" placeholder="What the COR says" label="{profileCorTaxTypeLabel}" on-input="profile_cor_tax_type_input"/>
-            <checkbox height="44" checked="{profileCorTaxTypeAccepted}" text="Use this value" on-toggle="profile_cor_toggle_tax_type"/>
-          </column>
           <checkbox
             height="44"
             checked="{profileCorApplyFormsSelected}"
@@ -274,7 +269,7 @@
         height="44"
         selected="{profileTaxFormsActive}"
         on-press="show_profile_tax_forms">
-        Registration & Forms
+        Forms Set
       </button>
       <button
         height="44"
@@ -362,12 +357,27 @@
               </column>
             </card>
 
+            <card padding="0">
+              <column padding="18" gap="16">
+                <column gap="4">
+                  <text><span weight="bold">Accounting period</span></text>
+                  <text wrap="true" foreground="text_muted">The accounting basis used to derive filing periods.</text>
+                </column>
+                <grid columns="{profileReadColumns}" gap="16">
+                  <use template="profile-read-value" label="Accounting basis" value="{profileAccountingPeriodBasisLabel}"/>
+                  <if test="{profileFiscalYearEndMonthVisible}">
+                    <use template="profile-read-value" label="Fiscal year-end month" value="{profileFiscalYearEndMonthValue}"/>
+                  </if>
+                </grid>
+              </column>
+            </card>
+
             <if test="{profileBusinessFieldsVisible}">
               <card padding="0">
                 <column padding="18" gap="16">
                   <column gap="4">
-                    <text><span weight="bold">Business registration</span></text>
-                    <text wrap="true" foreground="text_muted">Registration-owned details used by forms that apply to this taxpayer.</text>
+                    <text><span weight="bold">Business details</span></text>
+                    <text wrap="true" foreground="text_muted">Reusable business facts shared by forms that request them.</text>
                   </column>
                   <grid columns="{profileReadColumns}" gap="16">
                     <use template="profile-read-value" label="EOPT Tier" value="{profileEoptTierLabel}"/>
@@ -422,7 +432,7 @@
 
         <column gap="16">
             <column gap="4">
-              <text><span weight="bold">Identity and registration</span></text>
+              <text><span weight="bold">Identity and contact</span></text>
               <text wrap="true" foreground="text_muted">
                 TIN, RDO, registered name, and Taxpayer Type identify this immutable
                 profile revision.
@@ -531,55 +541,63 @@
             </use>
         </column>
 
+        <column gap="16">
+          <column gap="4">
+            <text><span weight="bold">Accounting period</span></text>
+            <text wrap="true" foreground="text_muted">Choose the basis used to derive this taxpayer's filing periods.</text>
+          </column>
+          <grid columns="{profileReadColumns}" gap="8">
+            <button height="44" variant="outline" selected="{profileAccountingPeriodCalendarSelected}" on-press="profile_accounting_period_calendar">Calendar</button>
+            <button height="44" variant="outline" selected="{profileAccountingPeriodFiscalSelected}" on-press="profile_accounting_period_fiscal">Fiscal</button>
+          </grid>
+          <if test="{profileFiscalYearEndMonthVisible}">
+            <use template="profile-field" label="Fiscal year-end month">
+              <input
+                height="44"
+                text="{profileFiscalYearEndMonthValue}"
+                placeholder="1 to 12"
+                label="Fiscal year-end month"
+                on-input="profile_fiscal_year_end_month_input"/>
+            </use>
+          </if>
+        </column>
+
         <if test="{profileBusinessFieldsVisible}">
           <column gap="16">
             <column gap="4">
-              <text><span weight="bold">Business registration</span></text>
+              <text><span weight="bold">Business details</span></text>
               <text wrap="true" foreground="text_muted">
-                The primary activity and EOPT Tier belong to Registration and
-                are saved together with this Tax Profile.
+                These reusable fields are saved in this Tax Profile revision.
               </text>
             </column>
-            <if test="{profileRegistrationLoadFailureVisible}">
-              <text wrap="true" foreground="destructive">Registration details could not be loaded. Retry before saving this Tax Profile.</text>
-            </if>
-            <else>
-              <column gap="8">
-                <text>EOPT Tier</text>
-                <if test="{profileEoptTierMissing}">
-                  <text wrap="true" foreground="warning">Choose the taxpayer's EOPT Tier before saving.</text>
-                </if>
-                <stack>
-                  <select
-                    height="44"
-                    label="EOPT Tier"
-                    on-press="toggle_profile_eopt_picker">{profileEoptTierLabel}</select>
-                  <if test="{profileEoptPickerOpen}">
-                    <dropdown-menu
-                      anchor="below"
-                      anchor-alignment="stretch"
-                      on-dismiss="close_profile_eopt_picker">
-                      <menu-item height="44" selected="{profileEoptMicroSelected}" on-press="profile_eopt_micro">Micro</menu-item>
-                      <menu-item height="44" selected="{profileEoptSmallSelected}" on-press="profile_eopt_small">Small</menu-item>
-                      <menu-item height="44" selected="{profileEoptMediumSelected}" on-press="profile_eopt_medium">Medium</menu-item>
-                      <menu-item height="44" selected="{profileEoptLargeSelected}" on-press="profile_eopt_large">Large</menu-item>
-                    </dropdown-menu>
-                  </if>
-                </stack>
-              </column>
-              <use template="profile-field" label="Primary Line of Business">
-                <input
+            <column gap="8">
+              <text>EOPT Tier</text>
+              <stack>
+                <select
                   height="44"
-                  text="{profilePrimaryLineOfBusinessValue}"
-                  placeholder="Primary registered business activity"
-                  label="Primary Line of Business"
-                  on-input="profile_primary_line_of_business_input"/>
-              </use>
-              <if test="{profilePrimaryLineOfBusinessMissing}">
-                <text wrap="true" foreground="warning">Enter the primary Line of Business before saving.</text>
-              </if>
-              <text wrap="true" foreground="text_muted">Manage additional business activities under Registration & Forms.</text>
-            </else>
+                  label="EOPT Tier"
+                  on-press="toggle_profile_eopt_picker">{profileEoptTierLabel}</select>
+                <if test="{profileEoptPickerOpen}">
+                  <dropdown-menu
+                    anchor="below"
+                    anchor-alignment="stretch"
+                    on-dismiss="close_profile_eopt_picker">
+                    <menu-item height="44" selected="{profileEoptMicroSelected}" on-press="profile_eopt_micro">Micro</menu-item>
+                    <menu-item height="44" selected="{profileEoptSmallSelected}" on-press="profile_eopt_small">Small</menu-item>
+                    <menu-item height="44" selected="{profileEoptMediumSelected}" on-press="profile_eopt_medium">Medium</menu-item>
+                    <menu-item height="44" selected="{profileEoptLargeSelected}" on-press="profile_eopt_large">Large</menu-item>
+                  </dropdown-menu>
+                </if>
+              </stack>
+            </column>
+            <use template="profile-field" label="Primary Line of Business">
+              <input
+                height="44"
+                text="{profilePrimaryLineOfBusinessValue}"
+                placeholder="Primary line of business"
+                label="Primary Line of Business"
+                on-input="profile_primary_line_of_business_input"/>
+            </use>
           </column>
         </if>
 
@@ -646,7 +664,7 @@
         <if test="{profileFormsHeaderStacked}">
           <column gap="10">
             <column gap="4">
-              <text><span weight="bold">Registration & Forms</span></text>
+              <text><span weight="bold">Forms Set</span></text>
               <text wrap="true" foreground="text_muted">
                 Choose which BIR forms apply to this taxpayer in each tax year.
               </text>
@@ -657,7 +675,7 @@
         <else>
           <row gap="12" cross="center">
             <column grow="1" gap="4">
-              <text><span weight="bold">Registration & Forms</span></text>
+              <text><span weight="bold">Forms Set</span></text>
               <text wrap="true" foreground="text_muted">
                 Choose which BIR forms apply to this taxpayer in each tax year.
               </text>
@@ -678,42 +696,6 @@
           </card>
         </if>
         <else>
-          <if test="{regLoadFail}">
-            <card padding="0"><column padding="16" gap="10"><text><span weight="bold">Registration unavailable</span></text><button height="44" variant="outline" on-press="reg_retry">Try again</button></column></card>
-          </if>
-          <if test="{regContent}">
-            <card padding="0">
-              <column padding="16" gap="14">
-                <column gap="4"><text><span weight="bold">Registration</span></text><text wrap="true" foreground="text_muted">Reusable, effective-dated activities and tax obligations.</text></column>
-                <if test="{regEditing}"><column gap="8"><button height="44" variant="primary" disabled="{regSaveDisabled}" on-press="reg_save">Save Registration</button><button height="44" variant="outline" disabled="{regCancelDisabled}" on-press="reg_cancel">Cancel</button></column></if>
-                <else><if test="{regEditVisible}"><button height="44" variant="outline" on-press="reg_edit">Edit Registration</button></if></else>
-                <if test="{regErrVisible}"><text wrap="true" foreground="destructive">{regErrText}</text></if>
-                <if test="{regConflict}"><card padding="0"><column padding="12" gap="8"><text><span weight="bold">Newer revision saved</span></text><button height="44" variant="outline" on-press="reg_conflict_accept">Keep my draft</button><button height="44" variant="outline" on-press="reg_conflict_reload">Reload saved</button></column></card></if>
-                <if test="{regActVisible}">
-                  <column gap="8"><row gap="8" cross="center"><text grow="1"><span weight="bold">Activities</span></text><if test="{regEditing}"><button height="44" variant="outline" disabled="{regAddActDisabled}" on-press="reg_add_act">Add activity</button></if></row>
-                    <if test="{regActEmpty}"><text foreground="text_muted">No activity recorded.</text></if>
-                    <for each="regActRows" key="id" as="activity"><card padding="0"><column padding="12" gap="6"><text><span weight="bold">{activity.lineOfBusiness}</span></text><text foreground="text_muted">ATC: {activity.atcLabel} - {activity.effectiveLabel}</text><if test="{regEditing}"><row gap="8"><button height="44" variant="outline" on-press="reg_edit_act:{activity.id}">Edit</button><button height="44" variant="ghost" on-press="reg_remove_act:{activity.id}">Remove</button></row></if></column></card></for>
-                  </column>
-                </if>
-                <if test="{regObVisible}">
-                  <column gap="8"><row gap="8" cross="center"><text grow="1"><span weight="bold">Tax obligations</span></text><if test="{regEditing}"><button height="44" variant="outline" disabled="{regAddObDisabled}" on-press="reg_add_ob">Add obligation</button></if></row>
-                    <if test="{regObEmpty}"><text foreground="text_muted">None recorded.</text></if>
-                    <for each="regObRows" key="id" as="obligation"><card padding="0"><column padding="12" gap="6"><text><span weight="bold">{obligation.kindLabel}</span></text><text foreground="text_muted">{obligation.effectiveLabel}</text><if test="{regEditing}"><row gap="8"><button height="44" variant="outline" on-press="reg_edit_ob:{obligation.id}">Edit</button><button height="44" variant="ghost" on-press="reg_remove_ob:{obligation.id}">Remove</button></row></if></column></card></for>
-                  </column>
-                </if>
-                <if test="{regFactsVisible}"><column gap="8"><text><span weight="bold">Other confirmed registration facts</span></text><grid columns="{profileReadColumns}" gap="8"><for each="regFactRows" key="id" as="fact"><use template="profile-read-value" label="{fact.label}" value="{fact.value}"/></for></grid></column></if>
-                <if test="{regReview}"><text wrap="true" foreground="warning">{regReviewLabel}</text></if>
-                <if test="{regDialog}">
-                  <card padding="0"><column padding="14" gap="10"><text><span weight="bold">{regDialogTitle}</span></text>
-                    <if test="{regActivityDialog}"><input height="44" text="{regLine}" placeholder="Line of business" label="Line of business" on-input="reg_line_input"/><input height="44" text="{regAtcValue}" placeholder="Optional ATC, for example PT010" label="Alphanumeric Tax Code" on-input="reg_atc_input"/></if>
-                    <else><grid columns="{profileReadColumns}" gap="8"><button height="44" variant="outline" selected="{regIncome}" on-press="reg_kind_income_tax">Income tax</button><button height="44" variant="outline" selected="{regVat}" on-press="reg_kind_vat">VAT</button><button height="44" variant="outline" selected="{regPct}" on-press="reg_kind_percentage_tax">Percentage tax</button><button height="44" variant="outline" selected="{regWhComp}" on-press="reg_kind_wh_comp">Withholding - compensation</button><button height="44" variant="outline" selected="{regWhExpanded}" on-press="reg_kind_wh_expanded">Withholding - expanded</button><button height="44" variant="outline" selected="{regWhFinal}" on-press="reg_kind_wh_final">Withholding - final</button><button height="44" variant="outline" selected="{regWhOther}" on-press="reg_kind_wh_other">Other withholding</button></grid><if test="{regOtherVisible}"><input height="44" text="{regOtherValue}" placeholder="Registered withholding type" label="Other withholding type" on-input="reg_other_input"/></if></else>
-                    <input height="44" text="{regFrom}" placeholder="YYYY-MM-DD" label="Effective from" on-input="reg_from_input"/><input height="44" text="{regUntil}" placeholder="Optional YYYY-MM-DD" label="Effective until" on-input="reg_until_input"/>
-                    <row gap="8"><button height="44" variant="outline" on-press="reg_dialog_cancel">Cancel</button><button height="44" variant="primary" on-press="reg_dialog_save">Apply</button></row>
-                  </column></card>
-                </if>
-              </column>
-            </card>
-          </if>
           <use template="profile-setup-cor-card"/>
           <if test="{profileCorReviewOpen}">
             <use template="profile-setup-cor-review"/>

@@ -64,7 +64,6 @@ pub const RoleRevisionBinding = struct {
     revision_id: model.RevisionId,
     revision_sequence: u32,
     revision_source: model.RevisionSource,
-    business_activity_id: ?model.BusinessActivityId,
 
     fn capture(binding: projection.Binding) RoleRevisionBinding {
         return .{
@@ -73,7 +72,6 @@ pub const RoleRevisionBinding = struct {
             .revision_id = binding.revision.id,
             .revision_sequence = binding.revision.sequence,
             .revision_source = binding.revision.source,
-            .business_activity_id = binding.selection.business_activity_id,
         };
     }
 };
@@ -348,6 +346,7 @@ fn exampleIndividualRevision(
             .date_of_birth = try model.Date.parseIso("1995-06-01"),
             .citizenship = try field.Citizenship.parse("Filipino"),
         } },
+        .accounting_period_basis = .calendar,
     };
 }
 
@@ -412,7 +411,7 @@ fn transaction1701Q(
     };
 }
 
-test "2551Q draft owns exactly seven filer facts and revision provenance" {
+test "2551Q draft owns exactly eight filer facts and revision provenance" {
     var revision = try exampleIndividualRevision(.{
         .profile_id = "profile-filer",
         .revision_id = "revision-1",
@@ -436,7 +435,7 @@ test "2551Q draft owns exactly seven filer facts and revision provenance" {
     );
     const draft = result.accepted;
 
-    try std.testing.expectEqual(@as(u8, 7), draft.snapshot().len);
+    try std.testing.expectEqual(@as(u8, 8), draft.snapshot().len);
     try std.testing.expectEqual(@as(u8, 1), draft.role_bindings.len);
     try std.testing.expectEqual(ids.Role.filer, draft.role_bindings.slice()[0].role);
     try std.testing.expectEqual(@as(u16, 2026), draft.period.tax_year);

@@ -20,6 +20,12 @@ pub const revision = ids.FormRevision.initComptime(
 
 pub const filer_requirements = [_]spec.Requirement{
     .{
+        .source = .accounting_period_basis,
+        .target = ids.FieldId.initComptime(
+            "2551Q.2018-01-ENCS.input.taxable_period_basis",
+        ),
+    },
+    .{
         .source = .tin,
         .target = ids.FieldId.initComptime(
             "2551Q.2018-01-ENCS.input.tin",
@@ -195,7 +201,10 @@ pub fn beginEditing(
 
 test "2551Q spec contains the exact reusable taxpayer header" {
     const role = profile_spec.role(.filer).?;
-    try @import("std").testing.expectEqual(@as(usize, 7), role.requirements.len);
+    try @import("std").testing.expectEqual(@as(usize, 8), role.requirements.len);
+    try @import("std").testing.expect(
+        role.requiredFields().contains(.accounting_period_basis),
+    );
     try @import("std").testing.expect(role.requiredFields().contains(.tin));
     try @import("std").testing.expect(!role.requiredFields().contains(.atc));
     try @import("std").testing.expect(

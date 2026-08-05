@@ -575,9 +575,9 @@
 
       <separator/>
       <column gap="2">
-        <text><span weight="bold">Reusable form bindings</span></text>
+        <text><span weight="bold">Reusable form details</span></text>
         <text wrap="true" foreground="text_muted">
-          Registered activity and spouse bindings are managed in the Tax Form Profile for this tax year.
+          Form-specific yearly values and spouse profiles are managed in the Tax Form Profile for this tax year.
         </text>
       </column>
     </column>

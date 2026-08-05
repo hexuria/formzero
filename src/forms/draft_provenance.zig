@@ -2,7 +2,7 @@
 //!
 //! A filing composes several independently versioned sources.  This module
 //! records their exact identities and copies the values used by the draft so
-//! later taxpayer, registration, taxpayer-year, or Tax Form Profile edits
+//! later taxpayer, taxpayer-year, or Tax Form Profile edits
 //! cannot rewrite history.  Transaction defaults are deliberately kept in a
 //! seed-provenance collection; the editable filing-owned values created from
 //! those seeds live in `FilingOwnedValues`, outside this snapshot.
@@ -10,12 +10,10 @@
 const std = @import("std");
 const catalog = @import("generated/catalog.zig");
 const model = @import("../tax_profile/model.zig");
-const registration = @import("../tax_profile/registration.zig");
 const annual_profile = @import("../tax_profile/tax_form_profile.zig");
 const year_settings = @import("../tax_profile/taxpayer_year_settings.zig");
 
 pub const max_taxpayer_roles = 10;
-pub const max_component_bindings = 32;
 pub const max_source_snapshots = 96;
 pub const max_transaction_seeds = 32;
 
@@ -30,7 +28,6 @@ pub const Error = error{
     WrongSetupSpecRevision,
     WrongSetupSpecHash,
     TooManyTaxpayerRoles,
-    TooManyComponentBindings,
     TooManySourceSnapshots,
     TooManyTransactionSeeds,
     WrongProfileRole,
@@ -48,10 +45,6 @@ pub const Error = error{
     WrongTaxFormProfileFormRevision,
     WrongTaxFormProfileSpecRevision,
     WrongTaxFormProfileSpecHash,
-    WrongComponentRole,
-    WrongComponentOwner,
-    DuplicateComponentAnchor,
-    MissingComponentBinding,
     DuplicateSourceKey,
     DuplicateFilingField,
     MissingSourceRevision,
@@ -59,7 +52,6 @@ pub const Error = error{
     UnavailableTaxFormProfileSource,
     WrongSourceValueType,
     WrongBoundProfile,
-    WrongBoundAnchor,
     TransactionDefaultMustBeSeed,
     NonTransactionValueCannotBeSeed,
     WrongTransactionSeedRevision,
@@ -209,25 +201,6 @@ pub const TaxFormProfileRevisionBinding = struct {
     spec_hash: annual_profile.SpecHash,
 };
 
-pub const ActivityComponentBinding = struct {
-    role: catalog.Role,
-    anchor: registration.ActivityAnchor,
-    component_revision_id: registration.ComponentRevisionId,
-    component_revision_sequence: u32,
-};
-
-pub const ObligationComponentBinding = struct {
-    role: catalog.Role,
-    anchor: registration.ObligationAnchor,
-    component_revision_id: registration.ComponentRevisionId,
-    component_revision_sequence: u32,
-};
-
-pub const ComponentBinding = union(enum) {
-    business_activity: ActivityComponentBinding,
-    registration_obligation: ObligationComponentBinding,
-};
-
 pub const TaxpayerFactKey = enum {
     tin,
     rdo_code,
@@ -240,15 +213,6 @@ pub const TaxpayerFactKey = enum {
     email_address,
     subject_kind,
     natural_person_classification,
-};
-
-pub const ActivityFactKey = enum {
-    line_of_business,
-    atc,
-};
-
-pub const ObligationFactKey = enum {
-    registration_kind,
 };
 
 /// Semantic identity of one copied source.  Equality is structural; two rows
@@ -265,16 +229,6 @@ pub const SourceKey = union(enum) {
     tax_form_profile_value: struct {
         role: catalog.Role,
         key: catalog.TaxFormProfileSemanticKey,
-    },
-    business_activity_fact: struct {
-        role: catalog.Role,
-        anchor_id: registration.ActivityAnchorId,
-        key: ActivityFactKey,
-    },
-    registration_obligation_fact: struct {
-        role: catalog.Role,
-        anchor_id: registration.ObligationAnchorId,
-        key: ObligationFactKey,
     },
 
     pub fn role(self: SourceKey) catalog.Role {
@@ -300,18 +254,6 @@ pub const SourceKey = union(enum) {
                     left.key == right.key,
                 else => false,
             },
-            .business_activity_fact => |left| switch (other) {
-                .business_activity_fact => |right| left.role == right.role and
-                    left.key == right.key and
-                    left.anchor_id.eql(&right.anchor_id),
-                else => false,
-            },
-            .registration_obligation_fact => |left| switch (other) {
-                .registration_obligation_fact => |right| left.role == right.role and
-                    left.key == right.key and
-                    left.anchor_id.eql(&right.anchor_id),
-                else => false,
-            },
         };
     }
 };
@@ -325,8 +267,6 @@ pub const SnapshotValue = union(enum) {
     date: model.Date,
     year: u16,
     profile_id: model.ProfileId,
-    business_activity_anchor_id: registration.ActivityAnchorId,
-    registration_obligation_anchor_id: registration.ObligationAnchorId,
     income_tax_rate_election: year_settings.IncomeTaxRateElection,
     deduction_method: year_settings.DeductionMethod,
 
@@ -339,8 +279,6 @@ pub const SnapshotValue = union(enum) {
             .date => .date,
             .year => .year,
             .profile_id => .profile_id,
-            .business_activity_anchor_id => .business_activity_anchor_id,
-            .registration_obligation_anchor_id => .registration_obligation_anchor_id,
             .income_tax_rate_election, .deduction_method => null,
         };
     }
@@ -369,7 +307,6 @@ pub const CaptureInput = struct {
     taxpayer_revisions: []const TaxpayerRevisionBinding,
     taxpayer_year_revision: ?TaxpayerYearRevisionBinding = null,
     tax_form_profile_revision: ?TaxFormProfileRevisionBinding = null,
-    components: []const ComponentBinding = &.{},
     source_snapshots: []const SourceSnapshot = &.{},
     transaction_seeds: []const TransactionDefaultSeed = &.{},
 };
@@ -383,8 +320,6 @@ pub const DraftProvenance = struct {
 
     taxpayer_revisions_storage: [max_taxpayer_roles]TaxpayerRevisionBinding = undefined,
     taxpayer_revision_count: u8 = 0,
-    components_storage: [max_component_bindings]ComponentBinding = undefined,
-    component_count: u8 = 0,
     source_snapshots_storage: [max_source_snapshots]SourceSnapshot = undefined,
     source_snapshot_count: u8 = 0,
     transaction_seeds_storage: [max_transaction_seeds]TransactionDefaultSeed = undefined,
@@ -402,16 +337,11 @@ pub const DraftProvenance = struct {
             .tax_form_profile_revision = input.tax_form_profile_revision,
         };
         result.taxpayer_revision_count = @intCast(input.taxpayer_revisions.len);
-        result.component_count = @intCast(input.components.len);
         result.source_snapshot_count = @intCast(input.source_snapshots.len);
         result.transaction_seed_count = @intCast(input.transaction_seeds.len);
         @memcpy(
             result.taxpayer_revisions_storage[0..input.taxpayer_revisions.len],
             input.taxpayer_revisions,
-        );
-        @memcpy(
-            result.components_storage[0..input.components.len],
-            input.components,
         );
         @memcpy(
             result.source_snapshots_storage[0..input.source_snapshots.len],
@@ -426,10 +356,6 @@ pub const DraftProvenance = struct {
 
     pub fn taxpayerRevisions(self: *const DraftProvenance) []const TaxpayerRevisionBinding {
         return self.taxpayer_revisions_storage[0..self.taxpayer_revision_count];
-    }
-
-    pub fn components(self: *const DraftProvenance) []const ComponentBinding {
-        return self.components_storage[0..self.component_count];
     }
 
     pub fn sourceSnapshots(self: *const DraftProvenance) []const SourceSnapshot {
@@ -512,9 +438,6 @@ pub fn validateCapture(
     if (input.taxpayer_revisions.len > max_taxpayer_roles) {
         return error.TooManyTaxpayerRoles;
     }
-    if (input.components.len > max_component_bindings) {
-        return error.TooManyComponentBindings;
-    }
     if (input.source_snapshots.len > max_source_snapshots) {
         return error.TooManySourceSnapshots;
     }
@@ -526,7 +449,6 @@ pub fn validateCapture(
     try validateTaxpayerBindings(input, form);
     try validateTaxpayerYearBinding(input);
     try validateTaxFormProfileBinding(input, form);
-    try validateComponents(input);
     try validateSources(input, form);
 }
 
@@ -623,13 +545,11 @@ fn validateTaxFormProfileBinding(
                     }
                 }
                 for (input.source_snapshots) |*source| switch (source.key) {
-                    .tax_form_profile_value =>
-                        return error.MissingTaxFormProfileRevision,
+                    .tax_form_profile_value => return error.MissingTaxFormProfileRevision,
                     else => {},
                 };
                 for (input.transaction_seeds) |*seed| switch (seed.source) {
-                    .tax_form_profile_revision =>
-                        return error.MissingTaxFormProfileRevision,
+                    .tax_form_profile_revision => return error.MissingTaxFormProfileRevision,
                     .catalog_default => {},
                 };
                 return;
@@ -660,25 +580,6 @@ fn validateTaxFormProfileBinding(
                 input.identity.setup_spec_hash.asSlice(),
             )) return error.WrongTaxFormProfileSpecHash;
         },
-    }
-}
-
-fn validateComponents(input: *const CaptureInput) Error!void {
-    for (input.components, 0..) |*component, index| {
-        const role = componentRole(component);
-        const role_binding = findTaxpayerBinding(input.taxpayer_revisions, role) orelse
-            return error.WrongComponentRole;
-        if (componentRevisionSequence(component) == 0) {
-            return error.InvalidRevisionSequence;
-        }
-        if (!componentOwner(component).eql(&role_binding.profile_id)) {
-            return error.WrongComponentOwner;
-        }
-        for (input.components[index + 1 ..]) |*other| {
-            if (sameComponentAnchor(component, other)) {
-                return error.DuplicateComponentAnchor;
-            }
-        }
     }
 }
 
@@ -765,16 +666,6 @@ fn validateSource(
             }
             try validateSelectedBinding(input, key.role, source.copied_value);
         },
-        .business_activity_fact => |key| {
-            if (findActivityComponent(input.components, key.role, &key.anchor_id) == null) {
-                return error.MissingComponentBinding;
-            }
-        },
-        .registration_obligation_fact => |key| {
-            if (findObligationComponent(input.components, key.role, &key.anchor_id) == null) {
-                return error.MissingComponentBinding;
-            }
-        },
     }
 }
 
@@ -788,16 +679,6 @@ fn validateSelectedBinding(
             const binding = findTaxpayerBinding(input.taxpayer_revisions, role) orelse
                 return error.MissingSourceRevision;
             if (!profile_id.eql(&binding.profile_id)) return error.WrongBoundProfile;
-        },
-        .business_activity_anchor_id => |anchor_id| {
-            if (findActivityComponent(input.components, role, &anchor_id) == null) {
-                return error.WrongBoundAnchor;
-            }
-        },
-        .registration_obligation_anchor_id => |anchor_id| {
-            if (findObligationComponent(input.components, role, &anchor_id) == null) {
-                return error.WrongBoundAnchor;
-            }
         },
         else => {},
     }
@@ -875,69 +756,6 @@ fn findSetupValue(
     return null;
 }
 
-fn componentRole(component: *const ComponentBinding) catalog.Role {
-    return switch (component.*) {
-        inline else => |value| value.role,
-    };
-}
-
-fn componentOwner(component: *const ComponentBinding) *const model.ProfileId {
-    return switch (component.*) {
-        .business_activity => |*value| &value.anchor.owner_profile_id,
-        .registration_obligation => |*value| &value.anchor.owner_profile_id,
-    };
-}
-
-fn componentRevisionSequence(component: *const ComponentBinding) u32 {
-    return switch (component.*) {
-        inline else => |value| value.component_revision_sequence,
-    };
-}
-
-fn sameComponentAnchor(
-    left: *const ComponentBinding,
-    right: *const ComponentBinding,
-) bool {
-    return switch (left.*) {
-        .business_activity => |left_value| switch (right.*) {
-            .business_activity => |right_value| left_value.anchor.id.eql(&right_value.anchor.id),
-            else => false,
-        },
-        .registration_obligation => |left_value| switch (right.*) {
-            .registration_obligation => |right_value| left_value.anchor.id.eql(&right_value.anchor.id),
-            else => false,
-        },
-    };
-}
-
-fn findActivityComponent(
-    components: []const ComponentBinding,
-    role: catalog.Role,
-    anchor_id: *const registration.ActivityAnchorId,
-) ?*const ActivityComponentBinding {
-    for (components) |*component| switch (component.*) {
-        .business_activity => |*value| {
-            if (value.role == role and value.anchor.id.eql(anchor_id)) return value;
-        },
-        else => {},
-    };
-    return null;
-}
-
-fn findObligationComponent(
-    components: []const ComponentBinding,
-    role: catalog.Role,
-    anchor_id: *const registration.ObligationAnchorId,
-) ?*const ObligationComponentBinding {
-    for (components) |*component| switch (component.*) {
-        .registration_obligation => |*value| {
-            if (value.role == role and value.anchor.id.eql(anchor_id)) return value;
-        },
-        else => {},
-    };
-    return null;
-}
-
 fn fixtureCatalog() !CatalogBinding {
     return .{
         .revision = try CatalogRevision.parse("catalog-test-1"),
@@ -991,8 +809,8 @@ fn fixtureFormProfile(
     };
 }
 
-test "2551Q no_setup captures exact taxpayer provenance without fabricating annual revision" {
-    const form = catalog.findForm("2551Q").?;
+test "1601C no_setup captures exact taxpayer provenance without fabricating annual revision" {
+    const form = catalog.findForm("1601C").?;
     const filer = try fixtureRole(.filer, "profile-filer", "profile-revision-7");
     const roles = [_]TaxpayerRevisionBinding{filer};
     const sources = [_]SourceSnapshot{.{
@@ -1016,11 +834,46 @@ test "2551Q no_setup captures exact taxpayer provenance without fabricating annu
     var fabricated = input;
     fabricated.tax_form_profile_revision = try fixtureFormProfile(
         &input.identity,
-        "fabricated-2551q-setup",
+        "fabricated-1601c-setup",
     );
     try std.testing.expectError(
         error.UnexpectedTaxFormProfileRevision,
         DraftProvenance.capture(&fabricated, form),
+    );
+}
+
+test "2551Q requires an exact generic Tax Form Profile revision" {
+    const form = catalog.findForm("2551Q").?;
+    const filer = try fixtureRole(.filer, "profile-filer", "profile-revision-7");
+    const roles = [_]TaxpayerRevisionBinding{filer};
+    const identity = try fixtureIdentity(form, filer.profile_id);
+    const rate_source = [_]SourceSnapshot{.{
+        .key = .{ .tax_form_profile_value = .{
+            .role = .filer,
+            .key = .income_tax_rate_election,
+        } },
+        .copied_value = .{ .choice = try OwnedText.copy("graduated") },
+    }};
+    var input: CaptureInput = .{
+        .identity = identity,
+        .taxpayer_revisions = &roles,
+        .source_snapshots = &rate_source,
+    };
+
+    try std.testing.expectError(
+        error.MissingTaxFormProfileRevision,
+        DraftProvenance.capture(&input, form),
+    );
+
+    input.tax_form_profile_revision = try fixtureFormProfile(
+        &identity,
+        "2551q-profile-r1",
+    );
+    const snapshot = try DraftProvenance.capture(&input, form);
+    try std.testing.expect(snapshot.tax_form_profile_revision != null);
+    try std.testing.expectEqualStrings(
+        "graduated",
+        snapshot.sourceSnapshots()[0].copied_value.choice.asSlice(),
     );
 }
 
@@ -1070,7 +923,7 @@ test "1701Q keeps shared taxpayer-year election separate from form setup" {
         std.meta.activeTag(snapshot.sourceSnapshots()[1].key) == .tax_form_profile_value,
     );
     try std.testing.expect(
-        findSetupValue(form, .filer, .business_activity_anchor_id).?.ownership ==
+        findSetupValue(form, .spouse, .spouse_profile_id).?.ownership ==
             .binding_selection,
     );
 
@@ -1141,70 +994,8 @@ test "profile year form and generated spec identities must match exactly" {
     );
 }
 
-test "component anchors must belong to the profile bound to their exact role" {
-    const form = catalog.findForm("1601C").?;
-    const filer = try fixtureRole(.filer, "profile-filer", "filer-revision");
-    const roles = [_]TaxpayerRevisionBinding{filer};
-    const identity = try fixtureIdentity(form, filer.profile_id);
-    const activity_id = try registration.ActivityAnchorId.parse("activity-main");
-    const obligation_id = try registration.ObligationAnchorId.parse("obligation-income");
-    var components = [_]ComponentBinding{
-        .{ .business_activity = .{
-            .role = .filer,
-            .anchor = .{ .owner_profile_id = filer.profile_id, .id = activity_id },
-            .component_revision_id = try registration.ComponentRevisionId.parse("activity-revision-2"),
-            .component_revision_sequence = 2,
-        } },
-        .{ .registration_obligation = .{
-            .role = .filer,
-            .anchor = .{ .owner_profile_id = filer.profile_id, .id = obligation_id },
-            .component_revision_id = try registration.ComponentRevisionId.parse("obligation-revision-3"),
-            .component_revision_sequence = 3,
-        } },
-    };
-    const sources = [_]SourceSnapshot{
-        .{
-            .key = .{ .tax_form_profile_value = .{
-                .role = .filer,
-                .key = .business_activity_anchor_id,
-            } },
-            .copied_value = .{ .business_activity_anchor_id = activity_id },
-        },
-        .{
-            .key = .{ .registration_obligation_fact = .{
-                .role = .filer,
-                .anchor_id = obligation_id,
-                .key = .registration_kind,
-            } },
-            .copied_value = .{ .choice = try OwnedText.copy("registered_income_tax") },
-        },
-    };
-    const input: CaptureInput = .{
-        .identity = identity,
-        .taxpayer_revisions = &roles,
-        .tax_form_profile_revision = try fixtureFormProfile(&identity, "1601c-setup"),
-        .components = &components,
-        .source_snapshots = &sources,
-    };
-    _ = try DraftProvenance.capture(&input, form);
-
-    components[0].business_activity.anchor.owner_profile_id =
-        try model.ProfileId.parse("another-profile");
-    try std.testing.expectError(
-        error.WrongComponentOwner,
-        DraftProvenance.capture(&input, form),
-    );
-
-    components[0].business_activity.anchor.owner_profile_id = filer.profile_id;
-    components[1].registration_obligation.role = .spouse;
-    try std.testing.expectError(
-        error.WrongComponentRole,
-        DraftProvenance.capture(&input, form),
-    );
-}
-
 test "duplicate source keys fail even when copied values differ" {
-    const form = catalog.findForm("2551Q").?;
+    const form = catalog.findForm("1601C").?;
     const filer = try fixtureRole(.filer, "profile-filer", "filer-revision");
     const roles = [_]TaxpayerRevisionBinding{filer};
     const sources = [_]SourceSnapshot{
@@ -1229,7 +1020,7 @@ test "duplicate source keys fail even when copied values differ" {
 }
 
 test "capture owns copied values so later source edits cannot rewrite history" {
-    const form = catalog.findForm("2551Q").?;
+    const form = catalog.findForm("1601C").?;
     const filer = try fixtureRole(.filer, "profile-filer", "filer-revision");
     const roles = [_]TaxpayerRevisionBinding{filer};
     var mutable_source = [_]u8{ 'O', 'R', 'I', 'G', 'I', 'N', 'A', 'L' };
@@ -1259,7 +1050,7 @@ test "transaction seed provenance stays immutable after filing-owned edit" {
         .distinct_from = &.{},
     }};
     const values_fixture = [_]catalog.TaxFormProfileValueDefinition{.{
-        .semantic_key = .special_rate_obligation_anchor_id,
+        .semantic_key = .special_rate_basis,
         .value_type = .choice,
         .role = .filer,
         .presence = .optional,
@@ -1299,7 +1090,7 @@ test "transaction seed provenance stays immutable after filing-owned edit" {
     const filing_field = try DraftFieldKey.parse("filing.special-rate-choice");
     const source_key: SourceKey = .{ .tax_form_profile_value = .{
         .role = .filer,
-        .key = .special_rate_obligation_anchor_id,
+        .key = .special_rate_basis,
     } };
     const seeds = [_]TransactionDefaultSeed{.{
         .filing_field = filing_field,

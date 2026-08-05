@@ -29,10 +29,9 @@ const model = @import("../tax_profile/model.zig");
 const profile_persistence = @import("../tax_profile/persistence_adapter.zig");
 const projection = @import("../tax_profile/projection.zig");
 const store_module = @import("../tax_profile/store.zig");
-const taxpayer_year = @import("../tax_profile/taxpayer_year_settings.zig");
+const tax_form_profile = @import("../tax_profile/tax_form_profile.zig");
 
 pub const max_spouse_candidates = 64;
-pub const max_activity_candidates = 32;
 pub const max_notice_len = 511;
 const reusable_field_count = std.meta.fields(field.ReusableField).len;
 
@@ -40,8 +39,8 @@ comptime {
     if (catalog.editor_count != editor_revisions.len) {
         @compileError("editor_revisions must cover every static catalog form");
     }
-    if (reusable_field_count != 16) {
-        @compileError("Native value cache must cover the closed 16-field vocabulary");
+    if (reusable_field_count != 18) {
+        @compileError("Native value cache must cover the closed 18-field vocabulary");
     }
 }
 
@@ -113,37 +112,55 @@ pub const OpenRequest = struct {
 /// only answers whether the selected profile can satisfy the editor's
 /// generated profile projection for the requested period.
 pub const LaunchStatus = enum {
+    inactive,
+    missing_base_profile,
+    missing_tax_form_profile,
+    unsupported_period,
     ready_new,
     ready_resume,
-    needs_profile,
-    needs_activity_selection,
-    profile_not_eligible,
-    unavailable,
 };
 
 pub const LaunchBlocker = enum {
     none,
     missing_profile_data,
     missing_effective_revision,
+    missing_tax_form_profile_data,
     missing_binding,
-    ambiguous_business_activity,
-    unknown_business_activity,
-    inactive_business_activity,
-    subject_not_allowed,
     invalid_revision,
     revision_not_effective,
     persistence_error,
 };
 
 pub const LaunchAssessment = struct {
-    status: LaunchStatus = .unavailable,
-    blocker: LaunchBlocker = .persistence_error,
+    status: LaunchStatus = .inactive,
+    blocker: LaunchBlocker = .none,
     issue_count: u16 = 0,
     first_missing_field: ?field.ReusableField = null,
+    missing_base_fields: [std.meta.fields(field.ReusableField).len]field.ReusableField = undefined,
+    missing_base_field_count: u8 = 0,
 
     pub fn ready(self: *const LaunchAssessment) bool {
         return self.status == .ready_new or
             self.status == .ready_resume;
+    }
+
+    pub fn missingBaseFields(self: *const LaunchAssessment) []const field.ReusableField {
+        return self.missing_base_fields[0..self.missing_base_field_count];
+    }
+
+    fn addMissingBaseField(
+        self: *LaunchAssessment,
+        reusable_field: field.ReusableField,
+    ) void {
+        for (self.missingBaseFields()) |existing| {
+            if (existing == reusable_field) return;
+        }
+        if (self.missing_base_field_count >= self.missing_base_fields.len) return;
+        self.missing_base_fields[self.missing_base_field_count] = reusable_field;
+        self.missing_base_field_count += 1;
+        if (self.first_missing_field == null) {
+            self.first_missing_field = reusable_field;
+        }
     }
 };
 
@@ -158,14 +175,6 @@ pub const SpouseCandidate = struct {
     name: field.TaxpayerName,
     tin: field.Tin,
     subject_kind: model.SubjectKind,
-    selected: bool,
-};
-
-pub const ActivityCandidate = struct {
-    id: model.BusinessActivityId,
-    line_of_business: field.LineOfBusiness,
-    atc: ?field.Atc,
-    effective_on_profile_date: bool,
     selected: bool,
 };
 
@@ -240,103 +249,6 @@ const RoleValueCache = struct {
     }
 };
 
-const ActivityCandidateCache = struct {
-    items: [max_activity_candidates]ActivityCandidate = undefined,
-    len: u8 = 0,
-    truncated: bool = false,
-
-    fn clear(self: *ActivityCandidateCache) void {
-        self.len = 0;
-        self.truncated = false;
-    }
-
-    fn slice(self: *const ActivityCandidateCache) []const ActivityCandidate {
-        return self.items[0..self.len];
-    }
-};
-
-/// Filing composition treats confirmed v16 Registration activities as the
-/// authoritative activity collection for the exact viewed date. The legacy
-/// ProfileRevision array remains a compatibility fallback only when no
-/// Registration stream exists. Once the stream exists, an empty effective
-/// set is authoritative too (for example, after the last activity retires).
-fn replaceWithAuthoritativeRegistrationActivities(
-    store: *store_module.Store,
-    allocator: std.mem.Allocator,
-    owned_revision: *profile_persistence.OwnedDomainRevision,
-    effective_on: model.Date,
-) !void {
-    var registration = try profile_persistence.loadRegistrationAggregateOn(
-        store,
-        allocator,
-        owned_revision.revision.profile_id,
-        effective_on,
-    );
-    defer registration.deinit(allocator);
-
-    var confirmed_count: usize = 0;
-    for (registration.business_activities) |*activity| {
-        if (activity.metadata.review.isConfirmed() and
-            activity.metadata.isEffective(effective_on))
-        {
-            confirmed_count += 1;
-        }
-    }
-    if (registration.stream_sequence == 0) return;
-
-    const activities = try allocator.alloc(
-        model.BusinessActivity,
-        confirmed_count,
-    );
-    errdefer allocator.free(activities);
-    var output_index: usize = 0;
-    for (registration.business_activities) |*activity| {
-        if (!activity.metadata.review.isConfirmed() or
-            !activity.metadata.isEffective(effective_on))
-        {
-            continue;
-        }
-        activities[output_index] = .{
-            .id = try model.BusinessActivityId.parse(
-                activity.anchor_id.asSlice(),
-            ),
-            .line_of_business = activity.line_of_business,
-            .atc = activity.atc,
-            .effective = activity.metadata.effective,
-        };
-        output_index += 1;
-    }
-
-    var replacement_revision = owned_revision.revision;
-    replacement_revision.business_activities = activities;
-    try replacement_revision.validate();
-    allocator.free(owned_revision.business_activities);
-    owned_revision.business_activities = activities;
-    owned_revision.revision = replacement_revision;
-}
-
-fn loadEffectiveRevisionForFiling(
-    store: *store_module.Store,
-    allocator: std.mem.Allocator,
-    profile_id: model.ProfileId,
-    effective_on: model.Date,
-) !?profile_persistence.OwnedDomainRevision {
-    var owned = (try profile_persistence.loadEffectiveRevision(
-        store,
-        allocator,
-        profile_id,
-        effective_on,
-    )) orelse return null;
-    errdefer owned.deinit(allocator);
-    try replaceWithAuthoritativeRegistrationActivities(
-        store,
-        allocator,
-        &owned,
-        effective_on,
-    );
-    return owned;
-}
-
 pub const State = struct {
     allocator: ?std.mem.Allocator = null,
     store: ?*store_module.Store = null,
@@ -348,8 +260,6 @@ pub const State = struct {
     opened_profile_as_of: ?model.Date = null,
     selected_filer_id: ?model.ProfileId = null,
     selected_spouse_id: ?model.ProfileId = null,
-    selected_filer_activity_id: ?model.BusinessActivityId = null,
-    selected_spouse_activity_id: ?model.BusinessActivityId = null,
 
     filer_revision: ?profile_persistence.OwnedDomainRevision = null,
     spouse_revision: ?profile_persistence.OwnedDomainRevision = null,
@@ -367,8 +277,6 @@ pub const State = struct {
     spouse_candidate_items: [max_spouse_candidates]SpouseCandidate = undefined,
     spouse_candidate_len: u8 = 0,
     spouse_candidates_truncated: bool = false,
-    filer_activity_candidates: ActivityCandidateCache = .{},
-    spouse_activity_candidates: ActivityCandidateCache = .{},
 
     notice_kind_value: NoticeKind = .none,
     notice_buffer: [max_notice_len]u8 = undefined,
@@ -492,7 +400,7 @@ pub const State = struct {
         );
         try self.adoptPersistedDraft(&draft, .resumed);
         self.persisted_draft_provenance = provenance_status;
-        try self.refreshCandidateCaches();
+        try self.refreshSpouseCandidates();
         self.setDraftSavedNotice(.resumed, provenance_status);
     }
 
@@ -532,7 +440,7 @@ pub const State = struct {
             (request.filing_period != null or isRecurring(request.form)) and
             try self.openExistingOriginal())
         {
-            try self.refreshCandidateCaches();
+            try self.refreshSpouseCandidates();
             self.setDraftSavedNotice(
                 .resumed,
                 self.persisted_draft_provenance orelse
@@ -543,7 +451,7 @@ pub const State = struct {
 
         const allocator = self.allocator.?;
         const store = self.store.?;
-        self.filer_revision = (try loadEffectiveRevisionForFiling(
+        self.filer_revision = (try profile_persistence.loadEffectiveRevision(
             store,
             allocator,
             request.filer_profile_id,
@@ -560,11 +468,11 @@ pub const State = struct {
                     .failure,
                     "Filer and spouse must use different tax profiles.",
                 );
-                try self.refreshCandidateCaches();
+                try self.refreshSpouseCandidates();
                 return;
             }
             self.spouse_revision =
-                (try loadEffectiveRevisionForFiling(
+                (try profile_persistence.loadEffectiveRevision(
                     store,
                     allocator,
                     spouse_id,
@@ -572,7 +480,7 @@ pub const State = struct {
                 )) orelse return error.NoEffectiveSpouseRevision;
         }
 
-        try self.refreshCandidateCaches();
+        try self.refreshSpouseCandidates();
         try self.reproject();
     }
 
@@ -608,12 +516,11 @@ pub const State = struct {
 
         if (self.spouse_revision) |*owned| owned.deinit(allocator);
         self.spouse_revision = null;
-        self.selected_spouse_activity_id = null;
         self.selected_spouse_id = profile_id;
 
         if (profile_id) |selected| {
             self.spouse_revision =
-                (try loadEffectiveRevisionForFiling(
+                (try profile_persistence.loadEffectiveRevision(
                     store,
                     allocator,
                     selected,
@@ -625,39 +532,12 @@ pub const State = struct {
                 };
         }
 
-        try self.refreshCandidateCaches();
+        try self.refreshSpouseCandidates();
         try self.reproject();
     }
 
     pub fn clearSpouseProfile(self: *State) !void {
         try self.setSpouseProfile(null);
-    }
-
-    /// A null selection restores domain resolution: zero activities yields no
-    /// value, one effective activity is unambiguous, and repeated effective
-    /// activities are rejected until the user explicitly chooses one.
-    pub fn setBusinessActivity(
-        self: *State,
-        role: ids.Role,
-        activity_id: ?model.BusinessActivityId,
-    ) !void {
-        self.ensureSnapshotMutable() catch |err| {
-            self.setErrorNotice(err);
-            return err;
-        };
-        switch (role) {
-            .filer => {
-                if (self.filer_revision == null) return error.RoleNotLoaded;
-                self.selected_filer_activity_id = activity_id;
-            },
-            .spouse => {
-                if (self.spouse_revision == null) return error.RoleNotLoaded;
-                self.selected_spouse_activity_id = activity_id;
-            },
-            else => return error.RoleNotLoaded,
-        }
-        self.refreshActivityCandidateCaches();
-        try self.reproject();
     }
 
     /// Creates or resumes an original recurring 2551Q/1701Q draft.
@@ -1024,18 +904,24 @@ pub const State = struct {
         self: *const State,
         request: OpenRequest,
     ) LaunchAssessment {
-        const allocator = self.allocator orelse return .{};
-        const store = self.store orelse return .{};
+        const allocator = self.allocator orelse return .{
+            .status = .unsupported_period,
+            .blocker = .persistence_error,
+        };
+        const store = self.store orelse return .{
+            .status = .unsupported_period,
+            .blocker = .persistence_error,
+        };
 
         validateEditorRevision(request.form) catch |err| {
             return .{
-                .status = .unavailable,
+                .status = .unsupported_period,
                 .blocker = launchBlockerForError(err),
             };
         };
         _ = validateRequestPeriod(request) catch |err| {
             return .{
-                .status = .unavailable,
+                .status = .unsupported_period,
                 .blocker = launchBlockerForError(err),
             };
         };
@@ -1055,22 +941,30 @@ pub const State = struct {
 
         const effective_on = request.profile_as_of orelse
             (if (request.filing_period) |period|
-                filingPeriodEnd(period) catch return .{}
+                filingPeriodEnd(period) catch return .{
+                    .status = .unsupported_period,
+                    .blocker = .invalid_revision,
+                }
             else
-                quarterEnd(request.tax_year, request.quarter) catch return .{});
-        var filer = (loadEffectiveRevisionForFiling(
+                quarterEnd(request.tax_year, request.quarter) catch return .{
+                    .status = .unsupported_period,
+                    .blocker = .invalid_revision,
+                });
+        // Readiness projects only the effective Base Tax Profile. Historical
+        // Registration activities and obligations are deliberately excluded.
+        var filer = (profile_persistence.loadEffectiveRevision(
             store,
             allocator,
             request.filer_profile_id,
             effective_on,
         ) catch {
             return .{
-                .status = .unavailable,
+                .status = .unsupported_period,
                 .blocker = .persistence_error,
             };
         }) orelse {
             return .{
-                .status = .needs_profile,
+                .status = .missing_base_profile,
                 .blocker = .missing_effective_revision,
             };
         };
@@ -1088,7 +982,7 @@ pub const State = struct {
             effective_on,
         ) catch {
             return .{
-                .status = .unavailable,
+                .status = .unsupported_period,
                 .blocker = .persistence_error,
             };
         };
@@ -1109,28 +1003,6 @@ pub const State = struct {
 
     pub fn spouseCandidatesTruncated(self: *const State) bool {
         return self.spouse_candidates_truncated;
-    }
-
-    pub fn activityCandidates(
-        self: *const State,
-        role: ids.Role,
-    ) []const ActivityCandidate {
-        return switch (role) {
-            .filer => self.filer_activity_candidates.slice(),
-            .spouse => self.spouse_activity_candidates.slice(),
-            else => &.{},
-        };
-    }
-
-    pub fn activityCandidatesTruncated(
-        self: *const State,
-        role: ids.Role,
-    ) bool {
-        return switch (role) {
-            .filer => self.filer_activity_candidates.truncated,
-            .spouse => self.spouse_activity_candidates.truncated,
-            else => false,
-        };
     }
 
     fn existingOriginalIsUsable(
@@ -1173,60 +1045,44 @@ pub const State = struct {
         issues: []const catalog_projection.Issue,
     ) LaunchAssessment {
         var assessment = LaunchAssessment{
-            .status = .unavailable,
-            .blocker = .persistence_error,
-            .issue_count = @intCast(@min(
-                issues.len,
-                std.math.maxInt(u16),
-            )),
+            .status = .ready_new,
+            .blocker = .none,
         };
         for (issues) |issue| {
             switch (issue) {
                 .missing_capability => |target| {
-                    if (assessment.status == .unavailable) {
-                        assessment.status = .needs_profile;
-                        assessment.blocker = .missing_profile_data;
-                    }
-                    if (assessment.first_missing_field == null) {
-                        assessment.first_missing_field = target.reusable_field;
-                    }
+                    // Base Profile blockers take priority over form-specific
+                    // setup so remediation always starts with shared data.
+                    assessment.status = .missing_base_profile;
+                    assessment.blocker = .missing_profile_data;
+                    assessment.addMissingBaseField(target.reusable_field);
+                    assessment.issue_count +|= 1;
                 },
                 .missing_binding => {
-                    if (assessment.status == .unavailable) {
-                        assessment.status = .needs_profile;
+                    if (assessment.status == .ready_new) {
+                        assessment.status = .missing_tax_form_profile;
                         assessment.blocker = .missing_binding;
                     }
+                    assessment.issue_count +|= 1;
                 },
-                .ambiguous_business_activity => {
-                    if (assessment.status == .unavailable) {
-                        assessment.status = .needs_activity_selection;
-                        assessment.blocker = .ambiguous_business_activity;
-                    }
-                },
-                .unknown_business_activity => {
-                    if (assessment.status == .unavailable) {
-                        assessment.status = .needs_activity_selection;
-                        assessment.blocker = .unknown_business_activity;
-                    }
-                },
-                .inactive_business_activity => {
-                    if (assessment.status == .unavailable) {
-                        assessment.status = .needs_activity_selection;
-                        assessment.blocker = .inactive_business_activity;
-                    }
-                },
-                .subject_not_allowed => {
-                    if (assessment.status == .unavailable) {
-                        assessment.status = .profile_not_eligible;
-                        assessment.blocker = .subject_not_allowed;
-                    }
-                },
+                // Forms Set activation is authoritative. Subject-kind policy
+                // cannot make an active form unavailable in the Library.
+                .subject_not_allowed => {},
                 .duplicate_binding,
                 .unexpected_binding,
                 .same_profile_binding,
                 .invalid_revision,
                 .revision_not_effective,
-                => {},
+                => {
+                    if (assessment.status == .ready_new) {
+                        assessment.status = .unsupported_period;
+                        assessment.blocker = switch (issue) {
+                            .revision_not_effective => .revision_not_effective,
+                            else => .invalid_revision,
+                        };
+                    }
+                    assessment.issue_count +|= 1;
+                },
             }
         }
         return assessment;
@@ -1329,14 +1185,10 @@ pub const State = struct {
         self.spouse_revision = loaded_spouse;
         revisions_transferred = true;
         self.selected_filer_id = filer_binding.profile_id;
-        self.selected_filer_activity_id = filer_binding.business_activity_id;
         if (rehydrated.role_bindings.get(.spouse)) |spouse_binding| {
             self.selected_spouse_id = spouse_binding.profile_id;
-            self.selected_spouse_activity_id =
-                spouse_binding.business_activity_id;
         } else {
             self.selected_spouse_id = null;
-            self.selected_spouse_activity_id = null;
         }
         self.opened_profile_as_of = rehydrated.snapshot.effective_on;
         self.opened_filing_period = rehydrated.period;
@@ -1345,7 +1197,6 @@ pub const State = struct {
         self.projection_is_accepted = true;
         self.projection_issue_count = 0;
         try self.cacheSnapshot(&rehydrated.snapshot);
-        self.refreshActivityCandidateCaches();
 
         self.persisted_draft_id = try ids.DraftId.parse(draft.id);
         self.persisted_draft_disposition = disposition;
@@ -1368,9 +1219,7 @@ pub const State = struct {
         binding_storage[0] = .{
             .role = .filer,
             .revision = filer,
-            .selection = .{
-                .business_activity_id = self.selected_filer_activity_id,
-            },
+            .selection = .{},
         };
         var binding_len: usize = 1;
         if (self.spouse_revision) |*owned| {
@@ -1384,9 +1233,7 @@ pub const State = struct {
             binding_storage[1] = .{
                 .role = .spouse,
                 .revision = &owned.revision,
-                .selection = .{
-                    .business_activity_id = self.selected_spouse_activity_id,
-                },
+                .selection = .{},
             };
             binding_len = 2;
         }
@@ -1443,34 +1290,6 @@ pub const State = struct {
                 .filer => try self.filer_cache.put(entry.value),
                 .spouse => try self.spouse_cache.put(entry.value),
                 else => {},
-            }
-        }
-    }
-
-    fn refreshCandidateCaches(self: *State) !void {
-        self.refreshActivityCandidateCaches();
-        try self.refreshSpouseCandidates();
-    }
-
-    fn refreshActivityCandidateCaches(self: *State) void {
-        self.filer_activity_candidates.clear();
-        self.spouse_activity_candidates.clear();
-        if (self.opened_profile_as_of) |effective_on| {
-            if (self.filer_revision) |*owned| {
-                fillActivityCandidates(
-                    &self.filer_activity_candidates,
-                    owned.revision.business_activities,
-                    effective_on,
-                    self.selected_filer_activity_id,
-                );
-            }
-            if (self.spouse_revision) |*owned| {
-                fillActivityCandidates(
-                    &self.spouse_activity_candidates,
-                    owned.revision.business_activities,
-                    effective_on,
-                    self.selected_spouse_activity_id,
-                );
             }
         }
     }
@@ -1544,12 +1363,8 @@ pub const State = struct {
         self.opened_profile_as_of = null;
         self.selected_filer_id = null;
         self.selected_spouse_id = null;
-        self.selected_filer_activity_id = null;
-        self.selected_spouse_activity_id = null;
         self.spouse_candidate_len = 0;
         self.spouse_candidates_truncated = false;
-        self.filer_activity_candidates.clear();
-        self.spouse_activity_candidates.clear();
         self.invalidateProjection();
     }
 
@@ -1647,29 +1462,6 @@ fn loadPersistedDraftProvenanceStatus(
         .exact => .exact,
         .corrupt => error.DraftProvenanceCorrupt,
     };
-}
-
-fn fillActivityCandidates(
-    cache: *ActivityCandidateCache,
-    activities: []const model.BusinessActivity,
-    effective_on: model.Date,
-    selected_id: ?model.BusinessActivityId,
-) void {
-    for (activities) |*activity| {
-        if (cache.len == max_activity_candidates) {
-            cache.truncated = true;
-            continue;
-        }
-        const selected = if (selected_id) |id| id.eql(&activity.id) else false;
-        cache.items[cache.len] = .{
-            .id = activity.id,
-            .line_of_business = activity.line_of_business,
-            .atc = activity.atc,
-            .effective_on_profile_date = activity.isEffective(effective_on),
-            .selected = selected,
-        };
-        cache.len += 1;
-    }
 }
 
 fn validateEditorRevision(form: ids.FormRevision) Error!void {
@@ -1808,37 +1600,6 @@ fn persistFullTestRevision(
         try model.Date.parseIso("2020-01-01"),
         null,
     );
-    const activities = [_]model.BusinessActivity{.{
-        .id = try model.BusinessActivityId.parse("activity-primary"),
-        .line_of_business = try field.LineOfBusiness.parse(
-            "Software consulting",
-        ),
-        .atc = try field.Atc.parse("PT010"),
-        .effective = effective,
-    }};
-    const facts = [_]model.RegistrationFact{
-        .{
-            .id = try model.RegistrationFactId.parse("fact-tax-type"),
-            .effective = effective,
-            .value = .{
-                .tax_type = try field.TaxType.parse("Percentage Tax"),
-            },
-        },
-        .{
-            .id = try model.RegistrationFactId.parse("fact-gwa"),
-            .effective = effective,
-            .value = .{ .government_withholding_agent = .yes },
-        },
-        .{
-            .id = try model.RegistrationFactId.parse("fact-special-rate"),
-            .effective = effective,
-            .value = .{
-                .special_rate_basis = try field.SpecialRateBasis.parse(
-                    "Treaty article 7",
-                ),
-            },
-        },
-    };
     const base: profile_editor.Base = .{
         .profile_id = try model.ProfileId.parse(profile_id),
         .revision_id = try model.RevisionId.parse(revision_id),
@@ -1887,10 +1648,13 @@ fn persistFullTestRevision(
             .kind = .corporation,
         }),
     };
-    const revision = try ready
-        .withBusinessActivities(&activities)
-        .withRegistrationFacts(&facts)
-        .build();
+    var revision = try ready.build();
+    revision.accounting_period_basis = .calendar;
+    revision.eopt_tier = .micro;
+    revision.primary_line_of_business = try field.LineOfBusiness.parse(
+        "Software consulting",
+    );
+    try revision.validate();
     if (sequence == 1) {
         try profile_persistence.createProfileWithRevision(
             store,
@@ -1924,22 +1688,40 @@ fn configure2551QDraftProvenanceSources(
         &registrations,
     );
 
-    const values = [_]taxpayer_year.SettingValue{.{
-        .income_tax_rate_election = .eight_percent,
+    const values = [_]tax_form_profile.SetupValue{.{
+        .semantic_key = .income_tax_rate_election,
+        .role = .filer,
+        .value = .{ .choice = try tax_form_profile.TextValue.parse(
+            "eight_percent",
+        ) },
     }};
-    const revision: taxpayer_year.Revision = .{
-        .id = try taxpayer_year.RevisionId.parse(
-            "ui-2551q-taxpayer-year-r1",
+    const revision: tax_form_profile.Revision = .{
+        .id = try tax_form_profile.RevisionId.parse(
+            "ui-2551q-tax-form-profile-r1",
         ),
-        .stream = .{ .profile_id = profile_id, .tax_year = 2026 },
+        .stream = .{
+            .profile_id = profile_id,
+            .tax_year = 2026,
+            .form_code = try tax_form_profile.FormCode.parse(definition.code),
+            .form_revision = try tax_form_profile.FormRevision.parse(
+                definition.revision.?,
+            ),
+        },
         .sequence = 1,
-        .effective = try taxpayer_year.fullTaxYearPeriod(2026),
+        .effective = try tax_form_profile.EffectivePeriod.init(
+            try tax_form_profile.Date.parseIso("2026-01-01"),
+            try tax_form_profile.Date.parseIso("2026-12-31"),
+        ),
+        .spec_revision = definition.tax_form_profile.spec_revision.?,
+        .spec_hash = try tax_form_profile.SpecHash.parse(
+            definition.tax_form_profile.spec_hash.?,
+        ),
         .review_state = .confirmed,
-        .confirmed_at_unix_seconds = 1,
+        .confirmed_at_unix = 1,
         .source = .manual_entry,
         .values = &values,
     };
-    try profile_persistence.appendTaxpayerYearRevision(
+    try profile_persistence.appendTaxFormProfileRevision(
         store,
         allocator,
         0,
@@ -2021,31 +1803,25 @@ test "all ten static editors project catalog profile targets and cache values" {
         state.filerText(.taxpayer_name),
     );
     try std.testing.expectEqualStrings(
-        "",
+        "Software consulting",
         state.filerText(.line_of_business),
     );
     try std.testing.expectEqualStrings("", state.filerText(.atc));
-    try std.testing.expectEqual(@as(usize, 1), state.activityCandidates(.filer).len);
-
     const form_0605 = catalog.findForm("0605").?;
-    var found_optional_activity_seed = false;
+    var found_line_of_business = false;
     for (form_0605.fields) |catalog_field| {
         if (!std.mem.eql(
             u8,
             catalog_field.id,
             "0605.1999-07-ENCS.input.line_of_business_occupation",
         )) continue;
-        found_optional_activity_seed = true;
+        found_line_of_business = true;
         try std.testing.expectEqual(
-            catalog.Provenance.transaction,
+            catalog.Provenance.profile,
             catalog_field.provenance,
         );
-        try std.testing.expectEqualStrings(
-            "business_activity.line_of_business",
-            catalog_field.optional_seed_source.?,
-        );
     }
-    try std.testing.expect(found_optional_activity_seed);
+    try std.testing.expect(found_line_of_business);
 
     try state.open(.{
         .form = editor_revisions[3],
@@ -2070,167 +1846,6 @@ test "all ten static editors project catalog profile targets and cache values" {
         "JUAN SANTOS",
         state.spouseCandidates()[0].name.asSlice(),
     );
-}
-
-test "confirmed v16 Registration activity replaces unmatched legacy activity for launch projection" {
-    const allocator = std.testing.allocator;
-    var store = try store_module.Store.openMemory(allocator);
-    defer store.close();
-    try persistFullTestRevision(
-        &store,
-        "profile-registration-authority",
-        "revision-registration-authority-1",
-        1,
-        .sole_proprietor,
-        "REGISTRATION AUTHORITY TAXPAYER",
-        "456-789-012-000",
-    );
-    const registration_activities =
-        [_]store_module.RegistrationActivityRevisionWrite{.{
-            .anchor_id = "v16-consulting-only",
-            .metadata = .{
-                .id = "v16-consulting-only-r1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2026-01-01".* },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 1,
-            },
-            .line_of_business = "V16 consulting authority",
-            .atc = "PT020",
-        }};
-    try std.testing.expectEqual(
-        @as(u32, 1),
-        try store.appendRegistrationCommit(.{
-            .profile_id = "profile-registration-authority",
-            .expected_current_sequence = 0,
-            .activities = &registration_activities,
-        }),
-    );
-
-    const profile_id = try model.ProfileId.parse(
-        "profile-registration-authority",
-    );
-    var state = State.init(allocator, &store);
-    defer state.deinit();
-    const request: OpenRequest = .{
-        .form = editor_revisions[3],
-        .filer_profile_id = profile_id,
-        .tax_year = 2026,
-        .quarter = 3,
-        .filing_period = .{ .monthly = .{
-            .tax_year = 2026,
-            .month = 8,
-        } },
-        .profile_as_of = try model.Date.parseIso("2026-08-31"),
-    };
-    const assessment = state.assessLaunch(request);
-    try std.testing.expectEqual(LaunchStatus.ready_new, assessment.status);
-    try std.testing.expectEqual(LaunchBlocker.none, assessment.blocker);
-
-    try state.open(request);
-    try std.testing.expect(state.projectionAccepted());
-    try std.testing.expectEqual(@as(usize, 1), state.activityCandidates(.filer).len);
-    const activity = &state.activityCandidates(.filer)[0];
-    try std.testing.expectEqualStrings(
-        "v16-consulting-only",
-        activity.id.asSlice(),
-    );
-    try std.testing.expectEqualStrings(
-        "V16 consulting authority",
-        state.filerText(.line_of_business),
-    );
-}
-
-test "retired last Registration activity never revives legacy profile activity" {
-    const allocator = std.testing.allocator;
-    var store = try store_module.Store.openMemory(allocator);
-    defer store.close();
-    try persistFullTestRevision(
-        &store,
-        "profile-registration-empty-authority",
-        "revision-registration-empty-authority-1",
-        1,
-        .sole_proprietor,
-        "REGISTRATION EMPTY AUTHORITY",
-        "456-789-013-000",
-    );
-
-    const registration_activity =
-        [_]store_module.RegistrationActivityRevisionWrite{.{
-            .anchor_id = "activity-primary",
-            .metadata = .{
-                .id = "registration-empty-authority-r1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2026-01-01".* },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 1,
-            },
-            .line_of_business = "Registration-owned consulting",
-            .atc = "PT020",
-        }};
-    _ = try store.appendRegistrationCommit(.{
-        .profile_id = "profile-registration-empty-authority",
-        .expected_current_sequence = 0,
-        .activities = &registration_activity,
-    });
-    const retirement = [_]store_module.RegistrationActivityRevisionWrite{.{
-        .anchor_id = "activity-primary",
-        .metadata = .{
-            .id = "registration-empty-authority-r2",
-            .expected_component_sequence = 1,
-            .effective = .{ .from = "2026-08-01".* },
-            .record_state = .retired,
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 2,
-            .supersedes_id = "registration-empty-authority-r1",
-        },
-        .line_of_business = "Registration-owned consulting",
-        .atc = "PT020",
-    }};
-    _ = try store.appendRegistrationCommit(.{
-        .profile_id = "profile-registration-empty-authority",
-        .expected_current_sequence = 1,
-        .activities = &retirement,
-    });
-
-    const profile_id = try model.ProfileId.parse(
-        "profile-registration-empty-authority",
-    );
-    const effective_on = try model.Date.parseIso("2026-08-31");
-    var effective = (try loadEffectiveRevisionForFiling(
-        &store,
-        allocator,
-        profile_id,
-        effective_on,
-    )).?;
-    defer effective.deinit(allocator);
-    try std.testing.expectEqual(
-        @as(usize, 0),
-        effective.revision.business_activities.len,
-    );
-
-    var state = State.init(allocator, &store);
-    defer state.deinit();
-    const request: OpenRequest = .{
-        .form = editor_revisions[3],
-        .filer_profile_id = profile_id,
-        .tax_year = 2026,
-        .quarter = 3,
-        .filing_period = .{ .monthly = .{
-            .tax_year = 2026,
-            .month = 8,
-        } },
-        .profile_as_of = effective_on,
-    };
-    try state.open(request);
-    try std.testing.expectEqual(
-        @as(usize, 0),
-        state.activityCandidates(.filer).len,
-    );
-    try std.testing.expect(!state.projectionAccepted());
 }
 
 test "typed catalog periods retain identity and block unconfigured provenance" {
@@ -2321,7 +1936,7 @@ test "2551Q UI atomically creates exact provenance and safely replaces resumed t
         .tax_year = 2026,
         .quarter = 1,
     });
-    try std.testing.expectEqual(@as(u8, 7), state.snapshot().?.len);
+    try std.testing.expectEqual(@as(u8, 8), state.snapshot().?.len);
     const initial_values = [_]store_module.DraftValueWrite{.{
         .field_id = "2551Q.schedule.row-a.rate",
         .value_text = "3.00",
@@ -2342,7 +1957,7 @@ test "2551Q UI atomically creates exact provenance and safely replaces resumed t
         created_id.asSlice(),
     )).?;
     defer stored.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 7), stored.snapshots.len);
+    try std.testing.expectEqual(@as(usize, 8), stored.snapshots.len);
     try std.testing.expectEqual(@as(usize, 1), stored.bindings.len);
     try std.testing.expectEqual(@as(usize, 1), stored.values.len);
     try std.testing.expectEqualStrings(
@@ -2390,7 +2005,7 @@ test "2551Q UI atomically creates exact provenance and safely replaces resumed t
     );
     try std.testing.expectError(
         error.DraftProfileSnapshotLocked,
-        resumed_state.setBusinessActivity(.filer, null),
+        resumed_state.setSpouseProfile(null),
     );
     const updated_values = [_]store_module.DraftValueWrite{.{
         .field_id = "2551Q.schedule.row-a.rate",
@@ -2731,4 +2346,59 @@ test "1701Q optional spouse projects named role while coarse draft persistence s
     });
     try std.testing.expect(!rejected.projectionAccepted());
     try std.testing.expectEqual(NoticeKind.failure, rejected.noticeKind());
+}
+
+test "launch assessment reports Base and Tax Form Profile blockers separately" {
+    const missing_base = catalog_projection.TargetContext{
+        .role = .filer,
+        .target = ids.FieldId.initComptime("test.base.zip-code"),
+        .reusable_field = .zip_code,
+    };
+    const missing_form_binding = catalog_projection.TargetContext{
+        .role = .spouse,
+        .target = ids.FieldId.initComptime("test.form.spouse"),
+        .reusable_field = .taxpayer_name,
+    };
+
+    const form_only_issues = [_]catalog_projection.Issue{
+        .{ .missing_binding = missing_form_binding },
+    };
+    const form_only = State.assessmentForIssues(&form_only_issues);
+    try std.testing.expectEqual(
+        LaunchStatus.missing_tax_form_profile,
+        form_only.status,
+    );
+    try std.testing.expectEqual(LaunchBlocker.missing_binding, form_only.blocker);
+    try std.testing.expect(form_only.first_missing_field == null);
+
+    const layered_issues = [_]catalog_projection.Issue{
+        .{ .missing_binding = missing_form_binding },
+        .{ .missing_capability = missing_base },
+    };
+    const layered = State.assessmentForIssues(&layered_issues);
+    try std.testing.expectEqual(
+        LaunchStatus.missing_base_profile,
+        layered.status,
+    );
+    try std.testing.expectEqual(
+        LaunchBlocker.missing_profile_data,
+        layered.blocker,
+    );
+    try std.testing.expectEqual(field.ReusableField.zip_code, layered.first_missing_field.?);
+    try std.testing.expectEqual(@as(usize, 1), layered.missingBaseFields().len);
+    try std.testing.expectEqual(field.ReusableField.zip_code, layered.missingBaseFields()[0]);
+    try std.testing.expectEqual(@as(u16, 2), layered.issue_count);
+}
+
+test "subject eligibility never blocks an active Forms Set launch" {
+    const issues = [_]catalog_projection.Issue{
+        .{ .subject_not_allowed = .{
+            .role = .filer,
+            .subject = .corporation,
+        } },
+    };
+    const assessment = State.assessmentForIssues(&issues);
+    try std.testing.expectEqual(LaunchStatus.ready_new, assessment.status);
+    try std.testing.expectEqual(LaunchBlocker.none, assessment.blocker);
+    try std.testing.expectEqual(@as(u16, 0), assessment.issue_count);
 }

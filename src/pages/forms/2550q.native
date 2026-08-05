@@ -13,6 +13,7 @@
     <!-- @include-template form-field-bound label="ZIP Code" v="{formFilerZipCode}" ph="-" -->
     <!-- @include-template form-field-bound label="Contact Number" v="{formFilerContactNumber}" ph="-" -->
     <!-- @include-template form-field-bound label="Email Address" v="{formFilerEmailAddress}" ph="-" -->
+    <!-- @include-template form-field-bound label="EOPT Taxpayer Classification" v="{formFilerEoptTier}" ph="Micro / Small / Medium / Large" -->
   </grid>
 </template>
 

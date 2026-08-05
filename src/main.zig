@@ -29,11 +29,6 @@ const profile_fields = @import("tax_profile/field.zig");
 const profile_model = @import("tax_profile/model.zig");
 const profile_projection = @import("tax_profile/projection.zig");
 const profile_applicability = @import("tax_profile/applicability.zig");
-const profile_registration = @import("tax_profile/registration.zig");
-const profile_registration_adapter = @import(
-    "tax_profile/registration_adapter.zig",
-);
-const profile_registration_ui = @import("tax_profile/registration_ui.zig");
 const tax_form_profile_domain = @import("tax_profile/tax_form_profile.zig");
 const tax_form_profile_binding_resolver = @import(
     "tax_profile/tax_form_profile_binding_resolver.zig",
@@ -46,12 +41,6 @@ const taxpayer_year_settings_domain = @import(
     "tax_profile/taxpayer_year_settings.zig",
 );
 const taxpayer_year_ui = @import("tax_profile/taxpayer_year_ui.zig");
-const annual_income_tax_election = @import(
-    "tax_profile/annual_income_tax_election.zig",
-);
-const composed_tax_profile = @import(
-    "tax_profile/composed_tax_profile.zig",
-);
 const forms_set_history = @import("tax_profile/forms_set_history.zig");
 const form_ui = @import("forms/ui_state.zig");
 const draft_provenance = @import("forms/draft_provenance.zig");
@@ -79,23 +68,19 @@ const exact_1701q_ui = @import(
     "forms/form_1701q_exact_ui_state.zig",
 );
 const percentage_tax_ui = @import("forms/percentage_tax_ui_state.zig");
+const form_2551q = @import("forms/form_2551q.zig");
 const c_time = @cImport({
     @cInclude("time.h");
 });
 
 comptime {
     _ = profile_applicability;
-    _ = profile_registration;
-    _ = profile_registration_adapter;
-    _ = profile_registration_ui;
     _ = tax_form_profile_domain;
     _ = tax_form_profile_binding_resolver;
     _ = tax_form_profile_ui;
     _ = forms_set_resolver;
     _ = taxpayer_year_settings_domain;
     _ = taxpayer_year_ui;
-    _ = annual_income_tax_election;
-    _ = composed_tax_profile;
     _ = forms_set_history;
     _ = draft_provenance;
     _ = draft_provenance_adapter;
@@ -617,7 +602,7 @@ fn profileDeadlineActionLabel(action: ProfileDeadlineAction) []const u8 {
         .print => "Print Form",
         .upload_receipt => "Upload Receipt",
         .pay_online => "Pay Online",
-        .complete_profile => "Complete Profile",
+        .complete_profile => "Complete Tax Profile",
     };
 }
 
@@ -718,49 +703,88 @@ const ProfileDeadlineRemediation = enum {
 ///
 /// `LaunchAssessment` answers whether the reusable Tax Profile can project a
 /// draft. `form_profile_state` answers whether the exact tax-year/form setup
-/// (including Registration bindings and the annual income-tax election) is
-/// ready. Keeping both in one compact value prevents the Library renderer and
+/// (including form-specific yearly values) is ready. Keeping both in one
+/// compact value prevents the Library renderer and
 /// its dispatch handler from applying different launch policies.
-const ExactPeriodLaunchReadiness = struct {
+const FormReadiness = struct {
     launch: form_ui.LaunchAssessment = .{},
     form_profile_state: TaxFormProfileCardState = .error_loading,
     evaluated: bool = false,
+    missing_tax_form_profile_fields: [
+        std.meta.fields(
+            form_catalog.TaxFormProfileSemanticKey,
+        ).len
+    ]form_catalog.TaxFormProfileSemanticKey = undefined,
+    missing_tax_form_profile_field_count: u8 = 0,
+
+    fn missingTaxFormProfileFields(
+        self: *const @This(),
+    ) []const form_catalog.TaxFormProfileSemanticKey {
+        return self.missing_tax_form_profile_fields[0..self.missing_tax_form_profile_field_count];
+    }
+
+    fn addMissingTaxFormProfileField(
+        self: *@This(),
+        key: form_catalog.TaxFormProfileSemanticKey,
+    ) void {
+        for (self.missingTaxFormProfileFields()) |existing| {
+            if (existing == key) return;
+        }
+        if (self.missing_tax_form_profile_field_count >=
+            self.missing_tax_form_profile_fields.len) return;
+        self.missing_tax_form_profile_fields[
+            self.missing_tax_form_profile_field_count
+        ] = key;
+        self.missing_tax_form_profile_field_count += 1;
+    }
+
+    fn status(self: @This()) form_ui.LaunchStatus {
+        if (!self.evaluated) return .unsupported_period;
+        switch (self.launch.status) {
+            .inactive,
+            .missing_base_profile,
+            .missing_tax_form_profile,
+            .unsupported_period,
+            => |launch_status| return launch_status,
+            .ready_new, .ready_resume => {},
+        }
+        return switch (self.form_profile_state) {
+            .ready, .inherited_only_ready => self.launch.status,
+            .needs_tax_profile => .missing_base_profile,
+            .needs_setup, .requires_review => .missing_tax_form_profile,
+            .needs_filing_context, .error_loading => .unsupported_period,
+            .unavailable, .calendar_only => .inactive,
+        };
+    }
 
     fn canOpen(self: @This()) bool {
-        if (!self.evaluated) return false;
-        const launch_acceptable = switch (self.launch.status) {
-            .ready_new, .ready_resume, .needs_activity_selection => true,
-            .needs_profile, .profile_not_eligible, .unavailable => false,
-        };
-        const bindings_ready = switch (self.form_profile_state) {
-            .ready, .inherited_only_ready => true,
+        return switch (self.status()) {
+            .ready_new, .ready_resume => true,
             else => false,
         };
-        return launch_acceptable and bindings_ready;
     }
 
     fn remediation(self: @This()) ProfileDeadlineRemediation {
         if (!self.evaluated) return .unavailable;
-        if (self.canOpen()) return .ready;
-        return switch (self.form_profile_state) {
-            .needs_tax_profile => .tax_profile,
-            .needs_registration,
-            .needs_year_settings,
-            .year_settings_reserved,
-            .year_settings_require_review,
-            .needs_setup,
-            .requires_review,
-            .needs_filing_context,
-            => .tax_form_profile,
-            .unavailable,
-            .calendar_only,
-            .ready,
-            .inherited_only_ready,
-            .error_loading,
-            => .unavailable,
+        return switch (self.status()) {
+            .ready_new, .ready_resume => .ready,
+            .missing_base_profile => .tax_profile,
+            .missing_tax_form_profile => .tax_form_profile,
+            .inactive, .unsupported_period => .unavailable,
         };
     }
 };
+
+fn captureMissingTaxFormProfileFields(
+    readiness: *FormReadiness,
+    definition: *const form_catalog.FormDefinition,
+) void {
+    for (definition.tax_form_profile.values) |value| {
+        if (value.availability == .supported and value.presence == .required) {
+            readiness.addMissingTaxFormProfileField(value.semantic_key);
+        }
+    }
+}
 
 /// A profile-scoped schedule row combines the resolved deadline with typed,
 /// independent filing and timing state. The underlying deadline remains owned
@@ -1289,10 +1313,6 @@ const TaxFormProfileCardState = enum {
     calendar_only,
     inherited_only_ready,
     needs_tax_profile,
-    needs_registration,
-    needs_year_settings,
-    year_settings_reserved,
-    year_settings_require_review,
     needs_setup,
     requires_review,
     needs_filing_context,
@@ -1302,13 +1322,9 @@ const TaxFormProfileCardState = enum {
     fn label(self: TaxFormProfileCardState) []const u8 {
         return switch (self) {
             .unavailable => "Inactive for this tax year",
-            .calendar_only => "Calendar only - no editor or Tax Form Profile",
+            .calendar_only => "Calendar only - uses saved Tax Profile details",
             .inherited_only_ready => "Ready - uses saved Tax Profile details",
             .needs_tax_profile => "Needs Tax Profile details",
-            .needs_registration => "Registration details incomplete",
-            .needs_year_settings => "Annual income tax rate unresolved",
-            .year_settings_reserved => "Annual income tax rate reserved",
-            .year_settings_require_review => "Annual income tax rate requires review",
             .needs_setup => "Needs Tax Form Profile setup",
             .requires_review => "Tax Form Profile requires review",
             .needs_filing_context => "Filing context incomplete",
@@ -1319,32 +1335,46 @@ const TaxFormProfileCardState = enum {
 
     fn actionLabel(self: TaxFormProfileCardState) []const u8 {
         return switch (self) {
-            .inherited_only_ready, .needs_tax_profile => "View Tax Form Profile",
-            .needs_registration => "Review Tax Form Profile",
-            .needs_year_settings => "Set income tax rate",
-            .year_settings_reserved => "View reserved income tax rate",
-            .year_settings_require_review => "Review income tax rate",
+            .calendar_only, .inherited_only_ready => "View Tax Form Profile",
+            .needs_tax_profile => "Complete Tax Profile",
             .needs_setup => "Set up Tax Form Profile",
             .requires_review, .ready => "View Tax Form Profile",
             .needs_filing_context => "Review filing context",
-            .unavailable, .calendar_only, .error_loading => "",
+            .unavailable, .error_loading => "",
         };
     }
 
     fn actionVisible(self: TaxFormProfileCardState) bool {
         return switch (self) {
+            .calendar_only,
             .inherited_only_ready,
             .needs_tax_profile,
-            .needs_registration,
-            .needs_year_settings,
-            .year_settings_reserved,
-            .year_settings_require_review,
             .needs_setup,
             .requires_review,
             .needs_filing_context,
             .ready,
             => true,
-            .unavailable, .calendar_only, .error_loading => false,
+            .unavailable, .error_loading => false,
+        };
+    }
+
+    /// Maps the canonical exact-period readiness cache into card copy. The
+    /// card keeps presentation-only distinctions such as inherited-only and
+    /// review-required without running another persistence-backed assessment.
+    fn fromReadiness(
+        definition: *const form_catalog.FormDefinition,
+        readiness: FormReadiness,
+    ) TaxFormProfileCardState {
+        return switch (readiness.status()) {
+            .inactive => .unavailable,
+            .missing_base_profile => .needs_tax_profile,
+            .missing_tax_form_profile => if (readiness.form_profile_state == .requires_review) .requires_review else .needs_setup,
+            .unsupported_period => if (readiness.form_profile_state == .needs_filing_context) .needs_filing_context else .error_loading,
+            .ready_new, .ready_resume => switch (definition.tax_form_profile.mode) {
+                .calendar_only => .calendar_only,
+                .no_setup => .inherited_only_ready,
+                .setup => if (readiness.form_profile_state == .inherited_only_ready) .inherited_only_ready else .ready,
+            },
         };
     }
 };
@@ -1366,43 +1396,10 @@ const TaxFormProfileInheritedCache = struct {
     zip: canvas.TextBuffer(16) = .{},
     contact: canvas.TextBuffer(64) = .{},
     email: canvas.TextBuffer(160) = .{},
-};
-
-const AnnualIncomeTaxEligibility = enum {
-    unresolved,
-    eligible,
-    taxpayer_type_ineligible,
-    classification_unresolved,
-    business_commencement_unresolved,
-    percentage_tax_registration_missing,
-    vat_registered,
-    registration_requires_review,
-    load_failed,
-};
-
-/// Volatile composed state for the 2551Q pilot. The event itself remains
-/// owned by the append-only `(taxpayer, tax year)` stream; this cache only
-/// drives the read-only Tax Form Profile and its explicit candidate editor.
-const AnnualIncomeTaxElectionCache = struct {
-    current: ?annual_income_tax_election.Event = null,
-    eligibility: AnnualIncomeTaxEligibility = .unresolved,
-    commencement: annual_income_tax_election.BusinessCommencement = .unknown,
-    filing_quarter: u8 = 1,
-    initial_applicable_quarter: ?u8 = null,
-    load_failed: bool = false,
-};
-
-/// Pointer-free copy of the composed profile result used by Native view
-/// bindings. `compose` borrows owned persistence projections, so every slice
-/// and pointer must be consumed before those projections are released.  The
-/// readiness layers, annual event, derived period, and launch decision are
-/// fixed-storage values and remain valid after the loader returns.
-const RuntimeComposedSnapshot = struct {
-    loaded: bool = false,
-    readiness: composed_tax_profile.ComposedReadiness = .{},
-    current_annual: ?annual_income_tax_election.Event = null,
-    filing_context: ?composed_tax_profile.DerivedFilingContext = null,
-    ready_for_new_filing: bool = false,
+    accounting_period_basis: ?profile_model.AccountingPeriodBasis = null,
+    fiscal_year_end_month: ?u8 = null,
+    eopt_tier: canvas.TextBuffer(16) = .{},
+    primary_line_of_business: canvas.TextBuffer(192) = .{},
 };
 
 pub const TaxFormProfileInheritedRow = struct {
@@ -1468,79 +1465,12 @@ pub const TaxFormProfileChoiceRow = struct {
     selected: bool,
 };
 
-const RegistrationDialogMode = enum {
-    none,
-    add_activity,
-    edit_activity,
-    add_obligation,
-    edit_obligation,
-};
-
 /// The Tax Form Profile has two local presentation sections.  The backing
 /// revision stream remains append-only; this selection merely keeps its audit
 /// history out of the ordinary setup view.
 const TaxFormProfileSection = enum {
     details,
     history,
-};
-
-const RegistrationObligationDraftKind = enum {
-    registered_income_tax,
-    vat,
-    percentage_tax,
-    withholding_compensation,
-    withholding_expanded,
-    withholding_final,
-    withholding_other,
-};
-
-pub const RegistrationActivityView = struct {
-    id: usize,
-    line_of_business: []const u8,
-    atc: []const u8,
-    effective: []const u8,
-
-    pub fn lineOfBusiness(self: *const RegistrationActivityView) []const u8 {
-        return self.line_of_business;
-    }
-
-    pub fn atcLabel(self: *const RegistrationActivityView) []const u8 {
-        return self.atc;
-    }
-
-    pub fn effectiveLabel(self: *const RegistrationActivityView) []const u8 {
-        return self.effective;
-    }
-};
-
-pub const RegistrationObligationView = struct {
-    id: usize,
-    kind: []const u8,
-    effective: []const u8,
-
-    pub fn kindLabel(self: *const RegistrationObligationView) []const u8 {
-        return self.kind;
-    }
-
-    pub fn effectiveLabel(
-        self: *const RegistrationObligationView,
-    ) []const u8 {
-        return self.effective;
-    }
-};
-
-pub const RegistrationFactView = struct {
-    id: usize,
-    fact_label: []const u8,
-    detail: []const u8,
-
-    pub fn label(self: *const RegistrationFactView) []const u8 {
-        return self.fact_label;
-    }
-
-    pub fn value(self: *const RegistrationFactView) []const u8 {
-        return self.detail;
-    }
 };
 
 pub const ProfileRdoOptionRow = struct {
@@ -1595,23 +1525,11 @@ pub const Model = struct {
     newsAllocator: ?std.mem.Allocator = null,
     newsNotices: ?news_domain.NoticeList = null,
     taxProfiles: profile_ui.State = .{},
-    regPage: profile_registration_ui.State = .{},
-    regLoaded: bool = false,
-    regLoadFailed: bool = false,
-    regDialogMode: RegistrationDialogMode = .none,
-    regSelectedIndex: ?usize = null,
-    regLineOfBusiness: canvas.TextBuffer(160) = .{},
-    regAtc: canvas.TextBuffer(16) = .{},
-    regEffectiveFrom: canvas.TextBuffer(10) = .{},
-    regEffectiveUntil: canvas.TextBuffer(10) = .{},
-    regOtherTaxType: canvas.TextBuffer(120) = .{},
-    regObligationDraftKind: RegistrationObligationDraftKind =
-        .registered_income_tax,
-    regEditorError: canvas.TextBuffer(180) = .{},
     formProfiles: form_ui.State = .{},
     taxFormProfilePage: tax_form_profile_ui.State = .{},
     taxpayerYearPage: taxpayer_year_ui.State = .{},
     taxFormProfileFormIndex: ?usize = null,
+    taxFormProfileFilingQuarter: u8 = 1,
     taxFormProfileViewedDate: ?profile_model.Date = null,
     taxFormProfilePreviousSegmentDate: ?profile_model.Date = null,
     taxFormProfileNextSegmentDate: ?profile_model.Date = null,
@@ -1620,14 +1538,11 @@ pub const Model = struct {
     taxFormProfileReturnProfileSection: ProfileSetupSection = .tax_profile,
     taxFormProfilePendingNavigation: ?PendingTaxFormProfileNavigation = null,
     taxFormProfileDiscardPromptOpen: bool = false,
-    taxFormProfileRegistrationReturnPending: bool = false,
     taxFormProfileSection: TaxFormProfileSection = .details,
     taxFormProfilePickerField: ?usize = null,
     taxFormProfileChoices: [128]TaxFormProfileChoiceCache = undefined,
     taxFormProfileChoiceCount: usize = 0,
     taxFormProfileInherited: TaxFormProfileInheritedCache = .{},
-    annualIncomeTaxElection: AnnualIncomeTaxElectionCache = .{},
-    taxFormProfileComposed: RuntimeComposedSnapshot = .{},
     taxFormProfileHistoryRowsCache: [max_tax_form_profile_history_rows]TaxFormProfileHistoryRow = undefined,
     taxFormProfileHistoryRowCount: usize = 0,
     taxFormProfileHistoryTruncated: bool = false,
@@ -1652,7 +1567,6 @@ pub const Model = struct {
     profileSubjectPickerVisible: bool = false,
     profileClassificationPickerVisible: bool = false,
     profileEoptPickerVisible: bool = false,
-    profilePrimaryLineOfBusiness: canvas.TextBuffer(160) = .{},
     profileCompletionTarget: ?profile_fields.ReusableField = null,
     profileCompletionFormIndex: ?usize = null,
     pendingProfileFormLaunch: ?PendingProfileFormLaunch = null,
@@ -1661,9 +1575,9 @@ pub const Model = struct {
     profilePeriodLaunchAssessments: [form_catalog.registry_count][12]form_ui.LaunchAssessment = undefined,
     profilePeriodLaunchAssessmentsReady: [form_catalog.registry_count][12]bool =
         [_][12]bool{[_]bool{false} ** 12} ** form_catalog.registry_count,
-    profilePeriodExactLaunchReadiness: [form_catalog.registry_count][12]ExactPeriodLaunchReadiness =
-        [_][12]ExactPeriodLaunchReadiness{
-            [_]ExactPeriodLaunchReadiness{.{}} ** 12,
+    profilePeriodExactLaunchReadiness: [form_catalog.registry_count][12]FormReadiness =
+        [_][12]FormReadiness{
+            [_]FormReadiness{.{}} ** 12,
         } ** form_catalog.registry_count,
     /// Date-effective Forms Set membership for the same period slots. These
     /// booleans are refreshed outside view bindings so cards and controls do
@@ -1825,20 +1739,7 @@ pub const Model = struct {
         "profile_forms_period_on_demand",
         "open_library_form",
         "taxProfiles",
-        "regPage",
-        "regLoaded",
-        "regLoadFailed",
-        "regDialogMode",
-        "regSelectedIndex",
-        "regLineOfBusiness",
-        "regAtc",
-        "regEffectiveFrom",
-        "regEffectiveUntil",
-        "regOtherTaxType",
-        "regObligationDraftKind",
-        "regEditorError",
         "formProfiles",
-        "annualIncomeTaxElection",
         "incomeTax",
         // Compatibility/test-only coarse 1701Q surface. It remains
         // deliberately unbound: the exact state is the only visible UI and
@@ -1925,7 +1826,6 @@ pub const Model = struct {
         "exact1701QDevelopmentPlaintext",
         "exact1701QFrozenProvenance",
         "exact1701QHistoricalProfile",
-        "taxFormProfileRegistrationReturnPending",
         "taxFormProfileSection",
         "percentageTax",
         "calendarExportProfileRevision",
@@ -2476,6 +2376,13 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
+        if (self.formProfiles.formRevision()) |revision| {
+            if (std.mem.eql(u8, revision.code.asSlice(), "2551Q")) {
+                const date = self.percentageTax.taxablePeriodStart() catch
+                    return "";
+                return formatFilingDate(arena, date);
+            }
+        }
         const period = self.formProfiles.filingPeriod() orelse return "";
         const date = switch (period) {
             .monthly => |value| profile_model.Date.init(
@@ -2498,6 +2405,13 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
+        if (self.formProfiles.formRevision()) |revision| {
+            if (std.mem.eql(u8, revision.code.asSlice(), "2551Q")) {
+                const date = self.percentageTax.taxablePeriodEnd() catch
+                    return "";
+                return formatFilingDate(arena, date);
+            }
+        }
         const period = self.formProfiles.filingPeriod() orelse return "";
         const date = switch (period) {
             .monthly => |value| monthEndDate(value.tax_year, value.month),
@@ -2601,6 +2515,10 @@ pub const Model = struct {
 
     pub fn formFilerLineOfBusiness(self: *const Model) []const u8 {
         return self.formProfiles.filerText(.line_of_business);
+    }
+
+    pub fn formFilerEoptTier(self: *const Model) []const u8 {
+        return self.formProfiles.filerText(.eopt_tier);
     }
 
     pub fn formFilerAtc(self: *const Model) []const u8 {
@@ -3035,14 +2953,6 @@ pub const Model = struct {
         return self.percentageTax.periodBasisText();
     }
 
-    pub fn percentageTaxPeriodCalendarSelected(self: *const Model) bool {
-        return self.percentageTax.periodCalendarSelected();
-    }
-
-    pub fn percentageTaxPeriodFiscalSelected(self: *const Model) bool {
-        return self.percentageTax.periodFiscalSelected();
-    }
-
     pub fn percentageTaxYearEndMonth(self: *const Model) []const u8 {
         return self.percentageTax.year_end_month.text();
     }
@@ -3091,6 +3001,10 @@ pub const Model = struct {
 
     pub fn percentageTaxElection(self: *const Model) []const u8 {
         return self.percentageTax.incomeTaxRateElectionText();
+    }
+
+    pub fn percentageTaxElectionVisible(self: *const Model) bool {
+        return self.percentageTax.incomeTaxRateElectionProjected();
     }
 
     pub fn percentageTaxElectionGraduatedSelected(
@@ -3275,33 +3189,6 @@ pub const Model = struct {
         return true;
     }
 
-    pub fn formProfileNeedsActivitySelection(self: *const Model) bool {
-        const revision = self.formProfiles.formRevision() orelse return false;
-        const definition = form_catalog.findForm(
-            revision.code.asSlice(),
-        ) orelse return false;
-        var consumes_activity = false;
-        for (definition.fields) |catalog_field| {
-            if (catalog_field.provenance != .profile) continue;
-            const key = catalog_field.profile_key orelse continue;
-            if (std.mem.eql(u8, key, "atc") or
-                std.mem.eql(u8, key, "line_of_business"))
-            {
-                consumes_activity = true;
-                break;
-            }
-        }
-        if (!consumes_activity) return false;
-        const candidates = self.formProfiles.activityCandidates(.filer);
-        var effective_count: usize = 0;
-        for (candidates) |candidate| {
-            if (!candidate.effective_on_profile_date) continue;
-            effective_count += 1;
-            if (candidate.selected) return false;
-        }
-        return effective_count > 1;
-    }
-
     pub fn formProfileHasSpouseRole(self: *const Model) bool {
         const revision = self.formProfiles.formRevision() orelse return false;
         const definition = form_catalog.findForm(
@@ -3318,35 +3205,6 @@ pub const Model = struct {
             if (candidate.selected) return true;
         }
         return self.formProfiles.roleBinding(.spouse) != null;
-    }
-
-    pub fn formActivityRows(
-        self: *const Model,
-        arena: std.mem.Allocator,
-    ) []const FormProfileChoiceRow {
-        const candidates = self.formProfiles.activityCandidates(.filer);
-        const rows = arena.alloc(FormProfileChoiceRow, candidates.len) catch
-            return &.{};
-        var row_count: usize = 0;
-        for (candidates, 0..) |*candidate, index| {
-            if (!candidate.effective_on_profile_date) continue;
-            const atc = if (candidate.atc) |*value|
-                value.asSlice()
-            else
-                "no ATC";
-            rows[row_count] = .{
-                .id = index,
-                .stable_id = candidate.id.asSlice(),
-                .name = std.fmt.allocPrint(
-                    arena,
-                    "{s} · {s}",
-                    .{ candidate.line_of_business.asSlice(), atc },
-                ) catch candidate.line_of_business.asSlice(),
-                .selected = candidate.selected,
-            };
-            row_count += 1;
-        }
-        return rows[0..row_count];
     }
 
     pub fn formSpouseRows(
@@ -3411,29 +3269,7 @@ pub const Model = struct {
     }
 
     pub fn profileSaveDisabled(self: *const Model) bool {
-        if (self.taxProfiles.editing_new) {
-            if (self.taxProfiles.saveDisabled()) return true;
-            if (!self.profileBusinessFieldsVisible()) return false;
-            return !self.regLoaded or self.regLoadFailed or
-                !self.regEditing() or
-                self.profilePrimaryLineOfBusinessMissing() or
-                self.profileEoptTierMissing() or
-                !self.regPage.affordances().can_save;
-        }
-        if (!self.taxProfiles.profileEditing()) return true;
-        const base_dirty = self.taxProfiles.profileDirty();
-        const registration_dirty = self.regPage.dirty();
-        if (!base_dirty and !registration_dirty) return true;
-        if (!self.taxProfiles.profileDraftValid()) return true;
-        if (self.profileBusinessFieldsVisible()) {
-            if (!self.regLoaded or self.regLoadFailed or !self.regEditing()) {
-                return true;
-            }
-            if (self.profilePrimaryLineOfBusinessMissing() or
-                self.profileEoptTierMissing()) return true;
-        }
-        return registration_dirty and
-            !self.regPage.affordances().can_save;
+        return self.taxProfiles.saveDisabled();
     }
 
     pub fn profileCancelDisabled(self: *const Model) bool {
@@ -3463,25 +3299,15 @@ pub const Model = struct {
             .profile_view => return "Discard all changes?",
             else => {},
         };
-        return if (self.regPage.dirty() and self.taxProfiles.profileDirty())
-            "Discard unsaved Tax Profile and Registration changes?"
-        else if (self.regPage.dirty())
-            "Discard unsaved Registration changes?"
-        else
-            "Discard unsaved Tax Profile changes?";
+        return "Discard unsaved Tax Profile changes?";
     }
 
     pub fn profileDirtyNavigationBody(self: *const Model) []const u8 {
         if (self.pendingProfileNavigation) |pending| switch (pending) {
-            .profile_view => return "Revert all unsaved Tax Profile and Registration changes and return to Tax Profile view mode.",
+            .profile_view => return "Revert all unsaved Tax Profile changes and return to Tax Profile view mode.",
             else => {},
         };
-        return if (self.regPage.dirty() and self.taxProfiles.profileDirty())
-            "Your unsaved Tax Profile and Registration changes will be discarded. Stay here to keep editing, or discard them and continue."
-        else if (self.regPage.dirty())
-            "Your unsaved Registration changes will be discarded. Stay here to keep editing, or discard them and continue."
-        else
-            "Your unsaved Tax Profile changes will be discarded. Stay here to keep editing, or discard them and continue.";
+        return "Your unsaved Tax Profile changes will be discarded. Stay here to keep editing, or discard them and continue.";
     }
 
     pub fn profileDiscardNavigationLabel(self: *const Model) []const u8 {
@@ -3699,61 +3525,72 @@ pub const Model = struct {
         return self.taxProfiles.businessFieldsVisible();
     }
 
-    pub fn profileRegistrationLoadFailureVisible(self: *const Model) bool {
-        return !self.regLoaded or self.regLoadFailed;
-    }
-
     pub fn profileEoptTierLabel(self: *const Model) []const u8 {
-        if (!self.regLoaded or self.regLoadFailed) return "Not recorded";
-        return self.regPage.eoptTierLabel();
+        return self.taxProfiles.eoptTierLabel();
     }
 
-    fn profileEoptTierSelectionValid(self: *const Model) bool {
-        const tier = self.regPage.eoptTier() orelse return false;
-        return switch (tier) {
-            .micro, .small, .medium, .large => true,
-            .not_applicable => false,
-        };
+    pub fn profileAccountingPeriodBasisLabel(self: *const Model) []const u8 {
+        return self.taxProfiles.accountingPeriodBasisLabel();
+    }
+
+    pub fn profileAccountingPeriodCalendarSelected(
+        self: *const Model,
+    ) bool {
+        return self.taxProfiles.accountingPeriodBasisSelected(.calendar);
+    }
+
+    pub fn profileAccountingPeriodFiscalSelected(
+        self: *const Model,
+    ) bool {
+        return self.taxProfiles.accountingPeriodBasisSelected(.fiscal);
+    }
+
+    pub fn profileFiscalYearEndMonthVisible(self: *const Model) bool {
+        return self.profileAccountingPeriodFiscalSelected();
+    }
+
+    pub fn profileFiscalYearEndMonthValue(self: *const Model) []const u8 {
+        return self.taxProfiles.fiscal_year_end_month.text();
     }
 
     pub fn profileEoptTierMissing(self: *const Model) bool {
         return self.profileBusinessFieldsVisible() and
-            !self.profileEoptTierSelectionValid();
+            self.taxProfiles.eopt_tier == null;
     }
 
     pub fn profileEoptMicroSelected(self: *const Model) bool {
-        return self.regPage.eoptTier() == .micro;
+        return self.taxProfiles.eoptTierSelected(.micro);
     }
 
     pub fn profileEoptSmallSelected(self: *const Model) bool {
-        return self.regPage.eoptTier() == .small;
+        return self.taxProfiles.eoptTierSelected(.small);
     }
 
     pub fn profileEoptMediumSelected(self: *const Model) bool {
-        return self.regPage.eoptTier() == .medium;
+        return self.taxProfiles.eoptTierSelected(.medium);
     }
 
     pub fn profileEoptLargeSelected(self: *const Model) bool {
-        return self.regPage.eoptTier() == .large;
+        return self.taxProfiles.eoptTierSelected(.large);
     }
 
     pub fn profilePrimaryLineOfBusinessValue(self: *const Model) []const u8 {
-        return self.profilePrimaryLineOfBusiness.text();
+        return self.taxProfiles.primary_line_of_business.text();
     }
 
     pub fn profilePrimaryLineOfBusinessDisplayValue(
         self: *const Model,
     ) []const u8 {
-        const primary = self.regPage.primaryBusinessActivity() orelse
-            return "Not recorded";
-        return primary.line_of_business.asSlice();
+        return recordedProfileValue(
+            self.taxProfiles.primaryLineOfBusinessText(),
+        );
     }
 
     pub fn profilePrimaryLineOfBusinessMissing(self: *const Model) bool {
         return self.profileBusinessFieldsVisible() and
             std.mem.trim(
                 u8,
-                self.profilePrimaryLineOfBusiness.text(),
+                self.taxProfiles.primary_line_of_business.text(),
                 " \t\r\n",
             ).len == 0;
     }
@@ -3785,18 +3622,6 @@ pub const Model = struct {
 
     pub fn profileSourceReferenceDisabled(self: *const Model) bool {
         return self.taxProfiles.source_kind == .manual_entry;
-    }
-
-    pub fn profileGwaUnsetSelected(self: *const Model) bool {
-        return self.taxProfiles.government_withholding_agent == .unset;
-    }
-
-    pub fn profileGwaNoSelected(self: *const Model) bool {
-        return self.taxProfiles.government_withholding_agent == .no;
-    }
-
-    pub fn profileGwaYesSelected(self: *const Model) bool {
-        return self.taxProfiles.government_withholding_agent == .yes;
     }
 
     pub fn profileTinValue(self: *const Model) []const u8 {
@@ -3939,22 +3764,6 @@ pub const Model = struct {
         return self.taxProfiles.foreign_tax_number.text();
     }
 
-    pub fn profileBusinessLineValue(self: *const Model) []const u8 {
-        return self.taxProfiles.business_line.text();
-    }
-
-    pub fn profileAtcValue(self: *const Model) []const u8 {
-        return self.taxProfiles.atc.text();
-    }
-
-    pub fn profileTaxTypeValue(self: *const Model) []const u8 {
-        return self.taxProfiles.tax_type.text();
-    }
-
-    pub fn profileSpecialRateBasisValue(self: *const Model) []const u8 {
-        return self.taxProfiles.special_rate_basis.text();
-    }
-
     pub fn profileEffectiveFromValue(self: *const Model) []const u8 {
         return self.taxProfiles.effective_from.text();
     }
@@ -4030,30 +3839,6 @@ pub const Model = struct {
 
     pub fn profileForeignTaxNumberDisplayValue(self: *const Model) []const u8 {
         return recordedProfileValue(self.profileForeignTaxNumberValue());
-    }
-
-    pub fn profileBusinessLineDisplayValue(self: *const Model) []const u8 {
-        return recordedProfileValue(self.profileBusinessLineValue());
-    }
-
-    pub fn profileAtcDisplayValue(self: *const Model) []const u8 {
-        return recordedProfileValue(self.profileAtcValue());
-    }
-
-    pub fn profileTaxTypeDisplayValue(self: *const Model) []const u8 {
-        return recordedProfileValue(self.profileTaxTypeValue());
-    }
-
-    pub fn profileSpecialRateBasisDisplayValue(self: *const Model) []const u8 {
-        return recordedProfileValue(self.profileSpecialRateBasisValue());
-    }
-
-    pub fn profileGovernmentWithholdingDisplayValue(self: *const Model) []const u8 {
-        return switch (self.taxProfiles.government_withholding_agent) {
-            .unset => "Not recorded",
-            .no => "No",
-            .yes => "Yes",
-        };
     }
 
     pub fn profileEffectiveFromDisplayValue(self: *const Model) []const u8 {
@@ -4574,7 +4359,8 @@ pub const Model = struct {
 
     pub fn profileFactsSummaryVisible(self: *const Model) bool {
         return !self.taxProfiles.editing_new and
-            self.taxProfiles.factsSummaryAvailable();
+            (self.taxProfiles.consolidationReviewRequired() or
+                self.taxProfiles.factsSummaryAvailable());
     }
 
     /// States which taxpayer details a year uses, in plain language. Carry
@@ -4584,6 +4370,9 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
+        if (self.taxProfiles.consolidationReviewRequired()) {
+            return "Migration review required: legacy Registration records did not prove one unambiguous EOPT tier or Primary Line of Business. Review this Base Tax Profile against source records; the marker remains until it is explicitly confirmed.";
+        }
         const year = self.taxProfiles.factsSummaryYear();
         if (self.taxProfiles.factsMissingForYear()) {
             return std.fmt.allocPrint(
@@ -4806,7 +4595,7 @@ pub const Model = struct {
 
     /// True only while a surface that hosts the yearly setup workspace is on
     /// screen. Since the calendar remediation, that is three places: the
-    /// Profile Settings page's Registration & Forms section, the same
+    /// Profile Settings page's Forms Set section, the same
     /// section inside the taxpayer dashboard's inline Profile tab, and the
     /// dashboard's Forms tab, which its edit-year flow made a manager
     /// surface. The dashboard calendar tab stays browse-only; staged work is
@@ -4977,18 +4766,6 @@ pub const Model = struct {
 
     pub fn profileForeignTaxNumberAutofocus(self: *const Model) bool {
         return self.profileCompletionTarget == .foreign_tax_number;
-    }
-
-    pub fn profileBusinessLineAutofocus(self: *const Model) bool {
-        return self.profileCompletionTarget == .line_of_business;
-    }
-
-    pub fn profileAtcAutofocus(self: *const Model) bool {
-        return self.profileCompletionTarget == .atc;
-    }
-
-    pub fn profileTaxTypeAutofocus(self: *const Model) bool {
-        return self.profileCompletionTarget == .tax_type;
     }
 
     pub fn profileFormsLegacyResetVisible(self: *const Model) bool {
@@ -5788,7 +5565,7 @@ pub const Model = struct {
             .forms => "Back to Tax Form Library",
             .profile_settings => switch (self.taxFormProfileReturnProfileSection) {
                 .tax_profile => "Back to Tax Profile",
-                .tax_forms => "Back to Registration & Forms",
+                .tax_forms => "Back to Forms Set",
                 .email => "Back to Email Settings",
             },
         };
@@ -5827,24 +5604,13 @@ pub const Model = struct {
     }
 
     pub fn taxFormProfileStatus(self: *const Model) []const u8 {
-        if (annualElectionPilotOpen(self)) {
-            if (!self.taxFormProfileComposed.loaded) {
-                return "Tax Profile status unavailable";
-            }
-            return switch (self.taxFormProfileComposed.readiness
-                .base_tax_profile.status) {
-                .ready, .locked, .not_applicable => "Tax Profile details ready",
-                .unresolved => "Tax Profile incomplete",
-                .reserved, .review_required, .invalid => "Tax Profile requires review",
-            };
-        }
         return switch (self.taxFormProfilePage.filingReadiness()) {
             .unavailable => "No Tax Form Profile is available for this form",
             .inactive => "Inactive for this tax year - saved history is read-only",
             .conflict => "A newer saved revision must be reviewed",
             .editing => "Editing Tax Form Profile",
             .missing_inherited_values => "Tax Profile incomplete",
-            .missing_annual_setup => "Tax Form Profile setup is incomplete",
+            .missing_annual_setup => "Tax Form Profile details are missing",
             .requires_review => "Saved setup requires review",
             .ready => "Profile setup ready",
         };
@@ -5854,21 +5620,6 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
-        if (annualElectionPilotOpen(self)) {
-            if (!self.taxFormProfileComposed.loaded) {
-                return "Tax Profile status unavailable";
-            }
-            const layer = self.taxFormProfileComposed.readiness
-                .base_tax_profile;
-            if (layer.status != .unresolved) return self.taxFormProfileStatus();
-            const count = layer.missingKeys().len;
-            if (count == 0) return "Not ready — inherited Tax Profile is invalid";
-            return std.fmt.allocPrint(
-                arena,
-                "Not ready — {d} inherited Tax Profile field{s} missing",
-                .{ count, if (count == 1) "" else "s" },
-            ) catch "Not ready — inherited Tax Profile fields missing";
-        }
         if (self.taxFormProfilePage.filingReadiness() !=
             .missing_inherited_values)
         {
@@ -5884,18 +5635,6 @@ pub const Model = struct {
     }
 
     pub fn taxFormProfileStatusTone(self: *const Model) []const u8 {
-        if (annualElectionPilotOpen(self)) {
-            if (!self.taxFormProfileComposed.loaded) return "destructive";
-            return switch (self.taxFormProfileComposed.readiness
-                .base_tax_profile.status) {
-                .ready, .locked, .not_applicable => "primary",
-                .unresolved,
-                .reserved,
-                .review_required,
-                .invalid,
-                => "destructive",
-            };
-        }
         return switch (self.taxFormProfilePage.filingReadiness()) {
             .ready => "primary",
             .editing => "secondary",
@@ -5911,10 +5650,10 @@ pub const Model = struct {
     pub fn taxFormProfileDescription(self: *const Model) []const u8 {
         return switch (self.taxFormProfilePage.page() orelse
             .calendar_only_no_profile) {
-            .calendar_only_no_profile => "This catalog entry is calendar-only and has no filing profile.",
+            .calendar_only_no_profile => "This catalog entry is calendar-only and has no filing setup.",
             .inactive_history_only => "This form is not active in the selected year. Existing setup remains available as history and cannot be changed.",
-            .inherited_only => "This form composes inherited Tax Profile details, filing context, and the saved annual income-tax-rate election. It has no duplicated annual form-specific setup.",
-            .needs_setup => "Confirm only the form-specific roles or registrations that truthfully apply for this tax year.",
+            .inherited_only => "This form uses the saved Tax Profile and has no additional yearly details.",
+            .needs_setup => "Complete only the yearly details specific to this tax form.",
             .viewing_ready => "These form-specific selections are saved only for this taxpayer, tax year, form revision, and setup specification.",
             .editing => "Changes remain local until Save. Cancel restores the exact saved Tax Form Profile.",
         };
@@ -5999,10 +5738,15 @@ pub const Model = struct {
             .zip_code => self.taxFormProfileInherited.zip.text(),
             .contact_number => self.taxFormProfileInherited.contact.text(),
             .email_address => self.taxFormProfileInherited.email.text(),
+            .accounting_period_basis => if (self.taxFormProfileInherited.accounting_period_basis) |value| value.label() else "",
+            .eopt_tier => self.taxFormProfileInherited.eopt_tier.text(),
+            .line_of_business => self
+                .taxFormProfileInherited
+                .primary_line_of_business
+                .text(),
             .date_of_birth,
             .citizenship,
             .foreign_tax_number,
-            .line_of_business,
             .atc,
             .tax_type,
             .government_withholding_agent,
@@ -6011,31 +5755,10 @@ pub const Model = struct {
         };
     }
 
-    /// Annual income-tax elections and the shared Tax Profile are separate
-    /// streams. Keep the exact missing inherited facts visible on this form
-    /// page so a saved 8% election cannot be mistaken for a complete filer
-    /// header.
     pub fn taxFormProfileMissingInheritedRows(
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const TaxFormProfileInheritedRow {
-        if (annualElectionPilotOpen(self)) {
-            if (!self.taxFormProfileComposed.loaded) return &.{};
-            const keys = self.taxFormProfileComposed.readiness
-                .base_tax_profile.missingKeys();
-            const rows = arena.alloc(
-                TaxFormProfileInheritedRow,
-                keys.len,
-            ) catch return &.{};
-            for (keys, 0..) |key, index| {
-                rows[index] = .{
-                    .id = index,
-                    .label = profile_ui.reusableFieldLabel(key),
-                    .value = "Required for this form",
-                };
-            }
-            return rows;
-        }
         const form_index = self.taxFormProfileFormIndex orelse return &.{};
         if (form_index >= form_catalog.registry_count) return &.{};
         const definition = &form_catalog.forms[form_index];
@@ -6063,21 +5786,25 @@ pub const Model = struct {
         return rows[0..count];
     }
 
+    fn taxFormProfileHasMissingInheritedField(self: *const Model) bool {
+        const form_index = self.taxFormProfileFormIndex orelse return false;
+        if (form_index >= form_catalog.registry_count) return false;
+        for (form_catalog.forms[form_index].fields) |field_definition| {
+            if (field_definition.provenance != .profile or
+                field_definition.profile_presence != .required) continue;
+            const profile_key = field_definition.profile_key orelse continue;
+            const key = std.meta.stringToEnum(
+                profile_fields.ReusableField,
+                profile_key,
+            ) orelse continue;
+            if (self.taxFormProfileInheritedValue(key).len == 0) return true;
+        }
+        return false;
+    }
+
     pub fn taxFormProfileMissingInheritedVisible(
         self: *const Model,
     ) bool {
-        if (annualElectionPilotOpen(self)) {
-            if (!self.taxFormProfileComposed.loaded) return true;
-            return switch (self.taxFormProfileComposed.readiness
-                .base_tax_profile.status) {
-                .ready, .locked, .not_applicable => false,
-                .unresolved,
-                .reserved,
-                .review_required,
-                .invalid,
-                => true,
-            };
-        }
         return self.taxFormProfilePage.filingReadiness() ==
             .missing_inherited_values;
     }
@@ -6101,16 +5828,6 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
-        if (annualElectionPilotOpen(self)) {
-            if (!self.taxFormProfileComposed.loaded) {
-                return "Tax Profile status unavailable";
-            }
-            if (self.taxFormProfileComposed.readiness.base_tax_profile.status !=
-                .unresolved)
-            {
-                return "Tax Profile details require review";
-            }
-        }
         const count = self.taxFormProfileMissingInheritedRows(arena).len;
         return std.fmt.allocPrint(
             arena,
@@ -6119,66 +5836,18 @@ pub const Model = struct {
         ) catch "Not ready — inherited Tax Profile fields missing";
     }
 
-    pub fn taxFormProfileRegistrationRepairVisible(
-        self: *const Model,
-    ) bool {
-        if (!annualElectionPilotOpen(self) or
-            !self.taxFormProfileComposed.loaded) return false;
-        return switch (self.taxFormProfileComposed.readiness
-            .registration_bindings.status) {
-            .ready, .locked, .not_applicable => false,
-            .unresolved,
-            .reserved,
-            .review_required,
-            .invalid,
-            => true,
-        };
-    }
-
-    pub fn taxFormProfileRegistrationRepairTitle(
-        self: *const Model,
-    ) []const u8 {
-        return switch (self.taxFormProfileComposed.readiness
-            .registration_bindings.status) {
-            .unresolved, .reserved => "Registration details incomplete",
-            .review_required, .invalid => "Registration details require review",
-            .ready, .locked, .not_applicable => "Registration details ready",
-        };
-    }
-
-    pub fn taxFormProfileRegistrationRepairAction(
-        self: *const Model,
-    ) []const u8 {
-        return switch (self.taxFormProfileComposed.readiness
-            .registration_bindings.status) {
-            .unresolved, .reserved => "Complete Registration",
-            .review_required, .invalid => "Review Registration",
-            .ready, .locked, .not_applicable => "View Registration",
-        };
-    }
-
     pub fn taxFormProfileFilingContextVisible(self: *const Model) bool {
-        return annualElectionPilotOpen(self) and
-            self.taxFormProfileComposed.loaded;
+        return std.mem.eql(u8, self.taxFormProfileCode(), "2551Q");
     }
 
     pub fn taxFormProfileQuarterLabel(
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
-        if (self.taxFormProfileComposed.filing_context) |context| {
-            const quarter = context.period.quarter() orelse
-                return "Quarter unavailable";
-            return std.fmt.allocPrint(
-                arena,
-                "Q{d}",
-                .{quarter},
-            ) catch "Quarter unavailable";
-        }
         return std.fmt.allocPrint(
             arena,
             "Q{d}",
-            .{self.annualIncomeTaxElection.filing_quarter},
+            .{self.taxFormProfileFilingQuarter},
         ) catch "Quarter unavailable";
     }
 
@@ -6186,21 +5855,31 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
-        const context = self.taxFormProfileComposed.filing_context orelse
+        const identity = self.taxFormProfilePage.viewedIdentity() orelse
             return "Taxable period unavailable";
-        const first = context.return_period_start orelse
+        const quarter = self.taxFormProfileFilingQuarter;
+        if (quarter < 1 or quarter > 4) return "Taxable period unavailable";
+        const basis = self.taxFormProfileInherited.accounting_period_basis orelse
             return "Taxable period unavailable";
-        const last = context.return_period_end orelse
+        var filing: percentage_tax_ui.State = .{};
+        filing.reset(identity.tax_year, quarter) catch
+            return "Taxable period unavailable";
+        filing.bindAccountingPeriod(.{
+            .basis = basis,
+            .fiscal_year_end_month = self.taxFormProfileInherited.fiscal_year_end_month,
+        }) catch return "Taxable period unavailable";
+        const period = filing.taxablePeriod() catch
             return "Taxable period unavailable";
         return std.fmt.allocPrint(
             arena,
-            "Calendar basis: {d:0>2}/01/{d:0>4} - {d:0>2}/{d:0>2}/{d:0>4}. Fiscal-year context is unavailable until it is recorded in the Tax Profile.",
+            "{d:0>2}/{d:0>2}/{d:0>4} - {d:0>2}/{d:0>2}/{d:0>4}",
             .{
-                first.month,
-                first.year,
-                last.month,
-                last.day,
-                last.year,
+                period.from.month,
+                period.from.day,
+                period.from.year,
+                period.until.month,
+                period.until.day,
+                period.until.year,
             },
         ) catch "Taxable period unavailable";
     }
@@ -6209,32 +5888,43 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const TaxFormProfileInheritedRow {
-        const labels = [_][]const u8{
-            "Taxpayer Identification Number (TIN)",
-            "Revenue District Office (RDO) code",
-            "Taxpayer or registered name",
-            "Registered address",
-            "ZIP code",
-            "Contact number",
-            "Registered email address",
-        };
-        const values = [_][]const u8{
-            self.taxFormProfileInheritedTin(),
-            self.taxFormProfileInheritedRdo(),
-            self.taxFormProfileInheritedName(),
-            self.taxFormProfileInheritedAddress(),
-            self.taxFormProfileInheritedZip(),
-            self.taxFormProfileInheritedContact(),
-            self.taxFormProfileInheritedEmail(),
-        };
+        const form_index = self.taxFormProfileFormIndex orelse return &.{};
+        if (form_index >= form_catalog.registry_count) return &.{};
+        const definition = &form_catalog.forms[form_index];
         const rows = arena.alloc(
             TaxFormProfileInheritedRow,
-            labels.len,
+            definition.fields.len,
         ) catch return &.{};
-        for (labels, values, 0..) |label, value, index| {
-            rows[index] = .{ .id = index, .label = label, .value = value };
+        var seen: [std.meta.fields(profile_fields.ReusableField).len]profile_fields.ReusableField = undefined;
+        var seen_count: usize = 0;
+        var count: usize = 0;
+        for (definition.fields) |field_definition| {
+            if (field_definition.provenance != .profile) continue;
+            const profile_key = field_definition.profile_key orelse continue;
+            const key = std.meta.stringToEnum(
+                profile_fields.ReusableField,
+                profile_key,
+            ) orelse continue;
+            var duplicate = false;
+            for (seen[0..seen_count]) |prior| {
+                if (prior == key) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate) continue;
+            seen[seen_count] = key;
+            seen_count += 1;
+            rows[count] = .{
+                .id = count,
+                .label = profile_ui.reusableFieldLabel(key),
+                .value = recordedProfileValue(
+                    self.taxFormProfileInheritedValue(key),
+                ),
+            };
+            count += 1;
         }
-        return rows;
+        return rows[0..count];
     }
 
     pub fn taxFormProfileEditVisible(self: *const Model) bool {
@@ -6245,6 +5935,7 @@ pub const Model = struct {
     pub fn taxFormProfileEditTaxProfileVisible(self: *const Model) bool {
         return self.taxFormProfilePage.active and
             self.taxFormProfilePage.setup_mode != .calendar_only and
+            self.taxFormProfileHasMissingInheritedField() and
             !self.taxFormProfileEditing() and
             !self.taxpayerYearEditing();
     }
@@ -6254,7 +5945,12 @@ pub const Model = struct {
     }
 
     pub fn taxFormProfileCancelDisabled(self: *const Model) bool {
-        return !self.taxFormProfilePage.affordances().can_cancel;
+        if (!self.taxFormProfileEditing()) return true;
+        // Clean Cancel is navigation back to the saved Details view. Dirty
+        // Cancel remains disabled only while the state machine cannot safely
+        // offer its discard confirmation (for example, during a save).
+        return self.taxFormProfilePage.dirty() and
+            !self.taxFormProfilePage.affordances().can_cancel;
     }
 
     pub fn taxFormProfileReviewVisible(self: *const Model) bool {
@@ -6471,7 +6167,14 @@ pub const Model = struct {
             );
             rows[index] = .{
                 .id = index,
-                .label = taxFormProfileFieldLabel(field),
+                .label = taxFormProfileFieldLabel(
+                    arena,
+                    field,
+                    if (self.taxFormProfilePage.viewedIdentity()) |identity|
+                        identity.tax_year
+                    else
+                        null,
+                ),
                 .value = taxFormProfileValueLabel(
                     self,
                     arena,
@@ -6527,23 +6230,6 @@ pub const Model = struct {
         return true;
     }
 
-    pub fn taxFormProfileChoicesRegistrationRepairVisible(
-        self: *const Model,
-    ) bool {
-        if (!self.taxFormProfileChoicesEmpty()) return false;
-        const form_index = self.taxFormProfileFormIndex orelse return false;
-        if (form_index >= form_catalog.registry_count) return false;
-        const field_index = self.taxFormProfilePickerField orelse return false;
-        const fields = form_catalog.forms[form_index].tax_form_profile.values;
-        if (field_index >= fields.len) return false;
-        return switch (fields[field_index].source_kind) {
-            .business_activity_anchor,
-            .registration_obligation_anchor,
-            => true,
-            .named_profile_role, .user_entry, .catalog_default => false,
-        };
-    }
-
     pub fn taxpayerYearSettingsVisible(self: *const Model) bool {
         const form_index = self.taxFormProfileFormIndex orelse return false;
         if (form_index >= form_catalog.registry_count) return false;
@@ -6554,18 +6240,6 @@ pub const Model = struct {
     }
 
     pub fn taxpayerYearStatus(self: *const Model) []const u8 {
-        if (annualElectionPilotOpen(self)) {
-            if (!self.taxFormProfileComposed.loaded) return "Unresolved";
-            return switch (self.taxFormProfileComposed.readiness
-                .annual_income_tax_election.status) {
-                .not_applicable => "Not applicable",
-                .unresolved => "Unresolved",
-                .ready => "Ready",
-                .reserved => "Reserved",
-                .locked => "Locked",
-                .review_required, .invalid => "Review required",
-            };
-        }
         return switch (self.taxpayerYearPage.readinessStatus()) {
             .unavailable => "Unavailable",
             .inactive => "Taxpayer is inactive",
@@ -6580,15 +6254,6 @@ pub const Model = struct {
     }
 
     pub fn taxpayerYearStatusTone(self: *const Model) []const u8 {
-        if (annualElectionPilotOpen(self)) {
-            if (!self.taxFormProfileComposed.loaded) return "destructive";
-            return switch (self.taxFormProfileComposed.readiness
-                .annual_income_tax_election.status) {
-                .not_applicable, .ready, .locked => "primary",
-                .reserved => "secondary",
-                .unresolved, .review_required, .invalid => "destructive",
-            };
-        }
         return switch (self.taxpayerYearPage.readinessStatus()) {
             .ready => "primary",
             .editing, .inactive, .no_consuming_forms, .unavailable => "secondary",
@@ -6605,18 +6270,11 @@ pub const Model = struct {
     }
 
     pub fn taxpayerYearEditVisible(self: *const Model) bool {
-        if (annualElectionPilotOpen(self)) {
-            return annualIncomeTaxElectionCandidateEditable(self) and
-                self.taxpayerYearPage.affordances().can_edit and
-                !self.taxFormProfileEditing();
-        }
         return self.taxpayerYearPage.affordances().can_edit and
             !self.taxFormProfileEditing();
     }
 
     pub fn taxpayerYearSaveDisabled(self: *const Model) bool {
-        if (annualElectionPilotOpen(self) and
-            !annualIncomeTaxElectionCandidateEditable(self)) return true;
         return !self.taxpayerYearPage.affordances().can_save;
     }
 
@@ -6625,12 +6283,10 @@ pub const Model = struct {
     }
 
     pub fn taxpayerYearReviewVisible(self: *const Model) bool {
-        if (annualElectionPilotOpen(self)) return false;
         return self.taxpayerYearPage.affordances().can_acknowledge_review;
     }
 
     pub fn taxpayerYearCopyPriorYearVisible(self: *const Model) bool {
-        if (annualElectionPilotOpen(self)) return false;
         return self.taxpayerYearPage.affordances().can_copy_prior_year and
             !self.taxFormProfileEditing();
     }
@@ -6649,7 +6305,6 @@ pub const Model = struct {
     }
 
     pub fn taxpayerYearConflictVisible(self: *const Model) bool {
-        if (annualElectionPilotOpen(self)) return false;
         return self.taxpayerYearPage.pendingConflict() != null;
     }
 
@@ -6678,7 +6333,6 @@ pub const Model = struct {
     }
 
     pub fn taxpayerYearDeductionVisible(self: *const Model) bool {
-        if (annualElectionPilotOpen(self)) return false;
         return self.taxpayerYearPage.consumption.deduction_method_when_graduated and
             taxpayerYearRateElection(self) == .graduated;
     }
@@ -6700,105 +6354,41 @@ pub const Model = struct {
     }
 
     pub fn taxpayerYearEligibilityLabel(self: *const Model) []const u8 {
-        if (!annualElectionPilotOpen(self)) return "Not applicable";
-        return switch (self.annualIncomeTaxElection.eligibility) {
-            .eligible => "Eligible individual percentage-tax taxpayer",
-            .taxpayer_type_ineligible => "Only eligible individual business/professional taxpayers may elect this rate",
-            .classification_unresolved => "Tax Classification must be confirmed first",
-            .business_commencement_unresolved => "Business commencement is not confirmed in Registration",
-            .percentage_tax_registration_missing => "A confirmed percentage-tax registration is required",
-            .vat_registered => "VAT-registered taxpayers are not eligible for this election",
-            .registration_requires_review => "Registration evidence requires review",
-            .unresolved => "Eligibility has not been resolved",
-            .load_failed => "Eligibility could not be loaded",
-        };
+        _ = self;
+        return "Not applicable";
     }
 
     pub fn taxpayerYearInitialQuarterLabel(
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
-        const quarter = self.annualIncomeTaxElection.initial_applicable_quarter orelse
-            return "Unresolved";
-        return std.fmt.allocPrint(
-            arena,
-            "Q{d}",
-            .{quarter},
-        ) catch "Unresolved";
+        _ = self;
+        _ = arena;
+        return "Q1";
     }
 
     pub fn taxpayerYearSourceLabel(
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
-        const current = self.annualIncomeTaxElection.current orelse
-            return "No saved annual source";
-        const source = switch (current.provenance.kind) {
-            .statutory_default => "Statutory default",
-            .form_1901 => "Form 1901 evidence",
-            .form_1905 => "Form 1905 evidence",
-            .form_1701q => "Form 1701Q",
-            .form_2551q => "Form 2551Q",
-            .migration => "Migrated evidence",
-            .statutory_disqualification => "Statutory disqualification",
-        };
-        if (current.provenance.filing_quarter) |quarter| {
-            return std.fmt.allocPrint(
-                arena,
-                "{s}, Q{d} (sequence {d})",
-                .{ source, quarter, current.sequence },
-            ) catch source;
-        }
-        return std.fmt.allocPrint(
-            arena,
-            "{s} (sequence {d})",
-            .{ source, current.sequence },
-        ) catch source;
+        _ = self;
+        _ = arena;
+        return "Managed by the Tax Form Profile";
     }
 
     pub fn taxpayerYearLockStateLabel(self: *const Model) []const u8 {
-        const current = self.annualIncomeTaxElection.current orelse
-            return "Unresolved - no annual choice saved";
-        return switch (current.state) {
-            .candidate => "Editable candidate; locks only at the filing boundary",
-            .reserved => "Reserved by a queued initial-quarter filing",
-            .confirmed => "Locked by a submitted filing or reviewed evidence",
-            .review_required => "Historical evidence conflicts; review required",
-        };
+        _ = self;
+        return "";
     }
 
     pub fn taxpayerYearBlockNoticeVisible(self: *const Model) bool {
-        if (!annualElectionPilotOpen(self)) return false;
-        if (self.annualIncomeTaxElection.load_failed) return true;
-        if (self.annualIncomeTaxElection.eligibility != .eligible) return true;
-        if (self.annualIncomeTaxElection.current) |current| {
-            if (current.state == .review_required) return true;
-        }
-        const initial = self.annualIncomeTaxElection.initial_applicable_quarter orelse
-            return true;
-        if (self.annualIncomeTaxElection.filing_quarter == initial) return false;
-        const current = self.annualIncomeTaxElection.current orelse return true;
-        return current.state != .confirmed;
+        _ = self;
+        return false;
     }
 
     pub fn taxpayerYearBlockNotice(self: *const Model) []const u8 {
-        if (self.annualIncomeTaxElection.load_failed) {
-            return "The saved annual income tax rate could not be loaded.";
-        }
-        if (self.annualIncomeTaxElection.eligibility != .eligible) {
-            return self.taxpayerYearEligibilityLabel();
-        }
-        if (self.annualIncomeTaxElection.current) |current| {
-            if (current.state == .review_required) {
-                return "Conflicting annual income-tax-rate evidence requires review before filing.";
-            }
-        }
-        const initial = self.annualIncomeTaxElection.initial_applicable_quarter orelse
-            return "Resolve the initial-quarter income tax rate first.";
-        if (self.annualIncomeTaxElection.filing_quarter != initial) {
-            return "Resolve the initial-quarter income tax rate first. A later quarter cannot establish the annual choice merely because it is filed first.";
-        }
-        return "Resolve the annual income-tax-rate election before filing.";
+        _ = self;
+        return "";
     }
 
     pub fn profileFormsShowMoreVisible(self: *const Model) bool {
@@ -6901,340 +6491,6 @@ pub const Model = struct {
 
     pub fn profileTaxFormsActive(self: *const Model) bool {
         return self.profileSetupSection == .tax_forms;
-    }
-
-    pub fn regSectionVisible(self: *const Model) bool {
-        return self.profileTaxFormsActive() and !self.editingNewProfile();
-    }
-
-    pub fn regLoadFail(self: *const Model) bool {
-        return self.regSectionVisible() and self.regLoadFailed;
-    }
-
-    pub fn regContent(self: *const Model) bool {
-        return self.regSectionVisible() and self.regLoaded and
-            !self.regLoadFailed;
-    }
-
-    pub fn regEditing(self: *const Model) bool {
-        return self.regPage.opened and
-            self.regPage.page_state == .editing;
-    }
-
-    pub fn regEditVisible(self: *const Model) bool {
-        return self.regPage.affordances().can_begin_edit;
-    }
-
-    pub fn regSaveDisabled(self: *const Model) bool {
-        return !self.regPage.affordances().can_save;
-    }
-
-    pub fn regCancelDisabled(self: *const Model) bool {
-        return !self.regPage.affordances().can_cancel;
-    }
-
-    pub fn regAddActDisabled(self: *const Model) bool {
-        return !self.regPage.affordances().can_add_business_activity;
-    }
-
-    pub fn regAddObDisabled(self: *const Model) bool {
-        return !self.regPage.affordances().can_add_registration_obligation;
-    }
-
-    pub fn regActVisible(self: *const Model) bool {
-        return self.regPage.affordances().show_business_activity_section;
-    }
-
-    pub fn regObVisible(self: *const Model) bool {
-        return self.regPage.affordances().show_registration_obligation_section;
-    }
-
-    pub fn regActEmpty(self: *const Model) bool {
-        for (self.regPage.businessActivities()) |*activity| {
-            if (!isPrimaryRegistrationActivity(activity)) return false;
-        }
-        return true;
-    }
-
-    pub fn regObEmpty(self: *const Model) bool {
-        return self.regPage.registrationObligations().len == 0;
-    }
-
-    pub fn regReview(self: *const Model) bool {
-        return self.regPage.reviewRequiredRows().len != 0;
-    }
-
-    pub fn regFactsVisible(self: *const Model) bool {
-        for (self.regPage.confirmedReadOnlyFacts()) |fact| switch (fact) {
-            .eopt_tier => {},
-            else => return true,
-        };
-        return false;
-    }
-
-    pub fn regReviewLabel(
-        self: *const Model,
-        arena: std.mem.Allocator,
-    ) []const u8 {
-        const count = self.regPage.reviewRequiredRows().len;
-        return std.fmt.allocPrint(
-            arena,
-            "{d} imported or migrated registration {s} require review before use.",
-            .{ count, if (count == 1) "item" else "items" },
-        ) catch "Registration items require review before use.";
-    }
-
-    pub fn regConflict(self: *const Model) bool {
-        return self.regPage.conflict != null;
-    }
-
-    pub fn regDialog(self: *const Model) bool {
-        return self.regDialogMode != .none;
-    }
-
-    pub fn regActivityDialog(self: *const Model) bool {
-        return self.regDialogMode == .add_activity or
-            self.regDialogMode == .edit_activity;
-    }
-
-    pub fn regDialogTitle(self: *const Model) []const u8 {
-        return switch (self.regDialogMode) {
-            .add_activity => "Add business activity",
-            .edit_activity => "Edit business activity",
-            .add_obligation => "Add registration obligation",
-            .edit_obligation => "Edit registration obligation",
-            .none => "Registration detail",
-        };
-    }
-
-    pub fn regLine(self: *const Model) []const u8 {
-        return self.regLineOfBusiness.text();
-    }
-
-    pub fn regAtcValue(self: *const Model) []const u8 {
-        return self.regAtc.text();
-    }
-
-    pub fn regFrom(self: *const Model) []const u8 {
-        return self.regEffectiveFrom.text();
-    }
-
-    pub fn regUntil(self: *const Model) []const u8 {
-        return self.regEffectiveUntil.text();
-    }
-
-    pub fn regOtherValue(self: *const Model) []const u8 {
-        return self.regOtherTaxType.text();
-    }
-
-    pub fn regOtherVisible(self: *const Model) bool {
-        return self.regObligationDraftKind == .withholding_other;
-    }
-
-    pub fn regErrVisible(self: *const Model) bool {
-        return self.regEditorError.text().len != 0;
-    }
-
-    pub fn regErrText(self: *const Model) []const u8 {
-        return self.regEditorError.text();
-    }
-
-    pub fn regIncome(self: *const Model) bool {
-        return self.regObligationDraftKind == .registered_income_tax;
-    }
-
-    pub fn regVat(self: *const Model) bool {
-        return self.regObligationDraftKind == .vat;
-    }
-
-    pub fn regPct(self: *const Model) bool {
-        return self.regObligationDraftKind == .percentage_tax;
-    }
-
-    pub fn regWhComp(self: *const Model) bool {
-        return self.regObligationDraftKind == .withholding_compensation;
-    }
-
-    pub fn regWhExpanded(self: *const Model) bool {
-        return self.regObligationDraftKind == .withholding_expanded;
-    }
-
-    pub fn regWhFinal(self: *const Model) bool {
-        return self.regObligationDraftKind == .withholding_final;
-    }
-
-    pub fn regWhOther(self: *const Model) bool {
-        return self.regObligationDraftKind == .withholding_other;
-    }
-
-    fn regEffectiveLabel(
-        period: profile_registration.EffectivePeriod,
-        arena: std.mem.Allocator,
-    ) []const u8 {
-        if (period.until) |until| {
-            return std.fmt.allocPrint(
-                arena,
-                "{d:0>4}-{d:0>2}-{d:0>2} to {d:0>4}-{d:0>2}-{d:0>2}",
-                .{
-                    period.from.year,
-                    period.from.month,
-                    period.from.day,
-                    until.year,
-                    until.month,
-                    until.day,
-                },
-            ) catch "Effective period unavailable";
-        }
-        return std.fmt.allocPrint(
-            arena,
-            "From {d:0>4}-{d:0>2}-{d:0>2}",
-            .{ period.from.year, period.from.month, period.from.day },
-        ) catch "Effective period unavailable";
-    }
-
-    fn isPrimaryRegistrationActivity(
-        activity: *const profile_registration_ui.BusinessActivityRow,
-    ) bool {
-        return std.mem.eql(
-            u8,
-            activity.anchor_id.asSlice(),
-            profile_registration_ui.primary_business_activity_anchor,
-        );
-    }
-
-    pub fn regActRows(
-        self: *const Model,
-        arena: std.mem.Allocator,
-    ) []const RegistrationActivityView {
-        const source = self.regPage.businessActivities();
-        const rows = arena.alloc(RegistrationActivityView, source.len) catch
-            return &.{};
-        var row_count: usize = 0;
-        for (source, 0..) |*activity, index| {
-            if (isPrimaryRegistrationActivity(activity)) continue;
-            rows[row_count] = .{
-                .id = index,
-                .line_of_business = activity.line_of_business.asSlice(),
-                .atc = if (activity.atc) |*atc| atc.asSlice() else "Not recorded",
-                .effective = regEffectiveLabel(
-                    activity.effective,
-                    arena,
-                ),
-            };
-            row_count += 1;
-        }
-        return rows[0..row_count];
-    }
-
-    pub fn regObRows(
-        self: *const Model,
-        arena: std.mem.Allocator,
-    ) []const RegistrationObligationView {
-        const source = self.regPage.registrationObligations();
-        const rows = arena.alloc(RegistrationObligationView, source.len) catch
-            return &.{};
-        for (source, 0..) |*obligation, index| {
-            const label: []const u8 = switch (obligation.kind) {
-                .registered_income_tax => "Income tax",
-                .vat => "Value-added tax (VAT)",
-                .percentage_tax => "Percentage tax",
-                .withholding => |withholding| switch (withholding) {
-                    .compensation => "Withholding - compensation",
-                    .expanded => "Withholding - expanded",
-                    .final => "Withholding - final",
-                    .other => |value| std.fmt.allocPrint(
-                        arena,
-                        "Withholding - {s}",
-                        .{value.asSlice()},
-                    ) catch "Other withholding tax",
-                    .unspecified_requires_review => "Withholding - review required",
-                },
-                .unknown_requires_review => "Registration type requires review",
-            };
-            rows[index] = .{
-                .id = index,
-                .kind = label,
-                .effective = regEffectiveLabel(
-                    obligation.effective,
-                    arena,
-                ),
-            };
-        }
-        return rows;
-    }
-
-    pub fn regFactRows(
-        self: *const Model,
-        arena: std.mem.Allocator,
-    ) []const RegistrationFactView {
-        const source = self.regPage.confirmedReadOnlyFacts();
-        const rows = arena.alloc(RegistrationFactView, source.len) catch
-            return &.{};
-        var row_count: usize = 0;
-        for (source) |fact| {
-            switch (fact) {
-                .eopt_tier => continue,
-                else => {},
-            }
-            const label: []const u8 = switch (fact) {
-                .agent_designation => "Withholding-agent designation",
-                .eopt_tier => unreachable,
-                .registration_activity_status => "Registration status",
-                .special_law_or_treaty_basis => "Special-law or treaty basis",
-            };
-            const value: []const u8 = switch (fact) {
-                .agent_designation => |item| switch (item.value) {
-                    .not_designated => "Not designated",
-                    .government_withholding_agent => "Government withholding agent",
-                    .top_withholding_agent => "Top withholding agent",
-                    .government_and_top_withholding_agent => "Government and top withholding agent",
-                    .unknown_requires_review => "Review required",
-                },
-                .eopt_tier => |item| switch (item.value) {
-                    .not_applicable => "Not applicable",
-                    .micro => "Micro",
-                    .small => "Small",
-                    .medium => "Medium",
-                    .large => "Large",
-                    .unknown_requires_review => "Review required",
-                },
-                .registration_activity_status => |item| switch (item.value) {
-                    .active => "Active",
-                    .inactive => "Inactive",
-                    .unknown_requires_review => "Review required",
-                },
-                .special_law_or_treaty_basis => |item| switch (item.value) {
-                    .special_law => |basis| std.fmt.allocPrint(
-                        arena,
-                        "Special law: {s}",
-                        .{basis.asSlice()},
-                    ) catch "Special law",
-                    .treaty => |basis| std.fmt.allocPrint(
-                        arena,
-                        "Treaty: {s}",
-                        .{basis.asSlice()},
-                    ) catch "Treaty",
-                    .unknown_requires_review => "Review required",
-                },
-            };
-            const effective = switch (fact) {
-                inline else => |item| regEffectiveLabel(
-                    item.metadata.effective,
-                    arena,
-                ),
-            };
-            rows[row_count] = .{
-                .id = row_count,
-                .fact_label = label,
-                .detail = std.fmt.allocPrint(
-                    arena,
-                    "{s} - {s}",
-                    .{ value, effective },
-                ) catch value,
-            };
-            row_count += 1;
-        }
-        return rows[0..row_count];
     }
 
     /// What the COR card says about the referenced document.
@@ -8549,9 +7805,8 @@ pub const Model = struct {
             const launch = self.profileDeadlineLaunchProjection(&deadline);
             if (launch.ready) {
                 switch (launch.assessment.status) {
-                    .needs_profile => {},
-                    .profile_not_eligible, .unavailable => actions = .{},
-                    .ready_new, .ready_resume, .needs_activity_selection => {},
+                    .ready_new, .ready_resume => {},
+                    else => actions = .{},
                 }
             }
         }
@@ -9444,511 +8699,31 @@ fn selectProfileRdo(model: *Model, entry_index: usize) void {
     syncProfileRdoControl(model);
 }
 
-fn resetRegistrationDialog(model: *Model) void {
-    model.regDialogMode = .none;
-    model.regSelectedIndex = null;
-    model.regLineOfBusiness.clear();
-    model.regAtc.clear();
-    model.regEffectiveFrom.clear();
-    model.regEffectiveUntil.clear();
-    model.regOtherTaxType.clear();
-    model.regEditorError.clear();
-}
-
-fn regSelectedTaxYear(model: *const Model) ?u16 {
-    const year_value = model.taxProfiles.workspaceYear() orelse
-        profileBrowseAvailabilityYear(model);
-    if (year_value < 1 or year_value > 9999) return null;
-    return @intCast(year_value);
-}
-
-fn regViewDate(model: *const Model) ?profile_model.Date {
-    const tax_year = regSelectedTaxYear(model) orelse return null;
-    return profile_model.Date.init(tax_year, 12, 31) catch null;
-}
-
-fn loadRegistrationPage(model: *Model) void {
-    model.regLoaded = false;
-    model.regLoadFailed = false;
-    resetRegistrationDialog(model);
-    const allocator = model.taxProfiles.allocator orelse {
-        model.regLoadFailed = true;
-        return;
-    };
-    const store = model.taxProfiles.store orelse {
-        model.regLoadFailed = true;
-        return;
-    };
-    const profile_id = model.taxProfiles.selectedProfileDomainId() orelse
-        return;
-    const viewed_on = regViewDate(model) orelse {
-        model.regLoadFailed = true;
-        return;
-    };
-    const tax_year = regSelectedTaxYear(model) orelse {
-        model.regLoadFailed = true;
-        return;
-    };
-    var owned = profile_persistence.loadRegistrationAggregateForYear(
-        store,
-        allocator,
-        profile_id,
-        tax_year,
-    ) catch {
-        model.regLoadFailed = true;
-        return;
-    };
-    defer owned.deinit(allocator);
-    model.regPage = profile_registration_ui.State.open(.{
-        .aggregate = &owned.aggregate,
-        .viewed_on = viewed_on,
-        .selected_tax_year = tax_year,
-        .subject_kind = model.taxProfiles.subjectKind(),
-        .natural_person_classification = model.taxProfiles.naturalPersonClassification(),
-        .expected_sequence = owned.stream_sequence,
-    }) catch {
-        model.regLoadFailed = true;
-        return;
-    };
-    model.regLoaded = true;
-    syncCompleteProfileRegistrationControls(model);
-}
-
-fn syncRegistrationTaxpayerContext(model: *Model) void {
-    if (!model.regPage.opened) return;
-    model.regPage.setTaxpayerContext(
-        model.taxProfiles.subjectKind(),
-        model.taxProfiles.naturalPersonClassification(),
-    );
-}
-
-fn syncCompleteProfileRegistrationControls(model: *Model) void {
-    model.profileClassificationPickerVisible = false;
-    model.profileEoptPickerVisible = false;
-    model.profilePrimaryLineOfBusiness.clear();
-    const primary = model.regPage.primaryBusinessActivity() orelse return;
-    model.profilePrimaryLineOfBusiness.set(
-        primary.line_of_business.asSlice(),
-    );
-}
-
-fn ensureCompleteProfileRegistrationLoaded(model: *Model) bool {
-    if (model.taxProfiles.editing_new) return false;
-    if (!model.regLoaded or model.regLoadFailed) {
-        ensureYearWorkspaceOpen(model);
-        if (!model.regLoaded or model.regLoadFailed) {
-            loadRegistrationPage(model);
-        }
-    }
-    if (!model.regLoaded or model.regLoadFailed) {
-        model.taxProfiles.reportFormLaunchFailure(
-            "Registration details could not be loaded. Retry before editing this Tax Profile.",
-        );
-        return false;
-    }
-    syncRegistrationTaxpayerContext(model);
-    syncCompleteProfileRegistrationControls(model);
-    return true;
-}
-
-fn initializeNewCompleteProfileRegistration(model: *Model) bool {
-    const raw_year = std.mem.trim(
-        u8,
-        model.taxProfiles.tax_year.text(),
-        " \t\r\n",
-    );
-    const tax_year = std.fmt.parseInt(u16, raw_year, 10) catch {
-        model.regLoadFailed = true;
-        return false;
-    };
-    const placeholder = profile_model.ProfileId.parse(
-        "new-profile-placeholder",
-    ) catch unreachable;
-    const aggregate: profile_registration.RegistrationAggregate = .{
-        .profile_id = placeholder,
-    };
-    const viewed_on = profile_model.Date.init(tax_year, 12, 31) catch {
-        model.regLoadFailed = true;
-        return false;
-    };
-    model.regPage = profile_registration_ui.State.open(.{
-        .aggregate = &aggregate,
-        .viewed_on = viewed_on,
-        .selected_tax_year = tax_year,
-        .subject_kind = model.taxProfiles.subjectKind(),
-        .natural_person_classification = model.taxProfiles.naturalPersonClassification(),
-        .expected_sequence = 0,
-    }) catch {
-        model.regLoadFailed = true;
-        return false;
-    };
-    model.regPage.beginEdit() catch {
-        model.regLoadFailed = true;
-        return false;
-    };
-    model.regLoaded = true;
-    model.regLoadFailed = false;
-    syncCompleteProfileRegistrationControls(model);
-    return true;
-}
-
 fn beginCompleteProfileEdit(model: *Model) void {
-    if (!ensureCompleteProfileRegistrationLoaded(model)) return;
-    model.regPage.beginEdit() catch return;
     model.taxProfiles.editSelected();
-    if (!model.taxProfiles.profileEditing()) {
-        loadRegistrationPage(model);
-        return;
-    }
-    syncRegistrationTaxpayerContext(model);
-    syncCompleteProfileRegistrationControls(model);
+    if (!model.taxProfiles.profileEditing()) return;
     syncProfileIdentityControls(model);
-}
-
-fn completeProfilePrimaryPeriod(
-    model: *const Model,
-) ?profile_registration.EffectivePeriod {
-    if (model.regPage.primaryBusinessActivity()) |primary| {
-        return primary.effective;
-    }
-    const tax_year = regSelectedTaxYear(model) orelse return null;
-    const from = profile_model.Date.init(tax_year, 1, 1) catch return null;
-    return profile_registration.EffectivePeriod.init(from, null) catch null;
 }
 
 fn applyCompleteProfilePrimaryLineOfBusiness(
     model: *Model,
     edit: canvas.TextInputEvent,
 ) void {
-    if (!model.regEditing()) return;
-    model.profilePrimaryLineOfBusiness.apply(edit);
-    const value = std.mem.trim(
-        u8,
-        model.profilePrimaryLineOfBusiness.text(),
-        " \t\r\n",
-    );
-    const existing = model.regPage.primaryBusinessActivity();
-    if (value.len == 0) {
-        if (existing != null) {
-            model.regPage.removePrimaryBusinessActivity() catch {
-                model.regEditorError.set(
-                    "The primary Line of Business could not be cleared.",
-                );
-            };
-        }
-        return;
-    }
-
-    const effective = completeProfilePrimaryPeriod(model) orelse return;
-    var atc_storage: [32]u8 = undefined;
-    var atc: ?[]const u8 = null;
-    if (existing) |primary| {
-        if (primary.atc) |*code| {
-            const source = code.asSlice();
-            if (source.len <= atc_storage.len) {
-                @memcpy(atc_storage[0..source.len], source);
-                atc = atc_storage[0..source.len];
-            }
-        }
-    }
-    model.regPage.setPrimaryBusinessActivity(
-        value,
-        atc,
-        effective,
-    ) catch {
-        model.regEditorError.set(
-            "Enter a valid primary Line of Business.",
-        );
-    };
+    if (!model.taxProfiles.profileEditing() and
+        !model.taxProfiles.profileCreating()) return;
+    model.taxProfiles.primary_line_of_business.apply(edit);
+    model.taxProfiles.captureInputTruncation();
 }
 
 fn selectCompleteProfileEopt(
     model: *Model,
-    tier: profile_registration_ui.EditableEoptTier,
+    tier: profile_model.EoptTier,
 ) void {
-    if (!model.regEditing()) return;
-    const effective = model.regPage.eoptTierEffective() orelse blk: {
-        const tax_year = regSelectedTaxYear(model) orelse return;
-        const from = profile_model.Date.init(tax_year, 1, 1) catch return;
-        break :blk profile_registration.EffectivePeriod.init(
-            from,
-            null,
-        ) catch return;
-    };
-    model.regPage.setEoptTier(tier, effective) catch {
-        model.regEditorError.set("The EOPT Tier could not be changed.");
-        return;
-    };
+    if (!model.taxProfiles.profileEditing() and
+        !model.taxProfiles.profileCreating()) return;
+    model.taxProfiles.setEoptTier(tier);
     model.profileEoptPickerVisible = false;
 }
-
-fn setRegistrationDateBuffers(
-    model: *Model,
-    period: profile_registration.EffectivePeriod,
-) void {
-    var from: [10]u8 = undefined;
-    model.regEffectiveFrom.set(period.from.writeIso(&from));
-    if (period.until) |until| {
-        var until_buffer: [10]u8 = undefined;
-        model.regEffectiveUntil.set(
-            until.writeIso(&until_buffer),
-        );
-    } else {
-        model.regEffectiveUntil.clear();
-    }
-}
-
-fn defaultRegistrationPeriod(model: *Model) void {
-    const viewed_on = regViewDate(model) orelse return;
-    const from = profile_model.Date.init(viewed_on.year, 1, 1) catch return;
-    setRegistrationDateBuffers(model, .{ .from = from, .until = null });
-}
-
-fn beginRegistrationActivityDialog(
-    model: *Model,
-    index: ?usize,
-) void {
-    resetRegistrationDialog(model);
-    if (index) |selected| {
-        const rows = model.regPage.businessActivities();
-        if (selected >= rows.len) return;
-        const row = &rows[selected];
-        model.regDialogMode = .edit_activity;
-        model.regSelectedIndex = selected;
-        model.regLineOfBusiness.set(row.line_of_business.asSlice());
-        if (row.atc) |*atc| model.regAtc.set(atc.asSlice());
-        setRegistrationDateBuffers(model, row.effective);
-    } else {
-        model.regDialogMode = .add_activity;
-        defaultRegistrationPeriod(model);
-    }
-}
-
-fn setRegistrationObligationDraft(
-    model: *Model,
-    kind: profile_registration.RegistrationObligationKind,
-) void {
-    switch (kind) {
-        .registered_income_tax => model.regObligationDraftKind =
-            .registered_income_tax,
-        .vat => model.regObligationDraftKind = .vat,
-        .percentage_tax => model.regObligationDraftKind =
-            .percentage_tax,
-        .withholding => |withholding| switch (withholding) {
-            .compensation => model.regObligationDraftKind =
-                .withholding_compensation,
-            .expanded => model.regObligationDraftKind =
-                .withholding_expanded,
-            .final => model.regObligationDraftKind =
-                .withholding_final,
-            .other => |value| {
-                model.regObligationDraftKind = .withholding_other;
-                model.regOtherTaxType.set(value.asSlice());
-            },
-            .unspecified_requires_review => {},
-        },
-        .unknown_requires_review => {},
-    }
-}
-
-fn beginRegistrationObligationDialog(
-    model: *Model,
-    index: ?usize,
-) void {
-    resetRegistrationDialog(model);
-    model.regObligationDraftKind = .registered_income_tax;
-    if (index) |selected| {
-        const rows = model.regPage.registrationObligations();
-        if (selected >= rows.len) return;
-        const row = &rows[selected];
-        model.regDialogMode = .edit_obligation;
-        model.regSelectedIndex = selected;
-        setRegistrationObligationDraft(model, row.kind);
-        setRegistrationDateBuffers(model, row.effective);
-    } else {
-        model.regDialogMode = .add_obligation;
-        defaultRegistrationPeriod(model);
-    }
-}
-
-fn regDraftPeriod(
-    model: *Model,
-) ?profile_registration.EffectivePeriod {
-    const from = profile_model.Date.parseIso(
-        model.regEffectiveFrom.text(),
-    ) catch return null;
-    const until = if (std.mem.trim(
-        u8,
-        model.regEffectiveUntil.text(),
-        " \t\r\n",
-    ).len == 0)
-        null
-    else
-        profile_model.Date.parseIso(
-            model.regEffectiveUntil.text(),
-        ) catch return null;
-    return profile_registration.EffectivePeriod.init(from, until) catch null;
-}
-
-fn regTypedObligation(
-    model: *const Model,
-) ?profile_registration_ui.TypedObligationInput {
-    return switch (model.regObligationDraftKind) {
-        .registered_income_tax => .registered_income_tax,
-        .vat => .vat,
-        .percentage_tax => .percentage_tax,
-        .withholding_compensation => .withholding_compensation,
-        .withholding_expanded => .withholding_expanded,
-        .withholding_final => .withholding_final,
-        .withholding_other => if (std.mem.trim(
-            u8,
-            model.regOtherTaxType.text(),
-            " \t\r\n",
-        ).len == 0)
-            null
-        else
-            .{ .withholding_other = model.regOtherTaxType.text() },
-    };
-}
-
-fn commitRegistrationDialog(model: *Model) void {
-    model.regEditorError.clear();
-    const period = regDraftPeriod(model) orelse {
-        model.regEditorError.set(
-            "Enter valid YYYY-MM-DD effectivity dates.",
-        );
-        return;
-    };
-    switch (model.regDialogMode) {
-        .add_activity => {
-            const store = model.taxProfiles.store orelse return;
-            const generated = store.generateOpaqueId() catch return;
-            const anchor = profile_registration.ActivityAnchorId.parse(
-                &generated,
-            ) catch return;
-            model.regPage.addBusinessActivity(
-                anchor,
-                model.regLineOfBusiness.text(),
-                model.regAtc.text(),
-                period,
-            ) catch {
-                model.regEditorError.set(
-                    "Enter a line of business and a valid optional ATC.",
-                );
-                return;
-            };
-        },
-        .edit_activity => {
-            const index = model.regSelectedIndex orelse return;
-            const rows = model.regPage.businessActivities();
-            if (index >= rows.len) return;
-            model.regPage.updateBusinessActivity(
-                rows[index].anchor_id,
-                model.regLineOfBusiness.text(),
-                model.regAtc.text(),
-                period,
-            ) catch {
-                model.regEditorError.set(
-                    "Enter a line of business and a valid optional ATC.",
-                );
-                return;
-            };
-        },
-        .add_obligation => {
-            const input = regTypedObligation(model) orelse {
-                model.regEditorError.set(
-                    "Enter the other withholding registration type.",
-                );
-                return;
-            };
-            const store = model.taxProfiles.store orelse return;
-            const generated = store.generateOpaqueId() catch return;
-            const anchor = profile_registration.ObligationAnchorId.parse(
-                &generated,
-            ) catch return;
-            model.regPage.addRegistrationObligation(
-                anchor,
-                input,
-                period,
-            ) catch {
-                model.regEditorError.set(
-                    "This obligation conflicts with another active registration.",
-                );
-                return;
-            };
-        },
-        .edit_obligation => {
-            const index = model.regSelectedIndex orelse return;
-            const rows = model.regPage.registrationObligations();
-            if (index >= rows.len) return;
-            const input = regTypedObligation(model) orelse {
-                model.regEditorError.set(
-                    "Enter the other withholding registration type.",
-                );
-                return;
-            };
-            model.regPage.updateRegistrationObligation(
-                rows[index].anchor_id,
-                input,
-                period,
-            ) catch {
-                model.regEditorError.set(
-                    "This obligation conflicts with another active registration.",
-                );
-                return;
-            };
-        },
-        .none => return,
-    }
-    resetRegistrationDialog(model);
-}
-
-fn saveRegistrationPage(model: *Model) void {
-    const intent = model.regPage.beginSave() catch return;
-    const allocator = model.taxProfiles.allocator orelse {
-        model.regPage.saveFailed() catch {};
-        return;
-    };
-    const store = model.taxProfiles.store orelse {
-        model.regPage.saveFailed() catch {};
-        return;
-    };
-    const new_sequence = profile_persistence.saveRegistrationIntent(
-        store,
-        allocator,
-        &intent,
-    ) catch |err| {
-        if (err == profile_store.Error.RegistrationStreamConflict) {
-            const current = store.registrationStreamSequence(
-                intent.profile_id.asSlice(),
-            ) catch {
-                model.regPage.saveFailed() catch {};
-                return;
-            };
-            model.regPage.noteConflict(current) catch {};
-        } else {
-            model.regPage.saveFailed() catch {};
-        }
-        return;
-    };
-    model.regPage.saveSucceeded(new_sequence) catch return;
-    loadRegistrationPage(model);
-    refreshProfileFormLaunchAssessments(model);
-    returnToTaxFormProfileAfterRegistration(model);
-}
-
-fn returnToTaxFormProfileAfterRegistration(model: *Model) void {
-    if (!model.taxFormProfileRegistrationReturnPending) return;
-    model.taxFormProfileRegistrationReturnPending = false;
-    const picker_field = model.taxFormProfilePickerField;
-    loadTaxFormProfileChoices(model);
-    model.taxFormProfilePickerField = picker_field;
-    refreshTaxFormProfileCardStates(model);
-    refreshOpenedTaxFormProfileBindingReadiness(model);
-    refreshOpenedRuntimeComposedSnapshot(model);
-    navigate(model, .tax_form_profile);
-}
-
 fn openProfileSetupYear(model: *Model, year: i32) void {
     if (!model.taxProfiles.openYearWorkspace(year)) return;
     model.libraryFilter.filter_picker_visible = false;
@@ -9958,27 +8733,6 @@ fn openProfileSetupYear(model: *Model, year: i32) void {
     model.libraryFilter.category_mask = 0;
     resetProfileFormsPage(model);
     refreshProfileFormLaunchAssessments(model);
-    loadRegistrationPage(model);
-}
-
-fn openTaxFormProfileRegistrationRepair(model: *Model) void {
-    if (!model.taxFormProfileChoicesRegistrationRepairVisible() and
-        !model.taxFormProfileRegistrationRepairVisible()) return;
-    model.taxFormProfileSection = .details;
-    const identity = model.taxFormProfilePage.viewedIdentity() orelse return;
-    openProfileSetupYear(model, @intCast(identity.tax_year));
-    if (model.taxProfiles.workspaceYear() != @as(i32, identity.tax_year) or
-        !model.regLoaded)
-    {
-        return;
-    }
-    model.taxFormProfileRegistrationReturnPending = true;
-    model.profileSetupSection = .tax_forms;
-    model.dashboardSection = .profile_settings;
-    navigate(model, .taxpayer_dashboard);
-    model.regPage.beginEdit() catch {
-        model.taxFormProfileRegistrationReturnPending = false;
-    };
 }
 
 /// Opens the yearly setup workspace when its section becomes visible, so the
@@ -10172,16 +8926,15 @@ fn libraryPeriodForSlot(
 }
 
 fn periodLaunchNote(
-    assessment: form_ui.LaunchAssessment,
-    assessment_ready: bool,
+    readiness: FormReadiness,
 ) []const u8 {
-    if (!assessment_ready) return "";
-    return switch (assessment.status) {
+    if (!readiness.evaluated) return "";
+    return switch (readiness.status()) {
         .ready_new, .ready_resume => "",
-        .needs_profile => ", complete profile before opening",
-        .needs_activity_selection => ", choose an activity before opening",
-        .profile_not_eligible => ", profile is not eligible",
-        .unavailable => ", unavailable",
+        .missing_base_profile => ", complete Tax Profile before opening",
+        .missing_tax_form_profile => ", complete Tax Form Profile before opening",
+        .inactive => ", inactive",
+        .unsupported_period => ", unavailable for this period",
     };
 }
 
@@ -10193,7 +8946,7 @@ fn appendLibraryPeriodCell(
     period: form_period.FilingPeriod,
     month_mask: u16,
     quarter_mask: u8,
-    readiness: ExactPeriodLaunchReadiness,
+    readiness: FormReadiness,
     period_active: bool,
     availability_ready: bool,
     label_override: ?[]const u8,
@@ -10251,7 +9004,7 @@ fn appendLibraryPeriodCell(
             label,
             period.taxYear(),
             status.label,
-            periodLaunchNote(readiness.launch, readiness.evaluated),
+            periodLaunchNote(readiness),
             if (row.definition.status == .calendar_only)
                 ", calendar only"
             else
@@ -10294,7 +9047,7 @@ fn populateLibraryPeriodCells(
     arena: std.mem.Allocator,
     month_mask: u16,
     quarter_mask: u8,
-    readiness: [12]ExactPeriodLaunchReadiness,
+    readiness: [12]FormReadiness,
     availability: [12]bool,
     availability_ready: [12]bool,
 ) void {
@@ -10491,7 +9244,6 @@ pub const Msg = union(enum) {
     show_form_1702_mx,
     show_form_2550q,
     show_form_2551q,
-    select_form_activity: usize,
     select_form_spouse: usize,
     clear_form_spouse,
     save_recurring_form_draft,
@@ -10540,15 +9292,10 @@ pub const Msg = union(enum) {
     income_tax_payment_bank_input: canvas.TextInputEvent,
     income_tax_payment_reference_input: canvas.TextInputEvent,
     income_tax_payment_amount_input: canvas.TextInputEvent,
-    percentage_tax_period_calendar,
-    percentage_tax_period_fiscal,
-    percentage_tax_year_end_month_input: canvas.TextInputEvent,
     percentage_tax_sheets_attached_input: canvas.TextInputEvent,
     percentage_tax_relief_none,
     percentage_tax_relief_specified,
     percentage_tax_relief_reference_input: canvas.TextInputEvent,
-    percentage_tax_election_graduated,
-    percentage_tax_election_eight_percent,
     percentage_tax_line_1_atc_input: canvas.TextInputEvent,
     percentage_tax_line_1_base_input: canvas.TextInputEvent,
     percentage_tax_line_1_rate_input: canvas.TextInputEvent,
@@ -10579,32 +9326,6 @@ pub const Msg = union(enum) {
     show_profile_tax,
     edit_tax_profile,
     show_profile_tax_forms,
-    reg_retry,
-    reg_edit,
-    reg_cancel,
-    reg_save,
-    reg_add_act,
-    reg_edit_act: usize,
-    reg_remove_act: usize,
-    reg_add_ob,
-    reg_edit_ob: usize,
-    reg_remove_ob: usize,
-    reg_dialog_cancel,
-    reg_dialog_save,
-    reg_line_input: canvas.TextInputEvent,
-    reg_atc_input: canvas.TextInputEvent,
-    reg_from_input: canvas.TextInputEvent,
-    reg_until_input: canvas.TextInputEvent,
-    reg_other_input: canvas.TextInputEvent,
-    reg_kind_income_tax,
-    reg_kind_vat,
-    reg_kind_percentage_tax,
-    reg_kind_wh_comp,
-    reg_kind_wh_expanded,
-    reg_kind_wh_final,
-    reg_kind_wh_other,
-    reg_conflict_accept,
-    reg_conflict_reload,
     profile_cor_upload,
     profile_cor_begin_review,
     profile_cor_cancel_review,
@@ -10649,12 +9370,12 @@ pub const Msg = union(enum) {
     profile_eopt_small,
     profile_eopt_medium,
     profile_eopt_large,
+    profile_accounting_period_calendar,
+    profile_accounting_period_fiscal,
+    profile_fiscal_year_end_month_input: canvas.TextInputEvent,
     profile_source_manual,
     profile_source_imported,
     profile_source_migrated,
-    profile_gwa_unset,
-    profile_gwa_no,
-    profile_gwa_yes,
     profile_tin_segment_one_input: canvas.TextInputEvent,
     profile_tin_segment_two_input: canvas.TextInputEvent,
     profile_tin_segment_three_input: canvas.TextInputEvent,
@@ -10673,10 +9394,6 @@ pub const Msg = union(enum) {
     profile_citizenship_input: canvas.TextInputEvent,
     profile_foreign_tax_number_input: canvas.TextInputEvent,
     profile_primary_line_of_business_input: canvas.TextInputEvent,
-    profile_business_line_input: canvas.TextInputEvent,
-    profile_atc_input: canvas.TextInputEvent,
-    profile_tax_type_input: canvas.TextInputEvent,
-    profile_special_rate_basis_input: canvas.TextInputEvent,
     profile_effective_from_input: canvas.TextInputEvent,
     profile_effective_until_input: canvas.TextInputEvent,
     profile_source_reference_input: canvas.TextInputEvent,
@@ -10776,7 +9493,6 @@ pub const Msg = union(enum) {
     tax_form_profile_keep_draft_after_conflict,
     tax_form_profile_reload_after_conflict,
     tax_form_profile_edit_tax_profile,
-    tax_form_profile_edit_registration,
     taxpayer_year_edit,
     taxpayer_year_cancel,
     taxpayer_year_save,
@@ -10987,7 +9703,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.pendingProfileFormLaunch = null;
             model.taxProfiles.cancelEdit();
             syncProfileIdentityControls(model);
-            _ = ensureCompleteProfileRegistrationLoaded(model);
             openProfileEditor(model);
         },
         .new_taxpayer_profile => {
@@ -11007,7 +9722,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.libraryFilter.period_filter = .all;
             resetProfileFormsBrowseFilters(model);
             model.taxProfiles.startNew();
-            _ = initializeNewCompleteProfileRegistration(model);
             syncProfileIdentityControls(model);
             openProfileEditor(model);
         },
@@ -11041,21 +9755,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .show_form_1702_mx => openGalleryOrProfileBoundForm(model, .form_1702_mx, "1702MX"),
         .show_form_2550q => openGalleryOrProfileBoundForm(model, .form_2550q, "2550Q"),
         .show_form_2551q => openGalleryOrProfileBoundForm(model, .form_2551q, "2551Q"),
-        .select_form_activity => |slot| {
-            if (rejectExact1701QContextChange(model)) return;
-            const amended = model.exact1701Q.amended();
-            const candidates = model.formProfiles.activityCandidates(.filer);
-            if (slot < candidates.len) {
-                model.formProfiles.setBusinessActivity(
-                    .filer,
-                    candidates[slot].id,
-                ) catch |err| {
-                    model.exact1701Q.reportContextBindingFailure(err);
-                    return;
-                };
-                refreshExact1701QFromCurrentProjection(model, amended);
-            }
-        },
         .select_form_spouse => |slot| {
             if (rejectExact1701QContextChange(model)) return;
             const amended = model.exact1701Q.amended();
@@ -11241,13 +9940,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .income_tax_payment_amount_input => |edit| {
             model.incomeTax.applyPaymentInput(.amount, edit);
         },
-        .percentage_tax_period_calendar => {
-            model.percentageTax.setPeriodBasis(.calendar);
-        },
-        .percentage_tax_period_fiscal => {},
-        .percentage_tax_year_end_month_input => |edit| {
-            model.percentageTax.editYearEndMonth(edit);
-        },
         .percentage_tax_sheets_attached_input => |edit| {
             model.percentageTax.editSheetsAttached(edit);
         },
@@ -11259,12 +9951,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .percentage_tax_relief_reference_input => |edit| {
             model.percentageTax.editTaxReliefReference(edit);
-        },
-        .percentage_tax_election_graduated => {
-            model.percentageTax.setIncomeTaxRateElection(.graduated);
-        },
-        .percentage_tax_election_eight_percent => {
-            model.percentageTax.setIncomeTaxRateElection(.eight_percent);
         },
         .percentage_tax_line_1_atc_input => |edit| {
             model.percentageTax.editScheduleAtc(0, edit);
@@ -11352,10 +10038,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
                 row.idLabel(),
             )) return;
             syncProfileIdentityControls(model);
-            model.regPage = .{};
-            model.regLoaded = false;
-            model.regLoadFailed = false;
-            resetRegistrationDialog(model);
             model.profileCalendarSelectedDate = null;
             model.libraryFilter.filter_picker_visible = false;
             model.libraryFilter.period_picker_visible = false;
@@ -11398,25 +10080,14 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.profileSetupSection = .tax_profile;
             model.taxProfiles.cancelEdit();
             syncProfileIdentityControls(model);
-            _ = ensureCompleteProfileRegistrationLoaded(model);
             model.dashboardSection = .profile_settings;
         },
         .show_profile_tax => {
-            if (model.regPage.dirty()) {
-                model.regEditorError.set(
-                    "Save or cancel registration edits before leaving this section.",
-                );
-                return;
-            }
             if (model.profileSetupSection != .tax_profile and
                 deferProfileNavigation(
                     model,
                     .{ .profile_section = .tax_profile },
                 )) return;
-            if (model.regEditing()) {
-                loadRegistrationPage(model);
-                syncCompleteProfileRegistrationControls(model);
-            }
             model.profileSetupSection = .tax_profile;
         },
         .edit_tax_profile => {
@@ -11432,7 +10103,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
                 model.taxProfiles.cancelEdit();
                 syncProfileIdentityControls(model);
             }
-            if (model.regEditing()) loadRegistrationPage(model);
             model.profileClassificationPickerVisible = false;
             model.profileEoptPickerVisible = false;
             model.profileSetupSection = .tax_forms;
@@ -11441,88 +10111,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.profileSetupYearQuery.clear();
             ensureYearWorkspaceOpen(model);
         },
-        .reg_retry => loadRegistrationPage(model),
-        .reg_edit => model.regPage.beginEdit() catch {},
-        .reg_cancel => {
-            model.regPage.cancel() catch {};
-            resetRegistrationDialog(model);
-            returnToTaxFormProfileAfterRegistration(model);
-        },
-        .reg_save => saveRegistrationPage(model),
-        .reg_add_act => beginRegistrationActivityDialog(
-            model,
-            null,
-        ),
-        .reg_edit_act => |index| {
-            beginRegistrationActivityDialog(model, index);
-        },
-        .reg_remove_act => |index| {
-            const rows = model.regPage.businessActivities();
-            if (index < rows.len) {
-                model.regPage.removeBusinessActivity(
-                    rows[index].anchor_id,
-                ) catch {};
-            }
-        },
-        .reg_add_ob => beginRegistrationObligationDialog(
-            model,
-            null,
-        ),
-        .reg_edit_ob => |index| {
-            beginRegistrationObligationDialog(model, index);
-        },
-        .reg_remove_ob => |index| {
-            const rows = model.regPage.registrationObligations();
-            if (index < rows.len) {
-                model.regPage.removeRegistrationObligation(
-                    rows[index].anchor_id,
-                ) catch {};
-            }
-        },
-        .reg_dialog_cancel => resetRegistrationDialog(model),
-        .reg_dialog_save => commitRegistrationDialog(model),
-        .reg_line_input => |edit| {
-            model.regLineOfBusiness.apply(edit);
-        },
-        .reg_atc_input => |edit| model.regAtc.apply(edit),
-        .reg_from_input => |edit| {
-            model.regEffectiveFrom.apply(edit);
-        },
-        .reg_until_input => |edit| {
-            model.regEffectiveUntil.apply(edit);
-        },
-        .reg_other_input => |edit| {
-            model.regOtherTaxType.apply(edit);
-        },
-        .reg_kind_income_tax => {
-            model.regObligationDraftKind = .registered_income_tax;
-        },
-        .reg_kind_vat => {
-            model.regObligationDraftKind = .vat;
-        },
-        .reg_kind_percentage_tax => {
-            model.regObligationDraftKind = .percentage_tax;
-        },
-        .reg_kind_wh_comp => {
-            model.regObligationDraftKind = .withholding_compensation;
-        },
-        .reg_kind_wh_expanded => {
-            model.regObligationDraftKind = .withholding_expanded;
-        },
-        .reg_kind_wh_final => {
-            model.regObligationDraftKind = .withholding_final;
-        },
-        .reg_kind_wh_other => {
-            model.regObligationDraftKind = .withholding_other;
-        },
-        .reg_conflict_accept => {
-            if (model.regPage.conflict) |conflict| {
-                model.regPage.acceptReviewedConflictBase(
-                    conflict.current_sequence,
-                ) catch {};
-            }
-        },
-        .reg_conflict_reload => loadRegistrationPage(model),
         .profile_cor_upload => attachCorDocument(model, fx),
         .profile_cor_begin_review => _ = model.taxProfiles.beginCorReview(),
         .profile_cor_cancel_review => model.taxProfiles.cancelCorReview(),
@@ -11565,12 +10153,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             }
         },
         .show_profile_email => {
-            if (model.regPage.dirty()) {
-                model.regEditorError.set(
-                    "Save or cancel registration edits before leaving this section.",
-                );
-                return;
-            }
             if (model.profileSetupSection != .email and
                 deferProfileNavigation(
                     model,
@@ -11580,7 +10162,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
                 model.taxProfiles.cancelEdit();
                 syncProfileIdentityControls(model);
             }
-            if (model.regEditing()) loadRegistrationPage(model);
             model.profileClassificationPickerVisible = false;
             model.profileEoptPickerVisible = false;
             model.profileSetupSection = .email;
@@ -11614,59 +10195,59 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .profile_subject_individual => {
             model.taxProfiles.setSubjectKind(.individual);
             model.profileSubjectPickerVisible = false;
-            syncRegistrationTaxpayerContext(model);
         },
         .profile_subject_corporation => {
             model.taxProfiles.setSubjectKind(.corporation);
             model.profileSubjectPickerVisible = false;
-            syncRegistrationTaxpayerContext(model);
         },
         .profile_subject_partnership => {
             model.taxProfiles.setSubjectKind(.partnership);
             model.profileSubjectPickerVisible = false;
-            syncRegistrationTaxpayerContext(model);
         },
         .profile_subject_cooperative => {
             model.taxProfiles.setSubjectKind(.cooperative);
             model.profileSubjectPickerVisible = false;
-            syncRegistrationTaxpayerContext(model);
         },
         .profile_subject_estate => {
             model.taxProfiles.setSubjectKind(.estate);
             model.profileSubjectPickerVisible = false;
-            syncRegistrationTaxpayerContext(model);
         },
         .profile_subject_trust => {
             model.taxProfiles.setSubjectKind(.trust);
             model.profileSubjectPickerVisible = false;
-            syncRegistrationTaxpayerContext(model);
         },
         .profile_subject_other_legal => {
             model.taxProfiles.setSubjectKind(.other_legal_entity);
             model.profileSubjectPickerVisible = false;
-            syncRegistrationTaxpayerContext(model);
         },
         .profile_classification_pure_compensation => {
             model.taxProfiles.setNaturalPersonClassification(
                 .pure_compensation,
             );
             model.profileClassificationPickerVisible = false;
-            syncRegistrationTaxpayerContext(model);
         },
         .profile_classification_self_employed => {
             model.taxProfiles.setNaturalPersonClassification(.self_employed);
             model.profileClassificationPickerVisible = false;
-            syncRegistrationTaxpayerContext(model);
         },
         .profile_classification_mixed_income => {
             model.taxProfiles.setNaturalPersonClassification(.mixed_income);
             model.profileClassificationPickerVisible = false;
-            syncRegistrationTaxpayerContext(model);
         },
         .profile_eopt_micro => selectCompleteProfileEopt(model, .micro),
         .profile_eopt_small => selectCompleteProfileEopt(model, .small),
         .profile_eopt_medium => selectCompleteProfileEopt(model, .medium),
         .profile_eopt_large => selectCompleteProfileEopt(model, .large),
+        .profile_accounting_period_calendar => {
+            model.taxProfiles.setAccountingPeriodBasis(.calendar);
+        },
+        .profile_accounting_period_fiscal => {
+            model.taxProfiles.setAccountingPeriodBasis(.fiscal);
+        },
+        .profile_fiscal_year_end_month_input => |edit| {
+            applyDigitsOnly(&model.taxProfiles.fiscal_year_end_month, edit);
+            model.taxProfiles.captureInputTruncation();
+        },
         .profile_source_manual => {
             model.taxProfiles.setSourceKind(.manual_entry);
         },
@@ -11675,15 +10256,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .profile_source_migrated => {
             model.taxProfiles.setSourceKind(.migrated);
-        },
-        .profile_gwa_unset => {
-            model.taxProfiles.setGovernmentWithholdingAgent(.unset);
-        },
-        .profile_gwa_no => {
-            model.taxProfiles.setGovernmentWithholdingAgent(.no);
-        },
-        .profile_gwa_yes => {
-            model.taxProfiles.setGovernmentWithholdingAgent(.yes);
         },
         .profile_setup_toggle_year_picker => {
             model.profileSetupYearPickerVisible =
@@ -11702,12 +10274,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.profileSetupYearPickerVisible = false;
             model.profileSetupYearQuery.clear();
             model.profileSetupSourcePickerVisible = false;
-            if (model.regPage.dirty()) {
-                model.regEditorError.set(
-                    "Save or cancel registration edits before changing tax year.",
-                );
-                return;
-            }
             openProfileSetupYear(model, year);
         },
         .profile_setup_retry_year => {
@@ -11793,7 +10359,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.profileCompletionTarget = null;
             model.profileCompletionFormIndex = null;
             model.pendingProfileFormLaunch = null;
-            _ = initializeNewCompleteProfileRegistration(model);
             syncProfileIdentityControls(model);
             openProfileEditor(model);
         },
@@ -11968,8 +10533,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.taxFormProfileDiscardPromptOpen = false;
             model.taxFormProfilePage.reset();
             model.taxpayerYearPage.reset();
-            model.annualIncomeTaxElection = .{};
-            model.taxFormProfileComposed = .{};
             model.taxFormProfileFormIndex = null;
             model.taxFormProfileViewedDate = null;
             model.taxFormProfilePreviousSegmentDate = null;
@@ -11980,7 +10543,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.taxFormProfileHistoryTruncated = false;
             model.taxFormProfileSection = .details;
             model.taxFormProfileInherited = .{};
-            model.taxFormProfileRegistrationReturnPending = false;
             switch (pending) {
                 .page => |page| navigate(model, page),
                 .return_context => restoreTaxFormProfileReturnContext(model),
@@ -12014,9 +10576,43 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.taxFormProfilePage.beginEdit() catch {};
         },
         .cancel_tax_form_profile => {
-            model.taxFormProfilePage.cancel() catch {};
-            model.taxFormProfileSection = .details;
-            model.taxFormProfilePickerField = null;
+            const form_index = model.taxFormProfileFormIndex orelse return;
+            const identity = model.taxFormProfilePage.viewedIdentity() orelse
+                return;
+            const viewed_on = model.taxFormProfileViewedDate orelse return;
+            const filing: ?form_period.FilingPeriod = if (std.mem.eql(
+                u8,
+                identity.form_code.asSlice(),
+                "2551Q",
+            )) .{ .quarterly = .{
+                .tax_year = identity.tax_year,
+                .quarter = model.taxFormProfileFilingQuarter,
+            } } else null;
+            if (model.taxFormProfilePage.dirty() or
+                model.taxpayerYearPage.dirty())
+            {
+                model.taxFormProfilePendingNavigation = .{
+                    .activation_segment = .{
+                        .form_index = form_index,
+                        .tax_year = identity.tax_year,
+                        .viewed_on = viewed_on,
+                        .filing = filing,
+                    },
+                };
+                model.taxFormProfileDiscardPromptOpen = true;
+                return;
+            }
+            // Re-open the exact stream and activation interval to leave Edit
+            // without manufacturing a draft mutation. This also restores the
+            // saved snapshot when the editor is clean.
+            openTaxFormProfileForYearAt(
+                model,
+                form_index,
+                identity.tax_year,
+                viewed_on,
+                true,
+                filing,
+            );
         },
         .save_tax_form_profile => saveTaxFormProfile(model),
         .tax_form_profile_toggle_picker => |field_index| {
@@ -12111,12 +10707,9 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             resolveTaxpayerYearConflict(model, false);
         },
         .tax_form_profile_edit_tax_profile => {
-            model.taxFormProfileRegistrationReturnPending = false;
             model.taxFormProfileSection = .details;
             model.taxFormProfilePage.reset();
             model.taxpayerYearPage.reset();
-            model.annualIncomeTaxElection = .{};
-            model.taxFormProfileComposed = .{};
             model.taxFormProfileFormIndex = null;
             model.taxFormProfileViewedDate = null;
             model.taxFormProfilePreviousSegmentDate = null;
@@ -12127,9 +10720,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.dashboardSection = .profile_settings;
             navigate(model, .taxpayer_dashboard);
             beginCompleteProfileEdit(model);
-        },
-        .tax_form_profile_edit_registration => {
-            openTaxFormProfileRegistrationRepair(model);
         },
         .profile_tin_segment_one_input => |edit| {
             applyProfileTinSegment(model, 0, edit);
@@ -12197,22 +10787,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .profile_primary_line_of_business_input => |edit| {
             applyCompleteProfilePrimaryLineOfBusiness(model, edit);
         },
-        .profile_business_line_input => |edit| {
-            model.taxProfiles.business_line.apply(edit);
-            model.taxProfiles.captureInputTruncation();
-        },
-        .profile_atc_input => |edit| {
-            model.taxProfiles.atc.apply(edit);
-            model.taxProfiles.captureInputTruncation();
-        },
-        .profile_tax_type_input => |edit| {
-            model.taxProfiles.tax_type.apply(edit);
-            model.taxProfiles.captureInputTruncation();
-        },
-        .profile_special_rate_basis_input => |edit| {
-            model.taxProfiles.special_rate_basis.apply(edit);
-            model.taxProfiles.captureInputTruncation();
-        },
         .profile_effective_from_input => |edit| {
             model.taxProfiles.effective_from.apply(edit);
             model.taxProfiles.captureInputTruncation();
@@ -12246,28 +10820,9 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
                 navigate(model, .form_1701q);
                 return;
             }
-            const registration_dirty = model.regPage.dirty();
-            var saved = false;
-            if (registration_dirty) {
-                const intent = model.regPage.beginSave() catch return;
-                const new_sequence = model.taxProfiles.saveCompleteProfile(
-                    &intent,
-                ) orelse {
-                    model.regPage.saveFailed() catch {};
-                    return;
-                };
-                model.regPage.saveSucceeded(new_sequence) catch {
-                    loadRegistrationPage(model);
-                    return;
-                };
-                saved = true;
-            } else {
-                saved = model.taxProfiles.save();
-            }
+            const saved = model.taxProfiles.save();
             if (saved) {
                 syncProfileIdentityControls(model);
-                loadRegistrationPage(model);
-                syncCompleteProfileRegistrationControls(model);
                 refreshSelectedProfileFormSet(model);
                 refreshTaxFormProfileCardStates(model);
                 resetProfileCalendarExportNotice(model);
@@ -12314,19 +10869,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
                     .profile_view;
                 return;
             }
-            if (model.regPage.dirty()) {
-                model.regPage.cancel() catch {};
-            }
             model.taxProfiles.cancelEdit();
-            if (mode == .creating) {
-                model.regPage = .{};
-                model.regLoaded = false;
-                model.regLoadFailed = false;
-                model.profilePrimaryLineOfBusiness.clear();
-            } else {
-                loadRegistrationPage(model);
-                syncCompleteProfileRegistrationControls(model);
-            }
             syncProfileIdentityControls(model);
             model.profileSubjectPickerVisible = false;
             model.profileClassificationPickerVisible = false;
@@ -12352,21 +10895,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .profile_discard_navigation => {
             const pending = model.pendingProfileNavigation orelse return;
             model.pendingProfileNavigation = null;
-            const was_creating = model.taxProfiles.editing_new;
-            if (model.regPage.dirty()) {
-                model.regPage.cancel() catch {};
-                resetRegistrationDialog(model);
-            }
             model.taxProfiles.cancelEdit();
-            if (was_creating) {
-                model.regPage = .{};
-                model.regLoaded = false;
-                model.regLoadFailed = false;
-                model.profilePrimaryLineOfBusiness.clear();
-            } else if (model.regPage.opened) {
-                loadRegistrationPage(model);
-                syncCompleteProfileRegistrationControls(model);
-            }
             syncProfileIdentityControls(model);
             switch (pending) {
                 .page => |page| navigate(model, page),
@@ -12897,21 +11426,7 @@ fn formAvailableForFiling(
         catalogFormRevision(definition),
         on,
     )) return false;
-    if (!std.mem.eql(u8, definition.code, "2551Q")) return true;
-    const quarter = filing.quarter() orelse return true;
-    const profile_id = model.taxProfiles.selectedProfileDomainId() orelse
-        return false;
-    const store = model.taxProfiles.store orelse return false;
-    const stream: annual_income_tax_election.StreamKey = .{
-        .profile_id = profile_id,
-        .tax_year = filing.taxYear(),
-    };
-    const current = store.resolveAnnualIncomeTaxElection(stream) catch
-        return false;
-    return annual_income_tax_election.percentageTaxReturnRequired(
-        if (current) |*event| event else null,
-        quarter,
-    ) catch false;
+    return true;
 }
 
 fn profileBrowseAvailabilityYear(model: *const Model) i32 {
@@ -12963,188 +11478,37 @@ fn taxFormProfileStream(
     };
 }
 
-fn composedFilingEffectiveOn(
-    filing: form_period.FilingPeriod,
-) !profile_model.Date {
-    try filing.validate();
-    return switch (filing) {
-        .monthly => |period| monthEndDate(
-            period.tax_year,
-            period.month,
-        ),
-        .quarterly => |period| monthEndDate(
-            period.tax_year,
-            period.quarter * 3,
-        ),
-        .annual => |period| profile_model.Date.init(
-            period.tax_year,
-            12,
-            31,
-        ),
-        // On-demand filings carry an occurrence ordinal rather than a
-        // transaction date. The production pilot is quarterly 2551Q; callers
-        // must not invent a date for another form at this boundary.
-        .on_demand => error.FilingContextDateUnavailable,
-    };
-}
-
-/// Loads every persistence owner needed by the composed read model, invokes
-/// the pure composer while those owners are alive, then copies only fixed
-/// storage into the returned runtime cache. No pointer in this result borrows
-/// SQLite rows, allocator-owned arrays, or the transient composed view.
-fn loadRuntimeComposedSnapshot(
-    model: *Model,
+fn cachedFormReadinessForViewedDate(
+    model: *const Model,
     definition: *const form_catalog.FormDefinition,
-    profile_id: profile_model.ProfileId,
-    tax_year: u16,
-    filing: form_period.FilingPeriod,
-    tax_form_profile_state: ?*const tax_form_profile_ui.State,
-) !RuntimeComposedSnapshot {
-    if (filing.taxYear() != tax_year) return error.InvalidTaxYear;
-    const effective_on = try composedFilingEffectiveOn(filing);
-    const allocator = model.taxProfiles.allocator orelse
-        return error.ProfileStoreUnavailable;
-    const store = model.taxProfiles.store orelse
-        return error.ProfileStoreUnavailable;
-
-    var base = (try profile_persistence.loadEffectiveRevision(
-        store,
-        allocator,
-        profile_id,
-        effective_on,
-    )) orelse return error.ProfileRevisionUnavailable;
-    defer base.deinit(allocator);
-
-    // The year projection retains earlier confirmed activities that ended
-    // before the filing date. `compose` still resolves obligations and the
-    // primary activity as of `effective_on`, while business commencement is
-    // derived from the earliest confirmed historical activity.
-    var normalized_registration = try profile_persistence
-        .loadRegistrationAggregateForYear(
-        store,
-        allocator,
-        profile_id,
-        tax_year,
-    );
-    defer normalized_registration.deinit(allocator);
-
-    var annual_history: ?profile_persistence
-        .OwnedAnnualIncomeTaxElectionHistory = null;
-    defer if (annual_history) |*owned| owned.deinit(allocator);
-    if (form_catalog.consumesTaxpayerYearSetting(
-        definition,
-        .income_tax_rate_election,
-    )) {
-        annual_history = try profile_persistence
-            .loadAnnualIncomeTaxElectionHistory(
-            store,
-            allocator,
-            .{ .profile_id = profile_id, .tax_year = tax_year },
-        );
-    }
-
-    const composed = try composed_tax_profile.compose(.{
-        .profile_id = profile_id,
-        .tax_year = tax_year,
-        .form_code = definition.code,
-        .form_revision = definition.revision,
-        .base_revision = &base.revision,
-        .registration_aggregate = &normalized_registration.aggregate,
-        .annual_income_tax_election = if (annual_history) |*owned|
-            &owned.history
-        else
-            null,
-        .tax_form_profile_state = tax_form_profile_state,
-        .filing_period = filing,
-    });
-
-    return .{
-        .loaded = true,
-        .readiness = composed.readiness,
-        .current_annual = if (composed.annual_income_tax_election.current) |event|
-            event.*
-        else
-            null,
-        .filing_context = composed.filing_context,
-        .ready_for_new_filing = composed.readyForNewFiling(),
+    index: usize,
+    viewed_on: profile_model.Date,
+) ?FormReadiness {
+    const slot: usize = switch (definition.cadence) {
+        .monthly => viewed_on.month - 1,
+        .quarterly => (viewed_on.month - 1) / 3,
+        .annual, .on_demand => 0,
     };
-}
+    if (slot < model.profilePeriodExactLaunchReadiness[index].len and
+        model.profilePeriodAvailabilityReady[index][slot] and
+        model.profilePeriodAvailability[index][slot])
+    {
+        const readiness = model.profilePeriodExactLaunchReadiness[index][slot];
+        if (readiness.evaluated) return readiness;
+    }
 
-fn inheritedReadinessFromComposed(
-    definition: *const form_catalog.FormDefinition,
-    snapshot: *const RuntimeComposedSnapshot,
-) tax_form_profile_ui.InheritedReadiness {
-    var required_count: u16 = 0;
-    for (definition.fields) |field_definition| {
-        if (field_definition.provenance == .profile and
-            field_definition.role == .filer and
-            field_definition.profile_presence == .required)
-        {
-            required_count +|= 1;
-        }
+    // A Forms Set interval may begin or end inside a cadence period. Use the
+    // latest evaluated active slot from the same tax year as a deterministic
+    // display fallback; never assess persistence again from a card renderer.
+    var candidate = model.profilePeriodExactLaunchReadiness[index].len;
+    while (candidate > 0) {
+        candidate -= 1;
+        if (!model.profilePeriodAvailabilityReady[index][candidate] or
+            !model.profilePeriodAvailability[index][candidate]) continue;
+        const readiness = model.profilePeriodExactLaunchReadiness[index][candidate];
+        if (readiness.evaluated) return readiness;
     }
-    if (!snapshot.loaded) return .{
-        .required_count = @max(required_count, 1),
-        .invalid_count = 1,
-    };
-    const layer = snapshot.readiness.base_tax_profile;
-    return switch (layer.status) {
-        .ready, .locked, .not_applicable => .{
-            .required_count = required_count,
-        },
-        .unresolved => .{
-            .required_count = required_count,
-            .missing_count = @intCast(@min(
-                layer.missingKeys().len,
-                required_count,
-            )),
-        },
-        .reserved, .review_required, .invalid => .{
-            .required_count = @max(required_count, 1),
-            .invalid_count = 1,
-        },
-    };
-}
-
-fn taxFormProfileCardStateFromComposed(
-    definition: *const form_catalog.FormDefinition,
-    snapshot: *const RuntimeComposedSnapshot,
-) TaxFormProfileCardState {
-    if (!snapshot.loaded) return .error_loading;
-    switch (snapshot.readiness.base_tax_profile.status) {
-        .ready, .not_applicable, .locked => {},
-        .unresolved => return .needs_tax_profile,
-        .reserved, .review_required, .invalid => return .needs_tax_profile,
-    }
-    switch (snapshot.readiness.registration_bindings.status) {
-        .ready, .not_applicable, .locked => {},
-        .unresolved => return .needs_registration,
-        .review_required, .invalid => return .requires_review,
-        .reserved => return .needs_registration,
-    }
-    switch (snapshot.readiness.annual_income_tax_election.status) {
-        .not_applicable, .locked => {},
-        .ready => if (!snapshot.ready_for_new_filing) {
-            return .needs_year_settings;
-        },
-        .unresolved => return .needs_year_settings,
-        .reserved => return .year_settings_reserved,
-        .review_required, .invalid => return .year_settings_require_review,
-    }
-    switch (snapshot.readiness.form_specific_values.status) {
-        .ready, .not_applicable, .locked => {},
-        .unresolved, .reserved => return .needs_setup,
-        .review_required, .invalid => return .requires_review,
-    }
-    switch (snapshot.readiness.filing_context.status) {
-        .ready, .not_applicable, .locked => {},
-        .unresolved, .reserved => return .needs_filing_context,
-        .review_required, .invalid => return .error_loading,
-    }
-    return if (definition.tax_form_profile.mode == .no_setup)
-        .inherited_only_ready
-    else
-        .ready;
+    return null;
 }
 
 fn launchAssessmentForViewedDate(
@@ -13153,31 +11517,12 @@ fn launchAssessmentForViewedDate(
     index: usize,
     viewed_on: profile_model.Date,
 ) form_ui.LaunchAssessment {
-    const slot: usize = switch (definition.cadence) {
-        .monthly => viewed_on.month - 1,
-        .quarterly => (viewed_on.month - 1) / 3,
-        .annual, .on_demand => 0,
-    };
-    if (slot < model.profilePeriodLaunchAssessmentsReady[index].len and
-        model.profilePeriodLaunchAssessmentsReady[index][slot] and
-        model.profilePeriodAvailabilityReady[index][slot] and
-        model.profilePeriodAvailability[index][slot])
-    {
-        return model.profilePeriodLaunchAssessments[index][slot];
-    }
-
-    // A date-effective Forms Set interval can begin or end inside a filing
-    // period. Prefer the latest filing slot that the same availability cache
-    // confirms rather than silently falling back to a different tax year or
-    // an arbitrary catalog default.
-    var candidate = model.profilePeriodLaunchAssessmentsReady[index].len;
-    while (candidate > 0) {
-        candidate -= 1;
-        if (!model.profilePeriodLaunchAssessmentsReady[index][candidate] or
-            !model.profilePeriodAvailabilityReady[index][candidate] or
-            !model.profilePeriodAvailability[index][candidate]) continue;
-        return model.profilePeriodLaunchAssessments[index][candidate];
-    }
+    if (cachedFormReadinessForViewedDate(
+        model,
+        definition,
+        index,
+        viewed_on,
+    )) |readiness| return readiness.launch;
     return model.profileFormLaunchAssessments[index];
 }
 
@@ -13195,6 +11540,11 @@ fn inheritedReadinessForForm(
             required_count +|= 1;
         }
     }
+    if (definition.status == .calendar_only or
+        definition.tax_form_profile.mode == .calendar_only)
+    {
+        return .{ .required_count = required_count };
+    }
     const assessment = launchAssessmentForViewedDate(
         model,
         definition,
@@ -13202,15 +11552,15 @@ fn inheritedReadinessForForm(
         viewed_on,
     );
     return switch (assessment.status) {
-        .needs_profile => .{
+        .missing_base_profile => .{
             .required_count = @max(required_count, assessment.issue_count),
             .missing_count = assessment.issue_count,
         },
-        .profile_not_eligible, .unavailable => .{
+        .inactive, .unsupported_period => .{
             .required_count = @max(required_count, 1),
             .invalid_count = 1,
         },
-        .ready_new, .ready_resume, .needs_activity_selection => .{
+        .missing_tax_form_profile, .ready_new, .ready_resume => .{
             .required_count = required_count,
         },
     };
@@ -13254,78 +11604,9 @@ fn taxpayerYearReadinessForForm(
 
 const LaunchTaxFormProfileBindings = struct {
     state: TaxFormProfileCardState = .ready,
-    income_tax_rate_election: ?taxpayer_year_settings_domain.IncomeTaxRateElection = null,
-    annual_election_event: ?annual_income_tax_election.Event = null,
+    income_tax_rate_election: ?form_2551q.IncomeTaxRateElection = null,
     spouse_profile_id: ?profile_model.ProfileId = null,
-    filer_activity_id: ?profile_model.BusinessActivityId = null,
-    spouse_activity_id: ?profile_model.BusinessActivityId = null,
 };
-
-fn loadActivityIdForAnchor(
-    model: *Model,
-    profile_id: profile_model.ProfileId,
-    anchor_id: []const u8,
-    on: profile_model.Date,
-) !?profile_model.BusinessActivityId {
-    const allocator = model.taxProfiles.allocator orelse
-        return error.ProfileStoreUnavailable;
-    const store = model.taxProfiles.store orelse
-        return error.ProfileStoreUnavailable;
-
-    var registration = try profile_persistence.loadRegistrationAggregateOn(
-        store,
-        allocator,
-        profile_id,
-        on,
-    );
-    defer registration.deinit(allocator);
-    var has_confirmed_registration_activity = false;
-    for (registration.business_activities) |*activity| {
-        if (!activity.metadata.review.isConfirmed() or
-            !activity.metadata.isEffective(on))
-        {
-            continue;
-        }
-        has_confirmed_registration_activity = true;
-        if (!std.mem.eql(
-            u8,
-            activity.anchor_id.asSlice(),
-            anchor_id,
-        )) continue;
-        return try profile_model.BusinessActivityId.parse(
-            activity.anchor_id.asSlice(),
-        );
-    }
-    // Once v16 Registration has confirmed activities for this exact date it
-    // owns the collection. A stale legacy anchor must not be revived from an
-    // older Profile Revision merely because it has the same text identifier.
-    if (has_confirmed_registration_activity) return null;
-
-    var date_buffer: [10]u8 = undefined;
-    var owned = (try store.getEffectiveRevision(
-        allocator,
-        profile_id.asSlice(),
-        on.writeIso(&date_buffer),
-    )) orelse return null;
-    defer owned.deinit(allocator);
-    for (owned.business_activities) |activity| {
-        if (!std.mem.eql(u8, activity.anchor_id, anchor_id)) continue;
-        const effective_from = try profile_model.Date.parseIso(
-            activity.effective_from,
-        );
-        const effective_until = if (activity.effective_until) |until|
-            try profile_model.Date.parseIso(until)
-        else
-            null;
-        const effective = try profile_model.EffectivePeriod.init(
-            effective_from,
-            effective_until,
-        );
-        if (!effective.contains(on)) continue;
-        return try profile_model.BusinessActivityId.parse(activity.id);
-    }
-    return null;
-}
 
 fn taxFormProfileLookupProfileSubjectKind(
     context: *anyopaque,
@@ -13356,95 +11637,21 @@ fn taxFormProfileLookupProfileSubjectKind(
     };
 }
 
-fn taxFormProfileLookupBusinessActivity(
-    context: *anyopaque,
-    owner_profile_id: profile_model.ProfileId,
-    anchor_id: []const u8,
-    on: profile_model.Date,
-) !?profile_model.BusinessActivityId {
-    const model: *Model = @ptrCast(@alignCast(context));
-    return loadActivityIdForAnchor(model, owner_profile_id, anchor_id, on);
-}
-
-fn taxFormProfileLookupRegistrationObligation(
-    context: *anyopaque,
-    owner_profile_id: profile_model.ProfileId,
-    semantic_key: form_catalog.TaxFormProfileSemanticKey,
-    anchor_id: []const u8,
-    on: profile_model.Date,
-) !bool {
-    const model: *Model = @ptrCast(@alignCast(context));
-    const allocator = model.taxProfiles.allocator orelse
-        return error.ProfileStoreUnavailable;
-    const store = model.taxProfiles.store orelse
-        return error.ProfileStoreUnavailable;
-    if (semantic_key == .special_rate_obligation_anchor_id) {
-        // This generated key is backed by the stable legacy special-rate
-        // registration-fact anchor. The v16 normalized special-law/treaty
-        // projection intentionally has no anchor and therefore cannot be
-        // substituted for a different saved identifier.
-        var date_buffer: [10]u8 = undefined;
-        var owned = (try store.getEffectiveRevision(
-            allocator,
-            owner_profile_id.asSlice(),
-            on.writeIso(&date_buffer),
-        )) orelse return false;
-        defer owned.deinit(allocator);
-        for (owned.registration_facts) |fact| {
-            if (!std.mem.eql(u8, fact.anchor_id, anchor_id)) continue;
-            const effective = try profile_model.EffectivePeriod.init(
-                try profile_model.Date.parseIso(fact.effective_from),
-                if (fact.effective_until) |until|
-                    try profile_model.Date.parseIso(until)
-                else
-                    null,
-            );
-            if (!effective.contains(on)) continue;
-            switch (fact.value) {
-                .special_rate_basis => return true,
-                else => return false,
-            }
-        }
-        return false;
-    }
-
-    var registration = try profile_persistence.loadRegistrationAggregateOn(
-        store,
-        allocator,
-        owner_profile_id,
-        on,
-    );
-    defer registration.deinit(allocator);
-    const parsed = try profile_registration.ObligationAnchorId.parse(anchor_id);
-    const resolved = registration.aggregate.resolveObligation(
-        parsed,
-        on,
-    ) catch |err| switch (err) {
-        error.MissingObligationAnchor => return false,
-        else => return err,
-    };
-    return resolved.confirmed != null;
-}
-
 fn resolveTaxFormProfileBindings(
     model: *Model,
     definition: *const form_catalog.FormDefinition,
     profile_id: profile_model.ProfileId,
     on: profile_model.Date,
     saved_revision: ?*const tax_form_profile_domain.Revision,
-    activity_selection_required: bool,
 ) !tax_form_profile_binding_resolver.Result {
     return tax_form_profile_binding_resolver.resolve(.{
         .form = definition,
         .filer_profile_id = profile_id,
         .on = on,
         .saved_revision = saved_revision,
-        .activity_selection_required = activity_selection_required,
     }, .{
         .context = model,
         .profile_subject_kind_fn = taxFormProfileLookupProfileSubjectKind,
-        .business_activity_fn = taxFormProfileLookupBusinessActivity,
-        .registration_obligation_fn = taxFormProfileLookupRegistrationObligation,
     });
 }
 
@@ -13455,7 +11662,6 @@ fn loadSavedTaxFormProfileBindings(
     tax_year: u16,
     on: profile_model.Date,
     activation_period: ?tax_form_profile_domain.EffectivePeriod,
-    activity_selection_required: bool,
 ) !tax_form_profile_binding_resolver.Result {
     if (definition.tax_form_profile.mode != .setup) {
         return resolveTaxFormProfileBindings(
@@ -13464,7 +11670,6 @@ fn loadSavedTaxFormProfileBindings(
             profile_id,
             on,
             null,
-            activity_selection_required,
         );
     }
     const allocator = model.taxProfiles.allocator orelse
@@ -13500,7 +11705,6 @@ fn loadSavedTaxFormProfileBindings(
         profile_id,
         on,
         saved_revision,
-        activity_selection_required,
     );
 }
 
@@ -13511,12 +11715,6 @@ fn refreshOpenedTaxFormProfileBindingReadiness(model: *Model) void {
     if (index >= form_catalog.registry_count) return;
     const viewed_on = taxFormProfileViewedOn(model) orelse return;
     const definition = &form_catalog.forms[index];
-    const launch = launchAssessmentForViewedDate(
-        model,
-        definition,
-        index,
-        viewed_on,
-    );
     const bindings = loadSavedTaxFormProfileBindings(
         model,
         definition,
@@ -13524,11 +11722,65 @@ fn refreshOpenedTaxFormProfileBindingReadiness(model: *Model) void {
         identity.tax_year,
         viewed_on,
         model.taxFormProfilePage.activationPeriod(),
-        launch.status == .needs_activity_selection,
     ) catch null;
     model.taxFormProfilePage.setSavedBindingsResolved(
         bindings != null and bindings.?.status == .ready,
     ) catch {};
+}
+
+fn load2551qTaxFormProfileChoice(
+    model: *Model,
+    definition: *const form_catalog.FormDefinition,
+    profile_id: profile_model.ProfileId,
+    tax_year: u16,
+    on: profile_model.Date,
+) !?form_2551q.IncomeTaxRateElection {
+    const allocator = model.taxProfiles.allocator orelse
+        return error.ProfileStoreUnavailable;
+    const store = model.taxProfiles.store orelse
+        return error.ProfileStoreUnavailable;
+    const activation = profileFormActivationContext(
+        model,
+        profile_id,
+        definition,
+        tax_year,
+        on,
+    ) orelse return null;
+    const stream = taxFormProfileStream(
+        profile_id,
+        definition,
+        tax_year,
+    ) orelse return null;
+    var history = try profile_persistence.loadTaxFormProfileHistory(
+        store,
+        allocator,
+        stream,
+    );
+    defer history.deinit(allocator);
+    var latest: ?*const tax_form_profile_domain.Revision = null;
+    for (history.history.revisions) |*candidate| {
+        if (candidate.review_state != .confirmed or
+            !candidate.effective.eql(activation.effective) or
+            !candidate.effectiveOn(on)) continue;
+        if (latest == null or candidate.sequence > latest.?.sequence) {
+            latest = candidate;
+        }
+    }
+    const revision = latest orelse return null;
+    const setup = tax_form_profile_domain.findValue(
+        revision.values,
+        .filer,
+        .income_tax_rate_election,
+    ) orelse return null;
+    const stable_id = switch (setup.value) {
+        .choice => |*value| value.asSlice(),
+        else => return error.WrongValueType,
+    };
+    if (std.mem.eql(u8, stable_id, "graduated")) return .graduated;
+    if (std.mem.eql(u8, stable_id, "eight_percent")) {
+        return .eight_percent;
+    }
+    return error.InvalidIncomeTaxRateElection;
 }
 
 fn loadLaunchTaxFormProfileBindings(
@@ -13546,63 +11798,9 @@ fn loadLaunchTaxFormProfileBindings(
         return .{ .state = .error_loading };
     var result: LaunchTaxFormProfileBindings = .{};
 
-    if (std.mem.eql(u8, definition.code, "2551Q")) {
-        const filing_quarter: u8 = @intCast((on.month - 1) / 3 + 1);
-        const filing: form_period.FilingPeriod = .{ .quarterly = .{
-            .tax_year = tax_year,
-            .quarter = filing_quarter,
-        } };
-        const snapshot = loadRuntimeComposedSnapshot(
-            model,
-            definition,
-            profile_id,
-            tax_year,
-            filing,
-            null,
-        ) catch return .{ .state = .error_loading };
-        const composed_state = taxFormProfileCardStateFromComposed(
-            definition,
-            &snapshot,
-        );
-        switch (composed_state) {
-            .ready, .inherited_only_ready => {},
-            else => return .{ .state = composed_state },
-        }
-        const current = snapshot.current_annual orelse {
-            // Item 13 is not applicable to a non-individual filer. The
-            // composed annual layer is the authority for that distinction.
-            if (snapshot.readiness.annual_income_tax_election.status ==
-                .not_applicable) return result;
-            return .{ .state = .needs_year_settings };
-        };
-        const item_13 = annual_income_tax_election.project2551qItem13(
-            &current,
-            tax_year,
-            filing_quarter,
-        ) catch |err| return switch (err) {
-            error.ElectionUnresolved,
-            error.ElectionNotConfirmedForLaterQuarter,
-            => .{ .state = .needs_year_settings },
-            error.ReviewRequired => .{
-                .state = .year_settings_require_review,
-            },
-            error.FilingBeforeBusinessCommencement => .{
-                .state = .unavailable,
-            },
-            else => .{ .state = .error_loading },
-        };
-        result.annual_election_event = current;
-        // Item 13 belongs only to the initial applicable quarter. Later
-        // quarters retain the confirmed annual event for UI/calculation
-        // binding, while their official return transaction receives no
-        // Item 13 value.
-        if (item_13.included()) {
-            result.income_tax_rate_election = switch (item_13.choice()) {
-                .graduated => .graduated,
-                .eight_percent => .eight_percent,
-            };
-        }
-    } else if (taxpayerYearReadinessForForm(definition, null) != .not_required) {
+    if (!std.mem.eql(u8, definition.code, "2551Q") and
+        taxpayerYearReadinessForForm(definition, null) != .not_required)
+    {
         const stream: taxpayer_year_settings_domain.StreamKey = .{
             .profile_id = profile_id,
             .tax_year = tax_year,
@@ -13615,20 +11813,23 @@ fn loadLaunchTaxFormProfileBindings(
         defer history.deinit(allocator);
         const revision = history.history.effectiveOn(on) catch |err| {
             return .{ .state = if (err == error.NoEffectiveRevision)
-                .needs_year_settings
+                .needs_setup
             else
                 .error_loading };
         };
         switch (taxpayerYearReadinessForForm(definition, revision)) {
             .not_required, .ready => {},
-            .missing => return .{ .state = .needs_year_settings },
+            .missing => return .{ .state = .needs_setup },
             .requires_review => return .{
-                .state = .year_settings_require_review,
+                .state = .requires_review,
             },
         }
         if (revision.find(.income_tax_rate_election)) |setting| {
             result.income_tax_rate_election = switch (setting.*) {
-                .income_tax_rate_election => |value| value,
+                .income_tax_rate_election => |value| switch (value) {
+                    .graduated => .graduated,
+                    .eight_percent => .eight_percent,
+                },
                 .deduction_method => return .{ .state = .error_loading },
             };
         }
@@ -13650,18 +11851,28 @@ fn loadLaunchTaxFormProfileBindings(
             ) orelse return .{ .state = .error_loading };
             break :blk activation.effective;
         } else null,
-        launch.status == .needs_activity_selection,
     ) catch return .{ .state = .error_loading };
     switch (bindings.status) {
         .ready => {
             result.spouse_profile_id = bindings.spouse_profile_id;
-            result.filer_activity_id = bindings.filer_activity_id;
-            result.spouse_activity_id = bindings.spouse_activity_id;
         },
         .needs_setup => result.state = .needs_setup,
         .requires_review => result.state = .requires_review,
     }
+    if (std.mem.eql(u8, definition.code, "2551Q")) {
+        result.income_tax_rate_election = load2551qTaxFormProfileChoice(
+            model,
+            definition,
+            profile_id,
+            tax_year,
+            on,
+        ) catch return .{ .state = .error_loading };
+        if (result.income_tax_rate_election == null) {
+            result.state = .needs_setup;
+        }
+    }
     _ = form_index;
+    _ = launch;
     return result;
 }
 
@@ -13671,8 +11882,8 @@ fn assessExactPeriodLaunch(
     form_index: usize,
     filing: form_period.FilingPeriod,
     occurrence_date: ?forms_set_resolver.Date,
-) ExactPeriodLaunchReadiness {
-    var result: ExactPeriodLaunchReadiness = .{ .evaluated = true };
+) FormReadiness {
+    var result: FormReadiness = .{ .evaluated = true };
     if (definition.status != .static_layout or
         !formAvailableForFiling(
             model,
@@ -13700,15 +11911,24 @@ fn assessExactPeriodLaunch(
         filing,
     );
     switch (result.launch.status) {
-        .needs_profile => {
+        .missing_base_profile => {
             result.form_profile_state = .needs_tax_profile;
             return result;
         },
-        .profile_not_eligible, .unavailable => {
+        .missing_tax_form_profile => {
+            result.form_profile_state = .needs_setup;
+            captureMissingTaxFormProfileFields(&result, definition);
+            return result;
+        },
+        .inactive => {
             result.form_profile_state = .unavailable;
             return result;
         },
-        .ready_new, .ready_resume, .needs_activity_selection => {},
+        .unsupported_period => {
+            result.form_profile_state = .needs_filing_context;
+            return result;
+        },
+        .ready_new, .ready_resume => {},
     }
 
     const profile_id = model.taxProfiles.selectedProfileDomainId() orelse {
@@ -13736,6 +11956,9 @@ fn assessExactPeriodLaunch(
         as_of,
         result.launch,
     ).state;
+    if (result.form_profile_state == .needs_setup) {
+        captureMissingTaxFormProfileFields(&result, definition);
+    }
     return result;
 }
 
@@ -13752,41 +11975,30 @@ fn refreshTaxFormProfileCardStates(model: *Model) void {
     if (year_value < 1 or year_value > 9999) return;
     const tax_year: u16 = @intCast(year_value);
 
-    var taxpayer_year_load_failed = false;
-    var taxpayer_year_history: ?profile_persistence.OwnedTaxpayerYearHistory = null;
-    defer if (taxpayer_year_history) |*owned| owned.deinit(allocator);
-    if (taxpayerYearConsumption(model).hasActiveConsumers()) {
-        const stream: taxpayer_year_settings_domain.StreamKey = .{
-            .profile_id = profile_id,
-            .tax_year = tax_year,
-        };
-        taxpayer_year_history = profile_persistence.loadTaxpayerYearHistory(
-            store,
-            allocator,
-            stream,
-        ) catch blk: {
-            taxpayer_year_load_failed = true;
-            break :blk null;
-        };
-    }
-
     for (&form_catalog.forms, 0..) |*definition, index| {
-        if (!model.profileFormAnyPeriodActive[index]) {
-            if (definition.tax_form_profile.mode == .setup) {
-                const stream = taxFormProfileStream(
-                    profile_id,
-                    definition,
-                    tax_year,
-                ) orelse continue;
+        // History is presentation data that the exact-period readiness cache
+        // intentionally does not own. Keep it available for setup forms while
+        // deriving every readiness label from that canonical cache below.
+        if (definition.tax_form_profile.mode == .setup) {
+            if (taxFormProfileStream(
+                profile_id,
+                definition,
+                tax_year,
+            )) |stream| {
                 var history = profile_persistence.loadTaxFormProfileHistory(
                     store,
                     allocator,
                     stream,
-                ) catch continue;
-                defer history.deinit(allocator);
-                model.taxFormProfileHistoryAvailable[index] =
-                    history.history.revisions.len != 0;
+                ) catch null;
+                if (history) |*owned| {
+                    model.taxFormProfileHistoryAvailable[index] =
+                        owned.history.revisions.len != 0;
+                    owned.deinit(allocator);
+                }
             }
+        }
+
+        if (!model.profileFormAnyPeriodActive[index]) {
             continue;
         }
         const activation_context = profileFormActivationContext(
@@ -13806,131 +12018,18 @@ fn refreshTaxFormProfileCardStates(model: *Model) void {
             model.taxFormProfileCardStates[index] = .calendar_only;
             continue;
         }
-        if (std.mem.eql(u8, definition.code, "2551Q")) {
-            const quarter = selectedFormQuarter(model, definition.code);
-            const filing: form_period.FilingPeriod = .{ .quarterly = .{
-                .tax_year = tax_year,
-                .quarter = quarter,
-            } };
-            const snapshot = loadRuntimeComposedSnapshot(
-                model,
-                definition,
-                profile_id,
-                tax_year,
-                filing,
-                null,
-            ) catch {
-                model.taxFormProfileCardStates[index] = .error_loading;
-                continue;
-            };
-            model.taxFormProfileCardStates[index] =
-                taxFormProfileCardStateFromComposed(
-                    definition,
-                    &snapshot,
-                );
-            continue;
-        }
-        const inherited = inheritedReadinessForForm(
+
+        const readiness = cachedFormReadinessForViewedDate(
             model,
             definition,
             index,
             activation_context.viewed_on,
-        );
-        if (!inherited.ready()) {
-            model.taxFormProfileCardStates[index] = .needs_tax_profile;
-            continue;
-        }
-        if (taxpayer_year_load_failed and
-            taxpayerYearReadinessForForm(definition, null) != .not_required)
-        {
-            model.taxFormProfileCardStates[index] = .error_loading;
-            continue;
-        }
-        var taxpayer_year_revision: ?*const taxpayer_year_settings_domain.Revision = null;
-        if (taxpayer_year_history) |*owned| {
-            taxpayer_year_revision = owned.history.effectiveOn(
-                activation_context.viewed_on,
-            ) catch |err| blk: {
-                if (err != error.NoEffectiveRevision) {
-                    taxpayer_year_load_failed = true;
-                }
-                break :blk null;
-            };
-        }
-        if (taxpayer_year_load_failed and
-            taxpayerYearReadinessForForm(definition, null) != .not_required)
-        {
-            model.taxFormProfileCardStates[index] = .error_loading;
-            continue;
-        }
-        switch (taxpayerYearReadinessForForm(
-            definition,
-            taxpayer_year_revision,
-        )) {
-            .not_required, .ready => {},
-            .missing => {
-                model.taxFormProfileCardStates[index] = .needs_year_settings;
-                continue;
-            },
-            .requires_review => {
-                model.taxFormProfileCardStates[index] =
-                    .year_settings_require_review;
-                continue;
-            },
-        }
-        if (definition.tax_form_profile.mode == .no_setup) {
-            model.taxFormProfileCardStates[index] = .inherited_only_ready;
-            continue;
-        }
-        const stream = taxFormProfileStream(
-            profile_id,
-            definition,
-            tax_year,
         ) orelse {
             model.taxFormProfileCardStates[index] = .error_loading;
             continue;
         };
-        var history = profile_persistence.loadTaxFormProfileHistory(
-            store,
-            allocator,
-            stream,
-        ) catch {
-            model.taxFormProfileCardStates[index] = .error_loading;
-            continue;
-        };
-        defer history.deinit(allocator);
-        model.taxFormProfileHistoryAvailable[index] =
-            history.history.revisions.len != 0;
-        var latest: ?*const tax_form_profile_domain.Revision = null;
-        for (history.history.revisions) |*revision| {
-            if (!revision.effective.eql(activation_context.effective) or
-                !revision.effectiveOn(activation_context.viewed_on)) continue;
-            if (latest == null or revision.sequence > latest.?.sequence) {
-                latest = revision;
-            }
-        }
-        const viewed_launch = launchAssessmentForViewedDate(
-            model,
-            definition,
-            index,
-            activation_context.viewed_on,
-        );
-        const bindings = resolveTaxFormProfileBindings(
-            model,
-            definition,
-            profile_id,
-            activation_context.viewed_on,
-            latest,
-            viewed_launch.status == .needs_activity_selection,
-        ) catch {
-            model.taxFormProfileCardStates[index] = .error_loading;
-            continue;
-        };
-        model.taxFormProfileCardStates[index] = switch (bindings.status) {
-            .ready => .ready,
-            .needs_setup => .needs_setup,
-            .requires_review => .requires_review,
-        };
+        model.taxFormProfileCardStates[index] =
+            TaxFormProfileCardState.fromReadiness(definition, readiness);
     }
     model.taxFormProfileCardStatesReady = true;
 }
@@ -13944,7 +12043,7 @@ fn refreshProfileFormLaunchAssessments(model: *Model) void {
         row.* = [_]bool{false} ** 12;
     }
     for (&model.profilePeriodExactLaunchReadiness) |*row| {
-        row.* = [_]ExactPeriodLaunchReadiness{.{}} ** 12;
+        row.* = [_]FormReadiness{.{}} ** 12;
     }
     for (&model.profilePeriodAvailability) |*row| {
         row.* = [_]bool{false} ** 12;
@@ -14285,29 +12384,16 @@ fn resetProfileCalendarExportNotice(model: *Model) void {
 fn saveRecurringFormDraft(model: *Model) void {
     const revision = model.formProfiles.formRevision() orelse return;
     if (std.mem.eql(u8, revision.code.asSlice(), "2551Q")) {
-        const filer = model.formProfiles.roleBinding(.filer) orelse {
+        const choice = model.percentageTax.incomeTaxRateElection() orelse {
             model.percentageTax.blockForLoadFailure(
-                error.ProfileProjectionUnavailable,
+                error.MissingIncomeTaxRateElection,
             );
-            return;
-        };
-        const store = model.taxProfiles.store orelse {
-            model.percentageTax.blockForLoadFailure(
-                error.ProfileStoreUnavailable,
-            );
-            return;
-        };
-        const current = store.resolveAnnualIncomeTaxElection(.{
-            .profile_id = filer.profile_id,
-            .tax_year = model.formProfiles.taxYear(),
-        }) catch |err| {
-            model.percentageTax.blockForLoadFailure(err);
             return;
         };
         var values: percentage_tax_ui.DraftValueSet = .{};
-        const writes = model.percentageTax.draftValueWritesForAnnualElection(
+        const writes = model.percentageTax.draftValueWritesForTaxFormProfile(
             &values,
-            if (current) |*event| event else null,
+            choice,
         ) catch |err| {
             model.percentageTax.blockForLoadFailure(err);
             return;
@@ -14586,8 +12672,18 @@ fn taxFormProfileSetupValue(
 }
 
 fn taxFormProfileFieldLabel(
+    arena: std.mem.Allocator,
     definition: form_catalog.TaxFormProfileValueDefinition,
+    tax_year: ?u16,
 ) []const u8 {
+    if (definition.semantic_key == .income_tax_rate_election) {
+        const year = tax_year orelse return "Income tax rate";
+        return std.fmt.allocPrint(
+            arena,
+            "Income tax rate for {d}",
+            .{year},
+        ) catch "Income tax rate";
+    }
     return taxFormProfileMappingFieldLabel(
         definition.role,
         definition.semantic_key,
@@ -14598,14 +12694,11 @@ fn taxFormProfileMappingFieldLabel(
     role: form_catalog.Role,
     semantic_key: form_catalog.TaxFormProfileSemanticKey,
 ) []const u8 {
+    _ = role;
     return switch (semantic_key) {
-        .business_activity_anchor_id => if (role == .spouse)
-            "Spouse business activity"
-        else
-            "Business activity",
         .spouse_profile_id => "Spouse taxpayer profile",
-        .spouse_business_activity_anchor_id => "Spouse business activity",
-        .special_rate_obligation_anchor_id => "Special-rate registration",
+        .income_tax_rate_election => "Income tax rate",
+        .special_rate_basis => "Special-rate basis",
     };
 }
 
@@ -14618,8 +12711,6 @@ fn taxFormProfileFieldHelper(
     }
     return switch (definition.source_kind) {
         .named_profile_role => "Choose another saved taxpayer profile only when that person is a filer on this form.",
-        .business_activity_anchor => "Choose an activity saved under Registration and Forms for this tax year. Add another activity there to make a different selection.",
-        .registration_obligation_anchor => "Choose a typed registration saved under Registration and Forms.",
         .user_entry => "Enter the value that applies for this form and tax year.",
         .catalog_default => "This value is supplied by the exact form revision.",
     };
@@ -14630,8 +12721,6 @@ fn taxFormProfileScalarStableId(
 ) ?[]const u8 {
     return switch (value.*) {
         .profile_id => |*item| item.asSlice(),
-        .business_activity_anchor_id => |*item| item.asSlice(),
-        .registration_obligation_anchor_id => |*item| item.asSlice(),
         .text => |*item| item.asSlice(),
         .choice => |*item| item.asSlice(),
         .boolean, .integer, .date, .year => null,
@@ -14656,8 +12745,6 @@ fn taxFormProfileValueLabel(
     }
     return switch (value.value) {
         .profile_id => |*item| item.asSlice(),
-        .business_activity_anchor_id => |*item| item.asSlice(),
-        .registration_obligation_anchor_id => |*item| item.asSlice(),
         .text => |*item| item.asSlice(),
         .choice => |*item| item.asSlice(),
         .boolean => |item| if (item) "Yes" else "No",
@@ -14710,20 +12797,6 @@ fn taxpayerYearValues(
         model.taxpayerYearPage.draftValues()
     else
         model.taxpayerYearPage.baselineValues();
-}
-
-fn annualIncomeTaxElectionCandidateEditable(model: *const Model) bool {
-    if (!annualElectionPilotOpen(model) or
-        model.annualIncomeTaxElection.load_failed or
-        model.annualIncomeTaxElection.eligibility != .eligible)
-    {
-        return false;
-    }
-    const initial = model.annualIncomeTaxElection.initial_applicable_quarter orelse
-        return false;
-    if (model.annualIncomeTaxElection.filing_quarter != initial) return false;
-    const current = model.annualIncomeTaxElection.current orelse return true;
-    return current.state == .candidate;
 }
 
 fn taxpayerYearRateElection(
@@ -14878,111 +12951,13 @@ fn taxFormProfileNamedProfileChoiceAllowed(
     return true;
 }
 
-fn loadTaxFormProfileActivityChoices(
-    model: *Model,
-    field_index: usize,
-    profile_id: profile_model.ProfileId,
-) void {
-    const allocator = model.taxProfiles.allocator orelse return;
-    const store = model.taxProfiles.store orelse return;
-    const viewed_on = taxFormProfileViewedOn(model) orelse return;
-    var owned = profile_persistence.loadRegistrationAggregateOn(
-        store,
-        allocator,
-        profile_id,
-        viewed_on,
-    ) catch return;
-    defer owned.deinit(allocator);
-    for (owned.aggregate.business_activities) |*activity| {
-        if (!activity.metadata.review.isConfirmed() or
-            !activity.metadata.isEffective(viewed_on)) continue;
-        var label_buffer: [220]u8 = undefined;
-        const label = if (activity.atc) |*atc|
-            std.fmt.bufPrint(
-                &label_buffer,
-                "{s} - ATC {s}",
-                .{
-                    activity.line_of_business.asSlice(),
-                    atc.asSlice(),
-                },
-            ) catch activity.line_of_business.asSlice()
-        else
-            activity.line_of_business.asSlice();
-        appendTaxFormProfileChoice(
-            model,
-            field_index,
-            activity.anchor_id.asSlice(),
-            label,
-        );
-    }
-}
-
-fn taxFormProfileObligationChoiceLabel(
-    obligation: *const profile_registration.RegistrationObligation,
-    buffer: []u8,
-) []const u8 {
-    return switch (obligation.kind) {
-        .registered_income_tax => "Registered income tax",
-        .vat => "Value-added tax (VAT)",
-        .percentage_tax => "Percentage tax",
-        .withholding => |withholding| switch (withholding) {
-            .compensation => "Withholding tax - compensation",
-            .expanded => "Withholding tax - expanded",
-            .final => "Withholding tax - final",
-            .other => |value| std.fmt.bufPrint(
-                buffer,
-                "Withholding tax - {s}",
-                .{value.asSlice()},
-            ) catch value.asSlice(),
-            .unspecified_requires_review => "Withholding tax - review required",
-        },
-        .unknown_requires_review => |value| std.fmt.bufPrint(
-            buffer,
-            "Registration obligation - {s}",
-            .{value.asSlice()},
-        ) catch value.asSlice(),
-    };
-}
-
-fn loadTaxFormProfileObligationChoices(
-    model: *Model,
-    field_index: usize,
-    profile_id: profile_model.ProfileId,
-) void {
-    const allocator = model.taxProfiles.allocator orelse return;
-    const store = model.taxProfiles.store orelse return;
-    const viewed_on = taxFormProfileViewedOn(model) orelse return;
-    var owned = profile_persistence.loadRegistrationAggregateOn(
-        store,
-        allocator,
-        profile_id,
-        viewed_on,
-    ) catch return;
-    defer owned.deinit(allocator);
-    for (owned.aggregate.obligations) |*obligation| {
-        if (!obligation.metadata.review.isConfirmed() or
-            !obligation.metadata.isEffective(viewed_on)) continue;
-        var label_buffer: [220]u8 = undefined;
-        const label = taxFormProfileObligationChoiceLabel(
-            obligation,
-            &label_buffer,
-        );
-        appendTaxFormProfileChoice(
-            model,
-            field_index,
-            obligation.anchor_id.asSlice(),
-            label,
-        );
-    }
-}
-
 fn loadTaxFormProfileChoices(model: *Model) void {
     model.taxFormProfileChoiceCount = 0;
     model.taxFormProfilePickerField = null;
     const form_index = model.taxFormProfileFormIndex orelse return;
     if (form_index >= form_catalog.registry_count) return;
     const definition = &form_catalog.forms[form_index];
-    const filer_id = model.taxProfiles.selectedProfileDomainId() orelse return;
+    _ = model.taxProfiles.selectedProfileDomainId() orelse return;
     for (definition.tax_form_profile.values, 0..) |value_definition, field_index| {
         if (value_definition.availability != .supported) continue;
         switch (value_definition.source_kind) {
@@ -15002,27 +12977,25 @@ fn loadTaxFormProfileChoices(model: *Model) void {
                     );
                 }
             },
-            .business_activity_anchor => {
-                const owner = if (value_definition.role == .spouse)
-                    taxFormProfileSelectedProfileId(
-                        &model.taxFormProfilePage,
-                    ) orelse continue
-                else
-                    filer_id;
-                loadTaxFormProfileActivityChoices(
-                    model,
-                    field_index,
-                    owner,
-                );
+            .user_entry => {
+                if (value_definition.semantic_key ==
+                    .income_tax_rate_election)
+                {
+                    appendTaxFormProfileChoice(
+                        model,
+                        field_index,
+                        "graduated",
+                        "Graduated income tax rates",
+                    );
+                    appendTaxFormProfileChoice(
+                        model,
+                        field_index,
+                        "eight_percent",
+                        "8% income tax rate",
+                    );
+                }
             },
-            .registration_obligation_anchor => {
-                loadTaxFormProfileObligationChoices(
-                    model,
-                    field_index,
-                    filer_id,
-                );
-            },
-            .user_entry, .catalog_default => {},
+            .catalog_default => {},
         }
     }
 }
@@ -15062,6 +13035,18 @@ fn loadTaxFormProfileInherited(
     }
     if (revision.contact.email_address) |*value| {
         model.taxFormProfileInherited.email.set(value.asSlice());
+    }
+    model.taxFormProfileInherited.accounting_period_basis =
+        revision.accounting_period_basis;
+    model.taxFormProfileInherited.fiscal_year_end_month =
+        revision.fiscal_year_end_month;
+    if (revision.eopt_tier) |value| {
+        model.taxFormProfileInherited.eopt_tier.set(value.label());
+    }
+    if (revision.primary_line_of_business) |*value| {
+        model.taxFormProfileInherited.primary_line_of_business.set(
+            value.asSlice(),
+        );
     }
     switch (revision.subject) {
         .individual => |person| {
@@ -15113,243 +13098,12 @@ fn taxpayerYearConsumption(model: *const Model) taxpayer_year_ui.Consumption {
     return result;
 }
 
-fn annualElectionPilotOpen(model: *const Model) bool {
-    return std.mem.eql(u8, model.taxFormProfileCode(), "2551Q");
-}
-
-fn annualElectionQuarterEnd(tax_year: u16, quarter: u8) ?profile_model.Date {
-    if (quarter < 1 or quarter > 4) return null;
-    return monthEndDate(tax_year, quarter * 3);
-}
-
-fn resolveAnnualIncomeTaxEligibility(
-    model: *Model,
-    profile_id: profile_model.ProfileId,
-    tax_year: u16,
-    filing_quarter: u8,
-) void {
-    model.annualIncomeTaxElection.eligibility = .load_failed;
-    model.annualIncomeTaxElection.commencement = .unknown;
-    model.annualIncomeTaxElection.initial_applicable_quarter = null;
-
-    const allocator = model.taxProfiles.allocator orelse return;
-    const store = model.taxProfiles.store orelse return;
-    const on = annualElectionQuarterEnd(tax_year, filing_quarter) orelse return;
-    var date_buffer: [10]u8 = undefined;
-    var owned_profile = (store.getEffectiveRevision(
-        allocator,
-        profile_id.asSlice(),
-        on.writeIso(&date_buffer),
-    ) catch return) orelse return;
-    defer owned_profile.deinit(allocator);
-
-    switch (owned_profile.subject) {
-        .individual => |person| switch (person.classification) {
-            .self_employed, .mixed_income => {},
-            .classification_unknown => {
-                model.annualIncomeTaxElection.eligibility =
-                    .classification_unresolved;
-                return;
-            },
-            .pure_compensation => {
-                model.annualIncomeTaxElection.eligibility =
-                    .taxpayer_type_ineligible;
-                return;
-            },
-        },
-        // Compatibility rows retain enough evidence to classify the natural
-        // person as self-employed without manufacturing a legal-person type.
-        .sole_proprietor => {},
-        .legal_entity => {
-            model.annualIncomeTaxElection.eligibility =
-                .taxpayer_type_ineligible;
-            return;
-        },
-    }
-
-    var registration = profile_persistence.loadRegistrationAggregateOn(
-        store,
-        allocator,
-        profile_id,
-        on,
-    ) catch return;
-    defer registration.deinit(allocator);
-    const summary = registration.aggregate.derivedSummary(on) catch return;
-    if (summary.vat.confirmed_registered) {
-        model.annualIncomeTaxElection.eligibility = .vat_registered;
-        return;
-    }
-    if (!summary.percentage_tax.confirmed_registered) {
-        model.annualIncomeTaxElection.eligibility =
-            if (summary.percentage_tax.unreviewed_proposal_count != 0)
-                .registration_requires_review
-            else
-                .percentage_tax_registration_missing;
-        return;
-    }
-
-    var registration_year = profile_persistence.loadRegistrationAggregateForYear(
-        store,
-        allocator,
-        profile_id,
-        tax_year,
-    ) catch return;
-    defer registration_year.deinit(allocator);
-    var commencement: ?profile_model.Date = null;
-    var activity_requires_review = false;
-    for (registration_year.aggregate.business_activities) |*activity| {
-        if (!activity.metadata.review.isConfirmed()) {
-            activity_requires_review = true;
-            continue;
-        }
-        if (commencement == null or
-            activity.metadata.effective.from.isBefore(commencement.?))
-        {
-            commencement = activity.metadata.effective.from;
-        }
-    }
-    const commenced_on = commencement orelse {
-        model.annualIncomeTaxElection.eligibility =
-            if (activity_requires_review)
-                .registration_requires_review
-            else
-                .business_commencement_unresolved;
-        return;
-    };
-    model.annualIncomeTaxElection.commencement =
-        if (commenced_on.year < tax_year)
-            .existing_before_tax_year
-        else
-            .{ .commenced_on = commenced_on };
-    const stream: annual_income_tax_election.StreamKey = .{
-        .profile_id = profile_id,
-        .tax_year = tax_year,
-    };
-    model.annualIncomeTaxElection.initial_applicable_quarter =
-        annual_income_tax_election.initialApplicableQuarter(
-            stream,
-            model.annualIncomeTaxElection.commencement,
-        ) catch {
-            model.annualIncomeTaxElection.eligibility =
-                .business_commencement_unresolved;
-            return;
-        };
-    model.annualIncomeTaxElection.eligibility = .eligible;
-}
-
-fn openAnnualIncomeTaxElection(
-    model: *Model,
-    profile_id: profile_model.ProfileId,
-    tax_year: u16,
-    effective_on: taxpayer_year_settings_domain.Date,
-) void {
-    model.taxpayerYearPage.reset();
-    const form_index = model.taxFormProfileFormIndex orelse return;
-    if (form_index >= form_catalog.registry_count or
-        !std.mem.eql(u8, form_catalog.forms[form_index].code, "2551Q") or
-        effective_on.year != tax_year)
-    {
-        return;
-    }
-    const requested_quarter = model.annualIncomeTaxElection.filing_quarter;
-    const filing_quarter = if (requested_quarter >= 1 and requested_quarter <= 4)
-        requested_quarter
-    else
-        selectedFormQuarter(model, "2551Q");
-    model.annualIncomeTaxElection = .{ .filing_quarter = filing_quarter };
-    resolveAnnualIncomeTaxEligibility(
-        model,
-        profile_id,
-        tax_year,
-        filing_quarter,
-    );
-
-    const allocator = model.taxProfiles.allocator orelse {
-        model.annualIncomeTaxElection.load_failed = true;
-        return;
-    };
-    const store = model.taxProfiles.store orelse {
-        model.annualIncomeTaxElection.load_failed = true;
-        return;
-    };
-    const annual_stream: annual_income_tax_election.StreamKey = .{
-        .profile_id = profile_id,
-        .tax_year = tax_year,
-    };
-    var history = profile_persistence.loadAnnualIncomeTaxElectionHistory(
-        store,
-        allocator,
-        annual_stream,
-    ) catch {
-        model.annualIncomeTaxElection.load_failed = true;
-        return;
-    };
-    defer history.deinit(allocator);
-    const current = history.history.current() catch {
-        model.annualIncomeTaxElection.load_failed = true;
-        return;
-    };
-    if (current) |event| {
-        model.annualIncomeTaxElection.current = event.*;
-        model.annualIncomeTaxElection.initial_applicable_quarter =
-            event.initial_applicable_quarter;
-    }
-
-    var setting_values: [1]taxpayer_year_settings_domain.SettingValue =
-        undefined;
-    var projected_revision: ?taxpayer_year_settings_domain.Revision = null;
-    if (current) |event| if (event.choice) |choice| {
-        setting_values[0] = .{ .income_tax_rate_election = switch (choice) {
-            .graduated => .graduated,
-            .eight_percent => .eight_percent,
-        } };
-        projected_revision = .{
-            .id = taxpayer_year_settings_domain.RevisionId.parse(
-                "annual-election-ui",
-            ) catch return,
-            .stream = .{ .profile_id = profile_id, .tax_year = tax_year },
-            .sequence = event.sequence,
-            .effective = taxpayer_year_settings_domain.fullTaxYearPeriod(
-                tax_year,
-            ) catch return,
-            // Lifecycle and lock state are rendered from the annual event.
-            // `confirmed` here only lets the existing editor snapshot the
-            // selected value; it never writes this compatibility projection.
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = event.occurred_at_unix_seconds,
-            .source = .manual_entry,
-            .values = &setting_values,
-        };
-    };
-    model.taxpayerYearPage = taxpayer_year_ui.State.open(.{
-        .profile_id = profile_id,
-        .tax_year = tax_year,
-        .effective_on = effective_on,
-        .profile_active = true,
-        .consumption = .{
-            .active_form_count = 1,
-            .income_tax_rate_election = true,
-        },
-        .history_exists = current != null,
-        .saved_revision = if (projected_revision) |*revision| revision else null,
-    }) catch .{};
-}
-
 fn openTaxpayerYearSettings(
     model: *Model,
     profile_id: profile_model.ProfileId,
     tax_year: u16,
     effective_on: taxpayer_year_settings_domain.Date,
 ) void {
-    if (annualElectionPilotOpen(model)) {
-        openAnnualIncomeTaxElection(
-            model,
-            profile_id,
-            tax_year,
-            effective_on,
-        );
-        return;
-    }
     model.taxpayerYearPage.reset();
     if (effective_on.year != tax_year) return;
     const stream: taxpayer_year_settings_domain.StreamKey = .{
@@ -15806,33 +13560,6 @@ fn reloadTaxFormProfileAfterConflict(model: *Model) void {
     refreshOpenedTaxFormProfileBindingReadiness(model);
 }
 
-fn refreshOpenedRuntimeComposedSnapshot(model: *Model) void {
-    model.taxFormProfileComposed = .{};
-    const identity = model.taxFormProfilePage.viewedIdentity() orelse return;
-    const index = model.taxFormProfileFormIndex orelse return;
-    if (index >= form_catalog.registry_count) return;
-    const definition = &form_catalog.forms[index];
-    if (!std.mem.eql(u8, definition.code, "2551Q")) return;
-    const quarter = model.annualIncomeTaxElection.filing_quarter;
-    if (quarter < 1 or quarter > 4) return;
-    const filing: form_period.FilingPeriod = .{ .quarterly = .{
-        .tax_year = identity.tax_year,
-        .quarter = quarter,
-    } };
-    model.taxFormProfileComposed = loadRuntimeComposedSnapshot(
-        model,
-        definition,
-        identity.profile_id,
-        identity.tax_year,
-        filing,
-        &model.taxFormProfilePage,
-    ) catch return;
-    // The annual UI cache retains eligibility/editing context; lifecycle and
-    // provenance come from the same composed event used by readiness.
-    model.annualIncomeTaxElection.current =
-        model.taxFormProfileComposed.current_annual;
-}
-
 fn openTaxFormProfileForYearAt(
     model: *Model,
     index: usize,
@@ -15846,16 +13573,41 @@ fn openTaxFormProfileForYearAt(
         refreshProfileFormLaunchAssessments(model);
     }
     const definition = &form_catalog.forms[index];
-    if (definition.status == .calendar_only or
-        definition.tax_form_profile.mode == .calendar_only) return;
     const profile_id = model.taxProfiles.selectedProfileDomainId() orelse
         return;
+    var selected_filing: ?form_period.FilingPeriod = null;
+    var requested_on = requested;
+    if (std.mem.eql(u8, definition.code, "2551Q")) {
+        const fallback: form_period.FilingPeriod = .{ .quarterly = .{
+            .tax_year = tax_year,
+            .quarter = selectedFormQuarter(model, definition.code),
+        } };
+        selected_filing = if (requested_filing) |candidate| requested: {
+            candidate.validate() catch break :requested fallback;
+            if (candidate.taxYear() != tax_year or
+                candidate.cadence() != .quarterly)
+            {
+                break :requested fallback;
+            }
+            break :requested candidate;
+        } else fallback;
+        model.taxFormProfileFilingQuarter = selected_filing.?.quarter().?;
+        if (requested_on == null) {
+            requested_on = profileAsOfForForm(
+                model,
+                definition.code,
+                tax_year,
+                model.taxFormProfileFilingQuarter,
+                null,
+            );
+        }
+    }
     const activation_context = profileFormActivationContext(
         model,
         profile_id,
         definition,
         tax_year,
-        requested,
+        requested_on,
     );
     const viewed_on = if (activation_context) |context|
         context.viewed_on
@@ -15866,36 +13618,7 @@ fn openTaxFormProfileForYearAt(
     else
         null;
     const active = activation_period != null;
-    var opening_composed: RuntimeComposedSnapshot = .{};
-    var pilot_filing: ?form_period.FilingPeriod = null;
-    const inherited = if (std.mem.eql(u8, definition.code, "2551Q")) blk: {
-        const default_filing: form_period.FilingPeriod = .{ .quarterly = .{
-            .tax_year = tax_year,
-            .quarter = selectedFormQuarter(model, definition.code),
-        } };
-        const filing = if (requested_filing) |candidate| requested: {
-            candidate.validate() catch break :requested default_filing;
-            if (candidate.taxYear() != tax_year or
-                candidate.cadence() != .quarterly)
-            {
-                break :requested default_filing;
-            }
-            break :requested candidate;
-        } else default_filing;
-        pilot_filing = filing;
-        opening_composed = loadRuntimeComposedSnapshot(
-            model,
-            definition,
-            profile_id,
-            tax_year,
-            filing,
-            null,
-        ) catch .{};
-        break :blk inheritedReadinessFromComposed(
-            definition,
-            &opening_composed,
-        );
-    } else inheritedReadinessForForm(
+    const inherited = inheritedReadinessForForm(
         model,
         definition,
         index,
@@ -15962,21 +13685,28 @@ fn openTaxFormProfileForYearAt(
         )
     else
         null;
-    const viewed_launch = launchAssessmentForViewedDate(
-        model,
-        definition,
-        index,
-        viewed_on,
-    );
+    const locked_by_filing = if (saved_revision) |saved| locked: {
+        const store = model.taxProfiles.store orelse break :locked true;
+        break :locked store.isTaxFormProfileLockedByFiling(
+            saved.stream.profile_id.asSlice(),
+            saved.stream.tax_year,
+            saved.stream.form_code.asSlice(),
+            saved.stream.form_revision.asSlice(),
+            saved.id.asSlice(),
+            saved.sequence,
+        ) catch true;
+    } else false;
     model.taxFormProfilePage = tax_form_profile_ui.State.open(.{
         .profile_id = profile_id,
         .tax_year = tax_year,
         .form_code = definition.code,
         .active = active,
+        .locked_by_filing = locked_by_filing,
         .activation_period = activation_period,
         .history_exists = history_exists,
         .inherited = inherited,
-        .annual_setup_required = viewed_launch.status == .needs_activity_selection,
+        .annual_setup_required = definition.tax_form_profile.mode == .setup and
+            definition.tax_form_profile.values.len != 0,
         .saved_revision = saved_revision,
         .expected_current_sequence = stream_sequence,
         .copy_offer = copy_offer,
@@ -15988,7 +13718,6 @@ fn openTaxFormProfileForYearAt(
             profile_id,
             viewed_on,
             saved_revision,
-            viewed_launch.status == .needs_activity_selection,
         ) catch null;
         model.taxFormProfilePage.setSavedBindingsResolved(
             bindings != null and bindings.?.status == .ready,
@@ -15996,12 +13725,11 @@ fn openTaxFormProfileForYearAt(
     }
     model.taxFormProfileFormIndex = index;
     model.taxFormProfileViewedDate = viewed_on;
-    model.taxFormProfileComposed = opening_composed;
-    if (pilot_filing) |filing| {
-        model.annualIncomeTaxElection.filing_quarter = filing.quarter().?;
+    if (taxpayerYearReadinessForForm(definition, null) != .not_required) {
+        openTaxpayerYearSettings(model, profile_id, tax_year, viewed_on);
+    } else {
+        model.taxpayerYearPage.reset();
     }
-    openTaxpayerYearSettings(model, profile_id, tax_year, viewed_on);
-    refreshOpenedRuntimeComposedSnapshot(model);
     model.taxFormProfilePreviousSegmentDate = if (activation_context) |context|
         context.previous_viewed_on
     else
@@ -16017,15 +13745,10 @@ fn openTaxFormProfileForYearAt(
     }
     model.taxFormProfilePendingNavigation = null;
     model.taxFormProfileDiscardPromptOpen = false;
-    model.taxFormProfileRegistrationReturnPending = false;
     // Every open (including segment switches and reloads) starts at Details;
     // an audit section must never become a sticky navigation destination.
     model.taxFormProfileSection = .details;
-    const inherited_on = if (model.taxFormProfileComposed.filing_context) |context|
-        context.effectiveOn()
-    else
-        viewed_on;
-    loadTaxFormProfileInherited(model, profile_id, inherited_on);
+    loadTaxFormProfileInherited(model, profile_id, viewed_on);
     loadTaxFormProfileChoices(model);
     if (owned_history) |*owned| {
         cacheTaxFormProfileHistory(
@@ -16056,10 +13779,14 @@ fn requestTaxFormProfileSegment(
     const form_index = model.taxFormProfileFormIndex orelse return;
     const identity = model.taxFormProfilePage.viewedIdentity() orelse return;
     if (viewed_on.year != identity.tax_year) return;
-    const filing = if (model.taxFormProfileComposed.filing_context) |context|
-        context.period
-    else
-        null;
+    const filing: ?form_period.FilingPeriod = if (std.mem.eql(
+        u8,
+        identity.form_code.asSlice(),
+        "2551Q",
+    )) .{ .quarterly = .{
+        .tax_year = identity.tax_year,
+        .quarter = model.taxFormProfileFilingQuarter,
+    } } else null;
     if (model.taxFormProfilePage.dirty() or model.taxpayerYearPage.dirty()) {
         model.taxFormProfilePendingNavigation = .{
             .activation_segment = .{
@@ -16098,15 +13825,12 @@ fn closeTaxFormProfile(model: *Model) void {
     }
     model.taxFormProfilePage.reset();
     model.taxpayerYearPage.reset();
-    model.annualIncomeTaxElection = .{};
-    model.taxFormProfileComposed = .{};
     model.taxFormProfileFormIndex = null;
     model.taxFormProfileViewedDate = null;
     model.taxFormProfilePreviousSegmentDate = null;
     model.taxFormProfileNextSegmentDate = null;
     model.taxFormProfilePendingNavigation = null;
     model.taxFormProfileDiscardPromptOpen = false;
-    model.taxFormProfileRegistrationReturnPending = false;
     model.taxFormProfilePickerField = null;
     model.taxFormProfileChoiceCount = 0;
     model.taxFormProfileInherited = .{};
@@ -16138,13 +13862,8 @@ fn selectTaxFormProfileChoice(model: *Model, choice_index: usize) void {
                 choice.stable_id.text(),
             ) catch return,
         },
-        .business_activity_anchor_id => .{
-            .business_activity_anchor_id = tax_form_profile_domain.ComponentAnchorId.parse(
-                choice.stable_id.text(),
-            ) catch return,
-        },
-        .registration_obligation_anchor_id => .{
-            .registration_obligation_anchor_id = tax_form_profile_domain.ComponentAnchorId.parse(
+        .choice => .{
+            .choice = tax_form_profile_domain.TextValue.parse(
                 choice.stable_id.text(),
             ) catch return,
         },
@@ -16153,7 +13872,6 @@ fn selectTaxFormProfileChoice(model: *Model, choice_index: usize) void {
         .integer,
         .date,
         .year,
-        .choice,
         => return,
     };
     model.taxFormProfilePage.setDraftValue(.{
@@ -16260,14 +13978,9 @@ fn saveTaxFormProfile(model: *Model) void {
     refreshOpenedTaxFormProfileHistory(model);
     refreshProfileFormLaunchAssessments(model);
     refreshOpenedTaxFormProfileBindingReadiness(model);
-    refreshOpenedRuntimeComposedSnapshot(model);
 }
 
 fn saveTaxpayerYearSettings(model: *Model) void {
-    if (annualElectionPilotOpen(model)) {
-        saveAnnualIncomeTaxElectionCandidate(model);
-        return;
-    }
     const intent = model.taxpayerYearPage.beginSave() catch return;
     const allocator = model.taxProfiles.allocator orelse {
         _ = model.taxpayerYearPage.saveFailed() catch {};
@@ -16320,83 +14033,6 @@ fn saveTaxpayerYearSettings(model: *Model) void {
     model.taxpayerYearPage.saveSucceeded(&revision) catch return;
     model.taxFormProfileSection = .details;
     refreshProfileFormLaunchAssessments(model);
-}
-
-fn saveAnnualIncomeTaxElectionCandidate(model: *Model) void {
-    if (!annualIncomeTaxElectionCandidateEditable(model)) return;
-    _ = model.taxpayerYearPage.beginSave() catch return;
-    const identity = model.taxFormProfilePage.viewedIdentity() orelse {
-        _ = model.taxpayerYearPage.saveFailed() catch {};
-        return;
-    };
-    const form_index = model.taxFormProfileFormIndex orelse {
-        _ = model.taxpayerYearPage.saveFailed() catch {};
-        return;
-    };
-    if (form_index >= form_catalog.registry_count) {
-        _ = model.taxpayerYearPage.saveFailed() catch {};
-        return;
-    }
-    const definition = &form_catalog.forms[form_index];
-    const revision_text = definition.revision orelse {
-        _ = model.taxpayerYearPage.saveFailed() catch {};
-        return;
-    };
-    const choice: annual_income_tax_election.Choice = switch (taxpayerYearRateElection(model) orelse {
-        _ = model.taxpayerYearPage.saveFailed() catch {};
-        return;
-    }) {
-        .graduated => .graduated,
-        .eight_percent => .eight_percent,
-    };
-    const store = model.taxProfiles.store orelse {
-        _ = model.taxpayerYearPage.saveFailed() catch {};
-        return;
-    };
-    const result = profile_persistence.stageAnnualIncomeTaxElectionCandidate(
-        store,
-        .{
-            .stream = .{
-                .profile_id = identity.profile_id,
-                .tax_year = identity.tax_year,
-            },
-            .expected_current_sequence = if (model.annualIncomeTaxElection.current) |event|
-                event.sequence
-            else
-                0,
-            .choice = choice,
-            .commencement = model.annualIncomeTaxElection.commencement,
-            .provenance = .{
-                .kind = .form_2551q,
-                .form_revision = annual_income_tax_election.FormRevision.parse(
-                    revision_text,
-                ) catch {
-                    _ = model.taxpayerYearPage.saveFailed() catch {};
-                    return;
-                },
-                .filing_quarter = model.annualIncomeTaxElection.filing_quarter,
-            },
-            .occurred_at_unix_seconds = @intCast(c_time.time(null)),
-        },
-    ) catch {
-        _ = model.taxpayerYearPage.saveFailed() catch {};
-        return;
-    };
-    _ = result;
-    const viewed_on = model.taxFormProfileViewedDate orelse {
-        _ = model.taxpayerYearPage.saveFailed() catch {};
-        return;
-    };
-    openAnnualIncomeTaxElection(
-        model,
-        identity.profile_id,
-        identity.tax_year,
-        viewed_on,
-    );
-    model.taxFormProfileSection = .details;
-    refreshOpenedRuntimeComposedSnapshot(model);
-    refreshProfileFormLaunchAssessments(model);
-    refreshOpenedTaxFormProfileBindingReadiness(model);
 }
 
 fn resolveTaxpayerYearConflict(model: *Model, keep_draft: bool) void {
@@ -16941,9 +14577,12 @@ fn openProfileBoundFormForQuarterDraft(
         resolved_filing,
     );
     switch (launch.status) {
-        .needs_profile => return false,
-        .profile_not_eligible, .unavailable => return false,
-        .ready_new, .ready_resume, .needs_activity_selection => {},
+        .ready_new, .ready_resume => {},
+        .inactive,
+        .missing_base_profile,
+        .missing_tax_form_profile,
+        .unsupported_period,
+        => return false,
     }
     const profile_as_of = profileAsOfForForm(
         model,
@@ -16963,10 +14602,6 @@ fn openProfileBoundFormForQuarterDraft(
     );
     switch (bindings.state) {
         .ready, .inherited_only_ready => {},
-        .needs_registration,
-        .needs_year_settings,
-        .year_settings_reserved,
-        .year_settings_require_review,
         .needs_setup,
         .requires_review,
         .needs_filing_context,
@@ -17011,44 +14646,39 @@ fn openProfileBoundFormForQuarterDraft(
         navigate(model, page);
         return false;
     };
-    if (!model.formProfiles.profileSnapshotLocked()) {
-        if (bindings.filer_activity_id) |activity_id| {
-            model.formProfiles.setBusinessActivity(
-                .filer,
-                activity_id,
-            ) catch return false;
-        }
-        if (bindings.spouse_activity_id) |activity_id| {
-            model.formProfiles.setBusinessActivity(
-                .spouse,
-                activity_id,
-            ) catch return false;
-        }
-    }
     if (std.mem.eql(u8, form_code, "2551Q")) {
         model.incomeTax = .{};
         model.percentageTax.reset(year, quarter) catch {
             model.percentageTax = .{};
         };
-        const annual_event = if (bindings.annual_election_event) |*event|
-            event
-        else
-            null;
-        if (annual_event) |event| {
-            const item_13 = annual_income_tax_election.project2551qItem13(
-                event,
-                year,
-                quarter,
-            ) catch |err| {
-                model.percentageTax.blockForLoadFailure(err);
+        const frozen_profile = model.formProfiles.profileRevision(.filer) orelse {
+            model.percentageTax.blockForLoadFailure(error.MissingPeriodBasis);
+            navigate(model, page);
+            return true;
+        };
+        const accounting_period: percentage_tax_ui.AccountingPeriodContext = .{
+            .basis = frozen_profile.accounting_period_basis orelse {
+                model.percentageTax.blockForLoadFailure(
+                    error.MissingPeriodBasis,
+                );
                 navigate(model, page);
                 return true;
-            };
-            model.percentageTax.bindIncomeTaxRateElection(switch (item_13.choice()) {
-                .graduated => .graduated,
-                .eight_percent => .eight_percent,
-            });
-        }
+            },
+            .fiscal_year_end_month = frozen_profile.fiscal_year_end_month,
+        };
+        model.percentageTax.bindAccountingPeriod(accounting_period) catch |err| {
+            model.percentageTax.blockForLoadFailure(err);
+            navigate(model, page);
+            return true;
+        };
+        const choice = bindings.income_tax_rate_election orelse {
+            model.percentageTax.blockForLoadFailure(
+                error.MissingIncomeTaxRateElection,
+            );
+            navigate(model, page);
+            return true;
+        };
+        model.percentageTax.bindIncomeTaxRateElection(choice);
         const loaded_draft = model.formProfiles.loadPersistedDraft() catch |err| {
             model.percentageTax.blockForLoadFailure(err);
             navigate(model, page);
@@ -17057,9 +14687,10 @@ fn openProfileBoundFormForQuarterDraft(
         if (loaded_draft) |loaded| {
             var draft = loaded;
             defer model.formProfiles.deinitLoadedDraft(&draft);
-            model.percentageTax.loadFromDraftForAnnualElection(
+            model.percentageTax.loadFromDraftForTaxFormProfile(
                 &draft,
-                annual_event,
+                choice,
+                accounting_period,
             ) catch |err| {
                 model.percentageTax.blockForLoadFailure(err);
             };
@@ -17357,9 +14988,8 @@ fn profileNavigationRequiresDiscard(model: *const Model) bool {
         (model.page == .taxpayer_dashboard and
             model.dashboardSection == .profile_settings);
     if (!profile_surface) return false;
-    return model.regPage.dirty() or
-        (!model.taxProfiles.profileViewing() and
-            model.taxProfiles.profileDirty());
+    return !model.taxProfiles.profileViewing() and
+        model.taxProfiles.profileDirty();
 }
 
 fn deferProfileNavigation(
@@ -17372,7 +15002,7 @@ fn deferProfileNavigation(
 }
 
 /// Taxpayer-context actions must be rejected or deferred before they mutate
-/// the selected profile, Registration editor, Forms Set workspace, or annual
+/// the selected profile, Forms Set workspace, or annual
 /// Tax Form Profile. This ordering keeps every dirty editor under the same
 /// taxpayer shell until the user explicitly discards it.
 fn deferTaxpayerContextMutation(
@@ -17473,10 +15103,6 @@ fn leaveInlineProfileSettings(model: *Model) void {
         return;
     }
     model.taxProfiles.cancelEdit();
-    if (model.regEditing() and !model.regPage.dirty()) {
-        loadRegistrationPage(model);
-        syncCompleteProfileRegistrationControls(model);
-    }
     syncProfileIdentityControls(model);
     model.profileCompletionTarget = null;
     model.profileCompletionFormIndex = null;
@@ -17491,10 +15117,6 @@ fn closeProfileEditor(model: *Model) void {
     // editor can safely restore view mode before leaving the page.
     if (deferProfileNavigation(model, .{ .page = destination })) return;
     model.taxProfiles.cancelEdit();
-    if (model.regEditing() and !model.regPage.dirty()) {
-        loadRegistrationPage(model);
-        syncCompleteProfileRegistrationControls(model);
-    }
     syncProfileIdentityControls(model);
     model.profileCompletionTarget = null;
     model.profileCompletionFormIndex = null;
@@ -17521,6 +15143,8 @@ fn profileCompletionFieldLabel(
         .zip_code => "the ZIP code",
         .contact_number => "the contact number",
         .email_address => "the registered email address",
+        .accounting_period_basis => "the accounting-period basis",
+        .eopt_tier => "the EOPT tier",
         .date_of_birth => "the date of birth",
         .citizenship => "the citizenship",
         .foreign_tax_number => "the foreign tax number",
@@ -18345,7 +15969,6 @@ fn addTestProfileWithRdo(
     );
     for ([_]u16{ 2025, 2026, 2027 }) |tax_year| {
         try addTestTaxpayerYearSettings(store, id, tax_year);
-        try addTestAnnualIncomeTaxElection(store, id, tax_year);
     }
 }
 
@@ -18401,82 +16024,57 @@ fn addTestTaxpayerYearSettings(
     );
 }
 
-fn addTestAnnualIncomeTaxElection(
+fn addTest2551QTaxFormProfile(
     store: *profile_store.Store,
     raw_profile_id: []const u8,
     tax_year: u16,
+    effective_from: []const u8,
+    effective_until: []const u8,
 ) !void {
-    _ = try profile_persistence.confirmAnnualIncomeTaxElectionEvidence(
+    const definition = form_catalog.findForm("2551Q") orelse
+        return error.TestUnexpectedResult;
+    const generated_id = try store.generateOpaqueId();
+    const values = [_]tax_form_profile_domain.SetupValue{.{
+        .semantic_key = .income_tax_rate_election,
+        .role = .filer,
+        .value = .{ .choice = try tax_form_profile_domain.TextValue.parse(
+            "graduated",
+        ) },
+    }};
+    const revision: tax_form_profile_domain.Revision = .{
+        .id = try tax_form_profile_domain.RevisionId.parse(&generated_id),
+        .stream = .{
+            .profile_id = try profile_model.ProfileId.parse(raw_profile_id),
+            .tax_year = tax_year,
+            .form_code = try tax_form_profile_domain.FormCode.parse(
+                definition.code,
+            ),
+            .form_revision = try tax_form_profile_domain.FormRevision.parse(
+                definition.revision orelse return error.TestUnexpectedResult,
+            ),
+        },
+        .sequence = 1,
+        .effective = try tax_form_profile_domain.EffectivePeriod.init(
+            try tax_form_profile_domain.Date.parseIso(effective_from),
+            try tax_form_profile_domain.Date.parseIso(effective_until),
+        ),
+        .spec_revision = definition.tax_form_profile.spec_revision orelse
+            return error.TestUnexpectedResult,
+        .spec_hash = try tax_form_profile_domain.SpecHash.parse(
+            definition.tax_form_profile.spec_hash orelse
+                return error.TestUnexpectedResult,
+        ),
+        .review_state = .confirmed,
+        .confirmed_at_unix = 1,
+        .source = .manual_entry,
+        .values = &values,
+    };
+    try profile_persistence.appendTaxFormProfileRevision(
         store,
-        .{
-            .stream = .{
-                .profile_id = try profile_model.ProfileId.parse(raw_profile_id),
-                .tax_year = tax_year,
-            },
-            .expected_current_sequence = 0,
-            .choice = .graduated,
-            .initial_applicable_quarter = 1,
-            .provenance = .{ .kind = .statutory_default },
-            .occurred_at_unix_seconds = 1,
-        },
+        std.testing.allocator,
+        0,
+        &revision,
     );
-}
-
-/// Seeds the normalized Registration facts that make a self-employed fixture
-/// complete for the 2551Q pilot and for the unified complete-profile editor.
-/// Base-profile helpers intentionally do not do this automatically: tests that
-/// exercise missing Registration must remain able to fail closed.
-fn addTestCompleteBusinessRegistration(
-    store: *profile_store.Store,
-    raw_profile_id: []const u8,
-    effective_from: [10]u8,
-) !void {
-    const activity_revision_id = try store.generateOpaqueId();
-    const obligation_revision_id = try store.generateOpaqueId();
-    const eopt_revision_id = try store.generateOpaqueId();
-    const activities = [_]profile_store.RegistrationActivityRevisionWrite{.{
-        .anchor_id = composed_tax_profile.primary_business_activity_anchor,
-        .metadata = .{
-            .id = activity_revision_id[0..],
-            .expected_component_sequence = 0,
-            .effective = .{ .from = effective_from },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 1,
-        },
-        .line_of_business = "Professional services",
-        .atc = "PT010",
-    }};
-    const obligations = [_]profile_store.RegistrationObligationRevisionWrite{.{
-        .anchor_id = "percentage-tax",
-        .metadata = .{
-            .id = obligation_revision_id[0..],
-            .expected_component_sequence = 0,
-            .effective = .{ .from = effective_from },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 2,
-        },
-        .kind = .percentage_tax,
-    }};
-    const eopt_tiers = [_]profile_store.RegistrationEoptTierRevisionWrite{.{
-        .metadata = .{
-            .id = eopt_revision_id[0..],
-            .expected_component_sequence = 0,
-            .effective = .{ .from = effective_from },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 3,
-        },
-        .value = .micro,
-    }};
-    _ = try store.appendRegistrationCommit(.{
-        .profile_id = raw_profile_id,
-        .expected_current_sequence = 0,
-        .activities = &activities,
-        .obligations = &obligations,
-        .eopt_tiers = &eopt_tiers,
-    });
 }
 
 fn addTestProfileWithRdoWithoutYearSettings(
@@ -18554,7 +16152,9 @@ fn addTestProfileWithRdoWithoutYearSettings(
             },
         }),
     };
-    const revision = try ready.build();
+    var revision = try ready.build();
+    revision.accounting_period_basis = .calendar;
+    try revision.validate();
     try profile_persistence.createProfileWithRevision(
         store,
         std.testing.allocator,
@@ -18582,7 +16182,7 @@ fn persistTestSoleProprietorRevision(
     effective_on: []const u8,
     name: []const u8,
     tin: []const u8,
-    activities: []const profile_model.BusinessActivity,
+    primary_line_of_business: ?[]const u8,
 ) !void {
     const base: profile_editor.Base = .{
         .profile_id = try profile_model.ProfileId.parse(profile_id),
@@ -18610,7 +16210,7 @@ fn persistTestSoleProprietorRevision(
             ),
         },
     };
-    const revision = try profile_editor.begin(base)
+    var revision = try profile_editor.begin(base)
         .soleProprietor(.{
             .person = .{
                 .name = try profile_fields.TaxpayerName.parse(name),
@@ -18622,8 +16222,14 @@ fn persistTestSoleProprietorRevision(
                 ),
             },
         })
-        .withBusinessActivities(activities)
         .build();
+    revision.accounting_period_basis = .calendar;
+    revision.eopt_tier = .micro;
+    revision.primary_line_of_business = if (primary_line_of_business) |line|
+        try profile_fields.LineOfBusiness.parse(line)
+    else
+        null;
+    try revision.validate();
     if (sequence == 1) {
         try profile_persistence.createProfileWithRevision(
             store,
@@ -18676,2131 +16282,6 @@ fn addThreeTestProfiles(store: *profile_store.Store) !void {
         "Sample Partnership",
         "222-222-222-000",
         .partnership,
-    );
-}
-
-test "Registration and Forms cancels exact repeatable draft, guards year switch, and persists v16 anchors" {
-    const allocator = std.testing.allocator;
-    var store = try profile_store.Store.openMemory(allocator);
-    defer store.close();
-
-    const profile_id_text = "registration-page-owner";
-    try addTestProfile(
-        &store,
-        profile_id_text,
-        "Registration Page Owner",
-        "987-654-321-000",
-        .sole_proprietor,
-    );
-    const baseline_activities = [_]profile_store.RegistrationActivityRevisionWrite{.{
-        .anchor_id = "baseline-consulting",
-        .metadata = .{
-            .id = "baseline-consulting-r1",
-            .expected_component_sequence = 0,
-            .effective = .{ .from = "2026-01-01".* },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 1,
-        },
-        .line_of_business = "Consulting",
-        .atc = "PT010",
-    }};
-    const baseline_obligations = [_]profile_store.RegistrationObligationRevisionWrite{.{
-        .anchor_id = "baseline-income-tax",
-        .metadata = .{
-            .id = "baseline-income-tax-r1",
-            .expected_component_sequence = 0,
-            .effective = .{ .from = "2026-01-01".* },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 2,
-        },
-        .kind = .registered_income_tax,
-    }};
-    try std.testing.expectEqual(
-        @as(u32, 1),
-        try store.appendRegistrationCommit(.{
-            .profile_id = profile_id_text,
-            .expected_current_sequence = 0,
-            .activities = &baseline_activities,
-            .obligations = &baseline_obligations,
-        }),
-    );
-
-    var model = Model{
-        .page = .taxpayer_dashboard,
-        .dashboardSection = .profile_settings,
-    };
-    model.calendarToday = try calendar_domain.Date.init(2026, 8, 4);
-    try model.taxProfiles.attach(allocator, &store, "2026-08-04", 2026);
-    model.formProfiles.attach(allocator, &store);
-    defer model.formProfiles.deinit();
-    refreshSelectedProfileFormSet(&model);
-
-    update(&model, .show_profile_tax_forms);
-    update(&model, .{ .profile_setup_select_year = 2026 });
-    try std.testing.expect(model.profileTaxFormsActive());
-    try std.testing.expect(model.regLoaded);
-    try std.testing.expectEqual(
-        profile_registration_ui.PageState.viewing,
-        model.regPage.page_state,
-    );
-    try std.testing.expectEqual(@as(i32, 2026), model.taxProfiles.workspaceYear().?);
-    try std.testing.expectEqual(@as(usize, 1), model.regPage.businessActivities().len);
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        model.regPage.registrationObligations().len,
-    );
-    try expectAppMarkupBuilds(&model);
-    const baseline_activity = model.regPage.businessActivities()[0];
-    const baseline_obligation = model.regPage.registrationObligations()[0];
-
-    update(&model, .reg_edit);
-    try std.testing.expectEqual(
-        profile_registration_ui.PageState.editing,
-        model.regPage.page_state,
-    );
-    try std.testing.expect(!model.regPage.dirty());
-    try std.testing.expect(model.regSaveDisabled());
-    try std.testing.expect(model.regCancelDisabled());
-
-    update(&model, .reg_add_act);
-    try expectAppMarkupBuilds(&model);
-    update(&model, .reg_dialog_cancel);
-    try std.testing.expect(!model.regDialog());
-    try expectAppMarkupBuilds(&model);
-    update(&model, .reg_add_act);
-    update(&model, .{
-        .reg_line_input = .{ .insert_text = "Retail trade" },
-    });
-    update(&model, .{ .reg_atc_input = .{ .insert_text = "PT020" } });
-    update(&model, .{ .reg_from_input = .clear });
-    update(&model, .{
-        .reg_from_input = .{ .insert_text = "2026-02-15" },
-    });
-    update(&model, .{
-        .reg_until_input = .{ .insert_text = "2026-12-31" },
-    });
-    try expectAppMarkupBuilds(&model);
-    update(&model, .reg_dialog_save);
-    try expectAppMarkupBuilds(&model);
-
-    update(&model, .reg_add_ob);
-    update(&model, .reg_kind_vat);
-    update(&model, .{ .reg_from_input = .clear });
-    update(&model, .{
-        .reg_from_input = .{ .insert_text = "2026-03-01" },
-    });
-    update(&model, .reg_dialog_save);
-    try std.testing.expect(model.regPage.dirty());
-    try std.testing.expect(!model.regSaveDisabled());
-    try std.testing.expect(!model.regCancelDisabled());
-    try std.testing.expectEqual(@as(usize, 2), model.regPage.businessActivities().len);
-    try std.testing.expectEqual(
-        @as(usize, 2),
-        model.regPage.registrationObligations().len,
-    );
-    try expectAppMarkupBuilds(&model);
-
-    // Main dashboard navigation is guarded too; it cannot silently reload
-    // and discard a dirty Registration draft.
-    update(&model, .show_dashboard_calendar);
-    try std.testing.expectEqual(
-        DashboardSection.profile_settings,
-        model.dashboardSection,
-    );
-    try std.testing.expect(model.regPage.dirty());
-    try std.testing.expect(model.profileDirtyNavigationVisible());
-    try std.testing.expectEqualStrings(
-        "Discard unsaved Registration changes?",
-        model.profileDirtyNavigationTitle(),
-    );
-    update(&model, .profile_keep_editing);
-    try std.testing.expect(!model.profileDirtyNavigationVisible());
-    try std.testing.expect(model.regPage.dirty());
-
-    update(&model, .{ .profile_setup_select_year = 2027 });
-    try std.testing.expectEqual(@as(i32, 2026), model.taxProfiles.workspaceYear().?);
-    try std.testing.expectEqualStrings(
-        "Save or cancel registration edits before changing tax year.",
-        model.regErrText(),
-    );
-
-    update(&model, .reg_cancel);
-    try std.testing.expect(model.profileTaxFormsActive());
-    try std.testing.expectEqual(
-        profile_registration_ui.PageState.viewing,
-        model.regPage.page_state,
-    );
-    try std.testing.expect(!model.regPage.dirty());
-    try std.testing.expectEqual(@as(usize, 1), model.regPage.businessActivities().len);
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        model.regPage.registrationObligations().len,
-    );
-    const restored_activity = &model.regPage.businessActivities()[0];
-    try std.testing.expect(restored_activity.anchor_id.eql(
-        &baseline_activity.anchor_id,
-    ));
-    try std.testing.expectEqualStrings(
-        baseline_activity.line_of_business.asSlice(),
-        restored_activity.line_of_business.asSlice(),
-    );
-    try std.testing.expectEqualStrings(
-        baseline_activity.atc.?.asSlice(),
-        restored_activity.atc.?.asSlice(),
-    );
-    try std.testing.expect(restored_activity.effective.eql(
-        baseline_activity.effective,
-    ));
-    try std.testing.expect(restored_activity.origin.?.revision_id.eql(
-        &baseline_activity.origin.?.revision_id,
-    ));
-    try std.testing.expectEqual(
-        baseline_activity.origin.?.sequence,
-        restored_activity.origin.?.sequence,
-    );
-    const restored_obligation = &model.regPage.registrationObligations()[0];
-    try std.testing.expect(restored_obligation.anchor_id.eql(
-        &baseline_obligation.anchor_id,
-    ));
-    try std.testing.expect(restored_obligation.effective.eql(
-        baseline_obligation.effective,
-    ));
-    try std.testing.expect(restored_obligation.origin.?.revision_id.eql(
-        &baseline_obligation.origin.?.revision_id,
-    ));
-    try std.testing.expectEqual(
-        baseline_obligation.origin.?.sequence,
-        restored_obligation.origin.?.sequence,
-    );
-    switch (restored_obligation.kind) {
-        .registered_income_tax => {},
-        else => return error.TestUnexpectedResult,
-    }
-
-    update(&model, .reg_edit);
-    update(&model, .reg_add_act);
-    update(&model, .{
-        .reg_line_input = .{ .insert_text = "Retail trade" },
-    });
-    update(&model, .{ .reg_atc_input = .{ .insert_text = "PT020" } });
-    update(&model, .{ .reg_from_input = .clear });
-    update(&model, .{
-        .reg_from_input = .{ .insert_text = "2026-02-15" },
-    });
-    update(&model, .{
-        .reg_until_input = .{ .insert_text = "2026-12-31" },
-    });
-    update(&model, .reg_dialog_save);
-    const saved_activity_anchor = model.regPage.businessActivities()[1].anchor_id;
-
-    update(&model, .reg_add_ob);
-    update(&model, .reg_kind_vat);
-    update(&model, .{ .reg_from_input = .clear });
-    update(&model, .{
-        .reg_from_input = .{ .insert_text = "2026-03-01" },
-    });
-    update(&model, .reg_dialog_save);
-    const saved_obligation_anchor = model.regPage.registrationObligations()[1].anchor_id;
-    update(&model, .reg_save);
-
-    try std.testing.expectEqual(
-        profile_registration_ui.PageState.viewing,
-        model.regPage.page_state,
-    );
-    try std.testing.expect(!model.regPage.dirty());
-    try std.testing.expectEqual(@as(u32, 2), model.regPage.expected_sequence);
-
-    const profile_id = try profile_model.ProfileId.parse(profile_id_text);
-    const viewed_on = try profile_model.Date.parseIso("2026-12-31");
-    var persisted = try profile_persistence.loadRegistrationAggregateOn(
-        &store,
-        allocator,
-        profile_id,
-        viewed_on,
-    );
-    defer persisted.deinit(allocator);
-    try std.testing.expectEqual(@as(u32, 2), persisted.stream_sequence);
-    try std.testing.expectEqual(@as(usize, 2), persisted.activity_anchors.len);
-    try std.testing.expectEqual(@as(usize, 2), persisted.obligation_anchors.len);
-
-    const persisted_activity = (try persisted.aggregate.resolveActivity(
-        saved_activity_anchor,
-        viewed_on,
-    )).confirmed orelse return error.TestUnexpectedResult;
-    try std.testing.expect(persisted_activity.anchor_id.eql(
-        &saved_activity_anchor,
-    ));
-    try std.testing.expectEqualStrings(
-        "Retail trade",
-        persisted_activity.line_of_business.asSlice(),
-    );
-    try std.testing.expectEqualStrings("PT020", persisted_activity.atc.?.asSlice());
-    try std.testing.expect(persisted_activity.metadata.effective.from.eql(
-        try profile_model.Date.parseIso("2026-02-15"),
-    ));
-    try std.testing.expect(persisted_activity.metadata.effective.until.?.eql(
-        try profile_model.Date.parseIso("2026-12-31"),
-    ));
-
-    const persisted_obligation = (try persisted.aggregate.resolveObligation(
-        saved_obligation_anchor,
-        viewed_on,
-    )).confirmed orelse return error.TestUnexpectedResult;
-    try std.testing.expect(persisted_obligation.anchor_id.eql(
-        &saved_obligation_anchor,
-    ));
-    try std.testing.expect(persisted_obligation.metadata.effective.from.eql(
-        try profile_model.Date.parseIso("2026-03-01"),
-    ));
-    try std.testing.expect(persisted_obligation.metadata.effective.until == null);
-    switch (persisted_obligation.kind) {
-        .vat => {},
-        else => return error.TestUnexpectedResult,
-    }
-
-    // Discard is explicit and restores the saved Registration baseline before
-    // the deferred dashboard navigation is allowed to run.
-    update(&model, .reg_edit);
-    update(&model, .{ .reg_remove_act = 1 });
-    try std.testing.expect(model.regPage.dirty());
-    update(&model, .show_dashboard_calendar);
-    try std.testing.expect(model.profileDirtyNavigationVisible());
-    update(&model, .profile_discard_navigation);
-    try std.testing.expectEqual(DashboardSection.calendar, model.dashboardSection);
-    try std.testing.expect(!model.regPage.dirty());
-    update(&model, .show_dashboard_profile_settings);
-    update(&model, .show_profile_tax_forms);
-    try std.testing.expectEqual(
-        @as(usize, 2),
-        model.regPage.businessActivities().len,
-    );
-}
-
-test "Registration and Forms keeps a Jan-Jun component visible and editable for its year" {
-    const allocator = std.testing.allocator;
-    var store = try profile_store.Store.openMemory(allocator);
-    defer store.close();
-
-    const profile_id_text = "part-year-registration-owner";
-    try addTestProfile(
-        &store,
-        profile_id_text,
-        "Part-year Registration Owner",
-        "753-159-486-000",
-        .sole_proprietor,
-    );
-    const activities = [_]profile_store.RegistrationActivityRevisionWrite{.{
-        .anchor_id = "part-year-consulting",
-        .metadata = .{
-            .id = "part-year-consulting-r1",
-            .expected_component_sequence = 0,
-            .effective = .{
-                .from = "2026-01-01".*,
-                .until = "2026-06-30".*,
-            },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 1,
-        },
-        .line_of_business = "Seasonal consulting",
-        .atc = "PT010",
-    }};
-    const obligations = [_]profile_store.RegistrationObligationRevisionWrite{.{
-        .anchor_id = "part-year-percentage-tax",
-        .metadata = .{
-            .id = "part-year-percentage-tax-r1",
-            .expected_component_sequence = 0,
-            .effective = .{
-                .from = "2026-01-01".*,
-                .until = "2026-06-30".*,
-            },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 2,
-        },
-        .kind = .percentage_tax,
-    }};
-    try std.testing.expectEqual(
-        @as(u32, 1),
-        try store.appendRegistrationCommit(.{
-            .profile_id = profile_id_text,
-            .expected_current_sequence = 0,
-            .activities = &activities,
-            .obligations = &obligations,
-        }),
-    );
-
-    var model = Model{
-        .page = .taxpayer_dashboard,
-        .dashboardSection = .profile_settings,
-    };
-    model.calendarToday = try calendar_domain.Date.init(2026, 8, 4);
-    try model.taxProfiles.attach(allocator, &store, "2026-08-04", 2026);
-    model.formProfiles.attach(allocator, &store);
-    defer model.formProfiles.deinit();
-    refreshSelectedProfileFormSet(&model);
-
-    update(&model, .show_profile_tax_forms);
-    update(&model, .{ .profile_setup_select_year = 2026 });
-    try std.testing.expect(model.regLoaded);
-    try std.testing.expectEqual(@as(?u16, 2026), model.regPage.selected_tax_year);
-    try std.testing.expectEqual(@as(usize, 1), model.regPage.businessActivities().len);
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        model.regPage.registrationObligations().len,
-    );
-    const original_anchor = model.regPage.businessActivities()[0].anchor_id;
-    const original_period = model.regPage.businessActivities()[0].effective;
-    try std.testing.expectEqualStrings(
-        "part-year-consulting",
-        original_anchor.asSlice(),
-    );
-    try std.testing.expect(original_period.eql(
-        try profile_registration.EffectivePeriod.init(
-            try profile_model.Date.parseIso("2026-01-01"),
-            try profile_model.Date.parseIso("2026-06-30"),
-        ),
-    ));
-
-    update(&model, .reg_edit);
-    update(&model, .{ .reg_edit_act = 0 });
-    try std.testing.expectEqualStrings("2026-01-01", model.regFrom());
-    try std.testing.expectEqualStrings("2026-06-30", model.regUntil());
-    update(&model, .{ .reg_line_input = .clear });
-    update(&model, .{
-        .reg_line_input = .{ .insert_text = "Seasonal advisory" },
-    });
-    update(&model, .{ .reg_atc_input = .clear });
-    update(&model, .{
-        .reg_atc_input = .{ .insert_text = "PT011" },
-    });
-    update(&model, .reg_dialog_save);
-    update(&model, .reg_save);
-
-    try std.testing.expect(model.regLoaded);
-    try std.testing.expectEqual(@as(usize, 1), model.regPage.businessActivities().len);
-    const reloaded = &model.regPage.businessActivities()[0];
-    try std.testing.expect(reloaded.anchor_id.eql(&original_anchor));
-    try std.testing.expect(reloaded.effective.eql(original_period));
-    try std.testing.expectEqualStrings(
-        "Seasonal advisory",
-        reloaded.line_of_business.asSlice(),
-    );
-    try std.testing.expectEqualStrings("PT011", reloaded.atc.?.asSlice());
-    try std.testing.expect(model.regPage.registrationObligations()[0].effective.eql(
-        original_period,
-    ));
-
-    const profile_id = try profile_model.ProfileId.parse(profile_id_text);
-    var persisted = try profile_persistence.loadRegistrationAggregateForYear(
-        &store,
-        allocator,
-        profile_id,
-        2026,
-    );
-    defer persisted.deinit(allocator);
-    try std.testing.expectEqual(@as(u32, 2), persisted.stream_sequence);
-    try std.testing.expect(persisted.business_activities[0].anchor_id.eql(
-        &original_anchor,
-    ));
-    try std.testing.expect(persisted.business_activities[0].metadata.effective.eql(
-        original_period,
-    ));
-}
-
-test "Tax Form Profile page saves exact annual activity and dirty Cancel stays" {
-    const allocator = std.testing.allocator;
-    var store = try profile_store.Store.openMemory(allocator);
-    defer store.close();
-
-    try persistTestSoleProprietorRevision(
-        &store,
-        "tax-form-profile-owner",
-        "tax-form-profile-owner-r1",
-        1,
-        "2026-01-01",
-        "Annual Setup Taxpayer",
-        "321-654-987-000",
-        &.{},
-    );
-    try addTestProfile(
-        &store,
-        "tax-form-profile-other-owner",
-        "Other Annual Setup Taxpayer",
-        "321-654-988-000",
-        .corporation,
-    );
-    const registration_activities = [_]profile_store.RegistrationActivityRevisionWrite{.{
-        .anchor_id = "tax-form-profile-consulting",
-        .metadata = .{
-            .id = "tax-form-profile-consulting-v16-r1",
-            .expected_component_sequence = 0,
-            .effective = .{ .from = "2026-01-01".* },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 1,
-        },
-        .line_of_business = "Professional consulting",
-        .atc = "PT010",
-    }};
-    try std.testing.expectEqual(
-        @as(u32, 1),
-        try store.appendRegistrationCommit(.{
-            .profile_id = "tax-form-profile-owner",
-            .expected_current_sequence = 0,
-            .activities = &registration_activities,
-        }),
-    );
-
-    var model = Model{
-        .page = .taxpayer_dashboard,
-        .dashboardSection = .forms,
-    };
-    model.calendarToday = try calendar_domain.Date.init(2026, 8, 4);
-    try model.taxProfiles.attach(allocator, &store, "2026-08-04", 2026);
-    model.formProfiles.attach(allocator, &store);
-    defer model.formProfiles.deinit();
-    refreshSelectedProfileFormSet(&model);
-
-    const index = formCatalogIndex("1601C").?;
-    update(&model, .{ .open_tax_form_profile = index });
-    try std.testing.expectEqual(Page.tax_form_profile, model.page);
-    try std.testing.expectEqualStrings("1601C", model.taxFormProfileCode());
-    try std.testing.expectEqual(
-        tax_form_profile_ui.PageState.needs_setup,
-        model.taxFormProfilePage.page().?,
-    );
-    try std.testing.expectEqual(
-        tax_form_profile_ui.FilingReadiness.ready,
-        model.taxFormProfilePage.filingReadiness(),
-    );
-    try std.testing.expectEqualStrings(
-        "primary",
-        model.taxFormProfileStatusTone(),
-    );
-    try expectAppMarkupBuilds(&model);
-
-    // Back restores the exact dashboard surface that opened the annual
-    // setup instead of falling through to Calendar.
-    try std.testing.expectEqualStrings(
-        "Back to Tax Form Library",
-        model.taxFormProfileBackLabel(),
-    );
-    update(&model, .close_tax_form_profile);
-    try std.testing.expectEqual(Page.taxpayer_dashboard, model.page);
-    try std.testing.expectEqual(DashboardSection.forms, model.dashboardSection);
-
-    model.dashboardSection = .profile_settings;
-    model.profileSetupSection = .tax_forms;
-    update(&model, .{ .open_tax_form_profile = index });
-    try std.testing.expectEqualStrings(
-        "Back to Registration & Forms",
-        model.taxFormProfileBackLabel(),
-    );
-    update(&model, .close_tax_form_profile);
-    try std.testing.expectEqual(Page.taxpayer_dashboard, model.page);
-    try std.testing.expectEqual(
-        DashboardSection.profile_settings,
-        model.dashboardSection,
-    );
-    try std.testing.expectEqual(
-        ProfileSetupSection.tax_forms,
-        model.profileSetupSection,
-    );
-
-    update(&model, .{ .open_tax_form_profile = index });
-    try std.testing.expectEqual(Page.tax_form_profile, model.page);
-
-    update(&model, .edit_tax_form_profile);
-    try expectAppMarkupBuilds(&model);
-    try std.testing.expect(model.taxFormProfileEditing());
-    try std.testing.expect(model.taxFormProfileSaveDisabled());
-    try std.testing.expect(model.taxFormProfileCancelDisabled());
-    try std.testing.expectEqual(@as(usize, 1), model.taxFormProfileChoiceCount);
-
-    update(&model, .{ .tax_form_profile_toggle_picker = 0 });
-    try expectAppMarkupBuilds(&model);
-    update(&model, .{ .tax_form_profile_select_choice = 0 });
-    try std.testing.expect(model.taxFormProfilePage.dirty());
-    try std.testing.expect(!model.taxFormProfileSaveDisabled());
-    try std.testing.expect(!model.taxFormProfileCancelDisabled());
-    update(&model, .close_tax_form_profile);
-    try std.testing.expectEqual(Page.tax_form_profile, model.page);
-    try std.testing.expect(model.taxFormProfileDiscardPromptOpen);
-    update(&model, .tax_form_profile_keep_editing);
-
-    // Every taxpayer-context mutation is deferred before it can change the
-    // sidebar/profile shell behind this dirty annual setup.
-    const other_profile_slot = profileSlotNamed(
-        &model,
-        "Other Annual Setup Taxpayer",
-    ).?;
-    update(&model, .{ .select_taxpayer = other_profile_slot });
-    try std.testing.expectEqualStrings(
-        "tax-form-profile-owner",
-        model.taxProfiles.selectedProfileId().?,
-    );
-    try std.testing.expect(model.taxFormProfileDiscardPromptOpen);
-    update(&model, .tax_form_profile_keep_editing);
-    try std.testing.expectEqual(Page.tax_form_profile, model.page);
-    update(&model, .new_taxpayer_profile);
-    try std.testing.expectEqualStrings(
-        "tax-form-profile-owner",
-        model.taxProfiles.selectedProfileId().?,
-    );
-    try std.testing.expect(model.taxFormProfileDiscardPromptOpen);
-    update(&model, .tax_form_profile_keep_editing);
-    update(&model, .add_branch_profile);
-    try std.testing.expectEqualStrings(
-        "tax-form-profile-owner",
-        model.taxProfiles.selectedProfileId().?,
-    );
-    try std.testing.expect(model.taxFormProfileDiscardPromptOpen);
-    update(&model, .tax_form_profile_keep_editing);
-    update(&model, .cancel_tax_form_profile);
-    try std.testing.expectEqual(Page.tax_form_profile, model.page);
-    try std.testing.expect(!model.taxFormProfilePage.dirty());
-    try std.testing.expectEqual(@as(usize, 0), model.taxFormProfilePage.draftValues().len);
-
-    update(&model, .edit_tax_form_profile);
-    update(&model, .{ .tax_form_profile_select_choice = 0 });
-    update(&model, .save_tax_form_profile);
-    try std.testing.expectEqual(
-        tax_form_profile_ui.PageState.viewing_ready,
-        model.taxFormProfilePage.page().?,
-    );
-    try std.testing.expect(!model.taxFormProfilePage.dirty());
-    try std.testing.expectEqual(
-        TaxFormProfileCardState.ready,
-        model.taxFormProfileCardStates[index],
-    );
-    const saved_bindings = loadLaunchTaxFormProfileBindings(
-        &model,
-        &form_catalog.forms[index],
-        index,
-        model.taxProfiles.selectedProfileDomainId().?,
-        2026,
-        model.taxFormProfileViewedDate.?,
-        launchAssessmentForViewedDate(
-            &model,
-            &form_catalog.forms[index],
-            index,
-            model.taxFormProfileViewedDate.?,
-        ),
-    );
-    try std.testing.expectEqual(TaxFormProfileCardState.ready, saved_bindings.state);
-    try std.testing.expectEqualStrings(
-        "tax-form-profile-consulting",
-        saved_bindings.filer_activity_id.?.asSlice(),
-    );
-
-    const profile_id = model.taxProfiles.selectedProfileDomainId().?;
-    const stream = taxFormProfileStream(
-        profile_id,
-        &form_catalog.forms[index],
-        2026,
-    ).?;
-    var history = try profile_persistence.loadTaxFormProfileHistory(
-        &store,
-        allocator,
-        stream,
-    );
-    defer history.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 1), history.history.revisions.len);
-    try std.testing.expectEqual(@as(usize, 1), history.history.revisions[0].values.len);
-
-    // Persisted revisions remain in the append-only stream, but the normal
-    // profile surface starts on Details. History is an explicit read-only
-    // section and disappears while editing.
-    try std.testing.expect(model.taxFormProfileHistoryTabVisible());
-    try std.testing.expect(model.taxFormProfileDetailsSelected());
-    try std.testing.expect(!model.taxFormProfileHistorySelected());
-    update(&model, .tax_form_profile_show_history);
-    try std.testing.expect(model.taxFormProfileHistorySelected());
-    try std.testing.expectEqual(@as(usize, 1), model.taxFormProfileHistoryRows().len);
-    try std.testing.expectEqual(@as(u32, 1), model.taxFormProfileHistoryRows()[0].sequence);
-    update(&model, .edit_tax_form_profile);
-    try std.testing.expect(!model.taxFormProfileHistoryTabVisible());
-    try std.testing.expect(model.taxFormProfileDetailsSelected());
-    update(&model, .{ .tax_form_profile_clear_value = 0 });
-    try std.testing.expect(model.taxFormProfilePage.dirty());
-    update(&model, .cancel_tax_form_profile);
-    try std.testing.expect(model.taxFormProfileDetailsSelected());
-    try std.testing.expect(!model.taxFormProfileHistorySelected());
-
-    // The saved annual setup points at a v16-only stable anchor: the base Tax
-    // Profile intentionally has no legacy business_activity row. The real
-    // launch path must resolve that Registration anchor, project its LOB, and
-    // mount the editor instead of bouncing back to setup.
-    const filing: form_period.FilingPeriod = .{ .monthly = .{
-        .tax_year = 2026,
-        .month = 8,
-    } };
-    try std.testing.expect(openProfileBoundFormForQuarter(
-        &model,
-        .form_1601_c,
-        "1601C",
-        2026,
-        3,
-        8,
-        null,
-        filing,
-    ));
-    try std.testing.expectEqual(Page.form_1601_c, model.page);
-    try std.testing.expect(model.formProfiles.projectionAccepted());
-    try std.testing.expectEqualStrings(
-        "Professional consulting",
-        model.formProfiles.filerText(.line_of_business),
-    );
-    try expectAppMarkupBuilds(&model);
-
-    // The Library preserves the exact monthly identity on both a fresh and a
-    // resumed 1601C draft. It routes only after this annual setup is ready.
-    navigate(&model, .taxpayer_dashboard);
-    model.dashboardSection = .forms;
-    refreshSelectedProfileFormSet(&model);
-    var library_arena_state = std.heap.ArenaAllocator.init(allocator);
-    defer library_arena_state.deinit();
-    const library_rows = model.profileBrowseFormRows(
-        library_arena_state.allocator(),
-    );
-    var august_action: ?usize = null;
-    for (library_rows) |row| {
-        if (!std.mem.eql(u8, row.code(), "1601C")) continue;
-        const august = row.periodCells()[7];
-        try std.testing.expect(!august.disabled());
-        august_action = august.actionId();
-        break;
-    }
-    try std.testing.expect(august_action != null);
-    for ([_]f32{ 700, 1920 }) |width| {
-        update(&model, .{ .viewport_width_changed = width });
-        try expectAppMarkupBuilds(&model);
-        try std.testing.expect(try appMarkupHasSemanticsPrefix(
-            &model,
-            "BIR Form 1601C, Aug, tax year 2026",
-        ));
-    }
-    try std.testing.expect(try dispatchAppWidgetBySemanticsPrefix(
-        &model,
-        "BIR Form 1601C, Aug, tax year 2026",
-    ));
-    try std.testing.expectEqual(Page.form_1601_c, model.page);
-    try std.testing.expectEqual(
-        form_ui.LaunchStatus.ready_new,
-        assessProfileFormLaunch(
-            &model,
-            "1601C",
-            2026,
-            3,
-            8,
-            .{ .monthly = .{ .tax_year = 2026, .month = 8 } },
-        ).status,
-    );
-    const new_filing = model.formProfiles.filingPeriod().?;
-    try std.testing.expectEqual(@as(?u8, 8), new_filing.month());
-    update(&model, .save_recurring_form_draft);
-    const resumed_draft_id = model.formProfiles.draftId().?;
-
-    navigate(&model, .taxpayer_dashboard);
-    model.dashboardSection = .forms;
-    refreshSelectedProfileFormSet(&model);
-    const resumed_rows = model.profileBrowseFormRows(
-        library_arena_state.allocator(),
-    );
-    var resumed_august_action: ?usize = null;
-    for (resumed_rows) |row| {
-        if (!std.mem.eql(u8, row.code(), "1601C")) continue;
-        try std.testing.expectEqual(
-            form_ui.LaunchStatus.ready_resume,
-            model.profilePeriodLaunchAssessments[row.id][7].status,
-        );
-        const august = row.periodCells()[7];
-        try std.testing.expect(!august.disabled());
-        try std.testing.expectEqualStrings("Draft", august.status);
-        resumed_august_action = august.actionId();
-        break;
-    }
-    try std.testing.expect(resumed_august_action != null);
-    try expectAppMarkupBuilds(&model);
-    try std.testing.expect(try dispatchAppWidgetBySemanticsPrefix(
-        &model,
-        "BIR Form 1601C, Aug, tax year 2026",
-    ));
-    try std.testing.expectEqual(Page.form_1601_c, model.page);
-    try std.testing.expectEqualStrings(
-        resumed_draft_id.asSlice(),
-        model.formProfiles.draftId().?.asSlice(),
-    );
-
-    openTaxFormProfileForYear(&model, index, 2027);
-    try std.testing.expectEqual(Page.tax_form_profile, model.page);
-    try std.testing.expect(model.taxFormProfileCopyPriorYearVisible());
-    update(&model, .tax_form_profile_copy_prior_year);
-    try std.testing.expect(model.taxFormProfileEditing());
-    try std.testing.expect(model.taxFormProfilePage.dirty());
-    try std.testing.expect(model.taxFormProfileReviewVisible());
-    try std.testing.expect(model.taxFormProfileSaveDisabled());
-    update(&model, .tax_form_profile_acknowledge_review);
-    try std.testing.expect(!model.taxFormProfileSaveDisabled());
-    update(&model, .save_tax_form_profile);
-
-    const stream_2027 = taxFormProfileStream(
-        profile_id,
-        &form_catalog.forms[index],
-        2027,
-    ).?;
-    var copied_history = try profile_persistence.loadTaxFormProfileHistory(
-        &store,
-        allocator,
-        stream_2027,
-    );
-    defer copied_history.deinit(allocator);
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        copied_history.history.revisions.len,
-    );
-    const copied = &copied_history.history.revisions[0];
-    try std.testing.expectEqual(
-        tax_form_profile_domain.ReviewState.confirmed,
-        copied.review_state,
-    );
-    try std.testing.expectEqual(
-        @as(u16, 2026),
-        copied.source.copied_from_prior_year.source_tax_year,
-    );
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        model.taxFormProfileHistoryRowCount,
-    );
-
-    // A saved optional activity can be explicitly cleared. The clear is an
-    // append-only revision (not a silent deletion), so its Save affordance
-    // must remain enabled even though the editable value set is now empty.
-    openTaxFormProfileForYear(&model, index, 2026);
-    update(&model, .edit_tax_form_profile);
-    update(&model, .{ .tax_form_profile_clear_value = 0 });
-    try std.testing.expect(model.taxFormProfilePage.dirty());
-    try std.testing.expect(!model.taxFormProfileSaveDisabled());
-    update(&model, .save_tax_form_profile);
-    try std.testing.expectEqual(
-        tax_form_profile_ui.PageState.viewing_ready,
-        model.taxFormProfilePage.page().?,
-    );
-    try std.testing.expectEqual(
-        @as(usize, 0),
-        model.taxFormProfilePage.baselineValues().len,
-    );
-    var cleared_history = try profile_persistence.loadTaxFormProfileHistory(
-        &store,
-        allocator,
-        stream,
-    );
-    defer cleared_history.deinit(allocator);
-    try std.testing.expectEqual(
-        @as(usize, 2),
-        cleared_history.history.revisions.len,
-    );
-    try std.testing.expectEqual(
-        @as(usize, 0),
-        cleared_history.history.revisions[1].values.len,
-    );
-
-    // The only saved Registration activity is a valid choice, but selecting
-    // it again against the cleared revision is now a real change and enables
-    // Save. This distinguishes one eligible Registration activity from a
-    // hard-coded form-profile option.
-    update(&model, .edit_tax_form_profile);
-    update(&model, .{ .tax_form_profile_toggle_picker = 0 });
-    update(&model, .{ .tax_form_profile_select_choice = 0 });
-    try std.testing.expect(model.taxFormProfilePage.dirty());
-    try std.testing.expect(!model.taxFormProfileSaveDisabled());
-
-    // Discarding a later dirty edit now performs the deferred taxpayer change
-    // only after the old annual setup has been reset.
-    update(&model, .{ .select_taxpayer = other_profile_slot });
-    try std.testing.expectEqualStrings(
-        "tax-form-profile-owner",
-        model.taxProfiles.selectedProfileId().?,
-    );
-    update(&model, .tax_form_profile_discard_navigation);
-    try std.testing.expectEqualStrings(
-        "tax-form-profile-other-owner",
-        model.taxProfiles.selectedProfileId().?,
-    );
-    try std.testing.expectEqual(Page.taxpayer_dashboard, model.page);
-}
-
-test "Tax Form Profile reviews and saves a prior catalog form revision" {
-    const allocator = std.testing.allocator;
-    var store = try profile_store.Store.openMemory(allocator);
-    defer store.close();
-
-    try persistTestSoleProprietorRevision(
-        &store,
-        "cross-revision-ui-owner",
-        "cross-revision-ui-owner-r1",
-        1,
-        "2025-01-01",
-        "Cross Revision UI Taxpayer",
-        "654-321-987-000",
-        &.{},
-    );
-    const registration_activities = [_]profile_store.RegistrationActivityRevisionWrite{.{
-        .anchor_id = "cross-revision-ui-activity",
-        .metadata = .{
-            .id = "cross-revision-ui-activity-r1",
-            .expected_component_sequence = 0,
-            .effective = .{ .from = "2025-01-01".* },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 1,
-        },
-        .line_of_business = "Professional services",
-        .atc = "PT010",
-    }};
-    _ = try store.appendRegistrationCommit(.{
-        .profile_id = "cross-revision-ui-owner",
-        .expected_current_sequence = 0,
-        .activities = &registration_activities,
-    });
-
-    const definition = form_catalog.findForm("1601C").?;
-    try store.replaceFormSet("cross-revision-ui-owner", 2025, &.{.{
-        .form_code = definition.code,
-        .form_revision = "2017-OLD",
-    }});
-    try store.replaceFormSet("cross-revision-ui-owner", 2026, &.{.{
-        .form_code = definition.code,
-        .form_revision = definition.revision.?,
-    }});
-    try profile_store.testing.execHistoricalFixture(&store,
-        \\INSERT INTO tax_profile_form_profile_revisions (
-        \\    profile_id, tax_year, form_code, form_revision, id,
-        \\    sequence, effective_from, spec_revision, spec_hash,
-        \\    review_state, confirmed_at_unix_seconds, source_tag
-        \\) VALUES (
-        \\    'cross-revision-ui-owner', 2025, '1601C', '2017-OLD',
-        \\    'cross-revision-ui-source', 1, '2025-01-01', 7,
-        \\    'old-generated-spec-hash', 'confirmed', 1735689600,
-        \\    'manual_entry'
-        \\);
-        \\INSERT INTO tax_profile_form_profile_values (
-        \\    profile_id, tax_year, form_code, form_revision,
-        \\    revision_id, revision_sequence, semantic_key, role,
-        \\    value_type, anchor_value, source_tag
-        \\) VALUES (
-        \\    'cross-revision-ui-owner', 2025, '1601C', '2017-OLD',
-        \\    'cross-revision-ui-source', 1,
-        \\    'business_activity_anchor_id', 'filer',
-        \\    'business_activity_anchor_id', 'cross-revision-ui-activity',
-        \\    'manual_confirmation'
-        \\);
-    );
-
-    var model = Model{
-        .page = .taxpayer_dashboard,
-        .dashboardSection = .forms,
-    };
-    model.calendarToday = try calendar_domain.Date.init(2026, 8, 4);
-    try model.taxProfiles.attach(allocator, &store, "2026-08-04", 2026);
-    model.formProfiles.attach(allocator, &store);
-    defer model.formProfiles.deinit();
-    refreshSelectedProfileFormSet(&model);
-
-    const index = formCatalogIndex("1601C").?;
-    openTaxFormProfileForYear(&model, index, 2026);
-    try std.testing.expectEqual(Page.tax_form_profile, model.page);
-    try std.testing.expect(model.taxFormProfileCopyPriorYearVisible());
-    try std.testing.expectEqual(
-        tax_form_profile_ui.ReuseReason.form_revision_mapping,
-        model.taxFormProfilePage.copy_offer.?.reason,
-    );
-    update(&model, .tax_form_profile_copy_prior_year);
-    try std.testing.expect(model.taxFormProfileEditing());
-    const review = model.taxFormProfilePage.mappingReview().?;
-    try std.testing.expectEqual(@as(u16, 1), review.mapped_count);
-    try std.testing.expectEqual(@as(usize, 0), review.issue_count);
-    var review_arena = std.heap.ArenaAllocator.init(allocator);
-    defer review_arena.deinit();
-    try std.testing.expect(std.mem.indexOf(
-        u8,
-        model.taxFormProfileReviewText(review_arena.allocator()),
-        "Mapped 1 compatible value",
-    ) != null);
-    update(&model, .tax_form_profile_acknowledge_review);
-    update(&model, .save_tax_form_profile);
-
-    const stream = taxFormProfileStream(
-        model.taxProfiles.selectedProfileDomainId().?,
-        definition,
-        2026,
-    ).?;
-    var history = try profile_persistence.loadTaxFormProfileHistory(
-        &store,
-        allocator,
-        stream,
-    );
-    defer history.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 1), history.history.revisions.len);
-    const copy = history.history.revisions[0].source.copied_from_prior_year;
-    try std.testing.expectEqualStrings(
-        "2017-OLD",
-        copy.source_form_revision.asSlice(),
-    );
-    try std.testing.expectEqual(@as(u32, 7), copy.source_spec_revision);
-    try std.testing.expectEqualStrings(
-        "cross-revision-ui-source",
-        copy.source_revision_id.asSlice(),
-    );
-}
-
-test "retired Tax Form Profile anchors make card page and launch need setup" {
-    const allocator = std.testing.allocator;
-    var store = try profile_store.Store.openMemory(allocator);
-    defer store.close();
-
-    try addTestProfile(
-        &store,
-        "retired-binding-owner",
-        "Retired Binding Owner",
-        "741-852-963-000",
-        .sole_proprietor,
-    );
-    const activity_rows = [_]profile_store.RegistrationActivityRevisionWrite{
-        .{
-            .anchor_id = "retired-binding-activity",
-            .metadata = .{
-                .id = "retired-binding-activity-r1",
-                .expected_component_sequence = 0,
-                .effective = .{
-                    .from = "2026-01-01".*,
-                    .until = "2026-06-30".*,
-                },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 1,
-            },
-            .line_of_business = "Retired consulting activity",
-            .atc = "PT010",
-        },
-        .{
-            // Keeps the base/profile projection complete on the viewed date
-            // while proving that the separately saved old anchor is stale.
-            .anchor_id = "current-binding-activity",
-            .metadata = .{
-                .id = "current-binding-activity-r1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2026-07-01".* },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 2,
-            },
-            .line_of_business = "Current consulting activity",
-            .atc = "PT011",
-        },
-    };
-    try std.testing.expectEqual(
-        @as(u32, 1),
-        try store.appendRegistrationCommit(.{
-            .profile_id = "retired-binding-owner",
-            .expected_current_sequence = 0,
-            .activities = &activity_rows,
-        }),
-    );
-
-    const definition = form_catalog.findForm("1601C").?;
-    const profile_id = try profile_model.ProfileId.parse(
-        "retired-binding-owner",
-    );
-    const setup_values = [_]tax_form_profile_domain.SetupValue{.{
-        .semantic_key = .business_activity_anchor_id,
-        .role = .filer,
-        .value = .{
-            .business_activity_anchor_id = try tax_form_profile_domain
-                .ComponentAnchorId.parse("retired-binding-activity"),
-        },
-    }};
-    const setup_revision: tax_form_profile_domain.Revision = .{
-        .id = try tax_form_profile_domain.RevisionId.parse(
-            "retired-binding-setup-r1",
-        ),
-        .stream = taxFormProfileStream(
-            profile_id,
-            definition,
-            2026,
-        ).?,
-        .sequence = 1,
-        .effective = try tax_form_profile_domain.EffectivePeriod.init(
-            try profile_model.Date.parseIso("2026-01-01"),
-            try profile_model.Date.parseIso("2026-12-31"),
-        ),
-        .spec_revision = definition.tax_form_profile.spec_revision.?,
-        .spec_hash = try tax_form_profile_domain.SpecHash.parse(
-            definition.tax_form_profile.spec_hash.?,
-        ),
-        .review_state = .confirmed,
-        .confirmed_at_unix = 1,
-        .source = .manual_entry,
-        .values = &setup_values,
-    };
-    try profile_persistence.appendTaxFormProfileRevision(
-        &store,
-        allocator,
-        0,
-        &setup_revision,
-    );
-
-    var model = Model{
-        .page = .taxpayer_dashboard,
-        .dashboardSection = .forms,
-    };
-    model.calendarToday = try calendar_domain.Date.init(2026, 8, 4);
-    try model.taxProfiles.attach(allocator, &store, "2026-08-04", 2026);
-    model.formProfiles.attach(allocator, &store);
-    defer model.formProfiles.deinit();
-    refreshSelectedProfileFormSet(&model);
-
-    const index = formCatalogIndex("1601C").?;
-    try std.testing.expectEqual(
-        TaxFormProfileCardState.needs_setup,
-        model.taxFormProfileCardStates[index],
-    );
-    openTaxFormProfileForYear(&model, index, 2026);
-    try std.testing.expectEqual(Page.tax_form_profile, model.page);
-    try std.testing.expectEqual(
-        tax_form_profile_ui.PageState.needs_setup,
-        model.taxFormProfilePage.page().?,
-    );
-    try std.testing.expectEqual(
-        tax_form_profile_ui.FilingReadiness.missing_annual_setup,
-        model.taxFormProfilePage.filingReadiness(),
-    );
-
-    const launch = launchAssessmentForViewedDate(
-        &model,
-        definition,
-        index,
-        model.taxFormProfileViewedDate.?,
-    );
-    const bindings = loadLaunchTaxFormProfileBindings(
-        &model,
-        definition,
-        index,
-        profile_id,
-        2026,
-        model.taxFormProfileViewedDate.?,
-        launch,
-    );
-    try std.testing.expectEqual(
-        TaxFormProfileCardState.needs_setup,
-        bindings.state,
-    );
-    try std.testing.expect(bindings.filer_activity_id == null);
-    try std.testing.expect(!openProfileBoundFormForQuarter(
-        &model,
-        .form_1601_c,
-        "1601C",
-        2026,
-        3,
-        8,
-        null,
-        .{ .monthly = .{ .tax_year = 2026, .month = 8 } },
-    ));
-    try std.testing.expectEqual(Page.tax_form_profile, model.page);
-}
-
-test "empty Tax Form Profile activity picker repairs Registration and returns to the same year" {
-    const allocator = std.testing.allocator;
-    var store = try profile_store.Store.openMemory(allocator);
-    defer store.close();
-
-    try persistTestSoleProprietorRevision(
-        &store,
-        "tax-form-profile-repair-owner",
-        "tax-form-profile-repair-r1",
-        1,
-        "2026-01-01",
-        "Registration Repair Taxpayer",
-        "654-321-987-000",
-        &.{},
-    );
-
-    var model = Model{
-        .page = .taxpayer_dashboard,
-        .dashboardSection = .forms,
-    };
-    model.calendarToday = try calendar_domain.Date.init(2026, 8, 4);
-    try model.taxProfiles.attach(allocator, &store, "2026-08-04", 2026);
-    model.formProfiles.attach(allocator, &store);
-    defer model.formProfiles.deinit();
-    refreshSelectedProfileFormSet(&model);
-
-    const index = formCatalogIndex("1601C").?;
-    update(&model, .{ .open_tax_form_profile = index });
-    update(&model, .edit_tax_form_profile);
-    update(&model, .{ .tax_form_profile_toggle_picker = 0 });
-    try std.testing.expect(model.taxFormProfileChoicesEmpty());
-    try std.testing.expect(
-        model.taxFormProfileChoicesRegistrationRepairVisible(),
-    );
-
-    update(&model, .tax_form_profile_edit_registration);
-    try std.testing.expectEqual(Page.taxpayer_dashboard, model.page);
-    try std.testing.expect(model.profileTaxFormsActive());
-    try std.testing.expect(model.taxFormProfileRegistrationReturnPending);
-    try std.testing.expectEqual(
-        profile_registration_ui.PageState.editing,
-        model.regPage.page_state,
-    );
-
-    update(&model, .reg_add_act);
-    update(&model, .{
-        .reg_line_input = .{ .insert_text = "Professional services" },
-    });
-    update(&model, .{ .reg_atc_input = .{ .insert_text = "PT010" } });
-    update(&model, .reg_dialog_save);
-    update(&model, .reg_save);
-
-    try std.testing.expectEqual(Page.tax_form_profile, model.page);
-    try std.testing.expect(!model.taxFormProfileRegistrationReturnPending);
-    try std.testing.expect(model.taxFormProfileEditing());
-    try std.testing.expectEqualStrings("1601C", model.taxFormProfileCode());
-    try std.testing.expectEqual(
-        @as(u16, 2026),
-        model.taxFormProfilePage.viewedIdentity().?.tax_year,
-    );
-    try std.testing.expectEqual(@as(?usize, 0), model.taxFormProfilePickerField);
-    try std.testing.expectEqual(@as(usize, 1), model.taxFormProfileChoiceCount);
-    try std.testing.expect(!model.taxFormProfileChoicesEmpty());
-
-    update(&model, .{ .tax_form_profile_select_choice = 0 });
-    update(&model, .save_tax_form_profile);
-    try std.testing.expectEqual(
-        tax_form_profile_ui.PageState.viewing_ready,
-        model.taxFormProfilePage.page().?,
-    );
-}
-
-test "Tax Form Profile opens the exact confirmed active segment, not silent year end" {
-    const allocator = std.testing.allocator;
-    var store = try profile_store.Store.openMemory(allocator);
-    defer store.close();
-    try addTestProfile(
-        &store,
-        "midyear-profile-owner",
-        "Midyear Profile Owner",
-        "159-753-486-000",
-        .sole_proprietor,
-    );
-
-    const activity_rows = [_]profile_store.RegistrationActivityRevisionWrite{.{
-        .anchor_id = "midyear-consulting",
-        .metadata = .{
-            .id = "midyear-consulting-r1",
-            .expected_component_sequence = 0,
-            .effective = .{
-                .from = "2026-01-01".*,
-                .until = "2026-06-30".*,
-            },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 1,
-        },
-        .line_of_business = "Midyear consulting",
-        .atc = "PT010",
-    }};
-    try std.testing.expectEqual(
-        @as(u32, 1),
-        try store.appendRegistrationCommit(.{
-            .profile_id = "midyear-profile-owner",
-            .expected_current_sequence = 0,
-            .activities = &activity_rows,
-        }),
-    );
-    const interval_id = try store.generateOpaqueId();
-    try store.createFormSetInterval(.{
-        .id = &interval_id,
-        .profile_id = "midyear-profile-owner",
-        .tax_year = 2026,
-        .effective_from = "2026-07-01",
-        .forms = &.{},
-    });
-
-    var model = Model{
-        .page = .taxpayer_dashboard,
-        .dashboardSection = .forms,
-    };
-    model.calendarToday = try calendar_domain.Date.init(2026, 8, 4);
-    try model.taxProfiles.attach(allocator, &store, "2026-08-04", 2026);
-    model.formProfiles.attach(allocator, &store);
-    defer model.formProfiles.deinit();
-    refreshSelectedProfileFormSet(&model);
-
-    const index = formCatalogIndex("1601C").?;
-    try std.testing.expect(model.profileFormAnyPeriodActive[index]);
-    openTaxFormProfileForYear(&model, index, 2026);
-    try std.testing.expectEqual(Page.tax_form_profile, model.page);
-    try std.testing.expect(model.taxFormProfilePage.active);
-    try std.testing.expect(
-        model.taxFormProfileViewedDate.?.eql(
-            try profile_model.Date.parseIso("2026-06-30"),
-        ),
-    );
-    const activation = model.taxFormProfilePage.activationPeriod().?;
-    try std.testing.expect(
-        activation.from.eql(try profile_model.Date.parseIso("2026-01-01")),
-    );
-    try std.testing.expect(
-        activation.until.?.eql(
-            try profile_model.Date.parseIso("2026-06-30"),
-        ),
-    );
-    update(&model, .edit_tax_form_profile);
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        model.taxFormProfileChoiceCount,
-    );
-    try std.testing.expectEqualStrings(
-        "midyear-consulting",
-        model.taxFormProfileChoices[0].stable_id.text(),
-    );
-}
-
-test "Tax Form Profile navigates disjoint activation intervals and saves older corrections at the stream head" {
-    const allocator = std.testing.allocator;
-    var store = try profile_store.Store.openMemory(allocator);
-    defer store.close();
-    try addTestProfile(
-        &store,
-        "segmented-profile-owner",
-        "Segmented Profile Owner",
-        "951-753-852-000",
-        .sole_proprietor,
-    );
-
-    const activity_rows = [_]profile_store.RegistrationActivityRevisionWrite{
-        .{
-            .anchor_id = "segmented-consulting",
-            .metadata = .{
-                .id = "segmented-consulting-r1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2026-01-01".* },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 1,
-            },
-            .line_of_business = "Segmented consulting",
-            .atc = "PT010",
-        },
-        .{
-            .anchor_id = "segmented-training",
-            .metadata = .{
-                .id = "segmented-training-r1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2026-01-01".* },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 1,
-            },
-            .line_of_business = "Segmented training",
-            .atc = "PT011",
-        },
-    };
-    try std.testing.expectEqual(
-        @as(u32, 1),
-        try store.appendRegistrationCommit(.{
-            .profile_id = "segmented-profile-owner",
-            .expected_current_sequence = 0,
-            .activities = &activity_rows,
-        }),
-    );
-    try store.createFormSetInterval(.{
-        .id = "segmented-profile-q3-inactive",
-        .profile_id = "segmented-profile-owner",
-        .tax_year = 2026,
-        .effective_from = "2026-07-01",
-        .effective_until = "2026-09-30",
-        .forms = &.{},
-    });
-
-    const definition = form_catalog.findForm("1601C").?;
-    const profile_id = try profile_model.ProfileId.parse(
-        "segmented-profile-owner",
-    );
-    const stream = taxFormProfileStream(profile_id, definition, 2026).?;
-    const first_period = try tax_form_profile_domain.EffectivePeriod.init(
-        try profile_model.Date.parseIso("2026-01-01"),
-        try profile_model.Date.parseIso("2026-06-30"),
-    );
-    const second_period = try tax_form_profile_domain.EffectivePeriod.init(
-        try profile_model.Date.parseIso("2026-10-01"),
-        try profile_model.Date.parseIso("2026-12-31"),
-    );
-    const first_values = [_]tax_form_profile_domain.SetupValue{.{
-        .semantic_key = .business_activity_anchor_id,
-        .role = .filer,
-        .value = .{
-            .business_activity_anchor_id = try tax_form_profile_domain
-                .ComponentAnchorId.parse("segmented-consulting"),
-        },
-    }};
-    const second_values = [_]tax_form_profile_domain.SetupValue{.{
-        .semantic_key = .business_activity_anchor_id,
-        .role = .filer,
-        .value = .{
-            .business_activity_anchor_id = try tax_form_profile_domain
-                .ComponentAnchorId.parse("segmented-training"),
-        },
-    }};
-    const first_revision: tax_form_profile_domain.Revision = .{
-        .id = try tax_form_profile_domain.RevisionId.parse(
-            "segmented-profile-first-r1",
-        ),
-        .stream = stream,
-        .sequence = 1,
-        .effective = first_period,
-        .spec_revision = definition.tax_form_profile.spec_revision.?,
-        .spec_hash = try tax_form_profile_domain.SpecHash.parse(
-            definition.tax_form_profile.spec_hash.?,
-        ),
-        .review_state = .confirmed,
-        .confirmed_at_unix = 1,
-        .source = .manual_entry,
-        .values = &first_values,
-    };
-    try profile_persistence.appendTaxFormProfileRevision(
-        &store,
-        allocator,
-        0,
-        &first_revision,
-    );
-    const second_revision: tax_form_profile_domain.Revision = .{
-        .id = try tax_form_profile_domain.RevisionId.parse(
-            "segmented-profile-second-r1",
-        ),
-        .stream = stream,
-        .sequence = 2,
-        .effective = second_period,
-        .spec_revision = definition.tax_form_profile.spec_revision.?,
-        .spec_hash = try tax_form_profile_domain.SpecHash.parse(
-            definition.tax_form_profile.spec_hash.?,
-        ),
-        .review_state = .confirmed,
-        .confirmed_at_unix = 2,
-        .source = .manual_entry,
-        .values = &second_values,
-    };
-    try profile_persistence.appendTaxFormProfileRevision(
-        &store,
-        allocator,
-        1,
-        &second_revision,
-    );
-
-    var model = Model{
-        .page = .taxpayer_dashboard,
-        .dashboardSection = .forms,
-    };
-    model.calendarToday = try calendar_domain.Date.init(2026, 8, 4);
-    try model.taxProfiles.attach(allocator, &store, "2026-08-04", 2026);
-    model.formProfiles.attach(allocator, &store);
-    defer model.formProfiles.deinit();
-    refreshSelectedProfileFormSet(&model);
-
-    const index = formCatalogIndex("1601C").?;
-    openTaxFormProfileForYear(&model, index, 2026);
-    try std.testing.expectEqual(Page.tax_form_profile, model.page);
-    try std.testing.expect(model.taxFormProfilePage.activationPeriod().?.eql(
-        second_period,
-    ));
-    try std.testing.expectEqual(
-        @as(u32, 2),
-        model.taxFormProfilePage.viewedIdentity().?.annual_revision_sequence,
-    );
-    try std.testing.expectEqual(
-        @as(u32, 2),
-        model.taxFormProfilePage.expected_sequence,
-    );
-    try std.testing.expect(!model.taxFormProfilePreviousSegmentDisabled());
-    try std.testing.expect(model.taxFormProfileNextSegmentDisabled());
-
-    update(&model, .tax_form_profile_previous_segment);
-    try std.testing.expect(model.taxFormProfilePage.activationPeriod().?.eql(
-        first_period,
-    ));
-    try std.testing.expectEqual(
-        @as(u32, 1),
-        model.taxFormProfilePage.viewedIdentity().?.annual_revision_sequence,
-    );
-    try std.testing.expectEqual(
-        @as(u32, 2),
-        model.taxFormProfilePage.expected_sequence,
-    );
-    try std.testing.expect(model.taxFormProfilePreviousSegmentDisabled());
-    try std.testing.expect(!model.taxFormProfileNextSegmentDisabled());
-
-    try model.taxFormProfilePage.beginEdit();
-    try model.taxFormProfilePage.setDraftValue(second_values[0]);
-    update(&model, .tax_form_profile_next_segment);
-    try std.testing.expect(model.taxFormProfileDiscardPromptOpen);
-    try std.testing.expect(model.taxFormProfilePage.activationPeriod().?.eql(
-        first_period,
-    ));
-    update(&model, .tax_form_profile_keep_editing);
-    try std.testing.expect(model.taxFormProfilePage.dirty());
-    update(&model, .tax_form_profile_next_segment);
-    update(&model, .tax_form_profile_discard_navigation);
-    try std.testing.expect(!model.taxFormProfileDiscardPromptOpen);
-    try std.testing.expect(model.taxFormProfilePage.activationPeriod().?.eql(
-        second_period,
-    ));
-
-    update(&model, .tax_form_profile_previous_segment);
-    try model.taxFormProfilePage.beginEdit();
-    try model.taxFormProfilePage.setDraftValue(second_values[0]);
-    update(&model, .save_tax_form_profile);
-    try std.testing.expectEqual(
-        tax_form_profile_ui.PageState.viewing_ready,
-        model.taxFormProfilePage.page().?,
-    );
-    try std.testing.expectEqual(
-        @as(u32, 3),
-        model.taxFormProfilePage.viewedIdentity().?.annual_revision_sequence,
-    );
-    try std.testing.expect(model.taxFormProfilePage.activationPeriod().?.eql(
-        first_period,
-    ));
-
-    update(&model, .tax_form_profile_next_segment);
-    try std.testing.expect(model.taxFormProfilePage.activationPeriod().?.eql(
-        second_period,
-    ));
-    try std.testing.expectEqual(
-        @as(u32, 2),
-        model.taxFormProfilePage.viewedIdentity().?.annual_revision_sequence,
-    );
-    try std.testing.expectEqual(
-        @as(u32, 3),
-        model.taxFormProfilePage.expected_sequence,
-    );
-
-    var history = try profile_persistence.loadTaxFormProfileHistory(
-        &store,
-        allocator,
-        stream,
-    );
-    defer history.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 3), history.history.revisions.len);
-    try std.testing.expect(history.history.revisions[2].effective.eql(
-        first_period,
-    ));
-    try std.testing.expectEqualStrings(
-        "segmented-training",
-        history.history.revisions[2]
-            .values[0]
-            .value
-            .business_activity_anchor_id
-            .asSlice(),
-    );
-}
-
-fn taxFormProfileChoiceContains(
-    model: *const Model,
-    field_index: usize,
-    stable_id: []const u8,
-) bool {
-    for (model.taxFormProfileChoices[0..model.taxFormProfileChoiceCount]) |*choice| {
-        if (choice.field_index == field_index and
-            std.mem.eql(u8, choice.stable_id.text(), stable_id))
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
-test "Tax Form Profile pickers use confirmed date-effective registration and role policy" {
-    const allocator = std.testing.allocator;
-    var store = try profile_store.Store.openMemory(allocator);
-    defer store.close();
-
-    try addTestProfile(
-        &store,
-        "picker-filer",
-        "Picker Filer",
-        "101-101-101-000",
-        .individual,
-    );
-    try addTestProfile(
-        &store,
-        "picker-individual",
-        "Eligible Individual",
-        "202-202-202-000",
-        .individual,
-    );
-    try addTestProfile(
-        &store,
-        "picker-sole",
-        "Eligible Sole Proprietor",
-        "303-303-303-000",
-        .sole_proprietor,
-    );
-    try addTestProfile(
-        &store,
-        "picker-corporation",
-        "Ineligible Corporation",
-        "404-404-404-000",
-        .corporation,
-    );
-    try addTestProfile(
-        &store,
-        "picker-partnership",
-        "Ineligible Partnership",
-        "505-505-505-000",
-        .partnership,
-    );
-    try addTestProfile(
-        &store,
-        "picker-estate",
-        "Ineligible Estate",
-        "606-606-606-000",
-        .estate,
-    );
-
-    const registration_activities = [_]profile_store.RegistrationActivityRevisionWrite{
-        .{
-            .anchor_id = "expired-activity",
-            .metadata = .{
-                .id = "expired-activity-r1",
-                .expected_component_sequence = 0,
-                .effective = .{
-                    .from = "2026-01-01".*,
-                    .until = "2026-06-30".*,
-                },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 1,
-            },
-            .line_of_business = "Expired activity",
-        },
-        .{
-            .anchor_id = "confirmed-activity",
-            .metadata = .{
-                .id = "confirmed-activity-r1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2026-07-01".* },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 2,
-            },
-            .line_of_business = "Confirmed activity",
-            .atc = "PT010",
-        },
-        .{
-            .anchor_id = "proposal-activity",
-            .metadata = .{
-                .id = "proposal-activity-r1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2026-01-01".* },
-                .source = .manual_entry,
-                .review_state = .requires_review,
-                .review_reason = .manual_proposal,
-            },
-            .line_of_business = "Unreviewed activity",
-        },
-        .{
-            .anchor_id = "future-activity",
-            .metadata = .{
-                .id = "future-activity-r1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2027-01-01".* },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 3,
-            },
-            .line_of_business = "Future activity",
-        },
-    };
-    const registration_obligations = [_]profile_store.RegistrationObligationRevisionWrite{
-        .{
-            .anchor_id = "expired-obligation",
-            .metadata = .{
-                .id = "expired-obligation-r1",
-                .expected_component_sequence = 0,
-                .effective = .{
-                    .from = "2026-01-01".*,
-                    .until = "2026-06-30".*,
-                },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 4,
-            },
-            .kind = .registered_income_tax,
-        },
-        .{
-            .anchor_id = "confirmed-obligation",
-            .metadata = .{
-                .id = "confirmed-obligation-r1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2026-07-01".* },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 5,
-            },
-            .kind = .withholding_expanded,
-        },
-        .{
-            .anchor_id = "proposal-obligation",
-            .metadata = .{
-                .id = "proposal-obligation-r1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2026-01-01".* },
-                .source = .manual_entry,
-                .review_state = .requires_review,
-                .review_reason = .specificity_unknown,
-            },
-            .kind = .unknown_requires_review,
-            .value_text = "Needs review",
-        },
-        .{
-            .anchor_id = "future-obligation",
-            .metadata = .{
-                .id = "future-obligation-r1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2027-01-01".* },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 6,
-            },
-            .kind = .vat,
-        },
-    };
-    try std.testing.expectEqual(
-        @as(u32, 1),
-        try store.appendRegistrationCommit(.{
-            .profile_id = "picker-filer",
-            .expected_current_sequence = 0,
-            .activities = &registration_activities,
-            .obligations = &registration_obligations,
-        }),
-    );
-
-    var model = Model{
-        .page = .taxpayer_dashboard,
-        .dashboardSection = .forms,
-    };
-    model.calendarToday = try calendar_domain.Date.init(2026, 8, 4);
-    try model.taxProfiles.attach(allocator, &store, "2026-08-04", 2026);
-    model.formProfiles.attach(allocator, &store);
-    defer model.formProfiles.deinit();
-    model.taxProfiles.select(profileSlotNamed(&model, "Picker Filer").?);
-    refreshSelectedProfileFormSet(&model);
-
-    const form_index = formCatalogIndex("1701Q").?;
-    openTaxFormProfileForYear(&model, form_index, 2026);
-    try std.testing.expectEqual(Page.tax_form_profile, model.page);
-    const definition = &form_catalog.forms[form_index];
-    var spouse_field_index: ?usize = null;
-    var activity_field_index: ?usize = null;
-    for (definition.tax_form_profile.values, 0..) |value, index| {
-        if (value.source_kind == .named_profile_role) {
-            spouse_field_index = index;
-        }
-        if (value.source_kind == .business_activity_anchor and
-            value.role == .filer and value.availability == .supported)
-        {
-            activity_field_index = index;
-        }
-    }
-    const spouse_field = spouse_field_index.?;
-    const activity_field = activity_field_index.?;
-
-    // The generated spouse role accepts only individual/sole-proprietor
-    // profiles and declares it distinct from the filer.
-    try std.testing.expect(taxFormProfileChoiceContains(
-        &model,
-        spouse_field,
-        "picker-individual",
-    ));
-    try std.testing.expect(taxFormProfileChoiceContains(
-        &model,
-        spouse_field,
-        "picker-sole",
-    ));
-    for ([_][]const u8{
-        "picker-filer",
-        "picker-corporation",
-        "picker-partnership",
-        "picker-estate",
-    }) |excluded| {
-        try std.testing.expect(!taxFormProfileChoiceContains(
-            &model,
-            spouse_field,
-            excluded,
-        ));
-    }
-
-    // At the page's exact 2026-08-04 viewed date, only the confirmed active
-    // v16 component is selectable. Expired, future, and review-required rows
-    // remain in history but cannot be bound to an annual form profile.
-    try std.testing.expect(taxFormProfileChoiceContains(
-        &model,
-        activity_field,
-        "confirmed-activity",
-    ));
-    for ([_][]const u8{
-        "expired-activity",
-        "proposal-activity",
-        "future-activity",
-    }) |excluded| {
-        try std.testing.expect(!taxFormProfileChoiceContains(
-            &model,
-            activity_field,
-            excluded,
-        ));
-    }
-
-    const obligation_field: usize = 97;
-    loadTaxFormProfileObligationChoices(
-        &model,
-        obligation_field,
-        try profile_model.ProfileId.parse("picker-filer"),
-    );
-    try std.testing.expect(taxFormProfileChoiceContains(
-        &model,
-        obligation_field,
-        "confirmed-obligation",
-    ));
-    for ([_][]const u8{
-        "expired-obligation",
-        "proposal-obligation",
-        "future-obligation",
-    }) |excluded| {
-        try std.testing.expect(!taxFormProfileChoiceContains(
-            &model,
-            obligation_field,
-            excluded,
-        ));
-    }
-}
-
-test "2551Q Tax Form Profile stays no-setup while taxpayer-year revisions are isolated" {
-    const allocator = std.testing.allocator;
-    var store = try profile_store.Store.openMemory(allocator);
-    defer store.close();
-    try addTestProfileWithoutYearSettings(
-        &store,
-        "taxpayer-year-owner",
-        "Taxpayer Year Owner",
-        "741-852-963-000",
-        .individual,
-    );
-    const activities = [_]profile_store.RegistrationActivityRevisionWrite{.{
-        .anchor_id = "taxpayer-year-business",
-        .metadata = .{
-            .id = "taxpayer-year-business-r1",
-            .expected_component_sequence = 0,
-            .effective = .{ .from = "2026-01-01".* },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 1,
-        },
-        .line_of_business = "Professional services",
-    }};
-    const obligations = [_]profile_store.RegistrationObligationRevisionWrite{.{
-        .anchor_id = "taxpayer-year-percentage-tax",
-        .metadata = .{
-            .id = "taxpayer-year-percentage-tax-r1",
-            .expected_component_sequence = 0,
-            .effective = .{ .from = "2026-01-01".* },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 1,
-        },
-        .kind = .percentage_tax,
-    }};
-    _ = try store.appendRegistrationCommit(.{
-        .profile_id = "taxpayer-year-owner",
-        .expected_current_sequence = 0,
-        .activities = &activities,
-        .obligations = &obligations,
-    });
-
-    var model = Model{
-        .page = .taxpayer_dashboard,
-        .dashboardSection = .forms,
-    };
-    model.calendarToday = try calendar_domain.Date.init(2026, 8, 4);
-    try model.taxProfiles.attach(allocator, &store, "2026-08-04", 2026);
-    model.formProfiles.attach(allocator, &store);
-    defer model.formProfiles.deinit();
-    refreshSelectedProfileFormSet(&model);
-
-    const index = formCatalogIndex("2551Q").?;
-    update(&model, .{ .open_tax_form_profile = index });
-    try std.testing.expectEqual(Page.tax_form_profile, model.page);
-    try std.testing.expectEqual(
-        tax_form_profile_ui.PageState.inherited_only,
-        model.taxFormProfilePage.page().?,
-    );
-    try std.testing.expectError(
-        error.SetupNotSupported,
-        model.taxFormProfilePage.beginEdit(),
-    );
-    try std.testing.expect(model.taxpayerYearSettingsVisible());
-    try std.testing.expectEqualStrings("Unresolved", model.taxpayerYearStatus());
-    try std.testing.expectEqualStrings(
-        "destructive",
-        model.taxpayerYearStatusTone(),
-    );
-    try expectAppMarkupBuilds(&model);
-
-    update(&model, .taxpayer_year_edit);
-    try std.testing.expect(model.taxpayerYearEditing());
-    try std.testing.expect(model.taxpayerYearSaveDisabled());
-    update(&model, .taxpayer_year_rate_eight_percent);
-    try std.testing.expect(!model.taxpayerYearSaveDisabled());
-    update(&model, .taxpayer_year_save);
-    try std.testing.expectEqualStrings("Ready", model.taxpayerYearStatus());
-    try std.testing.expectEqualStrings(
-        "primary",
-        model.taxpayerYearStatusTone(),
-    );
-    try expectAppMarkupBuilds(&model);
-
-    const profile_id = model.taxProfiles.selectedProfileDomainId().?;
-    var history_2026 = try profile_persistence.loadAnnualIncomeTaxElectionHistory(
-        &store,
-        allocator,
-        .{ .profile_id = profile_id, .tax_year = 2026 },
-    );
-    defer history_2026.deinit(allocator);
-    const resolved = (try history_2026.history.current()).?;
-    try std.testing.expectEqual(@as(u32, 1), resolved.sequence);
-    try std.testing.expectEqual(
-        annual_income_tax_election.State.candidate,
-        resolved.state,
-    );
-    try std.testing.expectEqual(
-        annual_income_tax_election.Choice.eight_percent,
-        resolved.choice.?,
-    );
-
-    var history_2025 = try profile_persistence.loadAnnualIncomeTaxElectionHistory(
-        &store,
-        allocator,
-        .{ .profile_id = profile_id, .tax_year = 2025 },
-    );
-    defer history_2025.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 0), history_2025.history.events.len);
-}
-
-test "2551Q runtime composition refreshes base and separates annual lifecycle" {
-    const allocator = std.testing.allocator;
-    var store = try profile_store.Store.openMemory(allocator);
-    defer store.close();
-    const raw_profile_id = "composed-runtime-2551q";
-    try addTestProfileWithoutYearSettings(
-        &store,
-        raw_profile_id,
-        "Composed Runtime Taxpayer",
-        "741-852-963-000",
-        .individual,
-    );
-    const profile_id = try profile_model.ProfileId.parse(raw_profile_id);
-
-    // Highest effective sequence intentionally lacks the exact three 2551Q
-    // inherited contact facts. The older complete revision must not mask it.
-    var current = (try profile_persistence.loadCurrentRevision(
-        &store,
-        allocator,
-        profile_id,
-    )).?;
-    defer current.deinit(allocator);
-    var incomplete = current.revision;
-    incomplete.id = try profile_model.RevisionId.parse(
-        "composed-runtime-incomplete",
-    );
-    incomplete.sequence = 2;
-    incomplete.contact.zip_code = null;
-    incomplete.contact.contact_number = null;
-    incomplete.contact.email_address = null;
-    try profile_persistence.appendRevision(
-        &store,
-        allocator,
-        &incomplete,
-        1,
-    );
-
-    const activities = [_]profile_store.RegistrationActivityRevisionWrite{.{
-        .anchor_id = "primary",
-        .metadata = .{
-            .id = "composed-runtime-primary-r1",
-            .expected_component_sequence = 0,
-            .effective = .{ .from = "2026-01-01".* },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 1,
-        },
-        .line_of_business = "Professional services",
-    }};
-    const obligations = [_]profile_store.RegistrationObligationRevisionWrite{.{
-        .anchor_id = "composed-runtime-percentage-tax",
-        .metadata = .{
-            .id = "composed-runtime-percentage-tax-r1",
-            .expected_component_sequence = 0,
-            .effective = .{ .from = "2026-01-01".* },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 1,
-        },
-        .kind = .percentage_tax,
-    }};
-    _ = try store.appendRegistrationCommit(.{
-        .profile_id = raw_profile_id,
-        .expected_current_sequence = 0,
-        .activities = &activities,
-        .obligations = &obligations,
-    });
-    _ = try profile_persistence.stageAnnualIncomeTaxElectionCandidate(
-        &store,
-        .{
-            .stream = .{ .profile_id = profile_id, .tax_year = 2026 },
-            .expected_current_sequence = 0,
-            .choice = .eight_percent,
-            .commencement = .existing_before_tax_year,
-            .provenance = .{
-                .kind = .form_2551q,
-                .form_revision = try annual_income_tax_election.FormRevision.parse(
-                    "2018-01-ENCS",
-                ),
-                .filing_quarter = 1,
-            },
-            .occurred_at_unix_seconds = 2,
-        },
-    );
-
-    var model = Model{};
-    try model.taxProfiles.attach(allocator, &store, "2026-03-31", 2026);
-    const definition = &form_catalog.forms[formCatalogIndex("2551Q").?];
-    const q1: form_period.FilingPeriod = .{ .quarterly = .{
-        .tax_year = 2026,
-        .quarter = 1,
-    } };
-    const before = try loadRuntimeComposedSnapshot(
-        &model,
-        definition,
-        profile_id,
-        2026,
-        q1,
-        null,
-    );
-    try std.testing.expectEqual(
-        @as(usize, 3),
-        before.readiness.base_tax_profile.missingKeys().len,
-    );
-    try std.testing.expect(
-        before.readiness.base_tax_profile.contains(.zip_code),
-    );
-    try std.testing.expect(
-        before.readiness.base_tax_profile.contains(.contact_number),
-    );
-    try std.testing.expect(
-        before.readiness.base_tax_profile.contains(.email_address),
-    );
-    try std.testing.expectEqual(
-        composed_tax_profile.LayerStatus.ready,
-        before.readiness.annual_income_tax_election.status,
-    );
-
-    var corrected = incomplete;
-    corrected.id = try profile_model.RevisionId.parse(
-        "composed-runtime-corrected",
-    );
-    corrected.sequence = 3;
-    corrected.contact.zip_code = try profile_fields.ZipCode.parse("1100");
-    corrected.contact.contact_number = try profile_fields.ContactNumber.parse(
-        "09171234567",
-    );
-    corrected.contact.email_address = try profile_fields.EmailAddress.parse(
-        "runtime@example.ph",
-    );
-    try profile_persistence.appendRevision(
-        &store,
-        allocator,
-        &corrected,
-        2,
-    );
-    const after = try loadRuntimeComposedSnapshot(
-        &model,
-        definition,
-        profile_id,
-        2026,
-        q1,
-        null,
-    );
-    try std.testing.expectEqual(
-        @as(usize, 0),
-        after.readiness.base_tax_profile.missingKeys().len,
-    );
-    try std.testing.expect(after.ready_for_new_filing);
-
-    const q2: form_period.FilingPeriod = .{ .quarterly = .{
-        .tax_year = 2026,
-        .quarter = 2,
-    } };
-    const candidate_q2 = try loadRuntimeComposedSnapshot(
-        &model,
-        definition,
-        profile_id,
-        2026,
-        q2,
-        null,
-    );
-    try std.testing.expect(!candidate_q2.ready_for_new_filing);
-    try std.testing.expectEqual(
-        TaxFormProfileCardState.needs_year_settings,
-        taxFormProfileCardStateFromComposed(definition, &candidate_q2),
-    );
-
-    _ = try profile_persistence.confirmAnnualIncomeTaxElectionEvidence(
-        &store,
-        .{
-            .stream = .{ .profile_id = profile_id, .tax_year = 2026 },
-            .expected_current_sequence = 1,
-            .choice = .eight_percent,
-            .initial_applicable_quarter = 1,
-            .provenance = .{ .kind = .statutory_default },
-            .occurred_at_unix_seconds = 3,
-        },
-    );
-    const confirmed_q2 = try loadRuntimeComposedSnapshot(
-        &model,
-        definition,
-        profile_id,
-        2026,
-        q2,
-        null,
-    );
-    try std.testing.expectEqual(
-        composed_tax_profile.LayerStatus.locked,
-        confirmed_q2.readiness.annual_income_tax_election.status,
-    );
-    try std.testing.expect(confirmed_q2.ready_for_new_filing);
-    try std.testing.expectEqual(
-        TaxFormProfileCardState.inherited_only_ready,
-        taxFormProfileCardStateFromComposed(definition, &confirmed_q2),
-    );
-
-    var reserved = confirmed_q2;
-    reserved.readiness.annual_income_tax_election.status = .reserved;
-    reserved.ready_for_new_filing = false;
-    try std.testing.expectEqual(
-        TaxFormProfileCardState.year_settings_reserved,
-        taxFormProfileCardStateFromComposed(definition, &reserved),
     );
 }
 
@@ -21072,6 +16553,141 @@ test "tax form library card columns follow desktop tablet phone density" {
     try std.testing.expectEqual(@as(u8, 1), model.profileFormCardColumns());
 }
 
+test "Tax Form Profile cards map the canonical exact-period readiness" {
+    const no_setup = form_catalog.findForm("1601C").?;
+    const setup = form_catalog.findForm("2551Q").?;
+    const ready: FormReadiness = .{
+        .launch = .{ .status = .ready_new },
+        .form_profile_state = .ready,
+        .evaluated = true,
+    };
+    try std.testing.expectEqual(
+        TaxFormProfileCardState.inherited_only_ready,
+        TaxFormProfileCardState.fromReadiness(no_setup, ready),
+    );
+
+    const review: FormReadiness = .{
+        .launch = .{ .status = .ready_new },
+        .form_profile_state = .requires_review,
+        .evaluated = true,
+    };
+    try std.testing.expectEqual(
+        TaxFormProfileCardState.requires_review,
+        TaxFormProfileCardState.fromReadiness(setup, review),
+    );
+
+    const missing_base: FormReadiness = .{
+        .launch = .{ .status = .missing_base_profile },
+        .form_profile_state = .ready,
+        .evaluated = true,
+    };
+    try std.testing.expectEqual(
+        TaxFormProfileCardState.needs_tax_profile,
+        TaxFormProfileCardState.fromReadiness(setup, missing_base),
+    );
+    try std.testing.expectEqualStrings(
+        "Complete Tax Profile",
+        TaxFormProfileCardState.needs_tax_profile.actionLabel(),
+    );
+}
+
+test "active inherited-only and calendar-only cards expose profile views" {
+    try std.testing.expect(
+        TaxFormProfileCardState.inherited_only_ready.actionVisible(),
+    );
+    try std.testing.expect(TaxFormProfileCardState.calendar_only.actionVisible());
+    try std.testing.expectEqualStrings(
+        "View Tax Form Profile",
+        TaxFormProfileCardState.calendar_only.actionLabel(),
+    );
+}
+
+test "2551Q Tax Form Profile rate label includes the viewed tax year" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const definition = form_catalog.findForm("2551Q").?;
+    try std.testing.expectEqualStrings(
+        "Income tax rate for 2027",
+        taxFormProfileFieldLabel(
+            arena_state.allocator(),
+            definition.tax_form_profile.values[0],
+            2027,
+        ),
+    );
+}
+
+test "2551Q Tax Form Profile status keeps the selected form and year identity" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var model = Model{};
+    model.taxFormProfileFormIndex = formCatalogIndex("2551Q").?;
+    model.taxFormProfilePage = try tax_form_profile_ui.State.open(.{
+        .profile_id = try profile_model.ProfileId.parse(
+            "selected-2551q-profile",
+        ),
+        .tax_year = 2027,
+        .form_code = "2551Q",
+        .active = true,
+        .activation_period = .{
+            .from = try tax_form_profile_domain.Date.init(2027, 1, 1),
+            .until = try tax_form_profile_domain.Date.init(2027, 12, 31),
+        },
+        .inherited = .{ .required_count = 8 },
+        .annual_setup_required = true,
+    });
+
+    const identity = model.taxFormProfilePage.viewedIdentity().?;
+    try std.testing.expectEqualStrings("2551Q", identity.formCode());
+    try std.testing.expectEqual(@as(u16, 2027), identity.tax_year);
+    try std.testing.expectEqual(
+        tax_form_profile_ui.FilingReadiness.missing_annual_setup,
+        model.taxFormProfilePage.filingReadiness(),
+    );
+    try std.testing.expectEqualStrings("2551Q", model.taxFormProfileCode());
+    try std.testing.expectEqualStrings(
+        "2027",
+        model.taxFormProfileYear(arena_state.allocator()),
+    );
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        model.taxFormProfileStatus(),
+        "Registration",
+    ) == null);
+}
+
+test "generic Tax Form Profile footer edits Base only for missing fields" {
+    var model = Model{};
+    model.taxFormProfileFormIndex = formCatalogIndex("2551Q").?;
+    model.taxFormProfilePage.active = true;
+    model.taxFormProfilePage.setup_mode = .setup;
+    model.taxFormProfileInherited.accounting_period_basis = .calendar;
+    model.taxFormProfileInherited.tin.set("123456789000");
+    model.taxFormProfileInherited.rdo.set("040");
+    model.taxFormProfileInherited.name.set("Juan Dela Cruz");
+    model.taxFormProfileInherited.address.set("Quezon City");
+    model.taxFormProfileInherited.zip.set("1100");
+    model.taxFormProfileInherited.contact.set("09171234567");
+    model.taxFormProfileInherited.email.set("juan@example.test");
+    try std.testing.expect(!model.taxFormProfileEditTaxProfileVisible());
+
+    model.taxFormProfileInherited.email = .{};
+    try std.testing.expect(model.taxFormProfileEditTaxProfileVisible());
+}
+
+test "Base Tax Profile exposes ambiguous migration review marker" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var model = Model{};
+    model.taxProfiles.editing_new = false;
+    model.taxProfiles.consolidation_review_state = .requires_review;
+    try std.testing.expect(model.profileFactsSummaryVisible());
+    try std.testing.expect(std.mem.startsWith(
+        u8,
+        model.profileFactsSummaryLabel(arena_state.allocator()),
+        "Migration review required:",
+    ));
+}
+
 test "tax form library progress counts filed lifecycle states only" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -21245,7 +16861,7 @@ test "month and quarter filters project only selected filing buttons" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const readiness = [_]ExactPeriodLaunchReadiness{
+    const readiness = [_]FormReadiness{
         .{
             .launch = .{ .status = .ready_new },
             .form_profile_state = .ready,
@@ -21329,7 +16945,7 @@ test "on-demand cards expose start-new and saved occurrence actions" {
     try drafts[1].period_key.set("2026-O002");
     try drafts[1].lifecycle.set("submitted");
 
-    var readiness = [_]ExactPeriodLaunchReadiness{
+    var readiness = [_]FormReadiness{
         .{
             .launch = .{ .status = .ready_resume },
             .form_profile_state = .ready,
@@ -22181,7 +17797,7 @@ test "persisted tax profiles have unique opaque calendar identities" {
     try std.testing.expect(std.mem.indexOf(u8, partnership_key, "Partnership") == null);
 }
 
-test "Forms Set explicit empty disables editors while fallback enables them" {
+test "Forms Set activation is authoritative for every browse year" {
     const allocator = std.testing.allocator;
     var store = try profile_store.Store.openMemory(allocator);
     defer store.close();
@@ -22207,12 +17823,15 @@ test "Forms Set explicit empty disables editors while fallback enables them" {
     update(&model, .show_form_2551q);
     try std.testing.expectEqual(Page.taxpayer_dashboard, model.page);
 
+    // The shared profile fixture configures all browse years. Make 2027
+    // explicitly empty before asserting the empty-state contract for it.
+    try store.replaceFormSet(profile_id, 2027, &.{});
     model.calendar.selected_year = 2027;
     refreshSelectedProfileFormSet(&model);
-    try std.testing.expect(!model.profileBrowseActiveEmpty());
-    try std.testing.expect(!model.taxpayerForm0605Disabled());
-    try std.testing.expect(!model.taxpayerForm1701QDisabled());
-    try std.testing.expect(!model.taxpayerForm2551QDisabled());
+    try std.testing.expect(model.profileBrowseActiveEmpty());
+    try std.testing.expect(model.taxpayerForm0605Disabled());
+    try std.testing.expect(model.taxpayerForm1701QDisabled());
+    try std.testing.expect(model.taxpayerForm2551QDisabled());
 
     try store.replaceFormSet(profile_id, 2027, &.{
         .{
@@ -22220,6 +17839,7 @@ test "Forms Set explicit empty disables editors while fallback enables them" {
             .form_revision = "2018-01-ENCS",
         },
     });
+    model.calendar.selected_year = 2027;
     refreshSelectedProfileFormSet(&model);
     try std.testing.expect(model.taxpayerForm0605Disabled());
     try std.testing.expect(model.taxpayerForm1701QDisabled());
@@ -22240,11 +17860,6 @@ test "library disables incomplete profile periods without redirecting to setup" 
         "Juan Dela Cruz",
         "123-456-789-000",
         .individual,
-    );
-    try addTestCompleteBusinessRegistration(
-        &store,
-        "11111111111111111111111111111111",
-        "2026-01-01".*,
     );
 
     var model = Model{};
@@ -22291,16 +17906,23 @@ test "library disables incomplete profile periods without redirecting to setup" 
         if (!std.mem.eql(u8, row.code(), "2551Q")) continue;
         found = true;
         try std.testing.expectEqual(
-            form_ui.LaunchStatus.needs_profile,
+            form_ui.LaunchStatus.missing_base_profile,
             row.launch_assessment.status,
         );
-        try std.testing.expectEqualStrings("Complete profile", row.launchLabel());
+        try std.testing.expectEqualStrings(
+            "Complete Tax Profile",
+            row.launchLabel(),
+        );
         try std.testing.expect(row.launchDisabled());
         try std.testing.expectEqualStrings("New", row.period1.status);
         try std.testing.expectEqualStrings("outline", row.period1.tone);
         try std.testing.expect(row.period1.disabled());
         try std.testing.expect(
-            std.mem.indexOf(u8, row.period1.accessibleLabel(), "complete profile") != null,
+            std.mem.indexOf(
+                u8,
+                row.period1.accessibleLabel(),
+                "complete Tax Profile",
+            ) != null,
         );
         action_id = row.period1.actionId();
         form_index = row.id;
@@ -22314,13 +17936,11 @@ test "library disables incomplete profile periods without redirecting to setup" 
         if (!formCodesEquivalent(deadline.form_code, "2551Q")) continue;
         const projected = model.profileCalendarDeadlineRow(deadline);
         try std.testing.expectEqual(
-            ProfileDeadlineAction.start,
+            ProfileDeadlineAction.none,
             projected.actions.at(0),
         );
-        try std.testing.expectEqualStrings(
-            "Start Form",
-            projected.primaryActionLabel(),
-        );
+        try std.testing.expect(!projected.primaryActionVisible());
+        try std.testing.expectEqualStrings("", projected.primaryActionLabel());
         try std.testing.expect(projected.primaryActionDisabled());
         try std.testing.expectEqual(
             ProfileDeadlineRemediation.tax_profile,
@@ -22354,7 +17974,7 @@ test "library disables incomplete profile periods without redirecting to setup" 
     try std.testing.expect(model.pendingProfileFormLaunch == null);
 }
 
-test "library disables unresolved 2551Q annual election in markup and dispatch" {
+test "library disables unresolved 2551Q Tax Form Profile in markup and dispatch" {
     const allocator = std.testing.allocator;
     var store = try profile_store.Store.openMemory(allocator);
     defer store.close();
@@ -22365,11 +17985,6 @@ test "library disables unresolved 2551Q annual election in markup and dispatch" 
         "Unresolved 2551Q Taxpayer",
         "987-654-321-000",
         .individual,
-    );
-    try addTestCompleteBusinessRegistration(
-        &store,
-        profile_id_text,
-        "2026-01-01".*,
     );
 
     var model = Model{
@@ -22390,7 +18005,7 @@ test "library disables unresolved 2551Q annual election in markup and dispatch" 
 
     const form_index = formCatalogIndex("2551Q").?;
     try std.testing.expectEqual(
-        TaxFormProfileCardState.needs_year_settings,
+        TaxFormProfileCardState.needs_setup,
         model.profilePeriodExactLaunchReadiness[form_index][0]
             .form_profile_state,
     );
@@ -22456,10 +18071,12 @@ test "library period tile opens the exact quarterly filing identity" {
         "123-456-789-000",
         .individual,
     );
-    try addTestCompleteBusinessRegistration(
+    try addTest2551QTaxFormProfile(
         &store,
         "11111111111111111111111111111111",
-        "2026-01-01".*,
+        2026,
+        "2026-01-01",
+        "2026-12-31",
     );
 
     var model = Model{
@@ -22505,92 +18122,6 @@ test "library period tile opens the exact quarterly filing identity" {
     try std.testing.expectEqual(form_catalog.FilingCadence.quarterly, filing.cadence());
     try std.testing.expectEqual(@as(?u8, 2), filing.quarter());
     try std.testing.expectEqual(@as(u16, 2026), filing.taxYear());
-}
-
-test "library disables missing-activity periods while Tax Form Profile remains reachable" {
-    const allocator = std.testing.allocator;
-    var store = try profile_store.Store.openMemory(allocator);
-    defer store.close();
-    try addTestProfile(
-        &store,
-        "1601c-context-diversion-owner",
-        "Context Diversion Taxpayer",
-        "852-741-963-000",
-        .individual,
-    );
-    const registration_activities = [_]profile_store.RegistrationActivityRevisionWrite{
-        .{
-            .anchor_id = "context-diversion-consulting",
-            .metadata = .{
-                .id = "context-diversion-consulting-r1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2026-01-01".* },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 1,
-            },
-            .line_of_business = "Consulting",
-            .atc = "PT010",
-        },
-        .{
-            .anchor_id = "context-diversion-training",
-            .metadata = .{
-                .id = "context-diversion-training-r1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2026-01-01".* },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 2,
-            },
-            .line_of_business = "Training",
-            .atc = "PT010",
-        },
-    };
-    _ = try store.appendRegistrationCommit(.{
-        .profile_id = "1601c-context-diversion-owner",
-        .expected_current_sequence = 0,
-        .activities = &registration_activities,
-    });
-
-    var model = Model{
-        .page = .taxpayer_dashboard,
-        .dashboardSection = .forms,
-    };
-    model.calendar.selected_year = 2026;
-    model.calendar.selected_month = 1;
-    try model.taxProfiles.attach(allocator, &store, "2026-01-15", 2026);
-    model.formProfiles.attach(allocator, &store);
-    defer model.formProfiles.deinit();
-    const profile_id = model.taxProfiles.selectedProfileDomainId().?;
-    try store.replaceFormSet(profile_id.asSlice(), 2026, &.{.{
-        .form_code = "1601C",
-        .form_revision = "2018-01-ENCS",
-    }});
-    refreshSelectedProfileFormSet(&model);
-
-    var arena_state = std.heap.ArenaAllocator.init(allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const rows = model.profileFormRows(arena);
-    try std.testing.expectEqual(@as(usize, 1), rows.len);
-    try std.testing.expectEqual(
-        form_ui.LaunchStatus.needs_activity_selection,
-        rows[0].launch_assessment.status,
-    );
-    try std.testing.expect(rows[0].launchDisabled());
-    try std.testing.expect(rows[0].period2.disabled());
-    update(&model, .{ .open_library_period = rows[0].period2.actionId() });
-
-    try std.testing.expectEqual(Page.taxpayer_dashboard, model.page);
-    try std.testing.expectEqual(DashboardSection.forms, model.dashboardSection);
-
-    // Remediation is deliberate: the form-profile action opens the composed
-    // setup page, rather than a filing-period click being repurposed as a
-    // navigation shortcut.
-    update(&model, .{ .open_tax_form_profile = rows[0].id });
-
-    try std.testing.expectEqual(Page.tax_form_profile, model.page);
-    try std.testing.expectEqual(@as(usize, 2), model.taxFormProfileChoiceCount);
 }
 
 test "month navigation stays inside the selected Forms Set year" {
@@ -22657,6 +18188,27 @@ test "month navigation stays inside the selected Forms Set year" {
     try std.testing.expect(model.profileCalendarPreviousMonthDisabled());
 }
 
+test "2551Q editor renders Item 13 only in the initial quarter" {
+    var model = Model{ .page = .form_2551q };
+    try model.percentageTax.reset(2026, 1);
+    model.percentageTax.bindIncomeTaxRateElection(.graduated);
+    try std.testing.expect(model.percentageTaxElectionVisible());
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        "13 What income tax rates are you availing?",
+    ));
+
+    try model.percentageTax.reset(2026, 2);
+    model.percentageTax.bindIncomeTaxRateElection(.graduated);
+    try std.testing.expect(!model.percentageTaxElectionVisible());
+    try std.testing.expect(!try appMarkupHasWidgetText(
+        &model,
+        .text,
+        "13 What income tax rates are you availing?",
+    ));
+}
+
 test "2551Q app wiring saves and resumes exact profile and transaction data" {
     const allocator = std.testing.allocator;
     var store = try profile_store.Store.openMemory(allocator);
@@ -22668,10 +18220,12 @@ test "2551Q app wiring saves and resumes exact profile and transaction data" {
         "123-456-789-000",
         .individual,
     );
-    try addTestCompleteBusinessRegistration(
+    try addTest2551QTaxFormProfile(
         &store,
         "11111111111111111111111111111111",
-        "2026-01-01".*,
+        2026,
+        "2026-01-01",
+        "2026-12-31",
     );
 
     var model = Model{};
@@ -22685,7 +18239,7 @@ test "2551Q app wiring saves and resumes exact profile and transaction data" {
     try std.testing.expectEqual(Page.form_2551q, model.page);
     try std.testing.expect(model.formProfiles.projectionAccepted());
     try std.testing.expectEqual(
-        @as(usize, 7),
+        @as(usize, 8),
         model.formProfiles.snapshot().?.slice().len,
     );
     var arena_state = std.heap.ArenaAllocator.init(allocator);
@@ -22711,18 +18265,14 @@ test "2551Q app wiring saves and resumes exact profile and transaction data" {
         model.formFilerTin(arena_state.allocator()),
     );
 
-    update(&model, .percentage_tax_period_fiscal);
     try std.testing.expectEqualStrings(
-        "",
+        "Calendar",
         model.percentageTaxPeriodBasis(),
     );
-    update(&model, .percentage_tax_period_calendar);
-    update(&model, .{
-        .percentage_tax_year_end_month_input = .{
-            .insert_text = "12",
-        },
-    });
-    update(&model, .percentage_tax_election_graduated);
+    try std.testing.expectEqualStrings(
+        "12",
+        model.percentageTaxYearEndMonth(),
+    );
     update(&model, .{
         .percentage_tax_line_1_atc_input = .{ .insert_text = "PT010" },
     });
@@ -22933,10 +18483,12 @@ test "exact 1701Q survives navigation and only explicit discard permits replacem
         "321-654-987-000",
         .individual,
     );
-    try addTestCompleteBusinessRegistration(
+    try addTest2551QTaxFormProfile(
         &store,
         "33333333333333333333333333333333",
-        "2026-01-01".*,
+        2026,
+        "2026-01-01",
+        "2026-12-31",
     );
 
     var model = Model{};
@@ -23199,11 +18751,6 @@ test "material exact 1701Q guards profile creation and retains its immutable rev
     var store = try profile_store.Store.openMemory(allocator);
     defer store.close();
     try addThreeTestProfiles(&store);
-    try addTestCompleteBusinessRegistration(
-        &store,
-        "11111111111111111111111111111111",
-        "2026-01-01".*,
-    );
 
     var model = Model{};
     model.calendar.selected_year = 2026;
@@ -23516,20 +19063,6 @@ test "exact 1701Q projection-only open isolates an older coarse draft" {
     var store = try profile_store.Store.openMemory(allocator);
     defer store.close();
 
-    const old_effective = try profile_model.EffectivePeriod.init(
-        try profile_model.Date.parseIso("2026-01-01"),
-        null,
-    );
-    const old_activities = [_]profile_model.BusinessActivity{.{
-        .id = try profile_model.BusinessActivityId.parse(
-            "legacy-draft-activity",
-        ),
-        .line_of_business = try profile_fields.LineOfBusiness.parse(
-            "Legacy consulting",
-        ),
-        .atc = try profile_fields.Atc.parse("PT010"),
-        .effective = old_effective,
-    }};
     try persistTestSoleProprietorRevision(
         &store,
         "projection-only-filer",
@@ -23538,7 +19071,7 @@ test "exact 1701Q projection-only open isolates an older coarse draft" {
         "2026-01-01",
         "LEGACY PROFILE NAME",
         "123-456-789-000",
-        &old_activities,
+        "Legacy consulting",
     );
     try addTestProfile(
         &store,
@@ -23574,7 +19107,6 @@ test "exact 1701Q projection-only open isolates an older coarse draft" {
             .profile_id = filer_id.asSlice(),
             .profile_revision_id = "projection-only-filer-r1",
             .profile_revision_sequence = 1,
-            .business_activity_id = old_activities[0].id.asSlice(),
         },
         .{
             .role = "spouse",
@@ -23602,32 +19134,6 @@ test "exact 1701Q projection-only open isolates an older coarse draft" {
         &legacy_values,
     );
 
-    const current_effective = try profile_model.EffectivePeriod.init(
-        try profile_model.Date.parseIso("2026-04-01"),
-        null,
-    );
-    const current_activities = [_]profile_model.BusinessActivity{
-        .{
-            .id = try profile_model.BusinessActivityId.parse(
-                "current-retail-activity",
-            ),
-            .line_of_business = try profile_fields.LineOfBusiness.parse(
-                "Current retail",
-            ),
-            .atc = try profile_fields.Atc.parse("PT020"),
-            .effective = current_effective,
-        },
-        .{
-            .id = try profile_model.BusinessActivityId.parse(
-                "current-service-activity",
-            ),
-            .line_of_business = try profile_fields.LineOfBusiness.parse(
-                "Current services",
-            ),
-            .atc = try profile_fields.Atc.parse("PT030"),
-            .effective = current_effective,
-        },
-    };
     try persistTestSoleProprietorRevision(
         &store,
         "projection-only-filer",
@@ -23636,7 +19142,7 @@ test "exact 1701Q projection-only open isolates an older coarse draft" {
         "2026-04-01",
         "CURRENT PROFILE NAME",
         "123-456-789-000",
-        &current_activities,
+        "Current consulting",
     );
 
     var model = Model{};
@@ -23700,32 +19206,6 @@ test "exact 1701Q projection-only open isolates an older coarse draft" {
         model.exact1701Q.selectedEditorText(),
     );
 
-    const activity_candidates =
-        model.formProfiles.activityCandidates(.filer);
-    try std.testing.expectEqual(
-        @as(usize, current_activities.len),
-        activity_candidates.len,
-    );
-    for (activity_candidates) |*candidate| {
-        try std.testing.expect(!candidate.selected);
-        try std.testing.expect(!candidate.id.eql(&old_activities[0].id));
-    }
-    var current_activity_slot: ?usize = null;
-    for (activity_candidates, 0..) |*candidate, slot| {
-        if (candidate.id.eql(&current_activities[1].id)) {
-            current_activity_slot = slot;
-            break;
-        }
-    }
-    update(&model, .{
-        .select_form_activity = current_activity_slot.?,
-    });
-    try std.testing.expect(
-        model.formProfiles.roleBinding(.filer).?
-            .business_activity_id.?.eql(&current_activities[1].id),
-    );
-    try std.testing.expect(model.exact1701Q.ready());
-
     var current_spouse_slot: ?usize = null;
     for (model.formProfiles.spouseCandidates(), 0..) |*candidate, slot| {
         try std.testing.expect(!candidate.selected);
@@ -23775,10 +19255,7 @@ test "exact 1701Q projection-only open isolates an older coarse draft" {
                 @as(u32, 1),
                 binding.profile_revision_sequence,
             );
-            try std.testing.expectEqualStrings(
-                old_activities[0].id.asSlice(),
-                binding.business_activity_id.?,
-            );
+            try std.testing.expect(binding.business_activity_id == null);
         } else if (std.mem.eql(u8, binding.role, "spouse")) {
             found_legacy_spouse_binding = true;
             try std.testing.expectEqual(
@@ -23989,8 +19466,6 @@ test "Tax Form Profile repair route opens the complete atomic profile editor" {
     try std.testing.expect(model.dashboardProfileSettingsActive());
     try std.testing.expect(model.profileTaxActive());
     try std.testing.expect(model.taxProfiles.profileEditing());
-    try std.testing.expect(model.regLoaded);
-    try std.testing.expect(model.regEditing());
     try std.testing.expect(model.profileSaveDisabled());
     try std.testing.expect(!model.profileCancelDisabled());
 
@@ -24000,16 +19475,12 @@ test "Tax Form Profile repair route opens the complete atomic profile editor" {
         .insert_text = "Professional services",
     } });
     try std.testing.expectEqual(
-        profile_registration_ui.EditableEoptTier.micro,
-        model.regPage.eoptTier().?,
-    );
-    try std.testing.expectEqual(
-        profile_model.Date{ .year = 2026, .month = 1, .day = 1 },
-        model.regPage.eoptTierEffective().?.from,
+        profile_model.EoptTier.micro,
+        model.taxProfiles.eopt_tier.?,
     );
     try std.testing.expectEqualStrings(
         "Professional services",
-        model.regPage.primaryBusinessActivity().?.line_of_business.asSlice(),
+        model.taxProfiles.primaryLineOfBusinessText(),
     );
     try std.testing.expect(!model.profileSaveDisabled());
     try std.testing.expect(!model.profileCancelDisabled());
@@ -24019,9 +19490,11 @@ test "Tax Form Profile repair route opens the complete atomic profile editor" {
     try std.testing.expect(model.taxProfiles.profileEditing());
     update(&model, .profile_discard_navigation);
     try std.testing.expect(model.profileTaxViewing());
-    try std.testing.expect(!model.regEditing());
-    try std.testing.expect(model.regPage.eoptTier() == null);
-    try std.testing.expect(model.regPage.primaryBusinessActivity() == null);
+    try std.testing.expect(model.taxProfiles.eopt_tier == null);
+    try std.testing.expectEqualStrings(
+        "",
+        model.taxProfiles.primaryLineOfBusinessText(),
+    );
 }
 
 test "inline profile settings discard staged edits when cancelled or left" {
@@ -24041,11 +19514,6 @@ test "inline profile settings discard staged edits when cancelled or left" {
         "Second Taxpayer Name",
         "321-654-988-000",
         .individual,
-    );
-    try addTestCompleteBusinessRegistration(
-        &store,
-        "inline-profile-settings",
-        "2026-01-01".*,
     );
 
     var model = Model{ .page = .taxpayer_dashboard };
@@ -25716,16 +21184,6 @@ test "render opened form workspace proof shots when requested" {
     var store = try profile_store.Store.openMemory(allocator);
     defer store.close();
 
-    const effective = try profile_model.EffectivePeriod.init(
-        try profile_model.Date.parseIso("2026-01-01"),
-        null,
-    );
-    const activities = [_]profile_model.BusinessActivity{.{
-        .id = try profile_model.BusinessActivityId.parse("activity-retail"),
-        .line_of_business = try profile_fields.LineOfBusiness.parse("Retail"),
-        .atc = try profile_fields.Atc.parse("PT010"),
-        .effective = effective,
-    }};
     try persistTestSoleProprietorRevision(
         &store,
         "44444444444444444444444444444444",
@@ -25734,7 +21192,7 @@ test "render opened form workspace proof shots when requested" {
         "2026-01-01",
         "Open Form Fixture",
         "444-444-444-000",
-        &activities,
+        "Retail",
     );
 
     var model = Model{
@@ -26916,11 +22374,6 @@ test "midyear Forms Set interval agrees across cards launch calendar and export"
         "654-321-987-000",
         .individual,
     );
-    try addTestCompleteBusinessRegistration(
-        &profile_fixture,
-        profile_id,
-        "2026-01-01".*,
-    );
     // The saved whole-year decision is explicitly empty. 2551Q becomes
     // active only for filing periods ending on or after July 1.
     try profile_fixture.replaceFormSet(profile_id, 2026, &.{});
@@ -26934,6 +22387,13 @@ test "midyear Forms Set interval agrees across cards launch calendar and export"
             .form_revision = "2018-01-ENCS",
         }},
     });
+    try addTest2551QTaxFormProfile(
+        &profile_fixture,
+        profile_id,
+        2026,
+        "2026-07-01",
+        "2026-12-31",
+    );
 
     var model = Model{
         .page = .taxpayer_dashboard,
@@ -27312,10 +22772,12 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
         "456-789-123-000",
         .individual,
     );
-    try addTestCompleteBusinessRegistration(
+    try addTest2551QTaxFormProfile(
         &profile_store_fixture,
         profile_id,
-        "2026-01-01".*,
+        2026,
+        "2026-01-01",
+        "2026-12-31",
     );
     var model = Model{};
     try model.calendar.attach(
@@ -28044,6 +23506,21 @@ fn appMarkupHasSemanticsPrefix(
     var ui = canvas.Ui(Msg).init(arena);
     const tree = try ui.finalize(try view.build(&ui, model));
     return findWidgetBySemanticsPrefix(tree.root, prefix) != null;
+}
+
+fn appMarkupHasWidgetText(
+    model: *const Model,
+    kind: canvas.WidgetKind,
+    text: []const u8,
+) !bool {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var ui = canvas.Ui(Msg).init(arena);
+    const tree = try ui.finalize(try view.build(&ui, model));
+    return findWidgetByText(tree.root, kind, text) != null;
 }
 
 fn dispatchAppWidgetBySemanticsPrefix(

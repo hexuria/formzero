@@ -10,10 +10,7 @@ const field = @import("field.zig");
 const model = @import("model.zig");
 const persistence = @import("store.zig");
 const forms_set_history = @import("forms_set_history.zig");
-const registration = @import("registration.zig");
-const registration_ui = @import("registration_ui.zig");
 const taxpayer_year = @import("taxpayer_year_settings.zig");
-const annual_election = @import("annual_income_tax_election.zig");
 const tax_form_profile = @import("tax_form_profile.zig");
 const form_catalog = @import("../forms/generated/catalog.zig");
 
@@ -22,37 +19,94 @@ pub const SerializedValue = struct {
     text: []const u8,
 };
 
-/// Allocated only for repeated SQL rows. All text slices borrow the immutable,
-/// allocation-free domain revision supplied to `toWriteRows`.
+/// Normal Base Tax Profile writes contain only the consolidated revision row.
+/// Retired activity and registration components are intentionally never
+/// emitted by this adapter.
 pub const WriteRows = struct {
     revision: persistence.RevisionWrite,
-    business_activities: []persistence.BusinessActivityWrite,
-    registration_facts: []persistence.RegistrationFactWrite,
-
-    pub fn components(self: *const WriteRows) persistence.RevisionComponentsWrite {
-        return .{
-            .business_activities = self.business_activities,
-            .registration_facts = self.registration_facts,
-        };
-    }
 
     pub fn deinit(self: *WriteRows, allocator: std.mem.Allocator) void {
-        allocator.free(self.business_activities);
-        allocator.free(self.registration_facts);
+        _ = allocator;
         self.* = undefined;
     }
 };
 
-/// Owns the repeated arrays referenced by `revision`. Domain fields themselves
-/// are fixed-storage values, so the source SQLite row can be released as soon
-/// as this conversion returns.
+/// Normal Base Tax Profile loads expose only consolidated Base fields. Domain
+/// fields are fixed-storage values, so the source SQLite row can be released
+/// as soon as this conversion returns.
 pub const OwnedDomainRevision = struct {
     revision: model.ProfileRevision,
-    business_activities: []model.BusinessActivity,
-    registration_facts: []model.RegistrationFact,
 
     pub fn deinit(
         self: *OwnedDomainRevision,
+        allocator: std.mem.Allocator,
+    ) void {
+        _ = allocator;
+        self.* = undefined;
+    }
+};
+
+/// Read-only evidence from retired profile-attached component rows. This type
+/// is deliberately separate from `OwnedDomainRevision` so normal Base profile
+/// editing, readiness, and filing composition cannot consume legacy facts.
+pub const LegacyComponentId = struct {
+    bytes: [64]u8 = undefined,
+    len: u8 = 0,
+
+    pub fn parse(raw: []const u8) model.IdError!LegacyComponentId {
+        const value = std.mem.trim(u8, raw, " \t\r\n");
+        if (value.len == 0) return error.Empty;
+        if (value.len > 64) return error.TooLong;
+        for (value) |byte| {
+            if (!std.ascii.isAlphanumeric(byte) and
+                byte != '-' and byte != '_' and byte != '.' and
+                byte != ':')
+            {
+                return error.InvalidCharacter;
+            }
+        }
+        var result: LegacyComponentId = .{};
+        @memcpy(result.bytes[0..value.len], value);
+        result.len = @intCast(value.len);
+        return result;
+    }
+
+    pub fn asSlice(self: *const LegacyComponentId) []const u8 {
+        return self.bytes[0..self.len];
+    }
+};
+
+pub const LegacyBusinessActivity = struct {
+    id: LegacyComponentId,
+    line_of_business: field.LineOfBusiness,
+    atc: ?field.Atc = null,
+    effective: model.EffectivePeriod,
+};
+
+pub const LegacyRegistrationFactKind = enum {
+    tax_type,
+    government_withholding_agent,
+    special_rate_basis,
+};
+
+pub const LegacyRegistrationFactValue = union(LegacyRegistrationFactKind) {
+    tax_type: field.TaxType,
+    government_withholding_agent: field.GovernmentWithholdingAgent,
+    special_rate_basis: field.SpecialRateBasis,
+};
+
+pub const LegacyRegistrationFact = struct {
+    id: LegacyComponentId,
+    effective: model.EffectivePeriod,
+    value: LegacyRegistrationFactValue,
+};
+
+pub const OwnedLegacyProfileComponents = struct {
+    business_activities: []LegacyBusinessActivity,
+    registration_facts: []LegacyRegistrationFact,
+
+    pub fn deinit(
+        self: *OwnedLegacyProfileComponents,
         allocator: std.mem.Allocator,
     ) void {
         allocator.free(self.business_activities);
@@ -71,19 +125,6 @@ pub const OwnedTaxpayerYearHistory = struct {
     ) void {
         for (self.revisions) |revision| allocator.free(revision.values);
         allocator.free(self.revisions);
-        self.* = undefined;
-    }
-};
-
-pub const OwnedAnnualIncomeTaxElectionHistory = struct {
-    history: annual_election.History,
-    events: []annual_election.Event,
-
-    pub fn deinit(
-        self: *OwnedAnnualIncomeTaxElectionHistory,
-        allocator: std.mem.Allocator,
-    ) void {
-        allocator.free(self.events);
         self.* = undefined;
     }
 };
@@ -148,73 +189,13 @@ pub const OwnedFormSetDecisionResolution = struct {
     }
 };
 
-/// Exact-date registration aggregate plus the independent optimistic stream
-/// sequence the UI must carry into its next `SaveIntent`.
-pub const OwnedRegistrationAggregate = struct {
-    aggregate: registration.RegistrationAggregate,
-    stream_sequence: u32,
-    activity_anchors: []registration.ActivityAnchor,
-    obligation_anchors: []registration.ObligationAnchor,
-    business_activities: []registration.BusinessActivity,
-    obligations: []registration.RegistrationObligation,
-    agent_designations: []registration.AgentDesignationRevision,
-    eopt_tiers: []registration.EoptTierRevision,
-    activity_statuses: []registration.RegistrationActivityStatusRevision,
-    special_bases: []registration.SpecialLawOrTreatyBasisRevision,
-
-    pub fn deinit(
-        self: *OwnedRegistrationAggregate,
-        allocator: std.mem.Allocator,
-    ) void {
-        allocator.free(self.activity_anchors);
-        allocator.free(self.obligation_anchors);
-        allocator.free(self.business_activities);
-        allocator.free(self.obligations);
-        allocator.free(self.agent_designations);
-        allocator.free(self.eopt_tiers);
-        allocator.free(self.activity_statuses);
-        allocator.free(self.special_bases);
-        self.* = undefined;
-    }
-};
-
 pub fn toWriteRows(
     allocator: std.mem.Allocator,
     revision: *const model.ProfileRevision,
     expected_current_sequence: ?u32,
 ) !WriteRows {
+    _ = allocator;
     try revision.validate();
-
-    const activities = try allocator.alloc(
-        persistence.BusinessActivityWrite,
-        revision.business_activities.len,
-    );
-    errdefer allocator.free(activities);
-    for (revision.business_activities, 0..) |*activity, index| {
-        if (index > std.math.maxInt(u32)) return error.TooManyComponents;
-        activities[index] = .{
-            .id = activity.id.asSlice(),
-            .line_of_business = activity.line_of_business.asSlice(),
-            .atc = if (activity.atc) |*atc| atc.asSlice() else null,
-            .effective = effectiveToWrite(activity.effective),
-            .ordinal = @intCast(index),
-        };
-    }
-
-    const facts = try allocator.alloc(
-        persistence.RegistrationFactWrite,
-        revision.registration_facts.len,
-    );
-    errdefer allocator.free(facts);
-    for (revision.registration_facts, 0..) |*fact, index| {
-        if (index > std.math.maxInt(u32)) return error.TooManyComponents;
-        facts[index] = .{
-            .id = fact.id.asSlice(),
-            .effective = effectiveToWrite(fact.effective),
-            .value = registrationFactToWrite(&fact.value),
-            .ordinal = @intCast(index),
-        };
-    }
 
     return .{
         .revision = .{
@@ -244,9 +225,23 @@ pub fn toWriteRows(
                     null,
             },
             .subject = subjectToWrite(&revision.subject),
+            .accounting_period_basis = if (revision.accounting_period_basis) |basis| switch (basis) {
+                .calendar => .calendar,
+                .fiscal => .fiscal,
+            } else null,
+            .fiscal_year_end_month = revision.fiscal_year_end_month,
+            .eopt_tier = if (revision.eopt_tier) |tier| switch (tier) {
+                .micro => .micro,
+                .small => .small,
+                .medium => .medium,
+                .large => .large,
+            } else null,
+            .primary_line_of_business = if (revision.primary_line_of_business) |*line| line.asSlice() else null,
+            .consolidation_review_state = switch (revision.consolidation_review_state) {
+                .confirmed => .confirmed,
+                .requires_review => .requires_review,
+            },
         },
-        .business_activities = activities,
-        .registration_facts = facts,
     };
 }
 
@@ -264,7 +259,6 @@ pub fn createProfileWithRevision(
             .status = status,
         },
         rows.revision,
-        rows.components(),
     );
 }
 
@@ -280,7 +274,7 @@ pub fn appendRevision(
         expected_current_sequence,
     );
     defer rows.deinit(allocator);
-    try store.appendRevision(rows.revision, rows.components());
+    try store.appendRevision(rows.revision);
 }
 
 /// Appends a revision carrying the durable key to the reviewed COR document
@@ -300,7 +294,7 @@ pub fn appendRevisionLinked(
     );
     defer rows.deinit(allocator);
     rows.revision.cor_document_id = cor_document_id;
-    try store.appendRevision(rows.revision, rows.components());
+    try store.appendRevision(rows.revision);
 }
 
 pub fn appendFormSetDecision(
@@ -444,892 +438,6 @@ pub fn resolveFormSetDecisionOn(
     };
 }
 
-/// Loads the exact-date registration projection expected by
-/// `registration_ui.State.open`, together with its optimistic stream head.
-/// Confirmed retirements and superseded values are resolved by the store;
-/// current review-required rows remain in the aggregate for inspection.
-pub fn loadRegistrationAggregateOn(
-    store: *persistence.Store,
-    allocator: std.mem.Allocator,
-    profile_id: model.ProfileId,
-    effective_on: model.Date,
-) !OwnedRegistrationAggregate {
-    var date_buffer: persistence.DateText = undefined;
-    const date_text = effective_on.writeIso(&date_buffer);
-    var rows = try store.resolveRegistrationOn(
-        allocator,
-        profile_id.asSlice(),
-        date_text,
-    );
-    defer rows.deinit(allocator);
-
-    return registrationAggregateFromRows(
-        allocator,
-        profile_id,
-        &rows,
-        .already_resolved,
-    );
-}
-
-/// Loads Registration & Forms for one selected tax year. Unlike an as-of-day
-/// projection, a confirmed Jan-Jun component remains present when the screen
-/// is opened later in the year. The latest confirmed revision for each stable
-/// anchor that intersects the year is selected without changing its stored
-/// effective interval.
-pub fn loadRegistrationAggregateForYear(
-    store: *persistence.Store,
-    allocator: std.mem.Allocator,
-    profile_id: model.ProfileId,
-    tax_year: u16,
-) !OwnedRegistrationAggregate {
-    _ = try registrationYearPeriod(tax_year);
-    var rows = try store.listRegistrationHistory(
-        allocator,
-        profile_id.asSlice(),
-    );
-    defer rows.deinit(allocator);
-
-    return registrationAggregateFromRows(
-        allocator,
-        profile_id,
-        &rows,
-        .{ .tax_year = tax_year },
-    );
-}
-
-const RegistrationProjectionScope = union(enum) {
-    already_resolved,
-    tax_year: u16,
-};
-
-fn registrationYearPeriod(tax_year: u16) !model.EffectivePeriod {
-    return registration.taxYearPeriod(tax_year);
-}
-
-fn registrationMetadataInScope(
-    metadata: *const persistence.OwnedRegistrationRevisionMetadata,
-    scope: RegistrationProjectionScope,
-) !bool {
-    if (scope == .already_resolved) return true;
-    if (metadata.record_state != .present) return false;
-    const period = try parseEffective(
-        metadata.effective_from,
-        metadata.effective_until,
-    );
-    return period.overlaps(try registrationYearPeriod(scope.tax_year));
-}
-
-fn registrationReviewRevisionIsCurrent(rows: anytype, index: usize) bool {
-    const id = rows[index].metadata.id;
-    for (rows) |*later| {
-        if (later.metadata.supersedes_id) |supersedes| {
-            if (std.mem.eql(u8, supersedes, id)) return false;
-        }
-    }
-    return true;
-}
-
-fn registrationActivityInScope(
-    rows: []const persistence.OwnedRegistrationActivityRevision,
-    index: usize,
-    scope: RegistrationProjectionScope,
-) !bool {
-    const row = &rows[index];
-    if (!(try registrationMetadataInScope(&row.metadata, scope))) return false;
-    if (scope == .already_resolved) return true;
-    if (row.metadata.review_state == .requires_review) {
-        return registrationReviewRevisionIsCurrent(rows, index);
-    }
-    for (rows, 0..) |*other, other_index| {
-        if (other_index == index or
-            other.metadata.review_state != .confirmed or
-            !std.mem.eql(u8, row.anchor_id, other.anchor_id) or
-            !(try registrationMetadataInScope(&other.metadata, scope)))
-        {
-            continue;
-        }
-        if (other.metadata.component_sequence > row.metadata.component_sequence) {
-            return false;
-        }
-    }
-    return true;
-}
-
-fn registrationObligationInScope(
-    rows: []const persistence.OwnedRegistrationObligationRevision,
-    index: usize,
-    scope: RegistrationProjectionScope,
-) !bool {
-    const row = &rows[index];
-    if (!(try registrationMetadataInScope(&row.metadata, scope))) return false;
-    if (scope == .already_resolved) return true;
-    if (row.metadata.review_state == .requires_review) {
-        return registrationReviewRevisionIsCurrent(rows, index);
-    }
-    for (rows, 0..) |*other, other_index| {
-        if (other_index == index or
-            other.metadata.review_state != .confirmed or
-            !std.mem.eql(u8, row.anchor_id, other.anchor_id) or
-            !(try registrationMetadataInScope(&other.metadata, scope)))
-        {
-            continue;
-        }
-        if (other.metadata.component_sequence > row.metadata.component_sequence) {
-            return false;
-        }
-    }
-    return true;
-}
-
-fn registrationFactInScope(
-    rows: anytype,
-    index: usize,
-    scope: RegistrationProjectionScope,
-) !bool {
-    const row = &rows[index];
-    if (!(try registrationMetadataInScope(&row.metadata, scope))) return false;
-    if (scope == .already_resolved) return true;
-    if (row.metadata.review_state == .requires_review) {
-        return registrationReviewRevisionIsCurrent(rows, index);
-    }
-    for (rows, 0..) |*other, other_index| {
-        if (other_index == index or
-            other.metadata.review_state != .confirmed or
-            !(try registrationMetadataInScope(&other.metadata, scope)))
-        {
-            continue;
-        }
-        if (other.metadata.component_sequence > row.metadata.component_sequence) {
-            return false;
-        }
-    }
-    return true;
-}
-
-fn registrationAggregateFromRows(
-    allocator: std.mem.Allocator,
-    profile_id: model.ProfileId,
-    rows: *const persistence.RegistrationHistoryList,
-    scope: RegistrationProjectionScope,
-) !OwnedRegistrationAggregate {
-    var activity_count: usize = 0;
-    for (rows.activities, 0..) |_, index| {
-        activity_count += @intFromBool(try registrationActivityInScope(
-            rows.activities,
-            index,
-            scope,
-        ));
-    }
-    var obligation_count: usize = 0;
-    for (rows.obligations, 0..) |_, index| {
-        obligation_count += @intFromBool(try registrationObligationInScope(
-            rows.obligations,
-            index,
-            scope,
-        ));
-    }
-    var agent_count: usize = 0;
-    for (rows.agent_designations, 0..) |_, index| {
-        agent_count += @intFromBool(try registrationFactInScope(
-            rows.agent_designations,
-            index,
-            scope,
-        ));
-    }
-    var eopt_count: usize = 0;
-    for (rows.eopt_tiers, 0..) |_, index| {
-        eopt_count += @intFromBool(try registrationFactInScope(
-            rows.eopt_tiers,
-            index,
-            scope,
-        ));
-    }
-    var status_count: usize = 0;
-    for (rows.activity_statuses, 0..) |_, index| {
-        status_count += @intFromBool(try registrationFactInScope(
-            rows.activity_statuses,
-            index,
-            scope,
-        ));
-    }
-    var basis_count: usize = 0;
-    for (rows.special_bases, 0..) |_, index| {
-        basis_count += @intFromBool(try registrationFactInScope(
-            rows.special_bases,
-            index,
-            scope,
-        ));
-    }
-
-    const activity_anchors = try allocator.alloc(
-        registration.ActivityAnchor,
-        rows.activity_anchors.len,
-    );
-    errdefer allocator.free(activity_anchors);
-    const obligation_anchors = try allocator.alloc(
-        registration.ObligationAnchor,
-        rows.obligation_anchors.len,
-    );
-    errdefer allocator.free(obligation_anchors);
-    const activities = try allocator.alloc(
-        registration.BusinessActivity,
-        activity_count,
-    );
-    errdefer allocator.free(activities);
-    const obligations = try allocator.alloc(
-        registration.RegistrationObligation,
-        obligation_count,
-    );
-    errdefer allocator.free(obligations);
-    const agents = try allocator.alloc(
-        registration.AgentDesignationRevision,
-        agent_count,
-    );
-    errdefer allocator.free(agents);
-    const eopt = try allocator.alloc(
-        registration.EoptTierRevision,
-        eopt_count,
-    );
-    errdefer allocator.free(eopt);
-    const statuses = try allocator.alloc(
-        registration.RegistrationActivityStatusRevision,
-        status_count,
-    );
-    errdefer allocator.free(statuses);
-    const bases = try allocator.alloc(
-        registration.SpecialLawOrTreatyBasisRevision,
-        basis_count,
-    );
-    errdefer allocator.free(bases);
-
-    for (rows.activity_anchors, 0..) |*row, index| {
-        activity_anchors[index] = .{
-            .owner_profile_id = try model.ProfileId.parse(row.profile_id),
-            .id = try registration.ActivityAnchorId.parse(row.anchor_id),
-        };
-    }
-    for (rows.obligation_anchors, 0..) |*row, index| {
-        obligation_anchors[index] = .{
-            .owner_profile_id = try model.ProfileId.parse(row.profile_id),
-            .id = try registration.ObligationAnchorId.parse(row.anchor_id),
-        };
-    }
-    var activity_index: usize = 0;
-    for (rows.activities, 0..) |*row, source_index| {
-        if (!(try registrationActivityInScope(
-            rows.activities,
-            source_index,
-            scope,
-        ))) continue;
-        activities[activity_index] = .{
-            .anchor_id = try registration.ActivityAnchorId.parse(
-                row.anchor_id,
-            ),
-            .metadata = try registrationMetadataToDomain(&row.metadata),
-            .line_of_business = try field.LineOfBusiness.parse(
-                row.line_of_business,
-            ),
-            .atc = if (row.atc) |atc| try field.Atc.parse(atc) else null,
-        };
-        activity_index += 1;
-    }
-    var obligation_index: usize = 0;
-    for (rows.obligations, 0..) |*row, source_index| {
-        if (!(try registrationObligationInScope(
-            rows.obligations,
-            source_index,
-            scope,
-        ))) continue;
-        obligations[obligation_index] = .{
-            .anchor_id = try registration.ObligationAnchorId.parse(
-                row.anchor_id,
-            ),
-            .metadata = try registrationMetadataToDomain(&row.metadata),
-            .kind = try registrationObligationToDomain(
-                row.kind,
-                row.value_text,
-            ),
-        };
-        obligation_index += 1;
-    }
-    var agent_index: usize = 0;
-    for (rows.agent_designations, 0..) |*row, source_index| {
-        if (!(try registrationFactInScope(
-            rows.agent_designations,
-            source_index,
-            scope,
-        ))) continue;
-        agents[agent_index] = .{
-            .metadata = try registrationMetadataToDomain(&row.metadata),
-            .value = switch (row.value) {
-                .not_designated => .not_designated,
-                .government_withholding_agent => .government_withholding_agent,
-                .top_withholding_agent => .top_withholding_agent,
-                .government_and_top_withholding_agent => .government_and_top_withholding_agent,
-                .unknown_requires_review => .unknown_requires_review,
-            },
-        };
-        agent_index += 1;
-    }
-    var eopt_index: usize = 0;
-    for (rows.eopt_tiers, 0..) |*row, source_index| {
-        if (!(try registrationFactInScope(
-            rows.eopt_tiers,
-            source_index,
-            scope,
-        ))) continue;
-        eopt[eopt_index] = .{
-            .metadata = try registrationMetadataToDomain(&row.metadata),
-            .value = switch (row.value) {
-                .not_applicable => .not_applicable,
-                .micro => .micro,
-                .small => .small,
-                .medium => .medium,
-                .large => .large,
-                .unknown_requires_review => .unknown_requires_review,
-            },
-        };
-        eopt_index += 1;
-    }
-    var status_index: usize = 0;
-    for (rows.activity_statuses, 0..) |*row, source_index| {
-        if (!(try registrationFactInScope(
-            rows.activity_statuses,
-            source_index,
-            scope,
-        ))) continue;
-        statuses[status_index] = .{
-            .metadata = try registrationMetadataToDomain(&row.metadata),
-            .value = switch (row.value) {
-                .active => .active,
-                .inactive => .inactive,
-                .unknown_requires_review => .unknown_requires_review,
-            },
-        };
-        status_index += 1;
-    }
-    var basis_index: usize = 0;
-    for (rows.special_bases, 0..) |*row, source_index| {
-        if (!(try registrationFactInScope(
-            rows.special_bases,
-            source_index,
-            scope,
-        ))) continue;
-        const value = try field.SpecialRateBasis.parse(row.value_text);
-        bases[basis_index] = .{
-            .metadata = try registrationMetadataToDomain(&row.metadata),
-            .value = switch (row.kind) {
-                .special_law => .{ .special_law = value },
-                .treaty => .{ .treaty = value },
-                .unknown_requires_review => .{
-                    .unknown_requires_review = value,
-                },
-            },
-        };
-        basis_index += 1;
-    }
-
-    const aggregate: registration.RegistrationAggregate = .{
-        .profile_id = profile_id,
-        .activity_anchors = activity_anchors,
-        .obligation_anchors = obligation_anchors,
-        .business_activities = activities,
-        .obligations = obligations,
-        .agent_designations = agents,
-        .eopt_tiers = eopt,
-        .registration_activity_statuses = statuses,
-        .special_law_or_treaty_bases = bases,
-    };
-    try aggregate.validate();
-    return .{
-        .aggregate = aggregate,
-        .stream_sequence = rows.stream_sequence,
-        .activity_anchors = activity_anchors,
-        .obligation_anchors = obligation_anchors,
-        .business_activities = activities,
-        .obligations = obligations,
-        .agent_designations = agents,
-        .eopt_tiers = eopt,
-        .activity_statuses = statuses,
-        .special_bases = bases,
-    };
-}
-
-/// Persists one complete `registration_ui.SaveIntent` as one optimistic v16
-/// stream commit. Only changed/new rows and explicit retirements are appended;
-/// the dedicated EOPT value is diffed independently, and review-required
-/// proposals plus other auxiliary facts are never inferred away.
-fn saveRegistrationIntentWithOptionalProfile(
-    store: *persistence.Store,
-    allocator: std.mem.Allocator,
-    intent: *const registration_ui.SaveIntent,
-    profile_rows: ?*const WriteRows,
-) !u32 {
-    var current = if (intent.selected_tax_year) |tax_year|
-        try loadRegistrationAggregateForYear(
-            store,
-            allocator,
-            intent.profile_id,
-            tax_year,
-        )
-    else
-        try loadRegistrationAggregateOn(
-            store,
-            allocator,
-            intent.profile_id,
-            intent.viewed_on,
-        );
-    defer current.deinit(allocator);
-    if (current.stream_sequence != intent.expected_sequence) {
-        return persistence.Error.RegistrationStreamConflict;
-    }
-    try validateRetainedRegistrationReviews(
-        &current.aggregate,
-        intent.retained_review_rows,
-    );
-
-    var history = try store.listRegistrationHistory(
-        allocator,
-        intent.profile_id.asSlice(),
-    );
-    defer history.deinit(allocator);
-    if (history.stream_sequence != intent.expected_sequence) {
-        return persistence.Error.RegistrationStreamConflict;
-    }
-
-    const activity_capacity = current.business_activities.len +
-        intent.business_activities.len;
-    const obligation_capacity = current.obligations.len +
-        intent.registration_obligations.len;
-    const activity_ids = try allocator.alloc(
-        persistence.OpaqueId,
-        activity_capacity,
-    );
-    defer allocator.free(activity_ids);
-    const obligation_ids = try allocator.alloc(
-        persistence.OpaqueId,
-        obligation_capacity,
-    );
-    defer allocator.free(obligation_ids);
-    const activity_writes = try allocator.alloc(
-        persistence.RegistrationActivityRevisionWrite,
-        activity_capacity,
-    );
-    defer allocator.free(activity_writes);
-    const obligation_writes = try allocator.alloc(
-        persistence.RegistrationObligationRevisionWrite,
-        obligation_capacity,
-    );
-    defer allocator.free(obligation_writes);
-    var activity_count: usize = 0;
-    var obligation_count: usize = 0;
-    var eopt_id: persistence.OpaqueId = undefined;
-    var eopt_writes: [1]persistence.RegistrationEoptTierRevisionWrite = undefined;
-    var eopt_count: usize = 0;
-
-    for (current.business_activities) |*existing| {
-        if (!existing.metadata.review.isConfirmed()) continue;
-        if (findDesiredActivity(intent.business_activities, &existing.anchor_id) != null) {
-            continue;
-        }
-        activity_ids[activity_count] = try store.generateOpaqueId();
-        activity_writes[activity_count] = .{
-            .anchor_id = existing.anchor_id.asSlice(),
-            .metadata = .{
-                .id = &activity_ids[activity_count],
-                .expected_component_sequence = maxActivitySequence(
-                    history.activities,
-                    &existing.anchor_id,
-                ),
-                .effective = if (intent.selected_tax_year != null)
-                    effectiveToWrite(existing.metadata.effective)
-                else
-                    registrationRetirementPeriod(intent.viewed_on),
-                .record_state = .retired,
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .supersedes_id = existing.metadata.revision_id.asSlice(),
-            },
-            .line_of_business = existing.line_of_business.asSlice(),
-            .atc = if (existing.atc) |*atc| atc.asSlice() else null,
-        };
-        activity_count += 1;
-    }
-    for (intent.business_activities) |*desired| {
-        const existing = findConfirmedActivity(
-            current.business_activities,
-            &desired.anchor_id,
-        );
-        if (existing) |found| {
-            if (registrationActivityEquals(found, desired)) continue;
-        }
-        activity_ids[activity_count] = try store.generateOpaqueId();
-        activity_writes[activity_count] = .{
-            .anchor_id = desired.anchor_id.asSlice(),
-            .metadata = .{
-                .id = &activity_ids[activity_count],
-                .expected_component_sequence = maxActivitySequence(
-                    history.activities,
-                    &desired.anchor_id,
-                ),
-                .effective = effectiveToWrite(desired.effective),
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .supersedes_id = if (existing) |found|
-                    found.metadata.revision_id.asSlice()
-                else
-                    null,
-            },
-            .line_of_business = desired.line_of_business.asSlice(),
-            .atc = if (desired.atc) |*atc| atc.asSlice() else null,
-        };
-        activity_count += 1;
-    }
-
-    for (current.obligations) |*existing| {
-        if (!existing.metadata.review.isConfirmed()) continue;
-        if (findDesiredObligation(
-            intent.registration_obligations,
-            &existing.anchor_id,
-        ) != null) continue;
-        obligation_ids[obligation_count] = try store.generateOpaqueId();
-        const encoded = registrationObligationToWrite(&existing.kind);
-        obligation_writes[obligation_count] = .{
-            .anchor_id = existing.anchor_id.asSlice(),
-            .metadata = .{
-                .id = &obligation_ids[obligation_count],
-                .expected_component_sequence = maxObligationSequence(
-                    history.obligations,
-                    &existing.anchor_id,
-                ),
-                .effective = if (intent.selected_tax_year != null)
-                    effectiveToWrite(existing.metadata.effective)
-                else
-                    registrationRetirementPeriod(intent.viewed_on),
-                .record_state = .retired,
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .supersedes_id = existing.metadata.revision_id.asSlice(),
-            },
-            .kind = encoded.kind,
-            .value_text = encoded.value_text,
-        };
-        obligation_count += 1;
-    }
-    for (intent.registration_obligations) |*desired| {
-        const existing = findConfirmedObligation(
-            current.obligations,
-            &desired.anchor_id,
-        );
-        if (existing) |found| {
-            if (registrationObligationRowEquals(found, desired)) continue;
-        }
-        obligation_ids[obligation_count] = try store.generateOpaqueId();
-        const encoded = registrationObligationToWrite(&desired.kind);
-        obligation_writes[obligation_count] = .{
-            .anchor_id = desired.anchor_id.asSlice(),
-            .metadata = .{
-                .id = &obligation_ids[obligation_count],
-                .expected_component_sequence = maxObligationSequence(
-                    history.obligations,
-                    &desired.anchor_id,
-                ),
-                .effective = effectiveToWrite(desired.effective),
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .supersedes_id = if (existing) |found|
-                    found.metadata.revision_id.asSlice()
-                else
-                    null,
-            },
-            .kind = encoded.kind,
-            .value_text = encoded.value_text,
-        };
-        obligation_count += 1;
-    }
-
-    if (intent.eopt_tier) |*desired| {
-        const existing = findConfirmedEoptTier(
-            current.eopt_tiers,
-            desired.origin,
-        );
-        if (existing == null or
-            !registrationEoptTierRowEquals(existing.?, desired))
-        {
-            eopt_id = try store.generateOpaqueId();
-            eopt_writes[0] = .{
-                .metadata = .{
-                    .id = &eopt_id,
-                    .expected_component_sequence = maxEoptTierSequence(
-                        history.eopt_tiers,
-                    ),
-                    .effective = effectiveToWrite(desired.effective),
-                    .source = .manual_entry,
-                    .review_state = .confirmed,
-                    .supersedes_id = if (existing) |found|
-                        found.metadata.revision_id.asSlice()
-                    else
-                        null,
-                },
-                .value = eoptTierToWrite(desired.value),
-            };
-            eopt_count = 1;
-        }
-    }
-
-    if (activity_count == 0 and obligation_count == 0 and eopt_count == 0) {
-        if (profile_rows) |rows| {
-            try store.appendRevision(rows.revision, rows.components());
-            return intent.expected_sequence;
-        }
-        return persistence.Error.RegistrationNoChanges;
-    }
-    const registration_write: persistence.RegistrationCommitWrite = .{
-        .profile_id = intent.profile_id.asSlice(),
-        .expected_current_sequence = intent.expected_sequence,
-        .activities = activity_writes[0..activity_count],
-        .obligations = obligation_writes[0..obligation_count],
-        .eopt_tiers = eopt_writes[0..eopt_count],
-    };
-    if (profile_rows) |rows| {
-        return store.appendRevisionAndRegistrationCommit(
-            rows.revision,
-            rows.components(),
-            registration_write,
-        );
-    }
-    return store.appendRegistrationCommit(registration_write);
-}
-
-pub fn saveRegistrationIntent(
-    store: *persistence.Store,
-    allocator: std.mem.Allocator,
-    intent: *const registration_ui.SaveIntent,
-) !u32 {
-    return saveRegistrationIntentWithOptionalProfile(
-        store,
-        allocator,
-        intent,
-        null,
-    );
-}
-
-/// One complete-profile Save operation. Base revision and registration-owned
-/// activity/EOPT changes share a transaction while retaining their independent
-/// optimistic sequence checks and persistence ownership.
-pub fn saveProfileAndRegistrationIntent(
-    store: *persistence.Store,
-    allocator: std.mem.Allocator,
-    revision: *const model.ProfileRevision,
-    expected_profile_sequence: u32,
-    intent: *const registration_ui.SaveIntent,
-) !u32 {
-    if (!revision.profile_id.eql(&intent.profile_id)) {
-        return persistence.Error.InvalidValue;
-    }
-    var rows = try toWriteRows(
-        allocator,
-        revision,
-        expected_profile_sequence,
-    );
-    defer rows.deinit(allocator);
-    return saveRegistrationIntentWithOptionalProfile(
-        store,
-        allocator,
-        intent,
-        &rows,
-    );
-}
-
-/// Creates a profile shell, revision 1, and its initial normalized
-/// registration components as one transaction. Creation cannot supersede or
-/// retain prior registration evidence because no stream exists yet.
-pub fn createProfileAndRegistrationIntent(
-    store: *persistence.Store,
-    allocator: std.mem.Allocator,
-    status: persistence.ProfileStatus,
-    revision: *const model.ProfileRevision,
-    intent: *const registration_ui.SaveIntent,
-) !u32 {
-    if (!revision.profile_id.eql(&intent.profile_id) or
-        revision.sequence != 1 or
-        intent.expected_sequence != 0 or
-        intent.retained_review_rows.len != 0)
-    {
-        return persistence.Error.InvalidValue;
-    }
-
-    var rows = try toWriteRows(allocator, revision, 0);
-    defer rows.deinit(allocator);
-
-    const activity_ids = try allocator.alloc(
-        persistence.OpaqueId,
-        intent.business_activities.len,
-    );
-    defer allocator.free(activity_ids);
-    const activity_writes = try allocator.alloc(
-        persistence.RegistrationActivityRevisionWrite,
-        intent.business_activities.len,
-    );
-    defer allocator.free(activity_writes);
-    for (intent.business_activities, 0..) |*desired, index| {
-        if (desired.origin != null) return persistence.Error.InvalidValue;
-        activity_ids[index] = try store.generateOpaqueId();
-        activity_writes[index] = .{
-            .anchor_id = desired.anchor_id.asSlice(),
-            .metadata = .{
-                .id = &activity_ids[index],
-                .expected_component_sequence = 0,
-                .effective = effectiveToWrite(desired.effective),
-                .source = .manual_entry,
-                .review_state = .confirmed,
-            },
-            .line_of_business = desired.line_of_business.asSlice(),
-            .atc = if (desired.atc) |*atc| atc.asSlice() else null,
-        };
-    }
-
-    const obligation_ids = try allocator.alloc(
-        persistence.OpaqueId,
-        intent.registration_obligations.len,
-    );
-    defer allocator.free(obligation_ids);
-    const obligation_writes = try allocator.alloc(
-        persistence.RegistrationObligationRevisionWrite,
-        intent.registration_obligations.len,
-    );
-    defer allocator.free(obligation_writes);
-    for (intent.registration_obligations, 0..) |*desired, index| {
-        if (desired.origin != null) return persistence.Error.InvalidValue;
-        obligation_ids[index] = try store.generateOpaqueId();
-        const encoded = registrationObligationToWrite(&desired.kind);
-        obligation_writes[index] = .{
-            .anchor_id = desired.anchor_id.asSlice(),
-            .metadata = .{
-                .id = &obligation_ids[index],
-                .expected_component_sequence = 0,
-                .effective = effectiveToWrite(desired.effective),
-                .source = .manual_entry,
-                .review_state = .confirmed,
-            },
-            .kind = encoded.kind,
-            .value_text = encoded.value_text,
-        };
-    }
-
-    var eopt_id: persistence.OpaqueId = undefined;
-    var eopt_writes: [1]persistence.RegistrationEoptTierRevisionWrite = undefined;
-    const eopt_count: usize = if (intent.eopt_tier) |*desired| blk: {
-        if (desired.origin != null) return persistence.Error.InvalidValue;
-        eopt_id = try store.generateOpaqueId();
-        eopt_writes[0] = .{
-            .metadata = .{
-                .id = &eopt_id,
-                .expected_component_sequence = 0,
-                .effective = effectiveToWrite(desired.effective),
-                .source = .manual_entry,
-                .review_state = .confirmed,
-            },
-            .value = eoptTierToWrite(desired.value),
-        };
-        break :blk 1;
-    } else 0;
-
-    if (activity_writes.len == 0 and
-        obligation_writes.len == 0 and
-        eopt_count == 0)
-    {
-        try store.createProfileWithRevision(
-            .{ .id = revision.profile_id.asSlice(), .status = status },
-            rows.revision,
-            rows.components(),
-        );
-        return 0;
-    }
-    return store.createProfileWithRevisionAndRegistrationCommit(
-        .{ .id = revision.profile_id.asSlice(), .status = status },
-        rows.revision,
-        rows.components(),
-        .{
-            .profile_id = revision.profile_id.asSlice(),
-            .expected_current_sequence = 0,
-            .activities = activity_writes,
-            .obligations = obligation_writes,
-            .eopt_tiers = eopt_writes[0..eopt_count],
-        },
-    );
-}
-
-pub fn loadAnnualIncomeTaxElectionHistory(
-    store: *persistence.Store,
-    allocator: std.mem.Allocator,
-    stream: annual_election.StreamKey,
-) !OwnedAnnualIncomeTaxElectionHistory {
-    const events = try store.listAnnualIncomeTaxElectionEvents(
-        allocator,
-        stream,
-    );
-    return .{
-        .history = .{ .stream = stream, .events = events },
-        .events = events,
-    };
-}
-
-pub fn stageAnnualIncomeTaxElectionCandidate(
-    store: *persistence.Store,
-    input: annual_election.CandidateInput,
-) !annual_election.TransitionResult {
-    return store.stageAnnualIncomeTaxElectionCandidate(input);
-}
-
-pub fn migrateAnnualIncomeTaxElection(
-    store: *persistence.Store,
-    input: annual_election.MigrationInput,
-) !annual_election.TransitionResult {
-    return store.migrateAnnualIncomeTaxElection(input);
-}
-
-pub fn confirmAnnualIncomeTaxElectionEvidence(
-    store: *persistence.Store,
-    input: annual_election.EvidenceInput,
-) !annual_election.TransitionResult {
-    return store.confirmAnnualIncomeTaxElectionEvidence(input);
-}
-
-pub fn recordAnnualIncomeTaxStatutoryDisqualification(
-    store: *persistence.Store,
-    input: annual_election.StatutoryDisqualificationInput,
-) !annual_election.TransitionResult {
-    return store.recordAnnualIncomeTaxStatutoryDisqualification(input);
-}
-
-/// Call this instead of the generic `transitionDraft` when a 1701Q/2551Q
-/// draft reaches the queue boundary.
-pub fn queueDraftWithAnnualIncomeTaxElection(
-    store: *persistence.Store,
-    input: annual_election.ReservationInput,
-) !annual_election.TransitionResult {
-    return store.queueDraftWithAnnualIncomeTaxElection(input);
-}
-
-/// Call this instead of the generic queued -> submitted transition. It
-/// confirms the owning reservation in the same transaction.
-pub fn submitDraftAndConfirmAnnualIncomeTaxElection(
-    store: *persistence.Store,
-    input: annual_election.ReservationFinalizationInput,
-) !annual_election.TransitionResult {
-    return store.submitDraftAndConfirmAnnualIncomeTaxElection(input);
-}
-
-/// Call this instead of the generic queued -> cancelled transition. A
-/// reservation is released only when this exact draft still owns it.
-pub fn cancelQueuedDraftAndReleaseAnnualIncomeTaxElection(
-    store: *persistence.Store,
-    input: annual_election.ReservationFinalizationInput,
-) !annual_election.TransitionResult {
-    return store.cancelQueuedDraftAndReleaseAnnualIncomeTaxElection(input);
-}
-
 pub fn appendTaxpayerYearRevision(
     store: *persistence.Store,
     allocator: std.mem.Allocator,
@@ -1463,6 +571,23 @@ pub fn appendTaxFormProfileRevision(
     });
 }
 
+/// Reports whether a filing crossed the boundary while bound to this exact
+/// Tax Form Profile revision. The Store also checks this inside append, so a
+/// stale UI cannot weaken the revision-provenance lock.
+pub fn isTaxFormProfileLockedByFiling(
+    store: *persistence.Store,
+    revision: *const tax_form_profile.Revision,
+) !bool {
+    return store.isTaxFormProfileLockedByFiling(
+        revision.stream.profile_id.asSlice(),
+        revision.stream.tax_year,
+        revision.stream.form_code.asSlice(),
+        revision.stream.form_revision.asSlice(),
+        revision.id.asSlice(),
+        revision.sequence,
+    );
+}
+
 pub fn loadTaxFormProfileHistory(
     store: *persistence.Store,
     allocator: std.mem.Allocator,
@@ -1591,54 +716,17 @@ pub fn applyCorReview(
     rows.revision.cor_document_id = cor_document_id;
     try store.applyCorReview(
         rows.revision,
-        rows.components(),
         forms_tax_year,
         forms,
         forms_mode,
     );
 }
 
-pub fn toDomain(
+fn baseRevisionToDomain(
     allocator: std.mem.Allocator,
     rows: *const persistence.OwnedProfileRevision,
 ) !OwnedDomainRevision {
-    const activities = try allocator.alloc(
-        model.BusinessActivity,
-        rows.business_activities.len,
-    );
-    errdefer allocator.free(activities);
-    for (rows.business_activities, 0..) |*activity, index| {
-        activities[index] = .{
-            .id = try model.BusinessActivityId.parse(activity.id),
-            .line_of_business = try field.LineOfBusiness.parse(
-                activity.line_of_business,
-            ),
-            .atc = if (activity.atc) |atc|
-                try field.Atc.parse(atc)
-            else
-                null,
-            .effective = try parseEffective(
-                activity.effective_from,
-                activity.effective_until,
-            ),
-        };
-    }
-
-    const facts = try allocator.alloc(
-        model.RegistrationFact,
-        rows.registration_facts.len,
-    );
-    errdefer allocator.free(facts);
-    for (rows.registration_facts, 0..) |*fact, index| {
-        facts[index] = .{
-            .id = try model.RegistrationFactId.parse(fact.id),
-            .effective = try parseEffective(
-                fact.effective_from,
-                fact.effective_until,
-            ),
-            .value = try registrationFactToDomain(&fact.value),
-        };
-    }
+    _ = allocator;
 
     const base: editor.Base = .{
         .profile_id = try model.ProfileId.parse(rows.profile_id),
@@ -1678,17 +766,98 @@ pub fn toDomain(
         .sole_proprietor => |proprietor| editor.begin(base).soleProprietor(proprietor),
         .legal_entity => |entity| editor.begin(base).legalEntity(entity),
     };
-    const revision = try ready
-        .withBusinessActivities(activities)
-        .withRegistrationFacts(facts)
-        .build();
+    var revision = try ready.build();
+    revision.accounting_period_basis = if (rows.accounting_period_basis) |basis| switch (basis) {
+        .calendar => .calendar,
+        .fiscal => .fiscal,
+    } else null;
+    revision.fiscal_year_end_month = rows.fiscal_year_end_month;
+    revision.eopt_tier = if (rows.eopt_tier) |tier| switch (tier) {
+        .micro => .micro,
+        .small => .small,
+        .medium => .medium,
+        .large => .large,
+    } else null;
+    revision.primary_line_of_business = if (rows.primary_line_of_business) |line| try field.LineOfBusiness.parse(line) else null;
+    revision.consolidation_review_state = switch (rows.consolidation_review_state) {
+        .confirmed => .confirmed,
+        .requires_review => .requires_review,
+    };
+    try revision.validate();
+
+    return .{ .revision = revision };
+}
+
+fn legacyProfileComponentsToDomain(
+    allocator: std.mem.Allocator,
+    rows: *const persistence.OwnedLegacyProfileRevisionComponents,
+) !OwnedLegacyProfileComponents {
+    const activities = try allocator.alloc(
+        LegacyBusinessActivity,
+        rows.business_activities.len,
+    );
+    errdefer allocator.free(activities);
+    for (rows.business_activities, 0..) |*activity, index| {
+        activities[index] = .{
+            .id = try LegacyComponentId.parse(activity.id),
+            .line_of_business = try field.LineOfBusiness.parse(
+                activity.line_of_business,
+            ),
+            .atc = if (activity.atc) |atc|
+                try field.Atc.parse(atc)
+            else
+                null,
+            .effective = try parseEffective(
+                activity.effective_from,
+                activity.effective_until,
+            ),
+        };
+    }
+
+    const facts = try allocator.alloc(
+        LegacyRegistrationFact,
+        rows.registration_facts.len,
+    );
+    errdefer allocator.free(facts);
+    for (rows.registration_facts, 0..) |*fact, index| {
+        facts[index] = .{
+            .id = try LegacyComponentId.parse(fact.id),
+            .effective = try parseEffective(
+                fact.effective_from,
+                fact.effective_until,
+            ),
+            .value = try registrationFactToLegacy(&fact.value),
+        };
+    }
 
     return .{
-        .revision = revision,
         .business_activities = activities,
         .registration_facts = facts,
     };
 }
+
+/// Explicit compatibility/export boundary for retired component rows. Normal
+/// runtime callers use `loadCurrentRevision`, `loadRevision`, or
+/// `loadEffectiveRevision`, whose consolidated Base revision type has no
+/// legacy component fields at all.
+pub const legacy_profile_component_export = struct {
+    pub fn loadRevision(
+        store: *persistence.Store,
+        allocator: std.mem.Allocator,
+        profile_id: model.ProfileId,
+        revision_id: model.RevisionId,
+    ) !?OwnedLegacyProfileComponents {
+        var rows = (try persistence.legacy_registration_export
+            .loadProfileRevisionComponents(
+            store,
+            allocator,
+            profile_id.asSlice(),
+            revision_id.asSlice(),
+        )) orelse return null;
+        defer rows.deinit(allocator);
+        return try legacyProfileComponentsToDomain(allocator, &rows);
+    }
+};
 
 pub fn loadCurrentRevision(
     store: *persistence.Store,
@@ -1700,7 +869,7 @@ pub fn loadCurrentRevision(
         profile_id.asSlice(),
     )) orelse return null;
     defer rows.deinit(allocator);
-    return try toDomain(allocator, &rows);
+    return try baseRevisionToDomain(allocator, &rows);
 }
 
 pub fn loadRevision(
@@ -1715,7 +884,7 @@ pub fn loadRevision(
         revision_id.asSlice(),
     )) orelse return null;
     defer rows.deinit(allocator);
-    return try toDomain(allocator, &rows);
+    return try baseRevisionToDomain(allocator, &rows);
 }
 
 /// Filing composition uses this lookup; editing screens generally use
@@ -1736,7 +905,7 @@ pub fn loadEffectiveRevision(
         date_text,
     )) orelse return null;
     defer rows.deinit(allocator);
-    return try toDomain(allocator, &rows);
+    return try baseRevisionToDomain(allocator, &rows);
 }
 
 /// Canonical snapshot encoding for every reusable field. Text is always
@@ -1757,7 +926,12 @@ pub fn serializeValue(
         .date_of_birth => |item| item.writeIso(buffer[0..10]),
         .citizenship => |*item| copyToBuffer(buffer, item.asSlice()),
         .foreign_tax_number => |*item| copyToBuffer(buffer, item.asSlice()),
+        .accounting_period_basis => |item| copyToBuffer(
+            buffer,
+            @tagName(item),
+        ),
         .line_of_business => |*item| copyToBuffer(buffer, item.asSlice()),
+        .eopt_tier => |*item| copyToBuffer(buffer, item.asSlice()),
         .atc => |*item| copyToBuffer(buffer, item.asSlice()),
         .tax_type => |*item| copyToBuffer(buffer, item.asSlice()),
         .government_withholding_agent => |item| copyToBuffer(
@@ -1812,9 +986,16 @@ pub fn parseValue(
         .foreign_tax_number => .{
             .foreign_tax_number = try field.ForeignTaxNumber.parse(text),
         },
+        .accounting_period_basis => .{
+            .accounting_period_basis = std.meta.stringToEnum(
+                field.AccountingPeriodBasis,
+                text,
+            ) orelse return error.InvalidAccountingPeriodBasis,
+        },
         .line_of_business => .{
             .line_of_business = try field.LineOfBusiness.parse(text),
         },
+        .eopt_tier => .{ .eopt_tier = try field.EoptTier.parse(text) },
         .atc => .{ .atc = try field.Atc.parse(text) },
         .tax_type => .{ .tax_type = try field.TaxType.parse(text) },
         .government_withholding_agent => .{
@@ -1831,6 +1012,7 @@ pub fn canonicalValueType(value: field.ReusableField) []const u8 {
     return switch (value) {
         .tin => "tin_digits",
         .date_of_birth => "iso_date",
+        .accounting_period_basis => "choice",
         .government_withholding_agent => "yes_no",
         else => "text",
     };
@@ -1840,358 +1022,6 @@ fn copyToBuffer(buffer: *[255]u8, source: []const u8) []const u8 {
     std.debug.assert(source.len <= buffer.len);
     @memcpy(buffer[0..source.len], source);
     return buffer[0..source.len];
-}
-
-fn registrationMetadataToDomain(
-    row: *const persistence.OwnedRegistrationRevisionMetadata,
-) !registration.RevisionMetadata {
-    const source: registration.RecordSource = switch (row.source) {
-        .manual_entry => .manual_entry,
-        .documented => .{ .documented = try field.SourceReference.parse(
-            row.evidence_reference orelse return persistence.Error.InvalidValue,
-        ) },
-        .imported => .{ .imported = try field.SourceReference.parse(
-            row.evidence_reference orelse return persistence.Error.InvalidValue,
-        ) },
-        .migrated => .{ .migrated = try field.SourceReference.parse(
-            row.evidence_reference orelse return persistence.Error.InvalidValue,
-        ) },
-    };
-    const review: registration.ReviewState = switch (row.review_state) {
-        .requires_review => .{ .requires_review = switch (row.review_reason orelse return persistence.Error.InvalidValue) {
-            .evidence_missing => .evidence_missing,
-            .specificity_unknown => .specificity_unknown,
-            .migrated_without_confirmation => .migrated_without_confirmation,
-            .manual_proposal => .manual_proposal,
-        } },
-        .confirmed => .{ .confirmed = .{
-            .confirmed_at_unix_seconds = row.confirmed_at_unix_seconds orelse
-                return persistence.Error.InvalidValue,
-        } },
-    };
-    return .{
-        .owner_profile_id = try model.ProfileId.parse(row.profile_id),
-        .revision_id = try registration.ComponentRevisionId.parse(row.id),
-        .sequence = row.component_sequence,
-        .effective = try parseEffective(
-            row.effective_from,
-            row.effective_until,
-        ),
-        .source = source,
-        .review = review,
-    };
-}
-
-fn registrationObligationToDomain(
-    kind: persistence.RegistrationObligationKind,
-    value_text: ?[]const u8,
-) !registration.RegistrationObligationKind {
-    return switch (kind) {
-        .registered_income_tax => .{ .registered_income_tax = {} },
-        .vat => .{ .vat = {} },
-        .percentage_tax => .{ .percentage_tax = {} },
-        .withholding_compensation => .{
-            .withholding = .{ .compensation = {} },
-        },
-        .withholding_expanded => .{
-            .withholding = .{ .expanded = {} },
-        },
-        .withholding_final => .{
-            .withholding = .{ .final = {} },
-        },
-        .withholding_other => .{ .withholding = .{
-            .other = try field.TaxType.parse(
-                value_text orelse return persistence.Error.InvalidValue,
-            ),
-        } },
-        .withholding_unspecified_requires_review => .{ .withholding = .{
-            .unspecified_requires_review = try field.TaxType.parse(
-                value_text orelse return persistence.Error.InvalidValue,
-            ),
-        } },
-        .unknown_requires_review => .{
-            .unknown_requires_review = try field.TaxType.parse(
-                value_text orelse return persistence.Error.InvalidValue,
-            ),
-        },
-    };
-}
-
-const EncodedRegistrationObligation = struct {
-    kind: persistence.RegistrationObligationKind,
-    value_text: ?[]const u8 = null,
-};
-
-fn registrationObligationToWrite(
-    kind: *const registration.RegistrationObligationKind,
-) EncodedRegistrationObligation {
-    return switch (kind.*) {
-        .registered_income_tax => .{ .kind = .registered_income_tax },
-        .vat => .{ .kind = .vat },
-        .percentage_tax => .{ .kind = .percentage_tax },
-        .withholding => |*value| switch (value.*) {
-            .compensation => .{ .kind = .withholding_compensation },
-            .expanded => .{ .kind = .withholding_expanded },
-            .final => .{ .kind = .withholding_final },
-            .other => |*text| .{
-                .kind = .withholding_other,
-                .value_text = text.asSlice(),
-            },
-            .unspecified_requires_review => |*text| .{
-                .kind = .withholding_unspecified_requires_review,
-                .value_text = text.asSlice(),
-            },
-        },
-        .unknown_requires_review => |*text| .{
-            .kind = .unknown_requires_review,
-            .value_text = text.asSlice(),
-        },
-    };
-}
-
-fn registrationRetirementPeriod(
-    viewed_on: model.Date,
-) persistence.EffectivePeriodWrite {
-    var from: persistence.DateText = undefined;
-    _ = viewed_on.writeIso(&from);
-    return .{ .from = from };
-}
-
-fn findDesiredActivity(
-    rows: []const registration_ui.BusinessActivityRow,
-    anchor_id: *const registration.ActivityAnchorId,
-) ?*const registration_ui.BusinessActivityRow {
-    for (rows) |*row| {
-        if (row.anchor_id.eql(anchor_id)) return row;
-    }
-    return null;
-}
-
-fn findDesiredObligation(
-    rows: []const registration_ui.RegistrationObligationRow,
-    anchor_id: *const registration.ObligationAnchorId,
-) ?*const registration_ui.RegistrationObligationRow {
-    for (rows) |*row| {
-        if (row.anchor_id.eql(anchor_id)) return row;
-    }
-    return null;
-}
-
-fn findConfirmedActivity(
-    rows: []const registration.BusinessActivity,
-    anchor_id: *const registration.ActivityAnchorId,
-) ?*const registration.BusinessActivity {
-    for (rows) |*row| {
-        if (row.metadata.review.isConfirmed() and
-            row.anchor_id.eql(anchor_id)) return row;
-    }
-    return null;
-}
-
-fn findConfirmedObligation(
-    rows: []const registration.RegistrationObligation,
-    anchor_id: *const registration.ObligationAnchorId,
-) ?*const registration.RegistrationObligation {
-    for (rows) |*row| {
-        if (row.metadata.review.isConfirmed() and
-            row.anchor_id.eql(anchor_id)) return row;
-    }
-    return null;
-}
-
-fn findConfirmedEoptTier(
-    rows: []const registration.EoptTierRevision,
-    origin: ?registration_ui.Origin,
-) ?*const registration.EoptTierRevision {
-    const expected = origin orelse return null;
-    for (rows) |*row| {
-        if (row.metadata.review.isConfirmed() and
-            row.metadata.revision_id.eql(&expected.revision_id))
-        {
-            return row;
-        }
-    }
-    return null;
-}
-
-fn maxActivitySequence(
-    rows: []const persistence.OwnedRegistrationActivityRevision,
-    anchor_id: *const registration.ActivityAnchorId,
-) u32 {
-    var result: u32 = 0;
-    for (rows) |*row| {
-        if (std.mem.eql(u8, row.anchor_id, anchor_id.asSlice())) {
-            result = @max(result, row.metadata.component_sequence);
-        }
-    }
-    return result;
-}
-
-fn maxObligationSequence(
-    rows: []const persistence.OwnedRegistrationObligationRevision,
-    anchor_id: *const registration.ObligationAnchorId,
-) u32 {
-    var result: u32 = 0;
-    for (rows) |*row| {
-        if (std.mem.eql(u8, row.anchor_id, anchor_id.asSlice())) {
-            result = @max(result, row.metadata.component_sequence);
-        }
-    }
-    return result;
-}
-
-fn maxEoptTierSequence(
-    rows: []const persistence.OwnedRegistrationEoptTierRevision,
-) u32 {
-    var result: u32 = 0;
-    for (rows) |*row| {
-        result = @max(result, row.metadata.component_sequence);
-    }
-    return result;
-}
-
-fn registrationActivityEquals(
-    existing: *const registration.BusinessActivity,
-    desired: *const registration_ui.BusinessActivityRow,
-) bool {
-    if (!existing.metadata.effective.eql(desired.effective) or
-        !existing.line_of_business.eql(&desired.line_of_business))
-    {
-        return false;
-    }
-    if (existing.atc) |*left| {
-        if (desired.atc) |*right| return left.eql(right);
-        return false;
-    }
-    return desired.atc == null;
-}
-
-fn registrationObligationRowEquals(
-    existing: *const registration.RegistrationObligation,
-    desired: *const registration_ui.RegistrationObligationRow,
-) bool {
-    return existing.metadata.effective.eql(desired.effective) and
-        registrationObligationKindsEqual(&existing.kind, &desired.kind);
-}
-
-fn registrationEoptTierRowEquals(
-    existing: *const registration.EoptTierRevision,
-    desired: *const registration_ui.EoptTierRow,
-) bool {
-    const desired_value = desired.value.toDomain();
-    return existing.metadata.effective.eql(desired.effective) and
-        existing.value == desired_value;
-}
-
-fn eoptTierToWrite(
-    value: registration_ui.EditableEoptTier,
-) persistence.RegistrationEoptTier {
-    return switch (value) {
-        .not_applicable => .not_applicable,
-        .micro => .micro,
-        .small => .small,
-        .medium => .medium,
-        .large => .large,
-    };
-}
-
-fn registrationObligationKindsEqual(
-    left: *const registration.RegistrationObligationKind,
-    right: *const registration.RegistrationObligationKind,
-) bool {
-    if (std.meta.activeTag(left.*) != std.meta.activeTag(right.*)) return false;
-    return switch (left.*) {
-        .registered_income_tax, .vat, .percentage_tax => true,
-        .unknown_requires_review => |*left_text| switch (right.*) {
-            .unknown_requires_review => |*right_text| left_text.eql(right_text),
-            else => unreachable,
-        },
-        .withholding => |*left_value| switch (right.*) {
-            .withholding => |*right_value| registrationWithholdingKindsEqual(
-                left_value,
-                right_value,
-            ),
-            else => unreachable,
-        },
-    };
-}
-
-fn registrationWithholdingKindsEqual(
-    left: *const registration.WithholdingObligation,
-    right: *const registration.WithholdingObligation,
-) bool {
-    if (std.meta.activeTag(left.*) != std.meta.activeTag(right.*)) return false;
-    return switch (left.*) {
-        .compensation, .expanded, .final => true,
-        .other => |*left_text| switch (right.*) {
-            .other => |*right_text| left_text.eql(right_text),
-            else => unreachable,
-        },
-        .unspecified_requires_review => |*left_text| switch (right.*) {
-            .unspecified_requires_review => |*right_text| left_text.eql(right_text),
-            else => unreachable,
-        },
-    };
-}
-
-fn validateRetainedRegistrationReviews(
-    aggregate: *const registration.RegistrationAggregate,
-    rows: []const registration_ui.ReviewRow,
-) !void {
-    var expected: usize = 0;
-    for (aggregate.business_activities) |item| {
-        expected += @intFromBool(!item.metadata.review.isConfirmed());
-    }
-    for (aggregate.obligations) |item| {
-        expected += @intFromBool(!item.metadata.review.isConfirmed());
-    }
-    inline for (.{
-        aggregate.agent_designations,
-        aggregate.eopt_tiers,
-        aggregate.registration_activity_statuses,
-        aggregate.special_law_or_treaty_bases,
-    }) |items| {
-        for (items) |item| {
-            expected += @intFromBool(!item.metadata.review.isConfirmed());
-        }
-    }
-    if (rows.len != expected) return persistence.Error.InvalidValue;
-    for (rows, 0..) |*row, index| {
-        const id = row.revisionId();
-        if (!aggregateHasReviewRevision(aggregate, &id)) {
-            return persistence.Error.InvalidValue;
-        }
-        for (rows[index + 1 ..]) |*other| {
-            const other_id = other.revisionId();
-            if (id.eql(&other_id)) return persistence.Error.InvalidValue;
-        }
-    }
-}
-
-fn aggregateHasReviewRevision(
-    aggregate: *const registration.RegistrationAggregate,
-    id: *const registration.ComponentRevisionId,
-) bool {
-    for (aggregate.business_activities) |*item| {
-        if (!item.metadata.review.isConfirmed() and
-            item.metadata.revision_id.eql(id)) return true;
-    }
-    for (aggregate.obligations) |*item| {
-        if (!item.metadata.review.isConfirmed() and
-            item.metadata.revision_id.eql(id)) return true;
-    }
-    inline for (.{
-        aggregate.agent_designations,
-        aggregate.eopt_tiers,
-        aggregate.registration_activity_statuses,
-        aggregate.special_law_or_treaty_bases,
-    }) |items| {
-        for (items) |*item| {
-            if (!item.metadata.review.isConfirmed() and
-                item.metadata.revision_id.eql(id)) return true;
-        }
-    }
-    return false;
 }
 
 fn effectiveToWrite(
@@ -2316,12 +1146,6 @@ fn taxFormProfileValueToWrite(
             .profile_id => |*profile_id| .{
                 .profile_id = profile_id.asSlice(),
             },
-            .business_activity_anchor_id => |*anchor_id| .{
-                .business_activity_anchor_id = anchor_id.asSlice(),
-            },
-            .registration_obligation_anchor_id => |*anchor_id| .{
-                .registration_obligation_anchor_id = anchor_id.asSlice(),
-            },
             .text => |*text| .{ .text = text.asSlice() },
             .boolean => |boolean| .{ .boolean = boolean },
             .integer => |integer| .{ .integer = integer },
@@ -2354,12 +1178,6 @@ fn taxFormProfileValueToDomain(
         .value = switch (value.value) {
             .profile_id => |profile_id| .{
                 .profile_id = try model.ProfileId.parse(profile_id),
-            },
-            .business_activity_anchor_id => |anchor_id| .{
-                .business_activity_anchor_id = try tax_form_profile.ComponentAnchorId.parse(anchor_id),
-            },
-            .registration_obligation_anchor_id => |anchor_id| .{
-                .registration_obligation_anchor_id = try tax_form_profile.ComponentAnchorId.parse(anchor_id),
             },
             .text => |text| .{
                 .text = try tax_form_profile.TextValue.parse(text),
@@ -2505,25 +1323,6 @@ fn naturalPersonClassificationToWrite(
     };
 }
 
-fn registrationFactToWrite(
-    value: *const model.RegistrationFactValue,
-) persistence.RegistrationFactValueWrite {
-    return switch (value.*) {
-        .tax_type => |*tax_type| .{
-            .tax_type = tax_type.asSlice(),
-        },
-        .government_withholding_agent => |answer| .{
-            .government_withholding_agent = switch (answer) {
-                .no => .no,
-                .yes => .yes,
-            },
-        },
-        .special_rate_basis => |*basis| .{
-            .special_rate_basis = basis.asSlice(),
-        },
-    };
-}
-
 fn parseEffective(
     from: []const u8,
     until: ?[]const u8,
@@ -2622,9 +1421,9 @@ fn naturalPersonClassificationToDomain(
     };
 }
 
-fn registrationFactToDomain(
+fn registrationFactToLegacy(
     value: *const persistence.OwnedRegistrationFactValue,
-) !model.RegistrationFactValue {
+) !LegacyRegistrationFactValue {
     return switch (value.*) {
         .tax_type => |tax_type| .{
             .tax_type = try field.TaxType.parse(tax_type),
@@ -2712,506 +1511,6 @@ test "Forms Set decision adapter round trips exact append list and resolve" {
     try std.testing.expectEqualStrings(
         "adapter-decision-base",
         resolved.resolution.decision.?.id.asSlice(),
-    );
-}
-
-test "registration SaveIntent round trips multiple stable typed components by date" {
-    const allocator = std.testing.allocator;
-    var store = try persistence.Store.openMemory(allocator);
-    defer store.close();
-    const profile = try testIndividualRevision();
-    try createProfileWithRevision(&store, allocator, .active, &profile);
-
-    const initial_activities = [_]persistence.RegistrationActivityRevisionWrite{
-        .{
-            .anchor_id = "consulting",
-            .metadata = .{
-                .id = "activity-consulting-v1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2026-01-01".* },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 1,
-            },
-            .line_of_business = "Software consulting",
-            .atc = "IT010",
-        },
-        .{
-            .anchor_id = "retail",
-            .metadata = .{
-                .id = "activity-retail-v1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2026-01-01".* },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 2,
-            },
-            .line_of_business = "Retail trade",
-        },
-    };
-    const initial_obligations = [_]persistence.RegistrationObligationRevisionWrite{
-        .{
-            .anchor_id = "income",
-            .metadata = .{
-                .id = "obligation-income-v1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2026-01-01".* },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 3,
-            },
-            .kind = .registered_income_tax,
-        },
-        .{
-            .anchor_id = "vat",
-            .metadata = .{
-                .id = "obligation-vat-v1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2026-01-01".* },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 4,
-            },
-            .kind = .vat,
-        },
-        .{
-            .anchor_id = "expanded",
-            .metadata = .{
-                .id = "obligation-expanded-v1",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2026-01-01".* },
-                .source = .manual_entry,
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 5,
-            },
-            .kind = .withholding_expanded,
-        },
-    };
-    const agent = [_]persistence.RegistrationAgentDesignationRevisionWrite{.{
-        .metadata = .{
-            .id = "agent-v1",
-            .expected_component_sequence = 0,
-            .effective = .{ .from = "2026-01-01".* },
-            .source = .documented,
-            .evidence_reference = "COR-2026",
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 6,
-        },
-        .value = .government_withholding_agent,
-    }};
-    try std.testing.expectEqual(
-        @as(u32, 1),
-        try store.appendRegistrationCommit(.{
-            .profile_id = profile.profile_id.asSlice(),
-            .expected_current_sequence = 0,
-            .activities = &initial_activities,
-            .obligations = &initial_obligations,
-            .agent_designations = &agent,
-        }),
-    );
-
-    const july_first = try model.Date.parseIso("2026-07-01");
-    var july = try loadRegistrationAggregateOn(
-        &store,
-        allocator,
-        profile.profile_id,
-        july_first,
-    );
-    defer july.deinit(allocator);
-    try std.testing.expectEqual(@as(u32, 1), july.stream_sequence);
-    try std.testing.expectEqual(@as(usize, 2), july.business_activities.len);
-    try std.testing.expectEqual(@as(usize, 3), july.obligations.len);
-    try std.testing.expectEqual(@as(usize, 1), july.agent_designations.len);
-    const consulting_anchor = try registration.ActivityAnchorId.parse(
-        "consulting",
-    );
-    const vat_anchor = try registration.ObligationAnchorId.parse("vat");
-    try std.testing.expectEqualStrings(
-        "Software consulting",
-        (try july.aggregate.resolveActivity(
-            consulting_anchor,
-            july_first,
-        )).confirmed.?.line_of_business.asSlice(),
-    );
-    try std.testing.expect(
-        (try july.aggregate.resolveObligation(vat_anchor, july_first))
-            .confirmed != null,
-    );
-
-    var state = try registration_ui.State.open(.{
-        .aggregate = &july.aggregate,
-        .viewed_on = july_first,
-        .subject_kind = .individual,
-        .natural_person_classification = .self_employed,
-        .expected_sequence = july.stream_sequence,
-    });
-    try state.beginEdit();
-    try state.updateBusinessActivity(
-        consulting_anchor,
-        "Cloud software consulting",
-        "IT011",
-        try registration.EffectivePeriod.init(july_first, null),
-    );
-    try state.removeRegistrationObligation(vat_anchor);
-    try state.addRegistrationObligation(
-        try registration.ObligationAnchorId.parse("percentage"),
-        .percentage_tax,
-        try registration.EffectivePeriod.init(july_first, null),
-    );
-    const intent = try state.beginSave();
-    const new_sequence = try saveRegistrationIntent(
-        &store,
-        allocator,
-        &intent,
-    );
-    try std.testing.expectEqual(@as(u32, 2), new_sequence);
-    try state.saveSucceeded(new_sequence);
-
-    var june = try loadRegistrationAggregateOn(
-        &store,
-        allocator,
-        profile.profile_id,
-        try model.Date.parseIso("2026-06-30"),
-    );
-    defer june.deinit(allocator);
-    try std.testing.expectEqualStrings(
-        "Software consulting",
-        (try june.aggregate.resolveActivity(
-            consulting_anchor,
-            try model.Date.parseIso("2026-06-30"),
-        )).confirmed.?.line_of_business.asSlice(),
-    );
-    try std.testing.expect(
-        (try june.aggregate.resolveObligation(
-            vat_anchor,
-            try model.Date.parseIso("2026-06-30"),
-        )).confirmed != null,
-    );
-
-    var changed = try loadRegistrationAggregateOn(
-        &store,
-        allocator,
-        profile.profile_id,
-        july_first,
-    );
-    defer changed.deinit(allocator);
-    try std.testing.expectEqualStrings(
-        "Cloud software consulting",
-        (try changed.aggregate.resolveActivity(
-            consulting_anchor,
-            july_first,
-        )).confirmed.?.line_of_business.asSlice(),
-    );
-    try std.testing.expect(
-        (try changed.aggregate.resolveObligation(vat_anchor, july_first))
-            .confirmed == null,
-    );
-    const percentage = try changed.aggregate.resolveObligation(
-        try registration.ObligationAnchorId.parse("percentage"),
-        july_first,
-    );
-    try std.testing.expect(percentage.confirmed != null);
-    try std.testing.expect(percentage.confirmed.?.kind == .percentage_tax);
-
-    var history = try store.listRegistrationHistory(
-        allocator,
-        profile.profile_id.asSlice(),
-    );
-    defer history.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 3), history.activities.len);
-    try std.testing.expectEqual(@as(usize, 5), history.obligations.len);
-    try std.testing.expectEqualStrings(
-        "consulting",
-        history.activities[2].anchor_id,
-    );
-}
-
-test "registration selected year edits and reloads a finite interval losslessly" {
-    const allocator = std.testing.allocator;
-    var store = try persistence.Store.openMemory(allocator);
-    defer store.close();
-    const profile = try testIndividualRevision();
-    try createProfileWithRevision(&store, allocator, .active, &profile);
-
-    const activities = [_]persistence.RegistrationActivityRevisionWrite{.{
-        .anchor_id = "first-half-activity",
-        .metadata = .{
-            .id = "first-half-activity-r1",
-            .expected_component_sequence = 0,
-            .effective = .{
-                .from = "2026-01-01".*,
-                .until = "2026-06-30".*,
-            },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 1,
-        },
-        .line_of_business = "Seasonal consulting",
-        .atc = "PT010",
-    }};
-    const obligations = [_]persistence.RegistrationObligationRevisionWrite{.{
-        .anchor_id = "first-half-percentage-tax",
-        .metadata = .{
-            .id = "first-half-percentage-tax-r1",
-            .expected_component_sequence = 0,
-            .effective = .{
-                .from = "2026-01-01".*,
-                .until = "2026-06-30".*,
-            },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 2,
-        },
-        .kind = .percentage_tax,
-    }};
-    try std.testing.expectEqual(
-        @as(u32, 1),
-        try store.appendRegistrationCommit(.{
-            .profile_id = profile.profile_id.asSlice(),
-            .expected_current_sequence = 0,
-            .activities = &activities,
-            .obligations = &obligations,
-        }),
-    );
-
-    const year_end = try model.Date.parseIso("2026-12-31");
-    var as_of_year_end = try loadRegistrationAggregateOn(
-        &store,
-        allocator,
-        profile.profile_id,
-        year_end,
-    );
-    defer as_of_year_end.deinit(allocator);
-    try std.testing.expectEqual(
-        @as(usize, 0),
-        as_of_year_end.business_activities.len,
-    );
-
-    var selected_year = try loadRegistrationAggregateForYear(
-        &store,
-        allocator,
-        profile.profile_id,
-        2026,
-    );
-    defer selected_year.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 1), selected_year.business_activities.len);
-    try std.testing.expectEqual(@as(usize, 1), selected_year.obligations.len);
-
-    var state = try registration_ui.State.open(.{
-        .aggregate = &selected_year.aggregate,
-        .viewed_on = year_end,
-        .selected_tax_year = 2026,
-        .subject_kind = .sole_proprietor,
-        .natural_person_classification = .self_employed,
-        .expected_sequence = selected_year.stream_sequence,
-    });
-    const anchor = state.businessActivities()[0].anchor_id;
-    const exact_period = state.businessActivities()[0].effective;
-    try state.beginEdit();
-    try state.updateBusinessActivity(
-        anchor,
-        "Seasonal advisory",
-        "PT011",
-        exact_period,
-    );
-    const intent = try state.beginSave();
-    const new_sequence = try saveRegistrationIntent(&store, allocator, &intent);
-    try std.testing.expectEqual(@as(u32, 2), new_sequence);
-    try state.saveSucceeded(new_sequence);
-
-    var reloaded = try loadRegistrationAggregateForYear(
-        &store,
-        allocator,
-        profile.profile_id,
-        2026,
-    );
-    defer reloaded.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 1), reloaded.business_activities.len);
-    try std.testing.expectEqual(@as(usize, 1), reloaded.obligations.len);
-    const reloaded_activity = &reloaded.business_activities[0];
-    try std.testing.expect(reloaded_activity.anchor_id.eql(&anchor));
-    try std.testing.expect(reloaded_activity.metadata.effective.eql(exact_period));
-    try std.testing.expectEqualStrings(
-        "Seasonal advisory",
-        reloaded_activity.line_of_business.asSlice(),
-    );
-    try std.testing.expectEqualStrings("PT011", reloaded_activity.atc.?.asSlice());
-    try std.testing.expect(reloaded.obligations[0].metadata.effective.eql(
-        exact_period,
-    ));
-}
-
-test "registration EOPT SaveIntent appends evidence-aware change and retains review" {
-    const allocator = std.testing.allocator;
-    var store = try persistence.Store.openMemory(allocator);
-    defer store.close();
-    const profile = try testIndividualRevision();
-    try createProfileWithRevision(&store, allocator, .active, &profile);
-
-    const eopt = [_]persistence.RegistrationEoptTierRevisionWrite{
-        .{
-            .metadata = .{
-                .id = "eopt-documented-micro",
-                .expected_component_sequence = 0,
-                .effective = .{ .from = "2026-01-01".* },
-                .source = .documented,
-                .evidence_reference = "COR-2026",
-                .review_state = .confirmed,
-                .confirmed_at_unix_seconds = 1,
-            },
-            .value = .micro,
-        },
-        .{
-            .metadata = .{
-                .id = "eopt-legacy-needs-review",
-                .expected_component_sequence = 1,
-                .effective = .{ .from = "2026-01-01".* },
-                .source = .imported,
-                .evidence_reference = "legacy-registration-import",
-                .review_state = .requires_review,
-                .review_reason = .migrated_without_confirmation,
-            },
-            .value = .unknown_requires_review,
-        },
-    };
-    try std.testing.expectEqual(
-        @as(u32, 1),
-        try store.appendRegistrationCommit(.{
-            .profile_id = profile.profile_id.asSlice(),
-            .expected_current_sequence = 0,
-            .eopt_tiers = &eopt,
-        }),
-    );
-
-    const viewed_on = try model.Date.parseIso("2026-08-04");
-    var loaded = try loadRegistrationAggregateOn(
-        &store,
-        allocator,
-        profile.profile_id,
-        viewed_on,
-    );
-    defer loaded.deinit(allocator);
-    var state = try registration_ui.State.open(.{
-        .aggregate = &loaded.aggregate,
-        .viewed_on = viewed_on,
-        .subject_kind = .individual,
-        .natural_person_classification = .self_employed,
-        .expected_sequence = loaded.stream_sequence,
-    });
-    try std.testing.expectEqual(
-        registration_ui.EditableEoptTier.micro,
-        state.eoptTier().?,
-    );
-    try std.testing.expect(state.eoptTierNeedsReview());
-    try state.beginEdit();
-    try state.selectEoptTier(.small);
-    const intent = try state.beginSave();
-    try std.testing.expectEqual(@as(usize, 1), intent.retained_review_rows.len);
-    const new_sequence = try saveRegistrationIntent(&store, allocator, &intent);
-    try std.testing.expectEqual(@as(u32, 2), new_sequence);
-
-    var changed = try loadRegistrationAggregateOn(
-        &store,
-        allocator,
-        profile.profile_id,
-        viewed_on,
-    );
-    defer changed.deinit(allocator);
-    const resolution = try changed.aggregate.resolveEoptTier(viewed_on);
-    try std.testing.expectEqual(
-        registration.EoptTier.small,
-        resolution.confirmed.?.value,
-    );
-    try std.testing.expectEqual(@as(u32, 1), resolution.proposal_count);
-    try std.testing.expectEqual(
-        registration.EoptTier.unknown_requires_review,
-        resolution.latest_proposal.?.value,
-    );
-
-    var history = try store.listRegistrationHistory(
-        allocator,
-        profile.profile_id.asSlice(),
-    );
-    defer history.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 3), history.eopt_tiers.len);
-    const appended = &history.eopt_tiers[2];
-    try std.testing.expectEqual(
-        persistence.RegistrationEoptTier.small,
-        appended.value,
-    );
-    try std.testing.expectEqual(
-        persistence.RegistrationRecordSource.manual_entry,
-        appended.metadata.source,
-    );
-    try std.testing.expectEqualStrings(
-        "eopt-documented-micro",
-        appended.metadata.supersedes_id.?,
-    );
-    try std.testing.expectEqualStrings(
-        "eopt-legacy-needs-review",
-        history.eopt_tiers[1].metadata.id,
-    );
-}
-
-test "registration EOPT adapter rejects an unchanged desired value" {
-    const allocator = std.testing.allocator;
-    var store = try persistence.Store.openMemory(allocator);
-    defer store.close();
-    const profile = try testIndividualRevision();
-    try createProfileWithRevision(&store, allocator, .active, &profile);
-
-    const eopt = [_]persistence.RegistrationEoptTierRevisionWrite{.{
-        .metadata = .{
-            .id = "eopt-noop-small",
-            .expected_component_sequence = 0,
-            .effective = .{ .from = "2026-01-01".* },
-            .source = .documented,
-            .evidence_reference = "COR-2026",
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 1,
-        },
-        .value = .small,
-    }};
-    _ = try store.appendRegistrationCommit(.{
-        .profile_id = profile.profile_id.asSlice(),
-        .expected_current_sequence = 0,
-        .eopt_tiers = &eopt,
-    });
-
-    const viewed_on = try model.Date.parseIso("2026-08-04");
-    var loaded = try loadRegistrationAggregateOn(
-        &store,
-        allocator,
-        profile.profile_id,
-        viewed_on,
-    );
-    defer loaded.deinit(allocator);
-    const resolved = (try loaded.aggregate.resolveEoptTier(viewed_on))
-        .confirmed.?;
-    const intent: registration_ui.SaveIntent = .{
-        .profile_id = profile.profile_id,
-        .viewed_on = viewed_on,
-        .expected_sequence = loaded.stream_sequence,
-        .business_activities = &.{},
-        .registration_obligations = &.{},
-        .eopt_tier = .{
-            .effective = resolved.metadata.effective,
-            .value = .small,
-            .origin = .{
-                .revision_id = resolved.metadata.revision_id,
-                .sequence = resolved.metadata.sequence,
-            },
-            .origin_source = resolved.metadata.source,
-        },
-        .retained_review_rows = &.{},
-    };
-    try std.testing.expectError(
-        persistence.Error.RegistrationNoChanges,
-        saveRegistrationIntent(&store, allocator, &intent),
-    );
-    try std.testing.expectEqual(
-        @as(u32, 1),
-        try store.registrationStreamSequence(profile.profile_id.asSlice()),
     );
 }
 
@@ -3455,19 +1754,7 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
     var store = try persistence.Store.openMemory(allocator);
     defer store.close();
 
-    const activity = [_]model.BusinessActivity{.{
-        .id = try model.BusinessActivityId.parse("activity-primary"),
-        .line_of_business = try field.LineOfBusiness.parse(
-            "Professional services",
-        ),
-        .atc = try field.Atc.parse("PT010"),
-        .effective = try model.EffectivePeriod.init(
-            try model.Date.parseIso("2026-01-01"),
-            null,
-        ),
-    }};
     var profile = try testIndividualRevision();
-    profile.business_activities = &activity;
     try createProfileWithRevision(&store, allocator, .active, &profile);
 
     var other_base = try testBase(
@@ -3476,19 +1763,10 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
         .manual_entry,
     );
     other_base.identity.tin = try field.Tin.parse("987-654-321-000");
-    const other_activity = [_]model.BusinessActivity{.{
-        .id = try model.BusinessActivityId.parse("activity-other"),
-        .line_of_business = try field.LineOfBusiness.parse("Other business"),
-        .effective = try model.EffectivePeriod.init(
-            try model.Date.parseIso("2026-01-01"),
-            null,
-        ),
-    }};
     const other_profile = try editor.begin(other_base)
         .individual(.{
             .name = try field.TaxpayerName.parse("OTHER TAXPAYER"),
         })
-        .withBusinessActivities(&other_activity)
         .build();
     try createProfileWithRevision(
         &store,
@@ -3497,16 +1775,16 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
         &other_profile,
     );
 
-    const form_1601c = form_catalog.findForm("1601C").?;
-    const form_1702rt = form_catalog.findForm("1702RT").?;
+    const form_2551q = form_catalog.findForm("2551Q").?;
+    const form_1701q = form_catalog.findForm("1701Q").?;
     const active_forms = [_]persistence.FormRegistrationWrite{
         .{
-            .form_code = form_1601c.code,
-            .form_revision = form_1601c.revision.?,
+            .form_code = form_2551q.code,
+            .form_revision = form_2551q.revision.?,
         },
         .{
-            .form_code = form_1702rt.code,
-            .form_revision = form_1702rt.revision.?,
+            .form_code = form_1701q.code,
+            .form_revision = form_1701q.revision.?,
         },
     };
     try store.replaceFormSet(
@@ -3514,36 +1792,47 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
         2026,
         &active_forms,
     );
-    const activity_value = [_]tax_form_profile.SetupValue{.{
-        .semantic_key = .business_activity_anchor_id,
+    const income_rate_value = [_]tax_form_profile.SetupValue{.{
+        .semantic_key = .income_tax_rate_election,
         .role = .filer,
-        .value = .{ .business_activity_anchor_id = try tax_form_profile.ComponentAnchorId.parse("activity-primary") },
+        .value = .{ .choice = try tax_form_profile.TextValue.parse(
+            "graduated",
+        ) },
     }};
     const first = try testTaxFormProfileRevision(
         profile.profile_id,
         2026,
-        form_1601c,
-        "setup-1601c-2026-first",
+        form_2551q,
+        "setup-2551q-2026-first",
         1,
         "2026-01-01",
         "2026-06-30",
         .confirmed,
         .manual_entry,
-        &activity_value,
+        &income_rate_value,
     );
     try appendTaxFormProfileRevision(&store, allocator, 0, &first);
+    try std.testing.expect(!(try isTaxFormProfileLockedByFiling(
+        &store,
+        &first,
+    )));
 
+    const spouse_value = [_]tax_form_profile.SetupValue{.{
+        .semantic_key = .spouse_profile_id,
+        .role = .spouse,
+        .value = .{ .profile_id = other_profile.profile_id },
+    }};
     const second_form = try testTaxFormProfileRevision(
         profile.profile_id,
         2026,
-        form_1702rt,
-        "setup-1702rt-2026",
+        form_1701q,
+        "setup-1701q-2026",
         1,
         "2026-01-01",
         null,
         .confirmed,
         .manual_entry,
-        &activity_value,
+        &spouse_value,
     );
     try appendTaxFormProfileRevision(&store, allocator, 0, &second_form);
     var second_stream = try loadTaxFormProfileHistory(
@@ -3565,14 +1854,14 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
     try std.testing.expectEqual(
         @as(u32, 1),
         (try loaded.history.effectiveOn(
-            form_1601c,
+            form_2551q,
             try tax_form_profile.Date.parseIso("2026-06-30"),
         )).sequence,
     );
     try std.testing.expectError(
         tax_form_profile.Error.NoEffectiveRevision,
         loaded.history.effectiveOn(
-            form_1601c,
+            form_2551q,
             try tax_form_profile.Date.parseIso("2026-07-01"),
         ),
     );
@@ -3580,14 +1869,14 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
     const next = try testTaxFormProfileRevision(
         profile.profile_id,
         2026,
-        form_1601c,
-        "setup-1601c-2026-second",
+        form_2551q,
+        "setup-2551q-2026-second",
         2,
         "2026-07-01",
         null,
         .confirmed,
         .manual_entry,
-        &activity_value,
+        &income_rate_value,
     );
     const next_id_before = next.id;
     try std.testing.expectError(
@@ -3611,8 +1900,8 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
         profile.profile_id.asSlice(),
         2026,
         &.{.{
-            .form_code = form_1702rt.code,
-            .form_revision = form_1702rt.revision.?,
+            .form_code = form_1701q.code,
+            .form_revision = form_1701q.revision.?,
         }},
     );
     try std.testing.expectError(
@@ -3648,14 +1937,14 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
     const boundary_candidate = try testTaxFormProfileRevision(
         profile.profile_id,
         2028,
-        form_1601c,
-        "setup-1601c-2028",
+        form_2551q,
+        "setup-2551q-2028",
         1,
         "2028-01-01",
         null,
         .confirmed,
         .manual_entry,
-        &activity_value,
+        &income_rate_value,
     );
     try std.testing.expectError(
         persistence.Error.TaxFormProfileInactive,
@@ -3674,33 +1963,32 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
     defer no_boundary_stream.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), no_boundary_stream.revisions.len);
 
-    // An anchor belongs to its selected profile, never merely to a component
-    // row with a matching-looking ID.
+    // A profile reference must identify a distinct compatible profile.
     try store.replaceFormSet(
         profile.profile_id.asSlice(),
         2029,
-        active_forms[0..1],
+        active_forms[1..2],
     );
-    const foreign_anchor_value = [_]tax_form_profile.SetupValue{.{
-        .semantic_key = .business_activity_anchor_id,
-        .role = .filer,
-        .value = .{ .business_activity_anchor_id = try tax_form_profile.ComponentAnchorId.parse("activity-other") },
+    const self_spouse_value = [_]tax_form_profile.SetupValue{.{
+        .semantic_key = .spouse_profile_id,
+        .role = .spouse,
+        .value = .{ .profile_id = profile.profile_id },
     }};
-    const foreign_anchor = try testTaxFormProfileRevision(
+    const self_spouse = try testTaxFormProfileRevision(
         profile.profile_id,
         2029,
-        form_1601c,
-        "setup-cross-profile-anchor",
+        form_1701q,
+        "setup-self-spouse",
         1,
         "2029-01-01",
         null,
         .confirmed,
         .manual_entry,
-        &foreign_anchor_value,
+        &self_spouse_value,
     );
     try std.testing.expectError(
         persistence.Error.TaxFormProfileReferenceInvalid,
-        appendTaxFormProfileRevision(&store, allocator, 0, &foreign_anchor),
+        appendTaxFormProfileRevision(&store, allocator, 0, &self_spouse),
     );
 
     // After explicit acknowledgement, prior-year copy provenance remains
@@ -3710,17 +1998,19 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
         2027,
         active_forms[0..1],
     );
-    const copied_activity_value = [_]tax_form_profile.SetupValue{.{
-        .semantic_key = .business_activity_anchor_id,
+    const copied_income_rate_value = [_]tax_form_profile.SetupValue{.{
+        .semantic_key = .income_tax_rate_election,
         .role = .filer,
-        .value = .{ .business_activity_anchor_id = try tax_form_profile.ComponentAnchorId.parse("activity-primary") },
+        .value = .{ .choice = try tax_form_profile.TextValue.parse(
+            "graduated",
+        ) },
         .source = .{ .copied_from_revision = first.id },
     }};
     const copied = try testTaxFormProfileRevision(
         profile.profile_id,
         2027,
-        form_1601c,
-        "setup-1601c-2027-copy",
+        form_2551q,
+        "setup-2551q-2027-copy",
         1,
         "2027-01-01",
         null,
@@ -3732,7 +2022,7 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
             .source_spec_hash = first.spec_hash,
             .source_revision_id = first.id,
         } },
-        &copied_activity_value,
+        &copied_income_rate_value,
     );
     try appendTaxFormProfileRevision(&store, allocator, 0, &copied);
     var copied_history = try loadTaxFormProfileHistory(
@@ -3757,13 +2047,12 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
     try std.testing.expectEqual(
         @as(u32, 1),
         (try copied_history.history.effectiveOn(
-            form_1601c,
+            form_2551q,
             try tax_form_profile.Date.parseIso("2027-03-01"),
         )).sequence,
     );
 
     // A generated profile-reference value round-trips by profile ID only.
-    const form_1701q = form_catalog.findForm("1701Q").?;
     try store.replaceFormSet(
         profile.profile_id.asSlice(),
         2030,
@@ -3772,14 +2061,6 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
             .form_revision = form_1701q.revision.?,
         }},
     );
-    const spouse_value = [_]tax_form_profile.SetupValue{.{
-        .semantic_key = .spouse_profile_id,
-        .role = .spouse,
-        .value = .{ .profile_id = other_profile.profile_id },
-        .source = .{ .migrated = try tax_form_profile.TextValue.parse(
-            "reviewed-spouse-binding",
-        ) },
-    }};
     const spouse_setup = try testTaxFormProfileRevision(
         profile.profile_id,
         2030,
@@ -3811,14 +2092,14 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
     var invalid = try testTaxFormProfileRevision(
         profile.profile_id,
         2031,
-        form_1601c,
+        form_2551q,
         "setup-invalid-contract",
         1,
         "2031-01-01",
         null,
         .confirmed,
         .manual_entry,
-        &activity_value,
+        &income_rate_value,
     );
     invalid.spec_revision += 1;
     try std.testing.expectError(
@@ -3827,7 +2108,7 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
     );
     invalid.spec_revision -= 1;
     const wrong_type = [_]tax_form_profile.SetupValue{.{
-        .semantic_key = .business_activity_anchor_id,
+        .semantic_key = .income_tax_rate_election,
         .role = .filer,
         .value = .{ .profile_id = other_profile.profile_id },
     }};
@@ -3837,28 +2118,52 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
         appendTaxFormProfileRevision(&store, allocator, 0, &invalid),
     );
     const duplicates = [_]tax_form_profile.SetupValue{
-        activity_value[0],
-        activity_value[0],
+        income_rate_value[0],
+        income_rate_value[0],
     };
     invalid.values = &duplicates;
     try std.testing.expectError(
         tax_form_profile.Error.DuplicateValue,
         appendTaxFormProfileRevision(&store, allocator, 0, &invalid),
     );
-    try store.replaceFormSet(profile.profile_id.asSlice(), 2031, &.{.{
-        .form_code = form_1601c.code,
-        .form_revision = form_1601c.revision.?,
-    }});
+    try store.replaceFormSet(profile.profile_id.asSlice(), 2031, &.{
+        .{
+            .form_code = form_2551q.code,
+            .form_revision = form_2551q.revision.?,
+        },
+        .{
+            .form_code = form_1701q.code,
+            .form_revision = form_1701q.revision.?,
+        },
+    });
     invalid.values = &.{};
-    try appendTaxFormProfileRevision(&store, allocator, 0, &invalid);
-    const no_setup_form = form_catalog.findForm("2551Q").?;
+    try std.testing.expectError(
+        tax_form_profile.Error.MissingRequiredValue,
+        appendTaxFormProfileRevision(&store, allocator, 0, &invalid),
+    );
+
+    const empty_optional = try testTaxFormProfileRevision(
+        profile.profile_id,
+        2031,
+        form_1701q,
+        "setup-optional-clear",
+        1,
+        "2031-01-01",
+        null,
+        .confirmed,
+        .manual_entry,
+        &.{},
+    );
+    try appendTaxFormProfileRevision(&store, allocator, 0, &empty_optional);
+
+    const no_setup_form = form_catalog.findForm("1601C").?;
     invalid.stream.form_code = try tax_form_profile.FormCode.parse(
         no_setup_form.code,
     );
     invalid.stream.form_revision = try tax_form_profile.FormRevision.parse(
         no_setup_form.revision.?,
     );
-    invalid.values = &activity_value;
+    invalid.values = &income_rate_value;
     try std.testing.expectError(
         tax_form_profile.Error.NoSetupContract,
         appendTaxFormProfileRevision(&store, allocator, 0, &invalid),
@@ -3869,9 +2174,9 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
         .{
             .profile_id = profile.profile_id,
             .tax_year = 2031,
-            .form_code = try tax_form_profile.FormCode.parse(form_1601c.code),
+            .form_code = try tax_form_profile.FormCode.parse(form_1701q.code),
             .form_revision = try tax_form_profile.FormRevision.parse(
-                form_1601c.revision.?,
+                form_1701q.revision.?,
             ),
         },
     );
@@ -3931,18 +2236,9 @@ test "Tax Form Profile full-year corrections append and resolve newest sequence"
     const allocator = std.testing.allocator;
     var store = try persistence.Store.openMemory(allocator);
     defer store.close();
-    const activity = [_]model.BusinessActivity{.{
-        .id = try model.BusinessActivityId.parse("correction-activity"),
-        .line_of_business = try field.LineOfBusiness.parse("Consulting"),
-        .effective = try model.EffectivePeriod.init(
-            try model.Date.parseIso("2026-01-01"),
-            null,
-        ),
-    }};
     var profile = try testIndividualRevision();
-    profile.business_activities = &activity;
     try createProfileWithRevision(&store, allocator, .active, &profile);
-    const form = form_catalog.findForm("1601C").?;
+    const form = form_catalog.findForm("2551Q").?;
     try store.replaceFormSet(
         profile.profile_id.asSlice(),
         2026,
@@ -3952,13 +2248,11 @@ test "Tax Form Profile full-year corrections append and resolve newest sequence"
         }},
     );
     const values = [_]tax_form_profile.SetupValue{.{
-        .semantic_key = .business_activity_anchor_id,
+        .semantic_key = .income_tax_rate_election,
         .role = .filer,
-        .value = .{
-            .business_activity_anchor_id = try tax_form_profile.ComponentAnchorId.parse(
-                "correction-activity",
-            ),
-        },
+        .value = .{ .choice = try tax_form_profile.TextValue.parse(
+            "graduated",
+        ) },
     }};
     const first = try testTaxFormProfileRevision(
         profile.profile_id,
@@ -4033,68 +2327,16 @@ test "individual revision round trips through cohesive persistence rows" {
     try expectRevisionEqual(&revision, &loaded.revision);
 }
 
-test "sole proprietor compatibility writes load as canonical self employed individual" {
+test "normal Base writes create no retired component rows" {
     const allocator = std.testing.allocator;
     var store = try persistence.Store.openMemory(allocator);
     defer store.close();
-
-    const activities = [_]model.BusinessActivity{
-        .{
-            .id = try model.BusinessActivityId.parse("activity-retail"),
-            .line_of_business = try field.LineOfBusiness.parse("Retail"),
-            .atc = try field.Atc.parse("PT010"),
-            .effective = try model.EffectivePeriod.init(
-                try model.Date.parseIso("2026-01-01"),
-                null,
-            ),
-        },
-        .{
-            .id = try model.BusinessActivityId.parse("activity-consulting"),
-            .line_of_business = try field.LineOfBusiness.parse("Consulting"),
-            .effective = try model.EffectivePeriod.init(
-                try model.Date.parseIso("2026-04-01"),
-                try model.Date.parseIso("2026-12-31"),
-            ),
-        },
-    };
-    const facts = [_]model.RegistrationFact{
-        .{
-            .id = try model.RegistrationFactId.parse("fact-tax-type"),
-            .effective = try model.EffectivePeriod.init(
-                try model.Date.parseIso("2026-01-01"),
-                null,
-            ),
-            .value = .{
-                .tax_type = try field.TaxType.parse("Percentage Tax"),
-            },
-        },
-        .{
-            .id = try model.RegistrationFactId.parse("fact-gwa"),
-            .effective = try model.EffectivePeriod.init(
-                try model.Date.parseIso("2026-02-01"),
-                null,
-            ),
-            .value = .{ .government_withholding_agent = .yes },
-        },
-        .{
-            .id = try model.RegistrationFactId.parse("fact-special-rate"),
-            .effective = try model.EffectivePeriod.init(
-                try model.Date.parseIso("2026-03-01"),
-                null,
-            ),
-            .value = .{
-                .special_rate_basis = try field.SpecialRateBasis.parse(
-                    "Tax treaty article 7",
-                ),
-            },
-        },
-    };
     const base = try testBase(
         "profile-sole-proprietor",
         "revision-sole-proprietor",
         .{ .imported = try field.SourceReference.parse("bir-import-2026") },
     );
-    const revision = try editor.begin(base)
+    var revision = try editor.begin(base)
         .soleProprietor(.{
             .person = .{
                 .name = try field.TaxpayerName.parse("MARIA SANTOS"),
@@ -4106,9 +2348,8 @@ test "sole proprietor compatibility writes load as canonical self employed indiv
             },
             .trade_name = try field.RegisteredName.parse("MARIA'S BAKERY"),
         })
-        .withBusinessActivities(&activities)
-        .withRegistrationFacts(&facts)
         .build();
+    try revision.validate();
 
     try createProfileWithRevision(&store, allocator, .active, &revision);
     var loaded = (try loadCurrentRevision(
@@ -4123,6 +2364,81 @@ test "sole proprietor compatibility writes load as canonical self employed indiv
     var canonical_revision = revision;
     canonical_revision.subject = .{ .individual = canonical_person };
     try expectRevisionEqual(&canonical_revision, &loaded.revision);
+
+    var legacy_components = (try legacy_profile_component_export.loadRevision(
+        &store,
+        allocator,
+        revision.profile_id,
+        revision.id,
+    )).?;
+    defer legacy_components.deinit(allocator);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        legacy_components.business_activities.len,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        legacy_components.registration_facts.len,
+    );
+}
+
+test "retired component rows require the explicit compatibility reader" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    const first = try testIndividualRevision();
+    try createProfileWithRevision(&store, allocator, .active, &first);
+
+    var second = first;
+    second.id = try model.RevisionId.parse("revision-legacy-evidence");
+    second.sequence = 2;
+    var rows = try toWriteRows(allocator, &second, 1);
+    defer rows.deinit(allocator);
+    const legacy_activities = [_]persistence.BusinessActivityWrite{.{
+        .id = "legacy-activity",
+        .line_of_business = "Legacy consulting",
+        .atc = "PT010",
+        .effective = effectiveToWrite(second.effective),
+    }};
+    const legacy_facts = [_]persistence.RegistrationFactWrite{.{
+        .id = "legacy-tax-type",
+        .effective = effectiveToWrite(second.effective),
+        .value = .{ .tax_type = "Percentage Tax" },
+    }};
+    // Simulate an older writer explicitly. The current adapter never supplies
+    // these component slices to the Store.
+    try persistence.testing.appendLegacyRevision(&store, rows.revision, .{
+        .business_activities = &legacy_activities,
+        .registration_facts = &legacy_facts,
+    });
+
+    var normal = (try loadRevision(
+        &store,
+        allocator,
+        second.profile_id,
+        second.id,
+    )).?;
+    defer normal.deinit(allocator);
+    try std.testing.expectEqual(@as(u32, 2), normal.revision.sequence);
+
+    var legacy = (try legacy_profile_component_export.loadRevision(
+        &store,
+        allocator,
+        second.profile_id,
+        second.id,
+    )).?;
+    defer legacy.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), legacy.business_activities.len);
+    try std.testing.expectEqualStrings(
+        "Legacy consulting",
+        legacy.business_activities[0].line_of_business.asSlice(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), legacy.registration_facts.len);
+    try std.testing.expectEqualStrings(
+        "Percentage Tax",
+        legacy.registration_facts[0].value.tax_type.asSlice(),
+    );
 }
 
 test "every natural person classification and trade name round trips" {
@@ -4226,7 +2542,9 @@ test "canonical value codec round trips all reusable field variants" {
         .{ .date_of_birth = try model.Date.parseIso("1995-06-01") },
         .{ .citizenship = try field.Citizenship.parse("Filipino") },
         .{ .foreign_tax_number = try field.ForeignTaxNumber.parse("US-123") },
+        .{ .accounting_period_basis = .fiscal },
         .{ .line_of_business = try field.LineOfBusiness.parse("Retail") },
+        .{ .eopt_tier = try field.EoptTier.parse("micro") },
         .{ .atc = try field.Atc.parse("PT010") },
         .{ .tax_type = try field.TaxType.parse("Percentage Tax") },
         .{ .government_withholding_agent = .yes },
@@ -4319,47 +2637,24 @@ fn expectRevisionEqual(
         actual.contact.email_address,
     );
     try expectSubjectEqual(&expected.subject, &actual.subject);
-
     try std.testing.expectEqual(
-        expected.business_activities.len,
-        actual.business_activities.len,
+        expected.accounting_period_basis,
+        actual.accounting_period_basis,
     );
-    for (
-        expected.business_activities,
-        actual.business_activities,
-    ) |*left, *right| {
-        try std.testing.expect(left.id.eql(&right.id));
-        try std.testing.expect(
-            left.line_of_business.eql(&right.line_of_business),
-        );
-        try expectOptionalFieldEqual(field.Atc, left.atc, right.atc);
-        try expectEffectiveEqual(left.effective, right.effective);
-    }
-
     try std.testing.expectEqual(
-        expected.registration_facts.len,
-        actual.registration_facts.len,
+        expected.fiscal_year_end_month,
+        actual.fiscal_year_end_month,
     );
-    for (
-        expected.registration_facts,
-        actual.registration_facts,
-    ) |*left, *right| {
-        try std.testing.expect(left.id.eql(&right.id));
-        try expectEffectiveEqual(left.effective, right.effective);
-        try std.testing.expectEqual(left.kind(), right.kind());
-        switch (left.value) {
-            .tax_type => |value| try std.testing.expect(
-                value.eql(&right.value.tax_type),
-            ),
-            .government_withholding_agent => |value| try std.testing.expectEqual(
-                value,
-                right.value.government_withholding_agent,
-            ),
-            .special_rate_basis => |value| try std.testing.expect(
-                value.eql(&right.value.special_rate_basis),
-            ),
-        }
-    }
+    try std.testing.expectEqual(expected.eopt_tier, actual.eopt_tier);
+    try expectOptionalFieldEqual(
+        field.LineOfBusiness,
+        expected.primary_line_of_business,
+        actual.primary_line_of_business,
+    );
+    try std.testing.expectEqual(
+        expected.consolidation_review_state,
+        actual.consolidation_review_state,
+    );
 }
 
 fn expectEffectiveEqual(

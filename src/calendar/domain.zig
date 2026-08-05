@@ -6,10 +6,6 @@
 //! state, and returns a single allocator-owned result slice.
 
 const std = @import("std");
-const annual_income_tax_election = @import(
-    "../tax_profile/annual_income_tax_election.zig",
-);
-const tax_profile_model = @import("../tax_profile/model.zig");
 
 pub const unknown_form_code = "UNKNOWN";
 
@@ -705,12 +701,6 @@ pub const OFFICIAL_RULES = [_]OfficialRule{
 pub const ResolveOptions = struct {
     calendar: BusinessDayCalendar = .{},
     overrides: []const DeadlineOverride = &.{},
-    /// When present, applies the confirmed annual 8% election to 2551Q
-    /// obligations for the matching taxable year. Candidate, reserved,
-    /// review-required, and absent streams retain every deadline: calendar
-    /// projection must never hide an obligation before the statutory choice
-    /// is immutable.
-    annual_income_tax_election: ?*const annual_income_tax_election.Event = null,
 };
 
 /// Resolves obligations for a tax period year. Like the reference subsystem,
@@ -726,40 +716,10 @@ pub fn resolveTaxableYear(
     for (OFFICIAL_RULES) |rule| {
         try generateRule(allocator, &deadlines, taxable_year, rule);
     }
-    try applyAnnualIncomeTaxElection(
-        &deadlines,
-        taxable_year,
-        options.annual_income_tax_election,
-    );
     try applyBusinessDayCalendar(deadlines.items, options.calendar);
     try applyOverrides(deadlines.items, options.overrides, options.calendar);
     sortDeadlines(deadlines.items);
     return deadlines.toOwnedSlice(allocator);
-}
-
-fn applyAnnualIncomeTaxElection(
-    deadlines: *std.ArrayList(ResolvedDeadline),
-    taxable_year: i32,
-    election: ?*const annual_income_tax_election.Event,
-) !void {
-    const current = election orelse return;
-    try current.validate();
-    if (taxable_year != @as(i32, @intCast(current.stream.tax_year))) return;
-
-    var retained: usize = 0;
-    for (deadlines.items) |deadline| {
-        var keep = true;
-        if (std.mem.eql(u8, deadline.form_code, "2551Q")) {
-            if (deadline.period.quarter()) |quarter| {
-                keep = try annual_income_tax_election
-                    .percentageTaxReturnRequired(current, quarter);
-            }
-        }
-        if (!keep) continue;
-        deadlines.items[retained] = deadline;
-        retained += 1;
-    }
-    deadlines.shrinkRetainingCapacity(retained);
 }
 
 /// Projects deadlines onto the year in which their final adjusted due date
@@ -2172,87 +2132,4 @@ test "form set resolver returns only selected rule-backed forms" {
                 std.mem.eql(u8, deadline.form_code, "2551Q"),
         );
     }
-}
-
-fn testAnnualElection(
-    state: annual_income_tax_election.State,
-    choice: annual_income_tax_election.Choice,
-    year: u16,
-    initial_quarter: u8,
-) !annual_income_tax_election.Event {
-    return .{
-        .stream = .{
-            .profile_id = try tax_profile_model.ProfileId.parse(
-                "calendar-annual-election-profile",
-            ),
-            .tax_year = year,
-        },
-        .sequence = 1,
-        .state = state,
-        .choice = choice,
-        .initial_applicable_quarter = initial_quarter,
-        .provenance = .{
-            .kind = .form_2551q,
-            .form_revision = try annual_income_tax_election.FormRevision.parse(
-                "2018-01-ENCS",
-            ),
-            .filing_quarter = initial_quarter,
-            .draft_id = try annual_income_tax_election.DraftId.parse(
-                "calendar-annual-election-draft",
-            ),
-        },
-        .occurred_at_unix_seconds = 1,
-    };
-}
-
-test "confirmed eight percent suppresses later 2551Q deadlines only" {
-    const forms = [_][]const u8{"2551Q"};
-    const confirmed = try testAnnualElection(.confirmed, .eight_percent, 2026, 1);
-    const deadlines = try deadlinesForForms(
-        std.testing.allocator,
-        &forms,
-        2026,
-        .{ .annual_income_tax_election = &confirmed },
-    );
-    defer std.testing.allocator.free(deadlines);
-
-    try std.testing.expectEqual(@as(usize, 1), deadlines.len);
-    try std.testing.expectEqual(@as(u8, 1), deadlines[0].period.quarter().?);
-}
-
-test "graduated and unconfirmed elections retain 2551Q deadlines" {
-    const forms = [_][]const u8{"2551Q"};
-    const cases = [_]annual_income_tax_election.Event{
-        try testAnnualElection(.confirmed, .graduated, 2026, 1),
-        try testAnnualElection(.candidate, .eight_percent, 2026, 1),
-        try testAnnualElection(.reserved, .eight_percent, 2026, 1),
-    };
-    for (&cases) |*election| {
-        const deadlines = try deadlinesForForms(
-            std.testing.allocator,
-            &forms,
-            2026,
-            .{ .annual_income_tax_election = election },
-        );
-        defer std.testing.allocator.free(deadlines);
-        try std.testing.expectEqual(@as(usize, 4), deadlines.len);
-    }
-}
-
-test "confirmed eight percent does not suppress another tax year" {
-    const forms = [_][]const u8{"2551Q"};
-    const prior_year = try testAnnualElection(
-        .confirmed,
-        .eight_percent,
-        2025,
-        1,
-    );
-    const deadlines = try deadlinesForForms(
-        std.testing.allocator,
-        &forms,
-        2026,
-        .{ .annual_income_tax_election = &prior_year },
-    );
-    defer std.testing.allocator.free(deadlines);
-    try std.testing.expectEqual(@as(usize, 4), deadlines.len);
 }

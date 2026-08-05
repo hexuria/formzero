@@ -20,8 +20,6 @@ pub const IdError = error{
 const IdKind = enum {
     profile,
     revision,
-    business_activity,
-    registration_fact,
 };
 
 fn OpaqueId(comptime kind: IdKind) type {
@@ -62,8 +60,6 @@ fn OpaqueId(comptime kind: IdKind) type {
 
 pub const ProfileId = OpaqueId(.profile);
 pub const RevisionId = OpaqueId(.revision);
-pub const BusinessActivityId = OpaqueId(.business_activity);
-pub const RegistrationFactId = OpaqueId(.registration_fact);
 
 pub const Identity = struct {
     tin: field.Tin,
@@ -75,6 +71,38 @@ pub const RegisteredContact = struct {
     zip_code: ?field.ZipCode = null,
     contact_number: ?field.ContactNumber = null,
     email_address: ?field.EmailAddress = null,
+};
+
+/// Accounting-period facts belong to the reusable taxpayer record, not to
+/// one form or filing. The containing `ProfileRevision` supplies the
+/// effective date.
+pub const AccountingPeriodBasis = field.AccountingPeriodBasis;
+
+/// EOPT taxpayer size classification recorded on the effective Base Tax
+/// Profile revision. `null` means not recorded; review-only migration states
+/// are carried separately and are never exposed as selectable tiers.
+pub const EoptTier = enum {
+    micro,
+    small,
+    medium,
+    large,
+
+    pub fn label(self: EoptTier) []const u8 {
+        return switch (self) {
+            .micro => "Micro",
+            .small => "Small",
+            .medium => "Medium",
+            .large => "Large",
+        };
+    }
+};
+
+/// Older normalized Registration streams can be copied into the Base Tax
+/// Profile only when their answer is unambiguous. This marker preserves the
+/// difference between "not recorded" and "legacy evidence needs review".
+pub const ConsolidationReviewState = enum {
+    confirmed,
+    requires_review,
 };
 
 /// Filing classification for a natural-person taxpayer.
@@ -207,45 +235,6 @@ pub const Subject = union(enum) {
     }
 };
 
-pub const BusinessActivity = struct {
-    id: BusinessActivityId,
-    line_of_business: field.LineOfBusiness,
-    atc: ?field.Atc = null,
-    effective: EffectivePeriod,
-
-    pub fn isEffective(self: *const BusinessActivity, on: Date) bool {
-        return self.effective.contains(on);
-    }
-};
-
-pub const RegistrationFactKind = enum {
-    tax_type,
-    government_withholding_agent,
-    special_rate_basis,
-};
-
-pub const RegistrationFactValue = union(RegistrationFactKind) {
-    tax_type: field.TaxType,
-    government_withholding_agent: field.GovernmentWithholdingAgent,
-    special_rate_basis: field.SpecialRateBasis,
-};
-
-/// One effective-dated registration fact per value. The union prevents a
-/// nullable bag where unrelated classifications appear half-populated.
-pub const RegistrationFact = struct {
-    id: RegistrationFactId,
-    effective: EffectivePeriod,
-    value: RegistrationFactValue,
-
-    pub fn kind(self: *const RegistrationFact) RegistrationFactKind {
-        return self.value;
-    }
-
-    pub fn isEffective(self: *const RegistrationFact, on: Date) bool {
-        return self.effective.contains(on);
-    }
-};
-
 pub const RevisionSource = union(enum) {
     manual_entry,
     imported: field.SourceReference,
@@ -254,9 +243,7 @@ pub const RevisionSource = union(enum) {
 
 pub const RevisionError = error{
     InvalidSequence,
-    DuplicateBusinessActivityId,
-    DuplicateRegistrationFactId,
-    OverlappingRegistrationFacts,
+    InvalidAccountingPeriod,
 };
 
 /// Immutable by API: there are no setters. Updating profile facts means
@@ -270,29 +257,29 @@ pub const ProfileRevision = struct {
     identity: Identity,
     contact: RegisteredContact,
     subject: Subject,
-    business_activities: []const BusinessActivity = &.{},
-    registration_facts: []const RegistrationFact = &.{},
+    accounting_period_basis: ?AccountingPeriodBasis = null,
+    fiscal_year_end_month: ?u8 = null,
+    eopt_tier: ?EoptTier = null,
+    primary_line_of_business: ?field.LineOfBusiness = null,
+    consolidation_review_state: ConsolidationReviewState = .confirmed,
 
     pub fn validate(self: *const ProfileRevision) RevisionError!void {
         if (self.sequence == 0) return error.InvalidSequence;
-        for (self.business_activities, 0..) |activity, index| {
-            for (self.business_activities[index + 1 ..]) |other| {
-                if (activity.id.eql(&other.id)) {
-                    return error.DuplicateBusinessActivityId;
-                }
+        if (self.accounting_period_basis) |basis| {
+            switch (basis) {
+                .calendar => if (self.fiscal_year_end_month != null) {
+                    return error.InvalidAccountingPeriod;
+                },
+                .fiscal => {
+                    const month = self.fiscal_year_end_month orelse
+                        return error.InvalidAccountingPeriod;
+                    if (month < 1 or month > 12) {
+                        return error.InvalidAccountingPeriod;
+                    }
+                },
             }
-        }
-        for (self.registration_facts, 0..) |fact, index| {
-            for (self.registration_facts[index + 1 ..]) |other| {
-                if (fact.id.eql(&other.id)) {
-                    return error.DuplicateRegistrationFactId;
-                }
-                if (fact.kind() == other.kind() and
-                    fact.effective.overlaps(other.effective))
-                {
-                    return error.OverlappingRegistrationFacts;
-                }
-            }
+        } else if (self.fiscal_year_end_month != null) {
+            return error.InvalidAccountingPeriod;
         }
     }
 
@@ -320,73 +307,19 @@ pub const ProfileRevision = struct {
         if (!self.identity.rdo_code.eql(&other.identity.rdo_code)) return false;
         if (!contactEquals(&self.contact, &other.contact)) return false;
         if (!subjectEquals(&self.subject, &other.subject)) return false;
-
-        if (self.business_activities.len != other.business_activities.len) {
+        if (self.accounting_period_basis != other.accounting_period_basis) {
             return false;
         }
-        for (self.business_activities, other.business_activities) |left, right| {
-            if (!left.id.eql(&right.id)) return false;
-            if (!left.line_of_business.eql(&right.line_of_business)) return false;
-            if (!optionalFieldEquals(left.atc, right.atc)) return false;
-            if (!left.effective.eql(right.effective)) return false;
-        }
-
-        if (self.registration_facts.len != other.registration_facts.len) {
+        if (self.fiscal_year_end_month != other.fiscal_year_end_month) {
             return false;
         }
-        for (self.registration_facts, other.registration_facts) |left, right| {
-            if (!left.id.eql(&right.id)) return false;
-            if (!left.effective.eql(right.effective)) return false;
-            if (!registrationFactValueEquals(left.value, right.value)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    pub fn businessActivity(
-        self: *const ProfileRevision,
-        id: BusinessActivityId,
-    ) ?*const BusinessActivity {
-        for (self.business_activities) |*activity| {
-            if (activity.id.eql(&id)) return activity;
-        }
-        return null;
-    }
-
-    pub fn effectiveBusinessActivityCount(
-        self: *const ProfileRevision,
-        on: Date,
-    ) usize {
-        var count: usize = 0;
-        for (self.business_activities) |*activity| {
-            if (activity.isEffective(on)) count += 1;
-        }
-        return count;
-    }
-
-    pub fn soleEffectiveBusinessActivity(
-        self: *const ProfileRevision,
-        on: Date,
-    ) ?*const BusinessActivity {
-        var found: ?*const BusinessActivity = null;
-        for (self.business_activities) |*activity| {
-            if (!activity.isEffective(on)) continue;
-            if (found != null) return null;
-            found = activity;
-        }
-        return found;
-    }
-
-    pub fn registrationFact(
-        self: *const ProfileRevision,
-        kind: RegistrationFactKind,
-        on: Date,
-    ) ?*const RegistrationFact {
-        for (self.registration_facts) |*fact| {
-            if (fact.kind() == kind and fact.isEffective(on)) return fact;
-        }
-        return null;
+        if (self.eopt_tier != other.eopt_tier) return false;
+        if (!optionalFieldEquals(
+            self.primary_line_of_business,
+            other.primary_line_of_business,
+        )) return false;
+        return self.consolidation_review_state ==
+            other.consolidation_review_state;
     }
 };
 
@@ -461,26 +394,6 @@ fn subjectEquals(left: *const Subject, right: *const Subject) bool {
     };
 }
 
-fn registrationFactValueEquals(
-    left: RegistrationFactValue,
-    right: RegistrationFactValue,
-) bool {
-    return switch (left) {
-        .tax_type => |value| switch (right) {
-            .tax_type => |other| value.eql(&other),
-            else => false,
-        },
-        .government_withholding_agent => |value| switch (right) {
-            .government_withholding_agent => |other| value == other,
-            else => false,
-        },
-        .special_rate_basis => |value| switch (right) {
-            .special_rate_basis => |other| value.eql(&other),
-            else => false,
-        },
-    };
-}
-
 pub const HistoryError = RevisionError || error{
     EmptyHistory,
     WrongProfile,
@@ -547,7 +460,6 @@ fn exampleRevision(
     revision_id: []const u8,
     sequence: u32,
     effective: EffectivePeriod,
-    activities: []const BusinessActivity,
 ) !ProfileRevision {
     return .{
         .profile_id = try ProfileId.parse("profile-maria"),
@@ -568,7 +480,6 @@ fn exampleRevision(
             },
             .trade_name = try field.RegisteredName.parse("MARIA'S BAKERY"),
         } },
-        .business_activities = activities,
     };
 }
 
@@ -577,7 +488,6 @@ test "subject variants expose truthful derived capabilities" {
         "revision-1",
         1,
         try EffectivePeriod.init(try Date.parseIso("2026-01-01"), null),
-        &.{},
     );
     try std.testing.expectEqual(
         SubjectKind.sole_proprietor,
@@ -612,13 +522,11 @@ test "history accepts an open-ended append and resolves by date and sequence" {
         "revision-1",
         1,
         try EffectivePeriod.init(try Date.parseIso("2026-01-01"), null),
-        &.{},
     );
     const second = try exampleRevision(
         "revision-2",
         2,
         try EffectivePeriod.init(try Date.parseIso("2026-07-01"), null),
-        &.{},
     );
     const revisions = [_]ProfileRevision{ first, second };
     const history: History = .{
@@ -638,13 +546,11 @@ test "retroactive overlap resolves to the highest effective sequence" {
         "revision-1",
         1,
         try EffectivePeriod.init(try Date.parseIso("2026-01-01"), null),
-        &.{},
     );
     const second = try exampleRevision(
         "revision-2",
         2,
         try EffectivePeriod.init(try Date.parseIso("2026-02-01"), null),
-        &.{},
     );
     // Deliberately unsorted: selection is based on sequence, not slice order.
     const revisions = [_]ProfileRevision{ second, first };
@@ -666,10 +572,10 @@ test "content comparison ignores identity and sees every recorded fact" {
         try Date.parseIso("2026-01-01"),
         null,
     );
-    const first = try exampleRevision("revision-1", 1, period, &.{});
+    const first = try exampleRevision("revision-1", 1, period);
     // A different revision id and sequence is not a difference in content:
     // the question is whether appending would record anything.
-    var second = try exampleRevision("revision-2", 7, period, &.{});
+    var second = try exampleRevision("revision-2", 7, period);
     try std.testing.expect(first.contentEquals(&second));
     try std.testing.expect(second.contentEquals(&first));
 
@@ -704,26 +610,17 @@ test "content comparison ignores identity and sees every recorded fact" {
     try std.testing.expect(!first.contentEquals(&second));
     second.subject = first.subject;
 
-    const activities = [_]BusinessActivity{.{
-        .id = try BusinessActivityId.parse("activity-retail"),
-        .line_of_business = try field.LineOfBusiness.parse("Retail"),
-        .atc = try field.Atc.parse("PT010"),
-        .effective = period,
-    }};
-    second.business_activities = &activities;
+    second.primary_line_of_business =
+        try field.LineOfBusiness.parse("Retail");
     try std.testing.expect(!first.contentEquals(&second));
+    second.primary_line_of_business = first.primary_line_of_business;
 
-    const facts = [_]RegistrationFact{.{
-        .id = try RegistrationFactId.parse("tax-type"),
-        .effective = period,
-        .value = .{ .tax_type = try field.TaxType.parse("Percentage Tax") },
-    }};
-    var third = try exampleRevision("revision-3", 3, period, &activities);
-    third.registration_facts = &facts;
-    var fourth = try exampleRevision("revision-4", 4, period, &activities);
-    try std.testing.expect(!third.contentEquals(&fourth));
-    fourth.registration_facts = &facts;
-    try std.testing.expect(third.contentEquals(&fourth));
+    second.eopt_tier = .micro;
+    try std.testing.expect(!first.contentEquals(&second));
+    second.eopt_tier = first.eopt_tier;
+
+    second.accounting_period_basis = .calendar;
+    try std.testing.expect(!first.contentEquals(&second));
 }
 
 test "an effective period equals only an identical one" {
@@ -741,40 +638,4 @@ test "an effective period equals only an identical one" {
         try Date.parseIso("2026-02-01"),
         null,
     )));
-}
-
-test "registration facts are cohesive and cannot overlap by kind" {
-    const facts = [_]RegistrationFact{
-        .{
-            .id = try RegistrationFactId.parse("tax-type-1"),
-            .effective = try EffectivePeriod.init(
-                try Date.parseIso("2026-01-01"),
-                null,
-            ),
-            .value = .{ .tax_type = try field.TaxType.parse(
-                "Percentage Tax",
-            ) },
-        },
-        .{
-            .id = try RegistrationFactId.parse("tax-type-2"),
-            .effective = try EffectivePeriod.init(
-                try Date.parseIso("2026-06-01"),
-                null,
-            ),
-            .value = .{ .tax_type = try field.TaxType.parse(
-                "Value Added Tax",
-            ) },
-        },
-    };
-    var revision = try exampleRevision(
-        "revision-1",
-        1,
-        try EffectivePeriod.init(try Date.parseIso("2026-01-01"), null),
-        &.{},
-    );
-    revision.registration_facts = &facts;
-    try std.testing.expectError(
-        error.OverlappingRegistrationFacts,
-        revision.validate(),
-    );
 }

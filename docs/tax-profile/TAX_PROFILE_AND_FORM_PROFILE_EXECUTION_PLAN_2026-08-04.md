@@ -4,15 +4,15 @@
 - Starting revision: `abd45c6` on `main`
 - Companion audit:
   [`TAX_PROFILE_AND_REGISTRATION_AUDIT_2026-08-04.md`](TAX_PROFILE_AND_REGISTRATION_AUDIT_2026-08-04.md)
-- Status: implementation and Milestone 12 workflow acceptance complete on the
-  execution branch; the bounded Registration segmented-history P1 and named
-  official filing/legal gates remain open
+- Status: **historical and superseded** by the Tax Profile and Tax Form Profile
+  Simplification implemented on 2026-08-05. Registration, activity, and tax-
+  obligation setup below no longer governs the normal runtime workflow.
 
 ## Document status and precedence
 
-This plan is the execution authority for the work in scope. It deliberately
-preserves compatible architecture while superseding older product decisions
-that conflict with the user's current direction.
+This document records the 2026-08-04 execution history. It is not current
+product authority where it conflicts with `ARCHITECTURE.md` or the simplified
+four-layer ownership model.
 
 | Document | Status for this work |
 | --- | --- |

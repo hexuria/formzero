@@ -1,8 +1,10 @@
 # Taxpayer Setup UX Specification
 
 Date: 2026-08-04
-Status: **implemented**, including COR evidence and review and filing-level
-exceptions — see §21 for what landed and the few gaps that remain
+Status: **historical and superseded** by the Tax Profile and Tax Form Profile
+Simplification implemented on 2026-08-05. Registration activity/obligation
+workflows described below are retained only as design history and are not the
+current runtime contract.
 Prompt: `docs/tax-profile/CLAUDE_FABLE_5_TAXPAYER_SETUP_UX_PROMPT_2026-08-04.md`
 Repository baseline: branch `gol/taxpayer-setup-ux-153451` at `2ff21cb`
 

@@ -10,7 +10,7 @@
     <!-- @include-template form-field-bound label="ZIP Code" v="{formFilerZipCode}" ph="-" -->
     <!-- @include-template form-field-bound label="Contact Number" v="{formFilerContactNumber}" ph="-" -->
     <!-- @include-template form-field-bound label="Email Address" v="{formFilerEmailAddress}" ph="-" -->
-    <!-- @include-template form-field-bound label="Line of Business" v="{formFilerLineOfBusiness}" ph="Business activity" -->
+    <!-- @include-template form-field-bound label="Line of Business" v="{formFilerLineOfBusiness}" ph="Primary Line of Business" -->
     <!-- @include-template form-field-bound label="Special / Preferential Rate Basis" v="{formFilerSpecialRateBasis}" ph="Legal basis or registration" -->
   </grid>
 </template>

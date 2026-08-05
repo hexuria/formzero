@@ -612,7 +612,7 @@
               <icon name="search" foreground="text_muted" width="28" height="28"/>
               <text text-alignment="center"><span weight="bold">No active forms</span></text>
               <text wrap="true" text-alignment="center" foreground="text_muted">Activate forms for this profile and tax year to add them to the library.</text>
-              <text wrap="true" text-alignment="center" foreground="text_muted">Open Profile Settings → Registration & Forms to activate a yearly form set.</text>
+              <text wrap="true" text-alignment="center" foreground="text_muted">Open Profile Settings → Forms Set to activate forms for a tax year.</text>
             </column>
           </card>
         </if>
