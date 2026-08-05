@@ -1,40 +1,45 @@
+<template name="taxpayer-add-branch-action">
+  <stack width="44" height="44">
+    <button
+      width="44"
+      height="44"
+      size="icon"
+      variant="ghost"
+      radius="xl"
+      icon="git-branch"
+      label="Add new branch"
+      on-press="add_branch_profile">
+    </button>
+    <tooltip anchor="below">Add new branch</tooltip>
+  </stack>
+</template>
+
 <template name="taxpayer-dashboard-page">
   <scroll grow="1" global-key="page-taxpayer-dashboard" label="Taxpayer dashboard content">
   <column padding="{taxpayerDashboardPagePadding}" gap="24">
-    <if test="{constrainedLayout}">
-      <row gap="12" cross="center">
-        <avatar label="{selectedTaxpayerName}">{selectedTaxpayerInitials}</avatar>
-        <column grow="1" gap="5">
+    <row gap="12" cross="center">
+      <avatar label="{selectedTaxpayerName}">{selectedTaxpayerInitials}</avatar>
+      <column grow="1" gap="5">
+        <if test="{constrainedLayout}">
           <text size="heading" wrap="true">{selectedTaxpayerName}</text>
           <text wrap="true" foreground="text_muted">TIN: {selectedTaxpayerTin}</text>
           <text wrap="true" foreground="text_muted">Type: {selectedTaxpayerKind} - Tax Year {currentCalendarYear} - {selectedTaxpayerTaxType}</text>
-        </column>
-      </row>
-    </if>
-    <else>
-      <row gap="16" cross="center">
-        <avatar label="{selectedTaxpayerName}">{selectedTaxpayerInitials}</avatar>
-        <column grow="1" gap="6">
+        </if>
+        <else>
           <text size="heading">{selectedTaxpayerName}</text>
           <text wrap="true" foreground="text_muted">{selectedTaxpayerSummary}</text>
-        </column>
-      </row>
-    </else>
+        </else>
+      </column>
+      <if test="{profileCanAddBranch}">
+        <use template="taxpayer-add-branch-action"/>
+      </if>
+    </row>
 
-    <if test="{constrainedLayout}">
-      <tabs gap="4" label="Dashboard view">
-        <button height="44" variant="ghost" selected="{dashboardCalendarActive}" on-press="show_dashboard_calendar">Calendar</button>
-        <button height="44" variant="ghost" selected="{dashboardFormsActive}" on-press="show_dashboard_forms">Forms</button>
-        <button height="44" variant="ghost" selected="{dashboardProfileSettingsActive}" on-press="show_dashboard_profile_settings">Profile</button>
-      </tabs>
-    </if>
-    <else>
-      <tabs gap="4" label="Dashboard view">
-        <button variant="ghost" icon="app:calendar" selected="{dashboardCalendarActive}" on-press="show_dashboard_calendar">Calendar</button>
-        <button variant="ghost" icon="folder-open" selected="{dashboardFormsActive}" on-press="show_dashboard_forms">Tax Form Library</button>
-        <button variant="ghost" icon="settings" selected="{dashboardProfileSettingsActive}" on-press="show_dashboard_profile_settings">Profile Settings</button>
-      </tabs>
-    </else>
+    <tabs gap="4" label="Dashboard view">
+      <button height="44" variant="ghost" icon="app:calendar" selected="{dashboardCalendarActive}" on-press="show_dashboard_calendar">Calendar</button>
+      <button height="44" variant="ghost" icon="folder-open" selected="{dashboardFormsActive}" on-press="show_dashboard_forms">{dashboardFormsTabLabel}</button>
+      <button height="44" variant="ghost" icon="settings" selected="{dashboardProfileSettingsActive}" on-press="show_dashboard_profile_settings">{dashboardProfileTabLabel}</button>
+    </tabs>
 
     <if test="{dashboardCalendarActive}">
       <!-- @include-template taxpayer-calendar-section -->

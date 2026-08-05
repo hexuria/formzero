@@ -4612,18 +4612,6 @@ pub const Model = struct {
         return self.taxProfiles.canAddBranch();
     }
 
-    pub fn profileAddBranchLabel(
-        self: *const Model,
-        arena: std.mem.Allocator,
-    ) []const u8 {
-        if (!self.taxProfiles.canAddBranch()) return "Add branch";
-        return std.fmt.allocPrint(
-            arena,
-            "Add branch of {s}",
-            .{self.taxProfiles.selectedName()},
-        ) catch "Add branch";
-    }
-
     pub fn profileBranchBannerTitle(
         self: *const Model,
         arena: std.mem.Allocator,
@@ -6835,6 +6823,14 @@ pub const Model = struct {
 
     pub fn dashboardProfileSettingsActive(self: *const Model) bool {
         return self.dashboardSection == .profile_settings;
+    }
+
+    pub fn dashboardFormsTabLabel(self: *const Model) []const u8 {
+        return if (self.constrainedLayout()) "Forms" else "Tax Form Library";
+    }
+
+    pub fn dashboardProfileTabLabel(self: *const Model) []const u8 {
+        return if (self.constrainedLayout()) "Profile" else "Profile Settings";
     }
 
     pub fn profileTaxActive(self: *const Model) bool {
@@ -27714,6 +27710,50 @@ test "profile dashboard markup builds with the three calendar lanes" {
     );
 }
 
+test "add branch action lives in the taxpayer header instead of the sidebar" {
+    const shell_source = @embedFile("components/shell.native");
+    const dashboard_source = @embedFile(
+        "pages/taxpayer-dashboard-page.native",
+    );
+
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        std.mem.count(u8, shell_source, "on-press=\"add_branch_profile\""),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        std.mem.count(
+            u8,
+            dashboard_source,
+            "on-press=\"add_branch_profile\"",
+        ),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        std.mem.count(u8, dashboard_source, "icon=\"git-branch\""),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        std.mem.count(
+            u8,
+            dashboard_source,
+            "<tooltip anchor=\"below\">Add new branch</tooltip>",
+        ),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        std.mem.count(u8, dashboard_source, "label=\"Add new branch\""),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        std.mem.count(
+            u8,
+            dashboard_source,
+            "<use template=\"taxpayer-add-branch-action\"/>",
+        ),
+    );
+}
+
 test "global and profile form pickers remain separately scoped" {
     const profile_source = @embedFile("pages/taxpayer-dashboard.native");
     const profile_page_source = @embedFile(
@@ -27749,7 +27789,7 @@ test "global and profile form pickers remain separately scoped" {
         std.mem.indexOf(u8, calendar_source, "multi-select-combobox") == null,
     );
     try std.testing.expectEqual(
-        @as(usize, 2),
+        @as(usize, 1),
         std.mem.count(
             u8,
             profile_page_source,

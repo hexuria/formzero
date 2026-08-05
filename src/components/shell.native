@@ -327,23 +327,6 @@
               active="{profile.active and taxpayerNavigationSelectionVisible}"/>
           </for>
 
-          <if test="{profileCanAddBranch}">
-            <row width="232" height="48" cross="center">
-              <list-item
-                key="{sidebarActionEpoch}"
-                width="232"
-                height="44"
-                padding="12"
-                radius="md"
-                icon="plus"
-                selected="false"
-                label="{profileAddBranchLabel}"
-                on-press="add_branch_profile">
-                Add branch
-              </list-item>
-            </row>
-          </if>
-
           <row width="232" height="48" cross="center">
             <list-item
               key="{sidebarActionEpoch}"
