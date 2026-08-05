@@ -190,10 +190,8 @@
   </stack>
 </template>
 
-<template name="t-l" args="r h">
+<template name="t-l" args="r">
   <column>
-    <if test="{h}">
-      <column>
     <if test="{profileDeadlineTableLayout}">
       <card padding="0">
         <column gap="0">
@@ -228,11 +226,6 @@
         </for>
       </column>
     </else>
-      </column>
-    </if>
-    <else>
-      <slot/>
-    </else>
   </column>
 </template>
 
@@ -264,9 +257,8 @@
       <text grow="1"><span weight="bold">Action Required</span></text>
       <badge variant="secondary">{profileActionRequiredCount}</badge>
     </row>
-    <use template="t-l" r="{profileActionRequiredRows}" h="{profileActionRequiredHasRows}">
-      <use template="t-e" i="check-circle" t="All caught up" b="Forms that need attention appear here."/>
-    </use>
+    <if test="{profileActionRequiredHasRows}"><use template="t-l" r="{profileActionRequiredRows}"/></if>
+    <else><use template="t-e" i="check-circle" t="All caught up" b="Forms that need attention appear here."/></else>
   </column>
 </template>
 
@@ -276,9 +268,8 @@
       <text grow="1"><span weight="bold">Overdue</span></text>
       <badge variant="destructive">{profileOverdueDeadlineCount}</badge>
     </row>
-    <use template="t-l" r="{profileOverdueDeadlineRows}" h="{profileOverdueHasDeadlines}">
-      <use template="t-e" i="check-circle" t="Nothing overdue" b="No unpaid deadline has passed for this tax profile."/>
-    </use>
+    <if test="{profileOverdueHasDeadlines}"><use template="t-l" r="{profileOverdueDeadlineRows}"/></if>
+    <else><use template="t-e" i="check-circle" t="Nothing overdue" b="No unpaid deadline has passed for this tax profile."/></else>
   </column>
 </template>
 

@@ -714,6 +714,54 @@ const ProfileDeadlineRemediation = enum {
     tax_form_profile,
 };
 
+/// Owns the complete launch decision for one exact filing-period tile.
+///
+/// `LaunchAssessment` answers whether the reusable Tax Profile can project a
+/// draft. `form_profile_state` answers whether the exact tax-year/form setup
+/// (including Registration bindings and the annual income-tax election) is
+/// ready. Keeping both in one compact value prevents the Library renderer and
+/// its dispatch handler from applying different launch policies.
+const ExactPeriodLaunchReadiness = struct {
+    launch: form_ui.LaunchAssessment = .{},
+    form_profile_state: TaxFormProfileCardState = .error_loading,
+    evaluated: bool = false,
+
+    fn canOpen(self: @This()) bool {
+        if (!self.evaluated) return false;
+        const launch_acceptable = switch (self.launch.status) {
+            .ready_new, .ready_resume, .needs_activity_selection => true,
+            .needs_profile, .profile_not_eligible, .unavailable => false,
+        };
+        const bindings_ready = switch (self.form_profile_state) {
+            .ready, .inherited_only_ready => true,
+            else => false,
+        };
+        return launch_acceptable and bindings_ready;
+    }
+
+    fn remediation(self: @This()) ProfileDeadlineRemediation {
+        if (!self.evaluated) return .unavailable;
+        if (self.canOpen()) return .ready;
+        return switch (self.form_profile_state) {
+            .needs_tax_profile => .tax_profile,
+            .needs_registration,
+            .needs_year_settings,
+            .year_settings_reserved,
+            .year_settings_require_review,
+            .needs_setup,
+            .requires_review,
+            .needs_filing_context,
+            => .tax_form_profile,
+            .unavailable,
+            .calendar_only,
+            .ready,
+            .inherited_only_ready,
+            .error_loading,
+            => .unavailable,
+        };
+    }
+};
+
 /// A profile-scoped schedule row combines the resolved deadline with typed,
 /// independent filing and timing state. The underlying deadline remains owned
 /// by the calendar state; this wrapper owns only the presentation projection.
@@ -1613,6 +1661,10 @@ pub const Model = struct {
     profilePeriodLaunchAssessments: [form_catalog.registry_count][12]form_ui.LaunchAssessment = undefined,
     profilePeriodLaunchAssessmentsReady: [form_catalog.registry_count][12]bool =
         [_][12]bool{[_]bool{false} ** 12} ** form_catalog.registry_count,
+    profilePeriodExactLaunchReadiness: [form_catalog.registry_count][12]ExactPeriodLaunchReadiness =
+        [_][12]ExactPeriodLaunchReadiness{
+            [_]ExactPeriodLaunchReadiness{.{}} ** 12,
+        } ** form_catalog.registry_count,
     /// Date-effective Forms Set membership for the same period slots. These
     /// booleans are refreshed outside view bindings so cards and controls do
     /// not perform persistence I/O while rendering.
@@ -1714,6 +1766,7 @@ pub const Model = struct {
         "profileFormLaunchAssessmentsReady",
         "profilePeriodLaunchAssessments",
         "profilePeriodLaunchAssessmentsReady",
+        "profilePeriodExactLaunchReadiness",
         "profileDeadlineLaunchAssessments",
         "profileDeadlineLaunchAssessmentsReady",
         "profileDeadlineRemediations",
@@ -5620,6 +5673,18 @@ pub const Model = struct {
                 self.taxFormProfileCardStates[index]
             else
                 TaxFormProfileCardState.error_loading;
+            var exact_period_ready = false;
+            for (
+                self.profilePeriodExactLaunchReadiness[index],
+                0..,
+            ) |readiness, slot| {
+                if (!self.profilePeriodAvailabilityReady[index][slot] or
+                    !self.profilePeriodAvailability[index][slot]) continue;
+                if (readiness.canOpen()) {
+                    exact_period_ready = true;
+                    break;
+                }
+            }
             rows[count] = .{
                 .id = index,
                 .definition = definition,
@@ -5627,9 +5692,7 @@ pub const Model = struct {
                 .selected = true,
                 .launch_assessment = launch_assessment,
                 .launch_disabled = definition.status != .static_layout or
-                    !libraryPeriodLaunchEnabled(
-                        launch_assessment.status,
-                    ),
+                    !exact_period_ready,
                 .period_grid_columns = self.libraryPeriodGridColumns(definition),
                 .tax_form_profile_status = profile_state.label(),
                 .tax_form_profile_action = profile_state.actionLabel(),
@@ -5653,8 +5716,7 @@ pub const Model = struct {
                 arena,
                 self.libraryFilter.month_mask,
                 self.libraryFilter.quarter_mask,
-                self.profilePeriodLaunchAssessments[index],
-                self.profilePeriodLaunchAssessmentsReady[index],
+                self.profilePeriodExactLaunchReadiness[index],
                 self.profilePeriodAvailability[index],
                 self.profilePeriodAvailabilityReady[index],
             );
@@ -10131,8 +10193,7 @@ fn appendLibraryPeriodCell(
     period: form_period.FilingPeriod,
     month_mask: u16,
     quarter_mask: u8,
-    assessment: form_ui.LaunchAssessment,
-    assessment_ready: bool,
+    readiness: ExactPeriodLaunchReadiness,
     period_active: bool,
     availability_ready: bool,
     label_override: ?[]const u8,
@@ -10190,7 +10251,7 @@ fn appendLibraryPeriodCell(
             label,
             period.taxYear(),
             status.label,
-            periodLaunchNote(assessment, assessment_ready),
+            periodLaunchNote(readiness.launch, readiness.evaluated),
             if (row.definition.status == .calendar_only)
                 ", calendar only"
             else
@@ -10216,8 +10277,7 @@ fn appendLibraryPeriodCell(
         .actionable = row.definition.status == .static_layout and
             period_active and
             availability_ready and
-            assessment_ready and
-            libraryPeriodLaunchEnabled(assessment.status),
+            readiness.canOpen(),
         .calendar_only = row.definition.status == .calendar_only,
         .accessible_label = action_label,
     };
@@ -10234,8 +10294,7 @@ fn populateLibraryPeriodCells(
     arena: std.mem.Allocator,
     month_mask: u16,
     quarter_mask: u8,
-    assessments: [12]form_ui.LaunchAssessment,
-    assessments_ready: [12]bool,
+    readiness: [12]ExactPeriodLaunchReadiness,
     availability: [12]bool,
     availability_ready: [12]bool,
 ) void {
@@ -10258,8 +10317,7 @@ fn populateLibraryPeriodCells(
             new_period,
             month_mask,
             quarter_mask,
-            assessments[0],
-            assessments_ready[0],
+            readiness[0],
             availability[0],
             availability_ready[0],
             "Start new return",
@@ -10290,8 +10348,7 @@ fn populateLibraryPeriodCells(
                 period,
                 month_mask,
                 quarter_mask,
-                assessments[slot],
-                assessments_ready[slot],
+                readiness[slot],
                 availability[slot],
                 availability_ready[slot],
                 label,
@@ -10311,8 +10368,7 @@ fn populateLibraryPeriodCells(
                 period,
                 month_mask,
                 quarter_mask,
-                assessments[slot],
-                assessments_ready[slot],
+                readiness[slot],
                 availability[slot],
                 availability_ready[slot],
                 null,
@@ -13609,6 +13665,80 @@ fn loadLaunchTaxFormProfileBindings(
     return result;
 }
 
+fn assessExactPeriodLaunch(
+    model: *Model,
+    definition: *const form_catalog.FormDefinition,
+    form_index: usize,
+    filing: form_period.FilingPeriod,
+    occurrence_date: ?forms_set_resolver.Date,
+) ExactPeriodLaunchReadiness {
+    var result: ExactPeriodLaunchReadiness = .{ .evaluated = true };
+    if (definition.status != .static_layout or
+        !formAvailableForFiling(
+            model,
+            definition,
+            filing,
+            occurrence_date,
+        ))
+    {
+        result.form_profile_state = .unavailable;
+        return result;
+    }
+
+    const tax_year = filing.taxYear();
+    const quarter = filing.quarter() orelse switch (filing) {
+        .annual => 4,
+        .on_demand => selectedFormQuarter(model, definition.code),
+        .monthly, .quarterly => unreachable,
+    };
+    result.launch = assessProfileFormLaunch(
+        model,
+        definition.code,
+        tax_year,
+        quarter,
+        filing.month(),
+        filing,
+    );
+    switch (result.launch.status) {
+        .needs_profile => {
+            result.form_profile_state = .needs_tax_profile;
+            return result;
+        },
+        .profile_not_eligible, .unavailable => {
+            result.form_profile_state = .unavailable;
+            return result;
+        },
+        .ready_new, .ready_resume, .needs_activity_selection => {},
+    }
+
+    const profile_id = model.taxProfiles.selectedProfileDomainId() orelse {
+        result.form_profile_state = .needs_tax_profile;
+        return result;
+    };
+    if (tax_year < 1 or tax_year > 9999) {
+        result.form_profile_state = .unavailable;
+        return result;
+    }
+    const year: u16 = @intCast(tax_year);
+    const as_of = profileAsOfForForm(
+        model,
+        definition.code,
+        year,
+        quarter,
+        filing.month(),
+    );
+    result.form_profile_state = loadLaunchTaxFormProfileBindings(
+        model,
+        definition,
+        form_index,
+        profile_id,
+        year,
+        as_of,
+        result.launch,
+    ).state;
+    return result;
+}
+
 fn refreshTaxFormProfileCardStates(model: *Model) void {
     model.taxFormProfileCardStatesReady = false;
     @memset(&model.taxFormProfileCardStates, .unavailable);
@@ -13813,6 +13943,9 @@ fn refreshProfileFormLaunchAssessments(model: *Model) void {
     for (&model.profilePeriodLaunchAssessmentsReady) |*row| {
         row.* = [_]bool{false} ** 12;
     }
+    for (&model.profilePeriodExactLaunchReadiness) |*row| {
+        row.* = [_]ExactPeriodLaunchReadiness{.{}} ** 12;
+    }
     for (&model.profilePeriodAvailability) |*row| {
         row.* = [_]bool{false} ** 12;
     }
@@ -13865,25 +13998,24 @@ fn refreshProfileFormLaunchAssessments(model: *Model) void {
             if (!active) {
                 model.profilePeriodLaunchAssessments[index][slot] = .{};
                 model.profilePeriodLaunchAssessmentsReady[index][slot] = true;
+                model.profilePeriodExactLaunchReadiness[index][slot] = .{
+                    .form_profile_state = .unavailable,
+                    .evaluated = true,
+                };
                 continue;
             }
-            const quarter = filing.quarter() orelse switch (filing) {
-                .annual => 4,
-                .on_demand => selectedFormQuarter(model, definition.code),
-                else => selectedFormQuarter(model, definition.code),
-            };
-            const assessment = assessProfileFormLaunch(
+            const exact = assessExactPeriodLaunch(
                 model,
-                definition.code,
-                year_value,
-                quarter,
-                filing.month(),
+                definition,
+                index,
                 filing,
+                occurrence_date,
             );
-            model.profilePeriodLaunchAssessments[index][slot] = assessment;
+            model.profilePeriodExactLaunchReadiness[index][slot] = exact;
+            model.profilePeriodLaunchAssessments[index][slot] = exact.launch;
             model.profilePeriodLaunchAssessmentsReady[index][slot] = true;
             if (!captured_first_active_assessment) {
-                model.profileFormLaunchAssessments[index] = assessment;
+                model.profileFormLaunchAssessments[index] = exact.launch;
                 captured_first_active_assessment = true;
             }
         }
@@ -13911,65 +14043,25 @@ fn refreshProfileDeadlineLaunchAssessments(model: *Model) void {
         if (profileFormRoute(deadline.form_code) == null or
             !model.profileCalendarIncludesDeadline(deadline)) continue;
         const filing = profileDeadlineFilingPeriod(deadline) orelse continue;
-        const tax_year: i32 = filing.taxYear();
-        const quarter = filing.quarter() orelse switch (filing) {
-            .annual => 4,
+        switch (filing) {
             .on_demand => continue,
-            .monthly, .quarterly => unreachable,
-        };
-        const assessment = assessProfileFormLaunch(
-                model,
-                deadline.form_code,
-                tax_year,
-                quarter,
-                filing.month(),
-                filing,
-            );
-        model.profileDeadlineLaunchAssessments[index] = assessment;
+            .monthly, .quarterly, .annual => {},
+        }
+        const definition = catalogDefinitionForDeadline(
+            deadline.form_code,
+        ) orelse continue;
+        const form_index = formCatalogIndex(deadline.form_code) orelse
+            continue;
+        const exact = assessExactPeriodLaunch(
+            model,
+            definition,
+            form_index,
+            filing,
+            null,
+        );
+        model.profileDeadlineLaunchAssessments[index] = exact.launch;
         model.profileDeadlineLaunchAssessmentsReady[index] = true;
-        model.profileDeadlineRemediations[index] = switch (assessment.status) {
-            .needs_profile => .tax_profile,
-            .profile_not_eligible, .unavailable => .unavailable,
-            .ready_new, .ready_resume, .needs_activity_selection => blk: {
-                const definition = catalogDefinitionForDeadline(
-                    deadline.form_code,
-                ) orelse break :blk .unavailable;
-                const form_index = formCatalogIndex(deadline.form_code) orelse
-                    break :blk .unavailable;
-                const profile_id = model.taxProfiles.selectedProfileDomainId() orelse
-                    break :blk .unavailable;
-                const year: u16 = @intCast(tax_year);
-                const as_of = profileAsOfForForm(
-                    model,
-                    deadline.form_code,
-                    year,
-                    quarter,
-                    filing.month(),
-                );
-                const bindings = loadLaunchTaxFormProfileBindings(
-                    model,
-                    definition,
-                    form_index,
-                    profile_id,
-                    year,
-                    as_of,
-                    assessment,
-                );
-                break :blk switch (bindings.state) {
-                    .ready, .inherited_only_ready => .ready,
-                    .needs_tax_profile => .tax_profile,
-                    .needs_registration,
-                    .needs_year_settings,
-                    .year_settings_reserved,
-                    .year_settings_require_review,
-                    .needs_setup,
-                    .requires_review,
-                    .needs_filing_context,
-                    => .tax_form_profile,
-                    .unavailable, .calendar_only, .error_loading => .unavailable,
-                };
-            },
-        };
+        model.profileDeadlineRemediations[index] = exact.remediation();
     }
 }
 
@@ -15710,6 +15802,7 @@ fn reloadTaxFormProfileAfterConflict(model: *Model) void {
         history.history.revisions,
         if (selected_revision) |revision| revision.sequence else 0,
     );
+    refreshProfileFormLaunchAssessments(model);
     refreshOpenedTaxFormProfileBindingReadiness(model);
 }
 
@@ -16165,7 +16258,7 @@ fn saveTaxFormProfile(model: *Model) void {
     model.taxFormProfilePickerField = null;
     model.taxFormProfileSection = .details;
     refreshOpenedTaxFormProfileHistory(model);
-    refreshTaxFormProfileCardStates(model);
+    refreshProfileFormLaunchAssessments(model);
     refreshOpenedTaxFormProfileBindingReadiness(model);
     refreshOpenedRuntimeComposedSnapshot(model);
 }
@@ -16226,7 +16319,7 @@ fn saveTaxpayerYearSettings(model: *Model) void {
     };
     model.taxpayerYearPage.saveSucceeded(&revision) catch return;
     model.taxFormProfileSection = .details;
-    refreshTaxFormProfileCardStates(model);
+    refreshProfileFormLaunchAssessments(model);
 }
 
 fn saveAnnualIncomeTaxElectionCandidate(model: *Model) void {
@@ -16302,7 +16395,7 @@ fn saveAnnualIncomeTaxElectionCandidate(model: *Model) void {
     );
     model.taxFormProfileSection = .details;
     refreshOpenedRuntimeComposedSnapshot(model);
-    refreshTaxFormProfileCardStates(model);
+    refreshProfileFormLaunchAssessments(model);
     refreshOpenedTaxFormProfileBindingReadiness(model);
 }
 
@@ -16327,6 +16420,7 @@ fn resolveTaxpayerYearConflict(model: *Model, keep_draft: bool) void {
                 return;
             model.taxFormProfileSection = .details;
         }
+        refreshProfileFormLaunchAssessments(model);
         return;
     }
 }
@@ -16354,15 +16448,14 @@ fn openLibraryForm(model: *Model, index: usize) void {
         .on_demand => selectedFormQuarter(model, definition.code),
         else => selectedFormQuarter(model, definition.code),
     };
-    const launch = assessProfileFormLaunch(
+    const exact = assessExactPeriodLaunch(
         model,
-        definition.code,
-        tax_year,
-        quarter,
-        filing.month(),
+        definition,
+        index,
         filing,
+        occurrence_date,
     );
-    if (!libraryPeriodLaunchEnabled(launch.status)) return;
+    if (!exact.canOpen()) return;
     const route = profileFormRoute(definition.code) orelse return;
     _ = openProfileBoundFormForQuarter(
         model,
@@ -16438,15 +16531,14 @@ fn openLibraryPeriod(model: *Model, action_id: usize) void {
         .on_demand => selectedFormQuarter(model, definition.code),
         else => selectedFormQuarter(model, definition.code),
     };
-    var launch = assessProfileFormLaunch(
+    var exact = assessExactPeriodLaunch(
         model,
-        definition.code,
-        tax_year,
-        quarter,
-        filing.month(),
+        definition,
+        index,
         filing,
+        occurrence_date,
     );
-    if (!libraryPeriodLaunchEnabled(launch.status)) return;
+    if (!exact.canOpen()) return;
 
     if (definition.cadence == .on_demand and slot == 0) {
         const store = model.formProfiles.store orelse {
@@ -16481,15 +16573,14 @@ fn openLibraryPeriod(model: *Model, action_id: usize) void {
             .occurrence = occurrence,
         } };
         quarter = selectedFormQuarter(model, definition.code);
-        launch = assessProfileFormLaunch(
+        exact = assessExactPeriodLaunch(
             model,
-            definition.code,
-            tax_year,
-            quarter,
-            null,
+            definition,
+            index,
             filing,
+            currentOccurrenceDate(model, year),
         );
-        if (!libraryPeriodLaunchEnabled(launch.status)) return;
+        if (!exact.canOpen()) return;
     }
 
     const route = profileFormRoute(definition.code) orelse return;
@@ -17415,23 +17506,6 @@ fn closeProfileEditor(model: *Model) void {
     if (model.page != .profile_setup) {
         model.profileEditorOrigin = .global_dashboard;
     }
-}
-
-/// Browse-library tiles are intentionally narrower than calendar remediation
-/// actions: a period may open only when its exact saved context is ready.
-/// Missing profile data or a missing activity must be repaired from the Tax
-/// Form Profile, never by a surprise redirect from a period tile.
-fn libraryPeriodLaunchEnabled(status: form_ui.LaunchStatus) bool {
-    return switch (status) {
-        .ready_new,
-        .ready_resume,
-        => true,
-        .needs_profile,
-        .needs_activity_selection,
-        .profile_not_eligible,
-        .unavailable,
-        => false,
-    };
 }
 
 fn profileCompletionFieldLabel(
@@ -19301,7 +19375,18 @@ test "Tax Form Profile page saves exact annual activity and dirty Cancel stays" 
         break;
     }
     try std.testing.expect(august_action != null);
-    update(&model, .{ .open_library_period = august_action.? });
+    for ([_]f32{ 700, 1920 }) |width| {
+        update(&model, .{ .viewport_width_changed = width });
+        try expectAppMarkupBuilds(&model);
+        try std.testing.expect(try appMarkupHasSemanticsPrefix(
+            &model,
+            "BIR Form 1601C, Aug, tax year 2026",
+        ));
+    }
+    try std.testing.expect(try dispatchAppWidgetBySemanticsPrefix(
+        &model,
+        "BIR Form 1601C, Aug, tax year 2026",
+    ));
     try std.testing.expectEqual(Page.form_1601_c, model.page);
     try std.testing.expectEqual(
         form_ui.LaunchStatus.ready_new,
@@ -19339,7 +19424,11 @@ test "Tax Form Profile page saves exact annual activity and dirty Cancel stays" 
         break;
     }
     try std.testing.expect(resumed_august_action != null);
-    update(&model, .{ .open_library_period = resumed_august_action.? });
+    try expectAppMarkupBuilds(&model);
+    try std.testing.expect(try dispatchAppWidgetBySemanticsPrefix(
+        &model,
+        "BIR Form 1601C, Aug, tax year 2026",
+    ));
     try std.testing.expectEqual(Page.form_1601_c, model.page);
     try std.testing.expectEqualStrings(
         resumed_draft_id.asSlice(),
@@ -21156,10 +21245,13 @@ test "month and quarter filters project only selected filing buttons" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const assessments = [_]form_ui.LaunchAssessment{
-        .{ .status = .ready_new },
+    const readiness = [_]ExactPeriodLaunchReadiness{
+        .{
+            .launch = .{ .status = .ready_new },
+            .form_profile_state = .ready,
+            .evaluated = true,
+        },
     } ** 12;
-    const assessments_ready = [_]bool{true} ** 12;
     const availability = [_]bool{true} ** 12;
     const availability_ready = [_]bool{true} ** 12;
 
@@ -21179,8 +21271,7 @@ test "month and quarter filters project only selected filing buttons" {
         arena,
         0b0000_0000_0000_0101,
         0,
-        assessments,
-        assessments_ready,
+        readiness,
         availability,
         availability_ready,
     );
@@ -21209,8 +21300,7 @@ test "month and quarter filters project only selected filing buttons" {
         arena,
         0,
         0b0011,
-        assessments,
-        assessments_ready,
+        readiness,
         availability,
         availability_ready,
     );
@@ -21239,11 +21329,14 @@ test "on-demand cards expose start-new and saved occurrence actions" {
     try drafts[1].period_key.set("2026-O002");
     try drafts[1].lifecycle.set("submitted");
 
-    var assessments = [_]form_ui.LaunchAssessment{
-        .{ .status = .ready_resume },
+    var readiness = [_]ExactPeriodLaunchReadiness{
+        .{
+            .launch = .{ .status = .ready_resume },
+            .form_profile_state = .ready,
+            .evaluated = true,
+        },
     } ** 12;
-    assessments[0].status = .ready_new;
-    const assessments_ready = [_]bool{true} ** 12;
+    readiness[0].launch.status = .ready_new;
     const availability = [_]bool{true} ** 12;
     const availability_ready = [_]bool{true} ** 12;
     var row = TaxFormLibraryRow{
@@ -21263,8 +21356,7 @@ test "on-demand cards expose start-new and saved occurrence actions" {
         arena,
         0,
         0,
-        assessments,
-        assessments_ready,
+        readiness,
         availability,
         availability_ready,
     );
@@ -22262,6 +22354,75 @@ test "library disables incomplete profile periods without redirecting to setup" 
     try std.testing.expect(model.pendingProfileFormLaunch == null);
 }
 
+test "library disables unresolved 2551Q annual election in markup and dispatch" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    const profile_id_text = "library-unresolved-2551q-owner";
+    try addTestProfileWithoutYearSettings(
+        &store,
+        profile_id_text,
+        "Unresolved 2551Q Taxpayer",
+        "987-654-321-000",
+        .individual,
+    );
+    try addTestCompleteBusinessRegistration(
+        &store,
+        profile_id_text,
+        "2026-01-01".*,
+    );
+
+    var model = Model{
+        .page = .taxpayer_dashboard,
+        .dashboardSection = .forms,
+    };
+    model.calendar.selected_year = 2026;
+    model.calendar.selected_month = 3;
+    model.calendarToday = try calendar_domain.Date.init(2026, 3, 31);
+    try model.taxProfiles.attach(allocator, &store, "2026-03-31", 2026);
+    model.formProfiles.attach(allocator, &store);
+    defer model.formProfiles.deinit();
+    try store.replaceFormSet(profile_id_text, 2026, &.{.{
+        .form_code = "2551Q",
+        .form_revision = "2018-01-ENCS",
+    }});
+    refreshSelectedProfileFormSet(&model);
+
+    const form_index = formCatalogIndex("2551Q").?;
+    try std.testing.expectEqual(
+        TaxFormProfileCardState.needs_year_settings,
+        model.profilePeriodExactLaunchReadiness[form_index][0]
+            .form_profile_state,
+    );
+
+    var row_arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer row_arena_state.deinit();
+    const rows = model.profileFormRows(row_arena_state.allocator());
+    try std.testing.expectEqual(@as(usize, 1), rows.len);
+    try std.testing.expectEqualStrings("2551Q", rows[0].code());
+    try std.testing.expect(rows[0].launchDisabled());
+    for (rows[0].periodCells()) |cell| {
+        try std.testing.expect(cell.disabled());
+        model.page = .taxpayer_dashboard;
+        model.dashboardSection = .forms;
+        update(&model, .{ .open_library_period = cell.actionId() });
+        try std.testing.expectEqual(Page.taxpayer_dashboard, model.page);
+        try std.testing.expectEqual(DashboardSection.forms, model.dashboardSection);
+    }
+    update(&model, .{ .open_library_form = form_index });
+    try std.testing.expectEqual(Page.taxpayer_dashboard, model.page);
+    try std.testing.expectEqual(DashboardSection.forms, model.dashboardSection);
+
+    for ([_]f32{ 700, 1920 }) |width| {
+        update(&model, .{ .viewport_width_changed = width });
+        try expectAppMarkupBuilds(&model);
+        try std.testing.expect(!try appMarkupHasSemanticsPrefix(
+            &model,
+            "BIR Form 2551Q, Q1, tax year 2026",
+        ));
+    }
+}
+
 test "Screen Gallery form buttons open static editor pages directly" {
     const cases = [_]struct { message: Msg, page: Page }{
         .{ .message = .show_form_0605, .page = .form_0605 },
@@ -22327,7 +22488,18 @@ test "library period tile opens the exact quarterly filing identity" {
     // A global month/filter context cannot rewrite this tile's exact Q2
     // identity: the action payload is derived from the tile itself.
     model.calendar.selected_month = 1;
-    update(&model, .{ .open_library_period = rows[0].period2.actionId() });
+    for ([_]f32{ 700, 1920 }) |width| {
+        update(&model, .{ .viewport_width_changed = width });
+        try expectAppMarkupBuilds(&model);
+        try std.testing.expect(try appMarkupHasSemanticsPrefix(
+            &model,
+            "BIR Form 2551Q, Q2, tax year 2026",
+        ));
+    }
+    try std.testing.expect(try dispatchAppWidgetBySemanticsPrefix(
+        &model,
+        "BIR Form 2551Q, Q2, tax year 2026",
+    ));
     try std.testing.expectEqual(Page.form_2551q, model.page);
     const filing = model.formProfiles.filingPeriod().?;
     try std.testing.expectEqual(form_catalog.FilingCadence.quarterly, filing.cadence());
@@ -27199,6 +27371,8 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
     model.profileCalendar.selected_month =
         matching_deadline.?.final_deadline.month;
     model.calendarToday = matching_deadline.?.final_deadline;
+    model.page = .taxpayer_dashboard;
+    model.dashboardSection = .calendar;
 
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
@@ -27224,6 +27398,10 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
         @as(usize, 0),
         model.profileOverdueDeadlineRows(arena).len,
     );
+    for ([_]f32{ 700, 1920 }) |width| {
+        update(&model, .{ .viewport_width_changed = width });
+        try expectAppMarkupBuilds(&model);
+    }
     model.calendarToday = try matching_deadline.?.final_deadline.addDays(1);
     try std.testing.expectEqual(
         @as(usize, 0),
@@ -27232,6 +27410,10 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
     const new_overdue_rows = model.profileOverdueDeadlineRows(arena);
     try std.testing.expectEqual(@as(usize, 1), new_overdue_rows.len);
     try std.testing.expectEqualStrings("New", new_overdue_rows[0].filingStatus());
+    for ([_]f32{ 700, 1920 }) |width| {
+        update(&model, .{ .viewport_width_changed = width });
+        try expectAppMarkupBuilds(&model);
+    }
     const selected_month = model.profileCalendar.selected_month;
     model.profileCalendar.selected_month = if (selected_month == 1) 2 else 1;
     try std.testing.expectEqual(
@@ -27848,6 +28030,38 @@ fn expectAppMarkupBuilds(model: *const Model) !void {
         return err;
     };
     _ = try ui.finalize(root);
+}
+
+fn appMarkupHasSemanticsPrefix(
+    model: *const Model,
+    prefix: []const u8,
+) !bool {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var ui = canvas.Ui(Msg).init(arena);
+    const tree = try ui.finalize(try view.build(&ui, model));
+    return findWidgetBySemanticsPrefix(tree.root, prefix) != null;
+}
+
+fn dispatchAppWidgetBySemanticsPrefix(
+    model: *Model,
+    prefix: []const u8,
+) !bool {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var ui = canvas.Ui(Msg).init(arena);
+    const tree = try ui.finalize(try view.build(&ui, model));
+    const widget = findWidgetBySemanticsPrefix(tree.root, prefix) orelse
+        return false;
+    const message = tree.msgForPointer(widget.id, .up) orelse return false;
+    update(model, message);
+    return true;
 }
 
 test "segmented TIN rejects composition letters and caps the branch at five digits" {
