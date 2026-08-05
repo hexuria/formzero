@@ -291,7 +291,7 @@
           <text wrap="true" foreground="text_muted">{profileDirtyNavigationBody}</text>
           <row gap="8">
             <button height="44" variant="primary" autofocus="true" on-press="profile_keep_editing">Stay and keep editing</button>
-            <button height="44" variant="outline" on-press="profile_discard_navigation">Discard and continue</button>
+            <button height="44" variant="outline" on-press="profile_discard_navigation">{profileDiscardNavigationLabel}</button>
           </row>
         </column>
       </card>
@@ -997,7 +997,7 @@
 
     <if test="{profileEditorActionsVisible}">
       <grid columns="{profileReadColumns}" gap="10">
-        <button height="44" variant="outline" disabled="{profileCancelDisabled}" on-press="cancel_profile_edit">Cancel changes</button>
+        <button height="44" variant="outline" disabled="{profileCancelDisabled}" on-press="cancel_profile_edit">Cancel</button>
         <button
           height="44"
           variant="primary"

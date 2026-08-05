@@ -286,6 +286,7 @@ pub const ProfileSetupSection = enum {
 
 const PendingProfileNavigation = union(enum) {
     page: Page,
+    profile_view,
     profile_section: ProfileSetupSection,
     dashboard_section: DashboardSection,
     taxpayer_slot: usize,
@@ -3383,11 +3384,8 @@ pub const Model = struct {
     }
 
     pub fn profileCancelDisabled(self: *const Model) bool {
-        if (self.taxProfiles.editing_new) {
-            return self.taxProfiles.cancelDisabled();
-        }
-        if (!self.taxProfiles.profileEditing()) return true;
-        return !self.taxProfiles.profileDirty() and !self.regPage.dirty();
+        return !self.taxProfiles.profileEditing() and
+            !self.taxProfiles.profileCreating();
     }
 
     pub fn profileTaxViewing(self: *const Model) bool {
@@ -3408,6 +3406,10 @@ pub const Model = struct {
     }
 
     pub fn profileDirtyNavigationTitle(self: *const Model) []const u8 {
+        if (self.pendingProfileNavigation) |pending| switch (pending) {
+            .profile_view => return "Discard all changes?",
+            else => {},
+        };
         return if (self.regPage.dirty() and self.taxProfiles.profileDirty())
             "Discard unsaved Tax Profile and Registration changes?"
         else if (self.regPage.dirty())
@@ -3417,12 +3419,24 @@ pub const Model = struct {
     }
 
     pub fn profileDirtyNavigationBody(self: *const Model) []const u8 {
+        if (self.pendingProfileNavigation) |pending| switch (pending) {
+            .profile_view => return "Revert all unsaved Tax Profile and Registration changes and return to Tax Profile view mode.",
+            else => {},
+        };
         return if (self.regPage.dirty() and self.taxProfiles.profileDirty())
             "Your unsaved Tax Profile and Registration changes will be discarded. Stay here to keep editing, or discard them and continue."
         else if (self.regPage.dirty())
             "Your unsaved Registration changes will be discarded. Stay here to keep editing, or discard them and continue."
         else
             "Your unsaved Tax Profile changes will be discarded. Stay here to keep editing, or discard them and continue.";
+    }
+
+    pub fn profileDiscardNavigationLabel(self: *const Model) []const u8 {
+        if (self.pendingProfileNavigation) |pending| switch (pending) {
+            .profile_view => return "Discard and return to Tax Profile",
+            else => {},
+        };
+        return "Discard and continue";
     }
 
     pub fn profileReadColumns(self: *const Model) u8 {
@@ -12240,10 +12254,14 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .cancel_profile_edit => {
             const mode = model.taxProfiles.profileMode();
-            // View mode has no Cancel action. Treat a stale/programmatic
-            // dispatch as a no-op so Cancel can never become hidden Back
-            // navigation again.
-            if (mode == .viewing or model.profileCancelDisabled()) return;
+            if (mode == .viewing) return;
+            if (profileNavigationRequiresDiscard(model)) {
+                model.pendingProfileNavigation = if (mode == .creating)
+                    .{ .page = model.profileEditorOrigin }
+                else
+                    .profile_view;
+                return;
+            }
             if (model.regPage.dirty()) {
                 model.regPage.cancel() catch {};
             }
@@ -12300,6 +12318,18 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             syncProfileIdentityControls(model);
             switch (pending) {
                 .page => |page| navigate(model, page),
+                .profile_view => {
+                    model.profileCompletionTarget = null;
+                    model.profileCompletionFormIndex = null;
+                    model.pendingProfileFormLaunch = null;
+                    model.profileSetupSection = .tax_profile;
+                    if (model.page == .taxpayer_dashboard) {
+                        model.dashboardSection = .profile_settings;
+                    }
+                    model.profileSubjectPickerVisible = false;
+                    model.profileClassificationPickerVisible = false;
+                    model.profileEoptPickerVisible = false;
+                },
                 .profile_section => |section| switch (section) {
                     .tax_profile => updateCore(model, .show_profile_tax, fx),
                     .tax_forms => updateCore(model, .show_profile_tax_forms, fx),
@@ -23690,7 +23720,7 @@ test "profile editor Back exits clean edits and guards dirty edits" {
 
     try std.testing.expect(model.taxProfiles.profileEditing());
     try std.testing.expect(model.profileSaveDisabled());
-    try std.testing.expect(model.profileCancelDisabled());
+    try std.testing.expect(!model.profileCancelDisabled());
     try std.testing.expect(!model.profileInlineBackDisabled());
 
     update(&model, .go_back);
@@ -23718,6 +23748,13 @@ test "profile editor Back exits clean edits and guards dirty edits" {
     update(&model, .profile_keep_editing);
     try std.testing.expect(!model.profileDirtyNavigationVisible());
     update(&model, .cancel_profile_edit);
+    try std.testing.expect(model.profileDirtyNavigationVisible());
+    try std.testing.expect(model.taxProfiles.profileEditing());
+    try std.testing.expectEqualStrings(
+        "Discard and return to Tax Profile",
+        model.profileDiscardNavigationLabel(),
+    );
+    update(&model, .profile_discard_navigation);
     try std.testing.expectEqual(Page.profile_setup, model.page);
     try std.testing.expect(model.profileTaxViewing());
     try std.testing.expectEqualStrings(
@@ -23763,7 +23800,7 @@ test "Tax Form Profile repair route opens the complete atomic profile editor" {
     try std.testing.expect(model.regLoaded);
     try std.testing.expect(model.regEditing());
     try std.testing.expect(model.profileSaveDisabled());
-    try std.testing.expect(model.profileCancelDisabled());
+    try std.testing.expect(!model.profileCancelDisabled());
 
     update(&model, .profile_subject_corporation);
     update(&model, .profile_eopt_micro);
@@ -23786,6 +23823,9 @@ test "Tax Form Profile repair route opens the complete atomic profile editor" {
     try std.testing.expect(!model.profileCancelDisabled());
 
     update(&model, .cancel_profile_edit);
+    try std.testing.expect(model.profileDirtyNavigationVisible());
+    try std.testing.expect(model.taxProfiles.profileEditing());
+    update(&model, .profile_discard_navigation);
     try std.testing.expect(model.profileTaxViewing());
     try std.testing.expect(!model.regEditing());
     try std.testing.expect(model.regPage.eoptTier() == null);
@@ -23844,6 +23884,9 @@ test "inline profile settings discard staged edits when cancelled or left" {
     update(&model, .edit_tax_profile);
     model.taxProfiles.display_name.set("Unsaved Cancel");
     update(&model, .cancel_profile_edit);
+    try std.testing.expect(model.profileDirtyNavigationVisible());
+    try std.testing.expect(model.taxProfiles.profileEditing());
+    update(&model, .profile_discard_navigation);
     try std.testing.expect(model.dashboardProfileSettingsActive());
     try std.testing.expect(model.profileTaxViewing());
     try std.testing.expectEqual(Page.taxpayer_dashboard, model.page);
