@@ -3845,6 +3845,10 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
         tax_form_profile.Error.DuplicateValue,
         appendTaxFormProfileRevision(&store, allocator, 0, &invalid),
     );
+    try store.replaceFormSet(profile.profile_id.asSlice(), 2031, &.{.{
+        .form_code = form_1601c.code,
+        .form_revision = form_1601c.revision.?,
+    }});
     invalid.values = &.{};
     try appendTaxFormProfileRevision(&store, allocator, 0, &invalid);
     const no_setup_form = form_catalog.findForm("2551Q").?;

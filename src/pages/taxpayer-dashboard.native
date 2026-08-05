@@ -502,15 +502,13 @@
     <if test="{v}">
       <panel width="{w}" height="48" padding="0" selected="{x}" disabled="{d}">
         <stack width="{w}" height="48">
-          <column width="{w}" height="48" padding="0" main="center" cross="stretch">
-            <column gap="1" main="center" cross="stretch">
-              <text wrap="false" size="sm" text-alignment="center">{l}</text>
-              <if test="{c == 'success'}"><text wrap="false" size="sm" text-alignment="center" foreground="success">{s}</text></if>
-              <if test="{c == 'info'}"><text wrap="false" size="sm" text-alignment="center" foreground="info">{s}</text></if>
-              <if test="{c == 'warning'}"><text wrap="false" size="sm" text-alignment="center" foreground="warning">{s}</text></if>
-              <if test="{c == 'destructive'}"><text wrap="false" size="sm" text-alignment="center" foreground="destructive">{s}</text></if>
-              <if test="{c == 'text_muted'}"><text wrap="false" size="sm" text-alignment="center" foreground="text_muted">{s}</text></if>
-            </column>
+          <column width="{w}" height="48" padding="0" gap="1" main="center" cross="stretch">
+            <text wrap="false" size="sm" text-alignment="center">{l}</text>
+            <if test="{c == 'success'}"><text wrap="false" size="sm" text-alignment="center" foreground="success">{s}</text></if>
+            <if test="{c == 'info'}"><text wrap="false" size="sm" text-alignment="center" foreground="info">{s}</text></if>
+            <if test="{c == 'warning'}"><text wrap="false" size="sm" text-alignment="center" foreground="warning">{s}</text></if>
+            <if test="{c == 'destructive'}"><text wrap="false" size="sm" text-alignment="center" foreground="destructive">{s}</text></if>
+            <if test="{c == 'text_muted'}"><text wrap="false" size="sm" text-alignment="center" foreground="text_muted">{s}</text></if>
           </column>
           <if test="{d}">
             <spacer width="{w}" height="48"/>

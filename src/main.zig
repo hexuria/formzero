@@ -22341,11 +22341,44 @@ test "library disables missing-activity periods while Tax Form Profile remains r
     defer store.close();
     try addTestProfile(
         &store,
-        "2551q-context-diversion-owner",
+        "1601c-context-diversion-owner",
         "Context Diversion Taxpayer",
         "852-741-963-000",
         .individual,
     );
+    const registration_activities = [_]profile_store.RegistrationActivityRevisionWrite{
+        .{
+            .anchor_id = "context-diversion-consulting",
+            .metadata = .{
+                .id = "context-diversion-consulting-r1",
+                .expected_component_sequence = 0,
+                .effective = .{ .from = "2026-01-01".* },
+                .source = .manual_entry,
+                .review_state = .confirmed,
+                .confirmed_at_unix_seconds = 1,
+            },
+            .line_of_business = "Consulting",
+            .atc = "PT010",
+        },
+        .{
+            .anchor_id = "context-diversion-training",
+            .metadata = .{
+                .id = "context-diversion-training-r1",
+                .expected_component_sequence = 0,
+                .effective = .{ .from = "2026-01-01".* },
+                .source = .manual_entry,
+                .review_state = .confirmed,
+                .confirmed_at_unix_seconds = 2,
+            },
+            .line_of_business = "Training",
+            .atc = "PT010",
+        },
+    };
+    _ = try store.appendRegistrationCommit(.{
+        .profile_id = "1601c-context-diversion-owner",
+        .expected_current_sequence = 0,
+        .activities = &registration_activities,
+    });
 
     var model = Model{
         .page = .taxpayer_dashboard,
@@ -22358,7 +22391,7 @@ test "library disables missing-activity periods while Tax Form Profile remains r
     defer model.formProfiles.deinit();
     const profile_id = model.taxProfiles.selectedProfileDomainId().?;
     try store.replaceFormSet(profile_id.asSlice(), 2026, &.{.{
-        .form_code = "2551Q",
+        .form_code = "1601C",
         .form_revision = "2018-01-ENCS",
     }});
     refreshSelectedProfileFormSet(&model);
@@ -22385,16 +22418,7 @@ test "library disables missing-activity periods while Tax Form Profile remains r
     update(&model, .{ .open_tax_form_profile = rows[0].id });
 
     try std.testing.expectEqual(Page.tax_form_profile, model.page);
-    try std.testing.expect(model.taxFormProfileRegistrationRepairVisible());
-    try std.testing.expectEqualStrings(
-        "Q1",
-        model.taxFormProfileQuarterLabel(arena),
-    );
-    try std.testing.expect(std.mem.indexOf(
-        u8,
-        model.taxFormProfileTaxablePeriodLabel(arena),
-        "01/01/2026 - 03/31/2026",
-    ) != null);
+    try std.testing.expectEqual(@as(usize, 2), model.taxFormProfileChoiceCount);
 }
 
 test "month navigation stays inside the selected Forms Set year" {

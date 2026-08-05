@@ -764,6 +764,40 @@ pub fn snapshotFieldWrites(
     return output[0..entries.len];
 }
 
+/// Normalized Registration activities are not children of the immutable Base
+/// Tax Profile revision. The v1 coarse-draft tables can therefore persist only
+/// legacy profile-owned activity IDs; exact provenance owns Registration
+/// anchors and their component revisions. Strip those normalized anchor IDs
+/// from compatibility rows while retaining copied values and the authoritative
+/// exact provenance sidecar.
+fn removeRegistrationActivitiesFromCoarseWrites(
+    exact: *const draft_provenance.DraftProvenance,
+    bindings: []store_module.RoleBindingWrite,
+    snapshots: []store_module.SnapshotFieldWrite,
+) void {
+    for (exact.components()) |*component| switch (component.*) {
+        .business_activity => |*activity| {
+            const role = catalog_projection.domainRole(activity.role) orelse
+                continue;
+            const role_text = @tagName(role);
+            const anchor_text = activity.anchor.id.asSlice();
+            for (bindings) |*binding| {
+                const selected = binding.business_activity_id orelse continue;
+                if (!std.mem.eql(u8, binding.role, role_text) or
+                    !std.mem.eql(u8, selected, anchor_text)) continue;
+                binding.business_activity_id = null;
+            }
+            for (snapshots) |*snapshot| {
+                const selected = snapshot.business_activity_id orelse continue;
+                if (!std.mem.eql(u8, snapshot.role, role_text) or
+                    !std.mem.eql(u8, selected, anchor_text)) continue;
+                snapshot.business_activity_id = null;
+            }
+        },
+        .registration_obligation => {},
+    };
+}
+
 /// Creates a new persisted draft or resumes the matching existing draft.
 ///
 /// The existence check intentionally precedes write conversion. On resume,
@@ -921,6 +955,11 @@ pub fn createOrLoadWithProvenance(
         else
             null,
     };
+    removeRegistrationActivitiesFromCoarseWrites(
+        exact.snapshot,
+        role_writes[0..persisted_bindings.len],
+        snapshot_writes[0..persisted_snapshots.len],
+    );
     var provenance_buffers: DraftProvenanceWriteBuffers = .{};
     const provenance_write = try draftProvenanceWrite(
         identity.id,
