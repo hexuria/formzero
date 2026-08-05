@@ -3,10 +3,10 @@ name: CI
 # Runs the quality gate documented in README.md and
 # docs/NATIVE_SDK_GUIDE_AND_IMPROVEMENT_PLAN.md on every change.
 #
-# The runner is macOS because that is the project's supported development and
-# build host; README.md states Linux, Windows, and mobile are not supported
-# targets today. scripts/setup-dev-env.sh already provisions Linux, so a Linux
-# job can be added once that path is exercised by the container work.
+# macOS remains the primary development host. Linux has its own build,
+# package, and user-install gate below. Windows ARM64 is audited through the
+# pinned environment documented in docs/WINDOWS_DEVELOPMENT.md because a
+# matching hosted ARM64 runner is not part of this workflow.
 
 on:
   push:
@@ -118,6 +118,62 @@ jobs:
       # both gates are required.
       - name: Build
         run: npx native build . --yes
+
+  linux-quality-gate:
+    name: Quality gate (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22.15'
+          cache: npm
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes pkg-config libgtk-4-dev
+
+      - name: Install Just
+        run: cargo install just --version 1.43.1 --locked
+
+      - name: Provision toolchain
+        run: scripts/setup-dev-env.sh
+
+      - name: Report toolchain
+        run: |
+          just --version
+          zig version
+          node --version
+          npx native --version || true
+
+      - name: Verify Linux build
+        run: just verify
+
+      - name: Package Linux artifact
+        run: just package
+
+      - name: Install Linux artifact
+        env:
+          EBIRFORMS_INSTALL_DIR: ${{ runner.temp }}/ebirforms-install
+        run: just install
+
+      - name: Assert Linux install layout
+        env:
+          EBIRFORMS_INSTALL_DIR: ${{ runner.temp }}/ebirforms-install
+        run: |
+          test -x "$EBIRFORMS_INSTALL_DIR/bin/ebirforms-zero"
+          test -x "$EBIRFORMS_INSTALL_DIR/lib/ebirforms-zero/bin/ebirforms-zero"
+          test -f "$EBIRFORMS_INSTALL_DIR/share/applications/ebirforms-zero.desktop"
+          grep -Fq "Exec=\"$EBIRFORMS_INSTALL_DIR/bin/ebirforms-zero\"" \
+            "$EBIRFORMS_INSTALL_DIR/share/applications/ebirforms-zero.desktop"
 
   setup-script:
     name: Setup script (${{ matrix.os }})

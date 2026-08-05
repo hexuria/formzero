@@ -96,6 +96,27 @@ The environment check must print the expected Node, Git, Zig, Native CLI, SDK,
 and local cache identities. Use the exported CLI path rather than `npx
 native`; `npx` selects the crashing ARM64 Native CLI package on this host.
 
+## Just command surface
+
+With the verified environment loaded, the repository's cross-platform command
+surface is:
+
+```powershell
+just setup
+just check
+just test
+just build
+just package
+just install
+```
+
+`just package` builds the unsigned Windows ARM64 directory artifact. `just
+install` copies it to `%LOCALAPPDATA%\Programs\eBIRForms` by default and creates
+`eBIRForms.lnk` in the current user's Start Menu. Set
+`$env:EBIRFORMS_INSTALL_DIR` to change the parent directory before running
+`just install`; previous installs are moved to timestamped `.previous.*`
+siblings.
+
 ## Development checks
 
 Run formatting and generation before Native checks:

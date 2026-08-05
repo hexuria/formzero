@@ -1,6 +1,7 @@
 # Contributor guide and release gates
 
-Current baseline: Native SDK CLI 0.6.1, Zig 0.16.0, Node.js 22.15+, macOS.
+Current baseline: Native SDK CLI 0.6.1, Zig 0.16.0, Node.js 22.15+, macOS and
+Linux. Windows ARM64 is an audited target with a pinned host-tool workaround.
 
 This is the operational guide for contributors. The
 [README](../README.md) is the product overview.
@@ -51,33 +52,32 @@ passed, which only the container does.
 
 ## Continuous integration
 
-Every push to `main` and every pull request runs the gate below on
-`macos-latest`, the supported build host. A second job provisions a cold
-`macos-latest` and `ubuntu-latest` runner from the setup script and asserts
-that a repeat run is idempotent, so the container path stays proven even though
-the product's own build targets remain macOS and Windows.
+Every push to `main` and every pull request runs the macOS quality gate and a
+Linux quality gate. The Linux job installs GTK4, runs the Just validation
+surface, packages the native artifact, and installs it into a temporary user
+prefix. A second job provisions cold `macos-latest` and `ubuntu-latest` runners
+from the setup script and asserts that a repeat run is idempotent. Windows
+ARM64 is qualified through the pinned environment documented in
+`docs/WINDOWS_DEVELOPMENT.md`; a matching hosted ARM64 runner is not part of
+CI.
 
 ## Required validation
 
 Run after every code or markup change:
 
 ```sh
-npm run generate
-git diff --check main...HEAD
-npx native test --yes -Dplatform=null
-npx native check . --strict
-npx native build . --yes
+just verify
 ```
 
 What each gate proves:
 
 | Gate | Proves |
 | --- | --- |
-| Generate | Runtime entrypoint matches editable fragments |
-| Diff check | No whitespace or conflict-marker damage in the change itself |
-| Headless tests | Model, calendar, storage, export, and component behavior |
-| Strict check | Markup and manifest match the model contract |
-| Build | ReleaseFast application compiles |
+| `just generate` | Runtime entrypoint matches editable fragments |
+| `git diff --check` | No whitespace or conflict-marker damage in the change itself |
+| `just test` | Model, calendar, storage, export, and component behavior |
+| `just check` | Markup and manifest match the model contract |
+| `just build` | ReleaseFast application compiles |
 
 Test and build are both required. Zig's lazy analysis can allow either command
 alone to miss code used only by the other.
@@ -135,16 +135,23 @@ external navigation, and add negative permission tests.
 
 ## Packaging and release truth
 
-Development package:
+Development packages:
 
 ```sh
-npx native doctor --manifest app.zon --strict
-npx native package --target macos --signing adhoc
-codesign --verify --deep --strict \
-  zig-out/package/ebirforms-zero.app
+just doctor
+just package
+just install
 ```
 
-Ad-hoc signing proves local bundle integrity only. A public macOS release
+On macOS, `just package` creates an ad-hoc signed `.app` and `just install`
+copies it to `~/Applications/eBIRForms.app`. On Linux, install GTK4 development
+files first; `just package` creates the Native SDK directory artifact and
+`just install` places it under `~/.local` by default. On Windows ARM64, load
+the pinned environment from the Windows guide before `just package` or
+`just install`; the result is an unsigned directory package with a per-user
+Start Menu shortcut, not an MSI/MSIX installer.
+
+Ad-hoc signing proves local macOS bundle integrity only. A public macOS release
 requires all of the following:
 
 1. production bundle identifier, name, version, and description;
@@ -156,7 +163,10 @@ requires all of the following:
 7. a final artifact that is not modified after signing.
 
 Do not call a build “deployed” or “production-ready” until these gates pass.
-Linux, Windows, and mobile are not supported targets for this app today.
+Linux and Windows are development targets only: Linux still needs a system
+GTK4 runtime, and Windows is currently audited on ARM64 with an unsigned
+directory package. AppImage, Flatpak, tarball, MSI, MSIX, signing, and
+notarization remain separate release work.
 
 ## Priority roadmap
 

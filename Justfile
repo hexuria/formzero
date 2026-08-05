@@ -13,6 +13,11 @@ default:
 setup:
     bash scripts/setup-dev-env.sh
 
+[linux]
+setup:
+    bash scripts/check-linux-deps.sh
+    bash scripts/setup-dev-env.sh
+
 # Windows toolchains are pinned and loaded by the Windows development guide.
 [windows]
 setup:
@@ -55,9 +60,9 @@ build: generate
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/just-windows.ps1 build
 
 [linux]
-build:
-    @echo "Linux is not a declared app target; app.zon currently supports macOS and Windows only."
-    @exit 1
+build: generate
+    bash scripts/check-linux-deps.sh
+    npx native build . --yes
 
 # Build a ReleaseFast binary with Native automation enabled.
 [macos]
@@ -69,9 +74,9 @@ build-automation: generate
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/just-windows.ps1 build-automation
 
 [linux]
-build-automation:
-    @echo "Linux is not a declared app target; app.zon currently supports macOS and Windows only."
-    @exit 1
+build-automation: generate
+    bash scripts/check-linux-deps.sh
+    npx native build . --yes -Dautomation=true
 
 # Run the local Debug app with Native markup hot reload.
 [macos]
@@ -83,9 +88,9 @@ run: generate
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/just-windows.ps1 run
 
 [linux]
-run:
-    @echo "Linux is not a declared app target; app.zon currently supports macOS and Windows only."
-    @exit 1
+run: generate
+    bash scripts/check-linux-deps.sh
+    npx native dev . --yes
 
 # Check the toolchain and manifest without building the app.
 [unix]
@@ -108,9 +113,8 @@ package: build
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/just-windows.ps1 package
 
 [linux]
-package:
-    @echo "Linux packaging is not available because app.zon does not declare Linux."
-    @exit 1
+package: build
+    bash scripts/package-linux.sh
 
 # Build the production bundle and open a fresh app instance.
 [macos]
@@ -122,9 +126,8 @@ app: package
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/just-windows.ps1 app
 
 [linux]
-app:
-    @echo "Linux app launch is not available because app.zon does not declare Linux."
-    @exit 1
+app: package
+    zig-out/package/linux/bin/ebirforms-zero
 
 # Install the current-user macOS application; set EBIRFORMS_INSTALL_DIR=/Applications for system-wide install.
 [macos]
@@ -150,9 +153,8 @@ install: package
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/just-windows.ps1 install
 
 [linux]
-install:
-    @echo "Linux installation is not available because app.zon does not declare Linux."
-    @exit 1
+install: package
+    bash scripts/install-linux.sh
 
 # Run the main local validation gates.
 verify: check test build

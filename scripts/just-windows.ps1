@@ -210,6 +210,19 @@ switch ($Command) {
         if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {
             throw "Installed Windows executable is missing: $installedExe"
         }
+        $startMenuDirectory = Join-Path $env:APPDATA (
+            "Microsoft\Windows\Start Menu\Programs"
+        )
+        New-Item -ItemType Directory -Force -Path $startMenuDirectory |
+            Out-Null
+        $shortcutPath = Join-Path $startMenuDirectory "eBIRForms.lnk"
+        $shell = New-Object -ComObject WScript.Shell
+        $shortcut = $shell.CreateShortcut($shortcutPath)
+        $shortcut.TargetPath = $installedExe
+        $shortcut.WorkingDirectory = Split-Path -Parent $installedExe
+        $shortcut.IconLocation = "$installedExe,0"
+        $shortcut.Save()
         Write-Host "Installed $targetDirectory"
+        Write-Host "Start Menu shortcut: $shortcutPath"
     }
 }

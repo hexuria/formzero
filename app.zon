@@ -15,7 +15,7 @@
             .{ .id = 6, .path = "assets/icon.png" },
         },
     },
-    .platforms = .{ "macos", "windows" },
+    .platforms = .{ "macos", "linux", "windows" },
     .permissions = .{ "view", "command", "network" },
     .capabilities = .{ "native_views", "gpu_surfaces" },
     .shell = .{

@@ -20,7 +20,7 @@ global form/deadline dashboard, and a functional tax-calendar engine.
 | Grounded 1701Q core | Exact 173-control contract, calculations, ordered validation, immutable profile mapping, candidate plaintext codecs, decrypt-only Artifact Lab, and schema-v4 draft streams under test |
 | Other form editors and print previews | UI/projection coverage only; not filing-ready |
 | Import, authentication, filing payment, and submission | UI only |
-| Distribution | macOS development build and Windows ARM64 development executable; neither is signed or production-ready |
+| Distribution | macOS development bundle, Linux package, and Windows ARM64 directory package; none is signed or production-ready |
 
 **Do not use this app as an authoritative filing plan yet.** The taxpayer
 calendar is limited to an explicitly configured, per-tax-year Forms Set and
@@ -39,8 +39,9 @@ because source-app captures may contain private taxpayer data.
 ## Quick start
 
 Requirements: Node.js 22.15+, Zig 0.16.0, and [Just](https://just.systems/).
-macOS is the original development host. Windows ARM64 uses a pinned host-tool
-workaround documented in the [Windows development guide](docs/WINDOWS_DEVELOPMENT.md).
+Linux also needs `pkg-config` and GTK4 development files. macOS is the
+original development host. Windows ARM64 uses a pinned host-tool workaround
+documented in the [Windows development guide](docs/WINDOWS_DEVELOPMENT.md).
 
 On macOS or Linux, `just setup` provisions the pinned Zig compiler (verified
 against its published SHA-256), checks the Node runtime, and installs the locked
@@ -64,23 +65,28 @@ just run
 ```sh
 just run       # local Debug app with hot reload
 just build     # ReleaseFast binary in zig-out/bin/
-just package   # macOS .app or Windows ARM64 package
+just package   # macOS .app, Linux package, or Windows ARM64 package
 just app       # package, then open/launch it
-just install   # install for the current user on macOS or Windows
+just install   # install for the current user on macOS, Linux, or Windows
 just check     # catalog, markup, and manifest checks
 just test      # headless Native SDK tests
 just verify    # check, test, build, and whitespace validation
 ```
 
 `just install` keeps the previous user-level app as a timestamped sibling. On
-macOS it installs to `~/Applications/eBIRForms.app` by default; on Windows it
-installs the unsigned package to `%LOCALAPPDATA%\Programs\eBIRForms`. Set
-`EBIRFORMS_INSTALL_DIR` to override the parent directory on either platform.
+macOS it installs to `~/Applications/eBIRForms.app` by default. On Linux it
+installs the package under `~/.local/lib/ebirforms-zero`, adds a launcher at
+`~/.local/bin/ebirforms-zero`, and installs the desktop entry under
+`~/.local/share/applications`. On Windows it installs the unsigned package to
+`%LOCALAPPDATA%\Programs\eBIRForms` and creates a Start Menu shortcut. Set
+`EBIRFORMS_INSTALL_DIR` to override the install prefix on Linux or the parent
+directory on macOS and Windows.
 
-Linux can run the generation, catalog, markup, and headless test commands, but
-the current `app.zon` declares only macOS and Windows. `just build`, `just app`,
-`just package`, and `just install` therefore fail clearly on Linux until Linux
-is added as a supported Native target. The Windows path is for the audited
+Linux builds require GTK4 development files because the Native SDK uses the
+system GTK host. Install them with `sudo apt-get install pkg-config libgtk-4-dev` on
+Debian/Ubuntu (the command prints Fedora and Arch equivalents). The Linux
+artifact is a relocatable Native SDK directory; AppImage, Flatpak, and tarball
+generation are still future release work. The Windows path is for the audited
 Windows ARM64 environment; load it with the [Windows development guide](docs/WINDOWS_DEVELOPMENT.md)
 before running the Windows build/package commands. Its package is unsigned
 and is a copied application directory, not an MSI/MSIX installer.
