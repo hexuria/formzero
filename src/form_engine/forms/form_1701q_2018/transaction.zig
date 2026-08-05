@@ -162,6 +162,17 @@ pub const Slot = struct {
         );
     }
 
+    fn clearProfileProvenance(self: *Slot) void {
+        self.profile_provenance = null;
+        // A null optional aggregate may leave its payload padding undefined
+        // on some target ABIs. Scrub after assigning the semantic null so the
+        // representation cannot retain displaced provenance bytes.
+        sensitive_memory.wipeValue(
+            ?projection.Provenance,
+            &self.profile_provenance,
+        );
+    }
+
     /// Consumes and wipes both prepared inputs after installing their active
     /// semantic values. Callers must pass storage distinct from this slot.
     fn replaceText(
@@ -176,27 +187,27 @@ pub const Slot = struct {
             if (owned.*) |*provenance| {
                 self.profile_provenance = provenance.*;
             } else {
-                self.profile_provenance = null;
+                self.clearProfileProvenance();
             }
             sensitive_memory.wipeValue(
                 ?projection.Provenance,
                 owned,
             );
         } else {
-            self.profile_provenance = null;
+            self.clearProfileProvenance();
         }
     }
 
     fn replaceChecked(self: *Slot, checked: bool) void {
         self.erasePayload();
         self.value = .{ .checked = checked };
-        self.profile_provenance = null;
+        self.clearProfileProvenance();
     }
 
     fn replaceMissing(self: *Slot) void {
         self.erasePayload();
         self.value = .missing;
-        self.profile_provenance = null;
+        self.clearProfileProvenance();
     }
 };
 
