@@ -38,31 +38,52 @@ because source-app captures may contain private taxpayer data.
 
 ## Quick start
 
-Requirements: Node.js 22.15+ and Zig 0.16.0. macOS is the original development
-host. Windows ARM64 uses a pinned host-tool workaround documented in the
-[Windows development guide](docs/WINDOWS_DEVELOPMENT.md).
+Requirements: Node.js 22.15+, Zig 0.16.0, and [Just](https://just.systems/).
+macOS is the original development host. Windows ARM64 uses a pinned host-tool
+workaround documented in the [Windows development guide](docs/WINDOWS_DEVELOPMENT.md).
 
-On macOS or Linux, `scripts/setup-dev-env.sh` provisions the pinned Zig
-compiler (verified against its published SHA-256), checks the Node runtime, and
-installs the locked npm dependencies. It is idempotent, and it is the same
-script CI and the development container run:
+On macOS or Linux, `just setup` provisions the pinned Zig compiler (verified
+against its published SHA-256), checks the Node runtime, and installs the locked
+npm dependencies. It is idempotent, and wraps the same script CI and the
+development container run:
 
 ```sh
-scripts/setup-dev-env.sh
+just setup
 ```
 
-Otherwise, install the toolchain yourself and start from `npm ci`:
+Then use the short command surface:
 
 ```sh
-npm ci
-npm run generate
-npx native test --yes -Dplatform=null
-npx native check . --strict
-npx native build . --yes
-npx native dev . --yes
+just run
 ```
 
 `@native-sdk/cli` is pinned to 0.6.1 in `package-lock.json`.
+
+### Just commands
+
+```sh
+just run       # local Debug app with hot reload
+just build     # ReleaseFast binary in zig-out/bin/
+just package   # macOS .app or Windows ARM64 package
+just app       # package, then open/launch it
+just install   # install for the current user on macOS or Windows
+just check     # catalog, markup, and manifest checks
+just test      # headless Native SDK tests
+just verify    # check, test, build, and whitespace validation
+```
+
+`just install` keeps the previous user-level app as a timestamped sibling. On
+macOS it installs to `~/Applications/eBIRForms.app` by default; on Windows it
+installs the unsigned package to `%LOCALAPPDATA%\Programs\eBIRForms`. Set
+`EBIRFORMS_INSTALL_DIR` to override the parent directory on either platform.
+
+Linux can run the generation, catalog, markup, and headless test commands, but
+the current `app.zon` declares only macOS and Windows. `just build`, `just app`,
+`just package`, and `just install` therefore fail clearly on Linux until Linux
+is added as a supported Native target. The Windows path is for the audited
+Windows ARM64 environment; load it with the [Windows development guide](docs/WINDOWS_DEVELOPMENT.md)
+before running the Windows build/package commands. Its package is unsigned
+and is a copied application directory, not an MSI/MSIX installer.
 
 ## Development rule
 
@@ -70,7 +91,7 @@ npx native dev . --yes
 `src/pages/`, or `src/app-root.fragment`, then run:
 
 ```sh
-npm run generate
+just generate
 ```
 
 Commit the regenerated `src/app.native`. The generator is deterministic and
@@ -104,12 +125,7 @@ idempotent.
 Before merging:
 
 ```sh
-npm run generate
-npm run check:tax-catalog
-git diff --check main...HEAD
-npx native test --yes -Dplatform=null
-npx native check . --strict
-npx native build . --yes
+just verify
 ```
 
 For visible changes, rebuild and relaunch the app before reviewing screenshots;
