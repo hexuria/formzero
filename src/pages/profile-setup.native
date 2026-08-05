@@ -433,6 +433,9 @@
               <use template="profile-field" label="Taxpayer Identification Number (TIN)"><use template="profile-tin-editor"/></use>
               <use template="profile-field" label="Revenue District Office (RDO)"><use template="profile-rdo-editor"/></use>
             </grid>
+            <if test="{profileTinInvalidVisible}">
+              <text wrap="true" foreground="destructive">{profileTinValidationMessage}</text>
+            </if>
 
             <column gap="8">
               <text>Taxpayer Type</text>

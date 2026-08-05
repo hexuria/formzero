@@ -725,9 +725,7 @@ pub const State = struct {
     /// commit time; this prevents offering Save for inputs already known to
     /// be invalid.
     pub fn profileDraftValid(self: *const State) bool {
-        const parsed_tin = fields.Tin.parse(trimmed(self.tin.text())) catch
-            return false;
-        if (self.editing_new and parsed_tin.asDigits().len != 14) return false;
+        if (!self.profileTinDraftValid()) return false;
         if (rdo_reference.findByCode(trimmed(self.rdo.text())) == null) {
             return false;
         }
@@ -757,6 +755,27 @@ pub const State = struct {
         if (optionalTrimmed(self.email.text())) |raw| {
             _ = fields.EmailAddress.parse(raw) catch return false;
         }
+        return true;
+    }
+
+    fn tinDiffersFromEditorBaseline(self: *const State) bool {
+        if (!self.editor_baseline.valid) return true;
+        const current = fields.Tin.parse(trimmed(self.tin.text())) catch
+            return true;
+        const baseline = fields.Tin.parse(
+            trimmed(self.editor_baseline.tin.text()),
+        ) catch return true;
+        return !std.mem.eql(u8, current.asDigits(), baseline.asDigits());
+    }
+
+    /// Existing 9/12/13-digit legacy identities remain readable unchanged.
+    /// Creating or correcting an identity must produce the complete 3-3-3-5
+    /// value; partial edits are never eligible for Save.
+    pub fn profileTinDraftValid(self: *const State) bool {
+        const parsed = fields.Tin.parse(trimmed(self.tin.text())) catch
+            return false;
+        if ((self.editing_new or self.tinDiffersFromEditorBaseline()) and
+            parsed.asDigits().len != 14) return false;
         return true;
     }
 
@@ -1928,7 +1947,9 @@ pub const State = struct {
         const year = try parseTaxYear(self.tax_year.text());
 
         const tin = try fields.Tin.parse(trimmed(self.tin.text()));
-        if (self.editing_new and tin.asDigits().len != 14) {
+        if ((self.editing_new or self.tinDiffersFromEditorBaseline()) and
+            tin.asDigits().len != 14)
+        {
             return error.NewProfileTinMustHaveFourteenDigits;
         }
         if (rdo_reference.findByCode(trimmed(self.rdo.text())) == null) {
@@ -3907,7 +3928,7 @@ pub const State = struct {
             error.BranchCodeRequired => "Add the branch code after the nine-digit TIN, for example 123-456-789-002.",
             error.BranchLegalPersonChanged => "A branch is the same taxpayer. A different kind of taxpayer needs its own profile.",
             error.InvalidRdoSelection => "Choose an RDO from the official code and office list.",
-            error.NewProfileTinMustHaveFourteenDigits => "New taxpayer profiles require an exact 3-3-3-5, 14-digit TIN. Existing legacy TINs remain unchanged until an audited correction.",
+            error.NewProfileTinMustHaveFourteenDigits => "New or corrected taxpayer profiles require an exact 3-3-3-5, 14-digit TIN. Existing legacy TINs remain readable only while unchanged.",
             error.NoFactsEffectiveForYear => "No taxpayer details exist for that year yet. Record what was true then before setting up its forms.",
             error.CorFileUnreadable => "That file could not be opened. Check it is still where you chose it from.",
             error.CorFileEmpty => "That file is empty.",
@@ -4652,11 +4673,26 @@ test "new profile rejects a legacy-length TIN without padding it" {
     try std.testing.expect(state.saveDisabled());
     try std.testing.expect(!state.save());
     try std.testing.expectEqualStrings(
-        "New taxpayer profiles require an exact 3-3-3-5, 14-digit TIN. Existing legacy TINs remain unchanged until an audited correction.",
+        "New or corrected taxpayer profiles require an exact 3-3-3-5, 14-digit TIN. Existing legacy TINs remain readable only while unchanged.",
         state.noticeText(),
     );
     try std.testing.expectEqualStrings("123-456-789-000", state.tin.text());
     try std.testing.expectEqual(@as(usize, 0), state.rows().len);
+}
+
+test "unchanged legacy TIN stays readable but a correction requires 14 digits" {
+    var state = State{};
+    state.editing_new = false;
+    state.editor_baseline.valid = true;
+    state.editor_baseline.tin.set("123456789000");
+    state.tin.set("123456789000");
+    try std.testing.expect(state.profileTinDraftValid());
+
+    state.tin.set("1234567890000");
+    try std.testing.expect(!state.profileTinDraftValid());
+
+    state.tin.set("12345678900000");
+    try std.testing.expect(state.profileTinDraftValid());
 }
 
 test "staged Forms Set is isolated until save and blocks context switches" {

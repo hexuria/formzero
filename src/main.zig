@@ -3660,6 +3660,18 @@ pub const Model = struct {
         return self.profileTinSegments[3].text();
     }
 
+    pub fn profileTinInvalidVisible(self: *const Model) bool {
+        if (!self.profileTaxEditorVisible()) return false;
+        if (!self.taxProfiles.profileDirty() and
+            self.taxProfiles.tin.text().len == 0) return false;
+        return !self.taxProfiles.profileTinDraftValid();
+    }
+
+    pub fn profileTinValidationMessage(self: *const Model) []const u8 {
+        _ = self;
+        return "Enter a valid 14-digit TIN in 3-3-3-5 format. Each segment accepts digits only.";
+    }
+
     fn profileTinSegmentAutofocus(
         self: *const Model,
         segment: u8,
@@ -9204,7 +9216,10 @@ fn applyProfileTinSegment(
     model.profileTinSegments[segment_index].apply(edit);
 
     switch (edit) {
-        .move_caret, .set_selection, .set_composition, .cancel_composition => return,
+        // Selection-only events do not change text. Composition events do:
+        // normalize those immediately so an input method can never leave
+        // letters or an overlong segment visible in this digits-only control.
+        .move_caret, .set_selection => return,
         .delete_backward => if (was_empty and segment_index != 0) {
             model.profileTinFocusSegment = @intCast(segment_index - 1);
             model.profileTinFocusActive = true;
@@ -27500,4 +27515,27 @@ fn expectAppMarkupBuilds(model: *const Model) !void {
         return err;
     };
     _ = try ui.finalize(root);
+}
+
+test "segmented TIN rejects composition letters and caps the branch at five digits" {
+    var model: Model = .{};
+    model.taxProfiles.tin.set("123456789000");
+    syncProfileTinControl(&model);
+
+    applyProfileTinSegment(&model, 3, .{ .set_selection = .{
+        .anchor = 0,
+        .focus = 3,
+    } });
+    applyProfileTinSegment(&model, 3, .{ .set_composition = .{
+        .text = "asdasd",
+    } });
+    try std.testing.expectEqualStrings("", model.profileTinSegments[3].text());
+    try std.testing.expectEqualStrings("123456789", model.taxProfiles.tin.text());
+    try std.testing.expect(model.profileTinInvalidVisible());
+
+    applyProfileTinSegment(&model, 3, .{ .set_composition = .{
+        .text = "123456789",
+    } });
+    try std.testing.expectEqualStrings("12345", model.profileTinSegments[3].text());
+    try std.testing.expectEqualStrings("12345678912345", model.taxProfiles.tin.text());
 }
