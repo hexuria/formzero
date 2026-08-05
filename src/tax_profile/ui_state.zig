@@ -144,6 +144,15 @@ pub const ProfileMode = enum {
     editing,
 };
 
+/// Startup has two deliberately different needs. Focused workspaces retain
+/// the historical convenience of selecting the first available taxpayer,
+/// while the global shell must only index sidebar rows until the user makes
+/// an explicit taxpayer choice.
+const AttachmentSelectionPolicy = enum {
+    implicit_first,
+    explicit_only,
+};
+
 pub const FormActivityFilter = enum { active, inactive, all };
 pub const FormCapabilityFilter = enum { all, editor, calendar_only };
 
@@ -431,6 +440,7 @@ pub const State = struct {
     has_selected_display: bool = false,
     selected_id: StableIdText = .{},
     has_selection: bool = false,
+    attachment_selection_policy: AttachmentSelectionPolicy = .implicit_first,
     selected_revision_id: StableIdText = .{},
     selected_revision_sequence: ?u32 = null,
     selected_activity_id: StableIdText = .{},
@@ -569,23 +579,67 @@ pub const State = struct {
         effective_from: []const u8,
         tax_year: i32,
     ) !void {
+        return self.attachWithSelectionPolicy(
+            allocator,
+            store,
+            effective_from,
+            tax_year,
+            .implicit_first,
+        );
+    }
+
+    /// Attaches the profile store for the Global Dashboard shell. This is an
+    /// index-only operation: it populates the sidebar but must never create,
+    /// select, hydrate, or notify about a taxpayer before the user chooses
+    /// one.
+    pub fn attachForGlobalDashboard(
+        self: *State,
+        allocator: std.mem.Allocator,
+        store: *persistence.Store,
+        effective_from: []const u8,
+        tax_year: i32,
+    ) !void {
+        return self.attachWithSelectionPolicy(
+            allocator,
+            store,
+            effective_from,
+            tax_year,
+            .explicit_only,
+        );
+    }
+
+    fn attachWithSelectionPolicy(
+        self: *State,
+        allocator: std.mem.Allocator,
+        store: *persistence.Store,
+        effective_from: []const u8,
+        tax_year: i32,
+        selection_policy: AttachmentSelectionPolicy,
+    ) !void {
         _ = try model.Date.parseIso(effective_from);
         if (tax_year < 1 or tax_year > 9999) return error.InvalidTaxYear;
         self.allocator = allocator;
         self.store = store;
         try self.default_effective_from.set(effective_from);
         self.default_tax_year = tax_year;
+        self.attachment_selection_policy = selection_policy;
+        if (selection_policy == .explicit_only) {
+            self.clearSelection();
+            self.dismissNotice();
+        }
         try self.reloadRows();
-        if (self.profile_count == 0) {
-            self.startNew();
-            self.setNotice(
-                .neutral,
-                "Create a tax profile to make recurring form prefills available.",
-            );
-        } else {
-            try self.selectSlot(0);
-            if (self.loaded_shape_supported) {
-                self.setNotice(.success, "Persisted tax profiles loaded.");
+        if (selection_policy == .implicit_first) {
+            if (self.profile_count == 0) {
+                self.startNew();
+                self.setNotice(
+                    .neutral,
+                    "Create a tax profile to make recurring form prefills available.",
+                );
+            } else {
+                try self.selectSlot(0);
+                if (self.loaded_shape_supported) {
+                    self.setNotice(.success, "Persisted tax profiles loaded.");
+                }
             }
         }
     }
@@ -3398,22 +3452,41 @@ pub const State = struct {
             // A search matching nobody narrows the view; it must not clear
             // the selection behind it.
             if (searching) return;
-            self.has_selection = false;
-            self.has_selected_display = false;
-            self.selected_id.clear();
-            self.selected_revision_id.clear();
-            self.selected_revision_sequence = null;
-            self.has_selected_activity = false;
-            self.selected_activity_id.clear();
+            self.clearSelection();
             return;
         }
         if (self.selectedRow() == null and !searching) {
-            try self.selected_id.set(self.profiles[0].stable_id.text());
-            self.has_selection = true;
+            switch (self.attachment_selection_policy) {
+                .implicit_first => {
+                    try self.selected_id.set(self.profiles[0].stable_id.text());
+                    self.has_selection = true;
+                },
+                .explicit_only => {
+                    // A selected taxpayer can legitimately be outside the
+                    // capped non-search sidebar list. Preserve that explicit
+                    // context rather than silently selecting someone else.
+                    if (!self.has_selection or !self.profile_records_truncated) {
+                        self.clearSelection();
+                    }
+                },
+            }
         }
         self.markActiveRow();
         self.captureSelectedDisplay();
-        self.reportSharedTin();
+        // A duplicate-TIN warning is important after a taxpayer context is
+        // active, but a sidebar-only Global Dashboard bootstrap must remain
+        // silent until the user explicitly enters that context.
+        if (self.has_selection) self.reportSharedTin();
+    }
+
+    fn clearSelection(self: *State) void {
+        self.has_selection = false;
+        self.has_selected_display = false;
+        self.selected_id.clear();
+        self.selected_revision_id.clear();
+        self.selected_revision_sequence = null;
+        self.has_selected_activity = false;
+        self.selected_activity_id.clear();
     }
 
     /// Remembers how the selected taxpayer presents, so the header stays
@@ -4418,6 +4491,67 @@ test "profile notices expose transient and manually dismissible lifecycles" {
     state.dismissNotice();
     try std.testing.expect(!state.noticeVisible());
     try std.testing.expect(state.noticeEpoch() != failure_epoch);
+}
+
+test "global dashboard attachment indexes saved profiles without implicit context" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var focused = State{};
+    try focused.attach(allocator, &store, "2026-08-05", 2026);
+    focused.tin.set("123-456-789-00000");
+    focused.rdo.set("040");
+    focused.display_name.set("Global Dashboard Taxpayer");
+    focused.setNaturalPersonClassification(.pure_compensation);
+    focused.registered_address.set("Quezon City");
+    focused.effective_from.set("2026-01-01");
+    try std.testing.expect(focused.save());
+    const expected_id = focused.selectedProfileId().?;
+
+    var shell = State{};
+    try shell.attachForGlobalDashboard(
+        allocator,
+        &store,
+        "2026-08-05",
+        2026,
+    );
+    try std.testing.expectEqual(@as(usize, 1), shell.rows().len);
+    try std.testing.expect(shell.selectedProfileId() == null);
+    try std.testing.expect(shell.selectedRevisionContext() == null);
+    try std.testing.expect(!shell.noticeVisible());
+    // `startNew` is deliberately not part of the Global Dashboard bootstrap.
+    try std.testing.expectEqualStrings("", shell.tax_year.text());
+
+    // Selecting a sidebar row remains the explicit point that hydrates the
+    // profile workspace.
+    shell.select(0);
+    try std.testing.expectEqualStrings(
+        expected_id,
+        shell.selectedProfileId().?,
+    );
+    try std.testing.expect(shell.selectedRevisionContext() != null);
+    try std.testing.expect(shell.profileViewing());
+    try std.testing.expect(!shell.noticeVisible());
+}
+
+test "global dashboard attachment is silent with no saved profiles" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var shell = State{};
+    try shell.attachForGlobalDashboard(
+        allocator,
+        &store,
+        "2026-08-05",
+        2026,
+    );
+    try std.testing.expectEqual(@as(usize, 0), shell.rows().len);
+    try std.testing.expect(shell.selectedProfileId() == null);
+    try std.testing.expect(shell.selectedRevisionContext() == null);
+    try std.testing.expect(!shell.noticeVisible());
+    try std.testing.expectEqualStrings("", shell.tax_year.text());
 }
 
 test "profile state builds domain revision and explicit empty Forms Set" {

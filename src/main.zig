@@ -10797,6 +10797,10 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
     switch (msg) {
         .show_global_dashboard => navigate(model, .global_dashboard),
         .show_taxpayer_dashboard => {
+            // This message can arrive through a stale/direct dispatch. A
+            // taxpayer dashboard only exists after an explicit sidebar
+            // selection, so remain on the Global Dashboard otherwise.
+            if (!model.hasSelectedTaxpayer()) return;
             refreshSelectedProfileFormSet(model);
             navigate(model, .taxpayer_dashboard);
         },
@@ -12521,6 +12525,10 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
 }
 
 fn refreshSelectedProfileFormSet(model: *Model) void {
+    // Global Dashboard intentionally has no taxpayer context. Do not turn a
+    // normal absent selection into a profile-load failure or hydrate a
+    // sidebar row before the user explicitly selects it.
+    if (!model.hasSelectedTaxpayer()) return;
     model.profileCalendarYearPickerVisible = false;
     model.profileCalendarYearQuery.clear();
     if (!model.taxProfiles.hasExplicitFormSet(model.calendar.selected_year)) {
@@ -17947,13 +17955,12 @@ pub fn main(init: std.process.Init) !void {
         &important_news_store,
     );
     defer deinitImportantNews(&app_state.model);
-    try app_state.model.taxProfiles.attach(
+    try app_state.model.taxProfiles.attachForGlobalDashboard(
         init.gpa,
         &tax_profile_store,
         &boot_date,
         boot_time.year,
     );
-    refreshSelectedProfileFormSet(&app_state.model);
     app_state.model.formProfiles.attach(
         init.gpa,
         &tax_profile_store,
@@ -23866,6 +23873,24 @@ test "profile notice toast supports manual and timed dismissal" {
     // an invented failure.
     try std.testing.expect(model.taxProfiles.noticeAutoDismissible());
     try std.testing.expectEqual(@as(usize, 0), fx.pendingTimerCount());
+}
+
+test "global dashboard never opens taxpayer context without an explicit selection" {
+    var model = Model{};
+
+    // This helper is called by several profile routes. It must be inert while
+    // Global Dashboard owns the screen and no sidebar taxpayer is selected.
+    refreshSelectedProfileFormSet(&model);
+    try std.testing.expectEqual(Page.global_dashboard, model.page);
+    try std.testing.expect(!model.hasSelectedTaxpayer());
+    try std.testing.expect(!model.profileNoticeVisible());
+
+    // A stale/direct message must not navigate into a profile workspace or
+    // manufacture a profile-save error from a normal no-selection state.
+    update(&model, .show_taxpayer_dashboard);
+    try std.testing.expectEqual(Page.global_dashboard, model.page);
+    try std.testing.expect(!model.hasSelectedTaxpayer());
+    try std.testing.expect(!model.profileNoticeVisible());
 }
 
 test "calendar export toast is safe while busy and dismisses when terminal" {
