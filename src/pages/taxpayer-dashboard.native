@@ -87,11 +87,11 @@
   </card>
 </template>
 
-<template name="taxpayer-profile-calendar-year-picker">
+<template name="taxpayer-profile-tax-year-picker">
   <stack width="{profileCalendarYearPickerWidth}">
     <select
       height="44"
-      label="Tax calendar year"
+      label="Tax year"
       disabled="{profileCalendarYearPickerDisabled}"
       on-press="profile_calendar_toggle_year_picker">{profileCalendarYearLabel}</select>
     <if test="{profileCalendarYearPickerOpen}">
@@ -108,7 +108,7 @@
             placeholder="Filter years"
             label="Filter tax years"
             on-input="profile_calendar_year_query"/>
-          <scroll height="190" label="Configured tax years">
+          <scroll height="190" label="Tax years">
             <column gap="4">
               <for each="profileCalendarYearOptions" key="id" as="option">
                 <menu-item height="44" selected="{option.selected}" on-press="profile_calendar_select_year:{option.year}">{option.year}</menu-item>
@@ -130,7 +130,7 @@
           placeholder="Search active forms..."
           label="Filter profile calendar forms"
         -->
-        <use template="taxpayer-profile-calendar-year-picker"/>
+        <use template="taxpayer-profile-tax-year-picker"/>
         <button height="44" variant="primary" icon="app:calendar" disabled="{profileCalendarExportBusy}" on-press="profile_calendar_export">Add to Calendar</button>
       </row>
     </if>
@@ -142,7 +142,7 @@
         <if test="{phoneLayout}">
           <column gap="8">
             <row gap="8" cross="center">
-              <use template="taxpayer-profile-calendar-year-picker"/>
+              <use template="taxpayer-profile-tax-year-picker"/>
               <button width="44" height="44" size="icon" variant="primary" icon="app:calendar" label="Add to Calendar" disabled="{profileCalendarExportBusy}" on-press="profile_calendar_export"></button>
             </row>
             <!-- @include-template profile-calendar-multi-select-combobox
@@ -157,7 +157,7 @@
               placeholder="Search active forms..."
               label="Filter profile calendar forms"
             -->
-            <use template="taxpayer-profile-calendar-year-picker"/>
+            <use template="taxpayer-profile-tax-year-picker"/>
             <button width="44" height="44" size="icon" variant="primary" icon="app:calendar" label="Add to Calendar" disabled="{profileCalendarExportBusy}" on-press="profile_calendar_export"></button>
           </row>
         </else>
@@ -500,17 +500,25 @@
 <template name="t-fp" args="a i x d l s c w v">
   <stack width="{w}" height="48">
     <if test="{v}">
-      <panel width="{w}" height="48" padding="0" selected="{x}">
-        <column width="{w}" height="48" padding="0" main="center" cross="stretch" role="button" label="{a}" disabled="{d}" on-press="open_library_period:{i}">
-          <column gap="1" main="center" cross="stretch">
-            <text wrap="false" size="sm" text-alignment="center">{l}</text>
-            <if test="{c == 'success'}"><text wrap="false" size="sm" text-alignment="center" foreground="success">{s}</text></if>
-            <if test="{c == 'info'}"><text wrap="false" size="sm" text-alignment="center" foreground="info">{s}</text></if>
-            <if test="{c == 'warning'}"><text wrap="false" size="sm" text-alignment="center" foreground="warning">{s}</text></if>
-            <if test="{c == 'destructive'}"><text wrap="false" size="sm" text-alignment="center" foreground="destructive">{s}</text></if>
-            <if test="{c == 'text_muted'}"><text wrap="false" size="sm" text-alignment="center" foreground="text_muted">{s}</text></if>
+      <panel width="{w}" height="48" padding="0" selected="{x}" disabled="{d}">
+        <stack width="{w}" height="48">
+          <column width="{w}" height="48" padding="0" main="center" cross="stretch">
+            <column gap="1" main="center" cross="stretch">
+              <text wrap="false" size="sm" text-alignment="center">{l}</text>
+              <if test="{c == 'success'}"><text wrap="false" size="sm" text-alignment="center" foreground="success">{s}</text></if>
+              <if test="{c == 'info'}"><text wrap="false" size="sm" text-alignment="center" foreground="info">{s}</text></if>
+              <if test="{c == 'warning'}"><text wrap="false" size="sm" text-alignment="center" foreground="warning">{s}</text></if>
+              <if test="{c == 'destructive'}"><text wrap="false" size="sm" text-alignment="center" foreground="destructive">{s}</text></if>
+              <if test="{c == 'text_muted'}"><text wrap="false" size="sm" text-alignment="center" foreground="text_muted">{s}</text></if>
+            </column>
           </column>
-        </column>
+          <if test="{d}">
+            <spacer width="{w}" height="48"/>
+          </if>
+          <else>
+            <column width="{w}" height="48" padding="0" role="button" label="{a}" on-press="open_library_period:{i}"></column>
+          </else>
+        </stack>
       </panel>
     </if>
     <else>
@@ -521,11 +529,7 @@
 
 <template name="taxpayer-form-library-section">
   <column gap="16">
-    <!--
-      Browse mode owns this header. In the yearly setup workspace the year, the
-      status, and the save actions all live beside the year combobox, so
-      repeating them here would put two of each on one screen.
-    -->
+    <!-- The shared selector owns browse-year state; yearly setup keeps its own setup-year control. -->
     <if test="{browsingProfileForms}">
       <if test="{profileFormsHeaderStacked}">
         <column gap="8">
@@ -534,8 +538,8 @@
               <text><span weight="bold">Tax Form Library</span></text>
               <text wrap="true" foreground="text_muted">{profileFormsCountLabel}</text>
             </column>
-            <text width="72" text-alignment="center" foreground="text_muted"><span weight="bold">{profileFormsYearLabel}</span></text>
           </row>
+          <use template="taxpayer-profile-tax-year-picker"/>
         </column>
       </if>
       <else>
@@ -544,7 +548,7 @@
             <text><span weight="bold">Tax Form Library</span></text>
             <text wrap="true" foreground="text_muted">{profileFormsCountLabel}</text>
           </column>
-          <text width="72" text-alignment="center" foreground="text_muted"><span weight="bold">{profileFormsYearLabel}</span></text>
+          <use template="taxpayer-profile-tax-year-picker"/>
         </row>
       </else>
     </if>
@@ -680,7 +684,6 @@
               <column padding="12" gap="10" cross="stretch">
                 <row gap="8" cross="center">
                   <text grow="1"><span weight="bold" scale="1.25">{form.code}</span></text>
-                  <text size="sm" foreground="text_muted">{form.filingProgress}</text>
                   <button
                     width="32"
                     height="32"
@@ -688,22 +691,16 @@
                     variant="ghost"
                     icon="info"
                     label="{form.infoLabel}"
-                    on-press="profile_forms_show_info:{form.id}"></button>
+                  on-press="profile_forms_show_info:{form.id}"></button>
                 </row>
                 <text wrap="true">{form.title}</text>
-                <row gap="6" cross="center"><badge variant="secondary">{form.activeLabel}</badge><badge variant="outline">{form.cadenceLabel}</badge><badge variant="outline">{form.capability}</badge></row>
-                <text wrap="true" size="sm" foreground="text_muted">Fileability: {form.fileability}</text>
-                <text wrap="true" size="sm" foreground="text_muted">{form.activationLabel}</text>
-                <column gap="8" cross="stretch">
-                  <text wrap="true" size="sm" foreground="text_muted">{form.taxFormProfileStatus}</text>
-                  <if test="{form.taxFormProfileActionVisible}">
-                    <button
-                      height="36"
-                      variant="outline"
-                      disabled="{form.taxFormProfileActionDisabled}"
-                      on-press="open_tax_form_profile:{form.id}">{form.taxFormProfileAction}</button>
-                  </if>
-                </column>
+                <if test="{form.taxFormProfileActionVisible}">
+                  <button
+                    height="36"
+                    variant="outline"
+                    disabled="{form.taxFormProfileActionDisabled}"
+                    on-press="open_tax_form_profile:{form.id}">{form.taxFormProfileAction}</button>
+                </if>
                 <if test="{form.hasPeriodCells}">
                   <grid columns="{form.periodGridColumns}" gap="6">
                     <if test="{form.period1.available}"><use template="t-fp" a="{form.period1.actionLabel}" i="{form.period1.actionId}" x="{form.period1.selected}" d="{form.period1.disabled}" l="{form.period1.label}" s="{form.period1.visualStatus}" v="{form.period1.visible}" c="{form.period1.statusColor}" w="{form.period1.tileWidth}"/></if>

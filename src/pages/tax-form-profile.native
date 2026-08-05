@@ -66,6 +66,14 @@
     <scroll grow="1" label="Tax Form Profile">
       <column padding="24" gap="16">
         <row gap="12" cross="start"><button width="44" height="44" size="icon" variant="ghost" icon="chevron-left" label="{taxFormProfileBackLabel}" on-press="close_tax_form_profile"></button><column grow="1" gap="5"><row gap="8" cross="center"><badge variant="secondary">{taxFormProfileCode}</badge><badge variant="{taxFormProfileStatusTone}">{taxFormProfileStatusLabel}</badge></row><text><span weight="bold" scale="1.5">{taxFormProfileCode} Tax Form Profile — {taxFormProfileYear}</span></text><text wrap="true">{taxFormProfileTitle}</text><text foreground="text_muted">Form revision {taxFormProfileRevision}</text><text wrap="true" foreground="text_muted">{taxFormProfileActivationLabel}</text></column></row>
+        <if test="{taxFormProfileHistoryTabVisible}">
+          <tabs gap="4" label="Tax Form Profile sections">
+            <button height="44" variant="ghost" selected="{taxFormProfileDetailsSelected}" on-press="tax_form_profile_show_details">Details</button>
+            <button height="44" variant="ghost" selected="{taxFormProfileHistorySelected}" on-press="tax_form_profile_show_history">History</button>
+          </tabs>
+        </if>
+
+        <if test="{taxFormProfileDetailsSelected}">
         <if test="{taxFormProfileMissingInheritedVisible}"><card padding="0" background="surface_subtle"><column padding="14" gap="10"><text><span weight="bold">{taxFormProfileMissingInheritedTitle}</span></text><text wrap="true" foreground="text_muted">{taxFormProfileMissingInheritedSummary}</text><for each="taxFormProfileMissingInheritedRows" key="id" as="fact"><row gap="8" cross="center"><text grow="1" wrap="true">{fact.label}</text><badge variant="destructive">Required</badge></row></for><button height="44" variant="outline" on-press="tax_form_profile_edit_tax_profile">Edit Tax Profile</button></column></card></if>
         <if test="{taxFormProfileRegistrationRepairVisible}"><card padding="0" background="surface_subtle"><row padding="14" gap="10" cross="center"><text grow="1"><span weight="bold">{taxFormProfileRegistrationRepairTitle}</span></text><button height="44" variant="outline" on-press="tax_form_profile_edit_registration">{taxFormProfileRegistrationRepairAction}</button></row></card></if>
         <if test="{taxFormProfileSegmentNavigationVisible}"><row gap="8"><button grow="1" height="44" variant="outline" disabled="{taxFormProfilePreviousSegmentDisabled}" on-press="tax_form_profile_previous_segment">Previous interval</button><button grow="1" height="44" variant="outline" disabled="{taxFormProfileNextSegmentDisabled}" on-press="tax_form_profile_next_segment">Next interval</button></row></if>
@@ -173,7 +181,10 @@
             <else><row padding="14" gap="10" cross="center"><text grow="1" wrap="true" foreground="text_muted">Another active interval has compatible setup. Review it before saving it for this interval.</text><button height="44" variant="outline" on-press="tax_form_profile_reuse_after_reactivation">{taxFormProfileReactivationReuseLabel}</button></row></else>
           </card>
         </if>
-        <if test="{taxFormProfileHistoryVisible}">
+        <use template="tax-form-profile-page-actions"/>
+        </if>
+
+        <if test="{taxFormProfileHistorySelected}">
           <card padding="0"><column padding="16" gap="10">
             <column gap="4"><text><span weight="bold">Tax Form Profile history</span></text><text wrap="true" foreground="text_muted">Saved annual revisions remain visible after deactivation and are never overwritten.</text></column>
             <for each="taxFormProfileHistoryRows" key="id" as="revision">
@@ -182,7 +193,6 @@
             <if test="{taxFormProfileHistoryTruncatedVisible}"><text wrap="true" foreground="text_muted">Showing the 24 most recent revisions.</text></if>
           </column></card>
         </if>
-        <use template="tax-form-profile-page-actions"/>
       </column>
     </scroll>
     <if test="{taxFormProfileDiscardPromptOpen}">
