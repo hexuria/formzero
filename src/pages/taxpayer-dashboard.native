@@ -174,11 +174,11 @@
   </row>
 </template>
 
-<template name="t-da" args="pi pl pd mk mo oi ol od">
+<template name="t-da" args="pi pl pd mk mo oi ol od ds">
   <stack width="{profileDeadlineActionColumnWidth}">
     <row gap="2" main="end" cross="center">
-      <button width="{profileDeadlineActionButtonSize}" height="{profileDeadlineActionButtonSize}" size="icon" variant="secondary" icon="{pi}" label="{pl}" on-press="profile_deadline_run_action:{pd}"></button>
-      <if test="{ol != ''}"><button width="{profileDeadlineActionButtonSize}" height="{profileDeadlineActionButtonSize}" size="icon" variant="ghost" icon="chevron-down" label="More filing actions" on-press="profile_deadline_toggle_actions:{mk}"></button></if>
+      <button width="{profileDeadlineActionButtonSize}" height="{profileDeadlineActionButtonSize}" size="icon" variant="secondary" icon="{pi}" label="{pl}" disabled="{ds}" on-press="profile_deadline_run_action:{pd}"></button>
+      <if test="{ol != ''}"><button width="{profileDeadlineActionButtonSize}" height="{profileDeadlineActionButtonSize}" size="icon" variant="ghost" icon="chevron-down" label="More filing actions" disabled="{ds}" on-press="profile_deadline_toggle_actions:{mk}"></button></if>
     </row>
     <if test="{mo}">
       <dropdown-menu width="220" anchor="below" anchor-alignment="end" anchor-offset="4" on-dismiss="profile_deadline_close_actions">
@@ -204,7 +204,7 @@
               <row padding="10" gap="8" cross="center">
                 <column grow="1" gap="4"><row gap="6" cross="center"><badge variant="secondary">{deadline.compactLabel}</badge><if test="{deadline.timingVisible}"><row gap="4" cross="center"><icon name="{deadline.timingIcon}" width="16" height="16"/><badge variant="{deadline.timingTone}">{deadline.timingLabel}</badge></row></if></row><text size="sm"><span weight="bold">{deadline.formName}</span></text><row gap="4" cross="center"><text grow="1" size="sm" wrap="true" foreground="text_muted">{deadline.dueLabel}</text><if test="{deadline.adjustmentVisible}"><button width="{profileDeadlineActionButtonSize}" height="{profileDeadlineActionButtonSize}" size="icon" variant="ghost" icon="info" label="{deadline.adjustmentActionLabel}" on-press="profile_deadline_show_adjustment:{deadline.adjustmentDispatchId}"></button></if></row></column>
                 <column width="108" gap="6" main="center"><row gap="6" cross="center"><icon name="{deadline.filingIcon}" width="16" height="16"/><badge variant="{deadline.filingTone}">{deadline.filingStatus}</badge></row></column>
-                <if test="{deadline.primaryActionVisible}"><use template="t-da" pi="{deadline.primaryActionIcon}" pl="{deadline.primaryActionLabel}" pd="{deadline.primaryActionDispatchId}" mk="{deadline.actionMenuId}" mo="{deadline.actionMenuOpen}" oi="{deadline.secondaryActionOneIcon}" ol="{deadline.secondaryActionOneLabel}" od="{deadline.secondaryActionOneDispatchId}"/></if>
+                <if test="{deadline.primaryActionVisible}"><use template="t-da" pi="{deadline.primaryActionIcon}" pl="{deadline.primaryActionLabel}" pd="{deadline.primaryActionDispatchId}" mk="{deadline.actionMenuId}" mo="{deadline.actionMenuOpen}" oi="{deadline.secondaryActionOneIcon}" ol="{deadline.secondaryActionOneLabel}" od="{deadline.secondaryActionOneDispatchId}" ds="{deadline.primaryActionDisabled}"/></if>
               </row>
               <separator/>
             </column>
@@ -219,7 +219,7 @@
             <column padding="12" gap="8">
               <row gap="8" cross="start">
                 <column grow="1" gap="4"><row gap="6" cross="center"><badge variant="secondary">{deadline.compactLabel}</badge><if test="{deadline.timingVisible}"><row gap="4" cross="center"><icon name="{deadline.timingIcon}" width="16" height="16"/><badge variant="{deadline.timingTone}">{deadline.timingLabel}</badge></row></if></row><text size="sm"><span weight="bold">{deadline.formName}</span></text><row gap="4" cross="center"><text grow="1" size="sm" wrap="true" foreground="text_muted">{deadline.dueLabel}</text><if test="{deadline.adjustmentVisible}"><button width="{profileDeadlineActionButtonSize}" height="{profileDeadlineActionButtonSize}" size="icon" variant="ghost" icon="info" label="{deadline.adjustmentActionLabel}" on-press="profile_deadline_show_adjustment:{deadline.adjustmentDispatchId}"></button></if></row></column>
-                <if test="{deadline.primaryActionVisible}"><use template="t-da" pi="{deadline.primaryActionIcon}" pl="{deadline.primaryActionLabel}" pd="{deadline.primaryActionDispatchId}" mk="{deadline.actionMenuId}" mo="{deadline.actionMenuOpen}" oi="{deadline.secondaryActionOneIcon}" ol="{deadline.secondaryActionOneLabel}" od="{deadline.secondaryActionOneDispatchId}"/></if>
+                <if test="{deadline.primaryActionVisible}"><use template="t-da" pi="{deadline.primaryActionIcon}" pl="{deadline.primaryActionLabel}" pd="{deadline.primaryActionDispatchId}" mk="{deadline.actionMenuId}" mo="{deadline.actionMenuOpen}" oi="{deadline.secondaryActionOneIcon}" ol="{deadline.secondaryActionOneLabel}" od="{deadline.secondaryActionOneDispatchId}" ds="{deadline.primaryActionDisabled}"/></if>
               </row>
               <separator/>
               <row gap="6" cross="center"><icon name="{deadline.filingIcon}" width="16" height="16"/><badge variant="{deadline.filingTone}">{deadline.filingStatus}</badge></row>

@@ -702,7 +702,15 @@ fn profileDeadlineActionsFor(
 
 const ProfileDeadlineLaunchProjection = struct {
     assessment: form_ui.LaunchAssessment = .{},
+    remediation: ProfileDeadlineRemediation = .unavailable,
     ready: bool = false,
+};
+
+const ProfileDeadlineRemediation = enum {
+    unavailable,
+    ready,
+    tax_profile,
+    tax_form_profile,
 };
 
 /// A profile-scoped schedule row combines the resolved deadline with typed,
@@ -717,6 +725,7 @@ pub const ProfileCalendarDeadlineRow = struct {
     draft_stage: ProfileDeadlineDraftStage = .none,
     draft_id: ?form_ids.DraftId = null,
     actions: ProfileDeadlineActionSet = .{},
+    remediation: ProfileDeadlineRemediation = .unavailable,
     menu_id: u64 = 0,
     action_menu_open: bool = false,
 
@@ -881,6 +890,10 @@ pub const ProfileCalendarDeadlineRow = struct {
 
     pub fn primaryActionVisible(self: *const ProfileCalendarDeadlineRow) bool {
         return self.actions.count != 0;
+    }
+
+    pub fn primaryActionDisabled(self: *const ProfileCalendarDeadlineRow) bool {
+        return self.remediation != .ready;
     }
 
     fn needsAction(self: *const ProfileCalendarDeadlineRow) bool {
@@ -1614,6 +1627,9 @@ pub const Model = struct {
     profileDeadlineLaunchAssessments: [calendar_ui.max_deadlines]form_ui.LaunchAssessment = undefined,
     profileDeadlineLaunchAssessmentsReady: [calendar_ui.max_deadlines]bool =
         [_]bool{false} ** calendar_ui.max_deadlines,
+    profileDeadlineRemediations: [calendar_ui.max_deadlines]ProfileDeadlineRemediation =
+        [_]ProfileDeadlineRemediation{.unavailable} ** calendar_ui.max_deadlines,
+    profileDeadlineRemediationDismissedId: ?u64 = null,
     libraryFilter: library_view.FilterState = .{},
     profileCalendarSelectedDate: ?calendar_domain.Date = null,
     profileCalendarYearPickerVisible: bool = false,
@@ -1699,6 +1715,8 @@ pub const Model = struct {
         "profilePeriodLaunchAssessmentsReady",
         "profileDeadlineLaunchAssessments",
         "profileDeadlineLaunchAssessmentsReady",
+        "profileDeadlineRemediations",
+        "profileDeadlineRemediationDismissedId",
         "profileFormPeriodCellTypeRows",
         // Compatibility/test-only helpers retained while older callers move
         // to the grouped Browse filters and exact period-tile action.
@@ -3429,7 +3447,85 @@ pub const Model = struct {
 
     pub fn profileToastRegionVisible(self: *const Model) bool {
         return self.profileNoticeVisible() or
-            self.profileCalendarExportNoticeVisible();
+            self.profileCalendarExportNoticeVisible() or
+            self.profileFilingReadinessNoticeVisible();
+    }
+
+    fn profileFilingRemediationCandidate(
+        self: *const Model,
+    ) ?ProfileDeadlineRemediationCandidate {
+        if (self.page != .taxpayer_dashboard or
+            self.dashboardSection != .calendar) return null;
+        const priorities = [_]ProfileDeadlineRemediation{
+            .tax_profile,
+            .tax_form_profile,
+        };
+        for (priorities) |priority| {
+            for (
+                self.profileCalendar.deadlines[0..self.profileCalendar.deadline_count],
+                0..,
+            ) |*deadline, index| {
+                if (!self.profileDeadlineLaunchAssessmentsReady[index] or
+                    self.profileDeadlineRemediations[index] != priority or
+                    !self.profileCalendarViewIncludesDeadline(deadline) or
+                    self.profileDeadlineRemediationDismissedId == deadline.id)
+                {
+                    continue;
+                }
+                return .{ .index = index, .remediation = priority };
+            }
+        }
+        return null;
+    }
+
+    pub fn profileFilingReadinessNoticeVisible(self: *const Model) bool {
+        return self.profileFilingRemediationCandidate() != null;
+    }
+
+    pub fn profileFilingReadinessNotice(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const candidate = self.profileFilingRemediationCandidate() orelse
+            return "";
+        const deadline = &self.profileCalendar.deadlines[candidate.index];
+        return switch (candidate.remediation) {
+            .tax_profile => std.fmt.allocPrint(
+                arena,
+                "Complete the Tax Profile before opening BIR Form {s} for {d}.",
+                .{
+                    deadline.form_code,
+                    deadline.period.taxableYear() orelse 0,
+                },
+            ) catch "Complete the Tax Profile before opening this form.",
+            .tax_form_profile => std.fmt.allocPrint(
+                arena,
+                "Complete the {s} Tax Form Profile for {d} before opening this filing period.",
+                .{
+                    deadline.form_code,
+                    deadline.period.taxableYear() orelse 0,
+                },
+            ) catch "Complete the Tax Form Profile before opening this filing period.",
+            .unavailable, .ready => "",
+        };
+    }
+
+    pub fn profileFilingReadinessActionLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const candidate = self.profileFilingRemediationCandidate() orelse
+            return "Resolve setup";
+        const deadline = &self.profileCalendar.deadlines[candidate.index];
+        return switch (candidate.remediation) {
+            .tax_profile => "Set Tax Profile",
+            .tax_form_profile => std.fmt.allocPrint(
+                arena,
+                "Set {s} Tax Form Profile",
+                .{deadline.form_code},
+            ) catch "Set Tax Form Profile",
+            .unavailable, .ready => "Resolve setup",
+        };
     }
 
     pub fn profileSubjectPickerOpen(self: *const Model) bool {
@@ -8381,10 +8477,7 @@ pub const Model = struct {
             const launch = self.profileDeadlineLaunchProjection(&deadline);
             if (launch.ready) {
                 switch (launch.assessment.status) {
-                    .needs_profile => {
-                        actions = .{};
-                        actions.add(.complete_profile);
-                    },
+                    .needs_profile => {},
                     .profile_not_eligible, .unavailable => actions = .{},
                     .ready_new, .ready_resume, .needs_activity_selection => {},
                 }
@@ -8419,6 +8512,7 @@ pub const Model = struct {
             .draft_stage = draft_stage,
             .draft_id = matched_draft_id,
             .actions = actions,
+            .remediation = self.profileDeadlineLaunchProjection(&deadline).remediation,
             .menu_id = menu_id,
             .action_menu_open = action_menu_open,
         };
@@ -8443,6 +8537,7 @@ pub const Model = struct {
                 !self.profileDeadlineLaunchAssessmentsReady[index]) continue;
             return .{
                 .assessment = self.profileDeadlineLaunchAssessments[index],
+                .remediation = self.profileDeadlineRemediations[index],
                 .ready = true,
             };
         }
@@ -10632,6 +10727,8 @@ pub const Msg = union(enum) {
     profile_keep_editing,
     profile_discard_navigation,
     dismiss_profile_notice,
+    dismiss_profile_filing_readiness_notice,
+    open_profile_filing_readiness_remediation,
     profile_notice_timeout: native_sdk.EffectTimer,
     calendar_today_refresh: native_sdk.EffectTimer,
     show_calendar_rules,
@@ -10868,16 +10965,16 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             bumpSidebarActionEpoch(model);
             navigate(model, .screen_gallery);
         },
-        .show_form_0605 => openProfileBoundForm(model, .form_0605, "0605"),
-        .show_form_0619_e => openProfileBoundForm(model, .form_0619_e, "0619E"),
-        .show_form_0619_f => openProfileBoundForm(model, .form_0619_f, "0619F"),
-        .show_form_1601_c => openProfileBoundForm(model, .form_1601_c, "1601C"),
-        .show_form_1701 => openProfileBoundForm(model, .form_1701, "1701"),
-        .show_form_1701q => openProfileBoundForm(model, .form_1701q, "1701Q"),
-        .show_form_1702_rt => openProfileBoundForm(model, .form_1702_rt, "1702RT"),
-        .show_form_1702_mx => openProfileBoundForm(model, .form_1702_mx, "1702MX"),
-        .show_form_2550q => openProfileBoundForm(model, .form_2550q, "2550Q"),
-        .show_form_2551q => openProfileBoundForm(model, .form_2551q, "2551Q"),
+        .show_form_0605 => openGalleryOrProfileBoundForm(model, .form_0605, "0605"),
+        .show_form_0619_e => openGalleryOrProfileBoundForm(model, .form_0619_e, "0619E"),
+        .show_form_0619_f => openGalleryOrProfileBoundForm(model, .form_0619_f, "0619F"),
+        .show_form_1601_c => openGalleryOrProfileBoundForm(model, .form_1601_c, "1601C"),
+        .show_form_1701 => openGalleryOrProfileBoundForm(model, .form_1701, "1701"),
+        .show_form_1701q => openGalleryOrProfileBoundForm(model, .form_1701q, "1701Q"),
+        .show_form_1702_rt => openGalleryOrProfileBoundForm(model, .form_1702_rt, "1702RT"),
+        .show_form_1702_mx => openGalleryOrProfileBoundForm(model, .form_1702_mx, "1702MX"),
+        .show_form_2550q => openGalleryOrProfileBoundForm(model, .form_2550q, "2550Q"),
+        .show_form_2551q => openGalleryOrProfileBoundForm(model, .form_2551q, "2551Q"),
         .select_form_activity => |slot| {
             if (rejectExact1701QContextChange(model)) return;
             const amended = model.exact1701Q.amended();
@@ -12227,6 +12324,15 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             }
         },
         .dismiss_profile_notice => model.taxProfiles.dismissNotice(),
+        .dismiss_profile_filing_readiness_notice => {
+            if (model.profileFilingRemediationCandidate()) |candidate| {
+                model.profileDeadlineRemediationDismissedId =
+                    model.profileCalendar.deadlines[candidate.index].id;
+            }
+        },
+        .open_profile_filing_readiness_remediation => {
+            openProfileFilingReadinessRemediation(model);
+        },
         .profile_notice_timeout => |timer| {
             profileNoticeTimeout(model, timer);
         },
@@ -13767,6 +13873,8 @@ fn refreshProfileFormLaunchAssessments(model: *Model) void {
 /// Native view bindings and handles prior-tax-year obligations correctly.
 fn refreshProfileDeadlineLaunchAssessments(model: *Model) void {
     @memset(&model.profileDeadlineLaunchAssessmentsReady, false);
+    @memset(&model.profileDeadlineRemediations, .unavailable);
+    model.profileDeadlineRemediationDismissedId = null;
     if (model.formProfiles.allocator == null or
         model.formProfiles.store == null) return;
     _ = model.taxProfiles.selectedProfileDomainId() orelse return;
@@ -13783,8 +13891,7 @@ fn refreshProfileDeadlineLaunchAssessments(model: *Model) void {
             .on_demand => continue,
             .monthly, .quarterly => unreachable,
         };
-        model.profileDeadlineLaunchAssessments[index] =
-            assessProfileFormLaunch(
+        const assessment = assessProfileFormLaunch(
                 model,
                 deadline.form_code,
                 tax_year,
@@ -13792,7 +13899,51 @@ fn refreshProfileDeadlineLaunchAssessments(model: *Model) void {
                 filing.month(),
                 filing,
             );
+        model.profileDeadlineLaunchAssessments[index] = assessment;
         model.profileDeadlineLaunchAssessmentsReady[index] = true;
+        model.profileDeadlineRemediations[index] = switch (assessment.status) {
+            .needs_profile => .tax_profile,
+            .profile_not_eligible, .unavailable => .unavailable,
+            .ready_new, .ready_resume, .needs_activity_selection => blk: {
+                const definition = catalogDefinitionForDeadline(
+                    deadline.form_code,
+                ) orelse break :blk .unavailable;
+                const form_index = formCatalogIndex(deadline.form_code) orelse
+                    break :blk .unavailable;
+                const profile_id = model.taxProfiles.selectedProfileDomainId() orelse
+                    break :blk .unavailable;
+                const year: u16 = @intCast(tax_year);
+                const as_of = profileAsOfForForm(
+                    model,
+                    deadline.form_code,
+                    year,
+                    quarter,
+                    filing.month(),
+                );
+                const bindings = loadLaunchTaxFormProfileBindings(
+                    model,
+                    definition,
+                    form_index,
+                    profile_id,
+                    year,
+                    as_of,
+                    assessment,
+                );
+                break :blk switch (bindings.state) {
+                    .ready, .inherited_only_ready => .ready,
+                    .needs_tax_profile => .tax_profile,
+                    .needs_registration,
+                    .needs_year_settings,
+                    .year_settings_reserved,
+                    .year_settings_require_review,
+                    .needs_setup,
+                    .requires_review,
+                    .needs_filing_context,
+                    => .tax_form_profile,
+                    .unavailable, .calendar_only, .error_loading => .unavailable,
+                };
+            },
+        };
     }
 }
 
@@ -14260,6 +14411,18 @@ fn openProfileBoundForm(
         null,
         null,
     );
+}
+
+fn openGalleryOrProfileBoundForm(
+    model: *Model,
+    page: Page,
+    form_code: []const u8,
+) void {
+    if (model.page == .screen_gallery) {
+        navigate(model, page);
+        return;
+    }
+    openProfileBoundForm(model, page, form_code);
 }
 
 const ProfileFormRoute = struct {
@@ -16404,6 +16567,11 @@ const ProfileDeadlineActionDispatch = struct {
     action: ProfileDeadlineAction,
 };
 
+const ProfileDeadlineRemediationCandidate = struct {
+    index: usize,
+    remediation: ProfileDeadlineRemediation,
+};
+
 fn decodeProfileDeadlineActionDispatch(
     dispatch_id: u64,
 ) ?ProfileDeadlineActionDispatch {
@@ -16490,6 +16658,7 @@ fn runProfileDeadlineAction(model: *Model, dispatch_id: u64) void {
     if (!model.profileCalendarViewIncludesDeadline(deadline)) return;
     const row = model.profileCalendarDeadlineRow(deadline.*);
     if (!row.actions.contains(dispatch.action)) return;
+    if (row.primaryActionDisabled()) return;
     model.profileDeadlineActionMenuId = null;
     switch (dispatch.action) {
         .start,
@@ -16505,6 +16674,50 @@ fn runProfileDeadlineAction(model: *Model, dispatch_id: u64) void {
         .pay_online,
         => showProfileDeadlineStub(model, deadline.id, dispatch.action),
         .none => {},
+    }
+}
+
+fn openProfileFilingReadinessRemediation(model: *Model) void {
+    const candidate = model.profileFilingRemediationCandidate() orelse return;
+    const deadline = &model.profileCalendar.deadlines[candidate.index];
+    const filing = profileDeadlineFilingPeriod(deadline) orelse return;
+    const form_index = formCatalogIndex(deadline.form_code) orelse return;
+    switch (candidate.remediation) {
+        .tax_profile => {
+            model.profileCompletionTarget =
+                model.profileDeadlineLaunchAssessments[candidate.index]
+                    .first_missing_field;
+            model.profileCompletionFormIndex = form_index;
+            model.pendingProfileFormLaunch = null;
+            model.profileSetupSection = .tax_profile;
+            beginCompleteProfileEdit(model);
+            model.dashboardSection = .profile_settings;
+            navigate(model, .taxpayer_dashboard);
+        },
+        .tax_form_profile => {
+            const tax_year: u16 = @intCast(filing.taxYear());
+            const quarter = filing.quarter() orelse switch (filing) {
+                .annual => 4,
+                .on_demand => return,
+                .monthly, .quarterly => unreachable,
+            };
+            const as_of = profileAsOfForForm(
+                model,
+                deadline.form_code,
+                tax_year,
+                quarter,
+                filing.month(),
+            );
+            openTaxFormProfileForYearAt(
+                model,
+                form_index,
+                tax_year,
+                as_of,
+                false,
+                filing,
+            );
+        },
+        .unavailable, .ready => {},
     }
 }
 
@@ -16569,6 +16782,7 @@ fn openProfileBoundFormForQuarterDraft(
     filing: ?form_period.FilingPeriod,
     draft_id: ?form_ids.DraftId,
 ) bool {
+    _ = spouse_profile_id;
     if (std.mem.eql(u8, form_code, "1701Q") and
         rejectExact1701QContextChange(model))
     {
@@ -16610,17 +16824,7 @@ fn openProfileBoundFormForQuarterDraft(
         resolved_filing,
     );
     switch (launch.status) {
-        .needs_profile => {
-            openProfileCompletion(model, form_index, launch, .{
-                .form_index = form_index,
-                .tax_year = tax_year,
-                .quarter = quarter,
-                .period_month = period_month,
-                .spouse_profile_id = spouse_profile_id,
-                .filing = resolved_filing,
-            });
-            return false;
-        },
+        .needs_profile => return false,
         .profile_not_eligible, .unavailable => return false,
         .ready_new, .ready_resume, .needs_activity_selection => {},
     }
@@ -16649,17 +16853,7 @@ fn openProfileBoundFormForQuarterDraft(
         .needs_setup,
         .requires_review,
         .needs_filing_context,
-        => {
-            openTaxFormProfileForYearAt(
-                model,
-                form_index,
-                year,
-                profile_as_of,
-                false,
-                resolved_filing,
-            );
-            return false;
-        },
+        => return false,
         .unavailable,
         .calendar_only,
         .needs_tax_profile,
@@ -22002,14 +22196,24 @@ test "library disables incomplete profile periods without redirecting to setup" 
         if (!formCodesEquivalent(deadline.form_code, "2551Q")) continue;
         const projected = model.profileCalendarDeadlineRow(deadline);
         try std.testing.expectEqual(
-            ProfileDeadlineAction.complete_profile,
+            ProfileDeadlineAction.start,
             projected.actions.at(0),
         );
         try std.testing.expectEqualStrings(
-            "Complete Profile",
+            "Start Form",
             projected.primaryActionLabel(),
         );
-        try std.testing.expectEqualStrings("edit", projected.primaryActionIcon());
+        try std.testing.expect(projected.primaryActionDisabled());
+        try std.testing.expectEqual(
+            ProfileDeadlineRemediation.tax_profile,
+            projected.remediation,
+        );
+        model.page = .taxpayer_dashboard;
+        model.dashboardSection = .calendar;
+        runProfileDeadlineAction(&model, projected.primaryActionDispatchId());
+        try std.testing.expectEqual(Page.taxpayer_dashboard, model.page);
+        try std.testing.expectEqual(DashboardSection.calendar, model.dashboardSection);
+        try std.testing.expect(model.pendingProfileFormLaunch == null);
         calendar_action_found = true;
         break;
     }
@@ -22030,6 +22234,28 @@ test "library disables incomplete profile periods without redirecting to setup" 
     try std.testing.expectEqual(DashboardSection.forms, model.dashboardSection);
     try std.testing.expect(model.profileCompletionTarget == null);
     try std.testing.expect(model.pendingProfileFormLaunch == null);
+}
+
+test "Screen Gallery form buttons open static editor pages directly" {
+    const cases = [_]struct { message: Msg, page: Page }{
+        .{ .message = .show_form_0605, .page = .form_0605 },
+        .{ .message = .show_form_0619_e, .page = .form_0619_e },
+        .{ .message = .show_form_0619_f, .page = .form_0619_f },
+        .{ .message = .show_form_1601_c, .page = .form_1601_c },
+        .{ .message = .show_form_1701, .page = .form_1701 },
+        .{ .message = .show_form_1701q, .page = .form_1701q },
+        .{ .message = .show_form_1702_rt, .page = .form_1702_rt },
+        .{ .message = .show_form_1702_mx, .page = .form_1702_mx },
+        .{ .message = .show_form_2550q, .page = .form_2550q },
+        .{ .message = .show_form_2551q, .page = .form_2551q },
+    };
+    for (cases) |case| {
+        var model = Model{ .page = .screen_gallery };
+        update(&model, case.message);
+        try std.testing.expectEqual(case.page, model.page);
+        try std.testing.expect(model.profileCompletionTarget == null);
+        try std.testing.expect(model.pendingProfileFormLaunch == null);
+    }
 }
 
 test "library period tile opens the exact quarterly filing identity" {
