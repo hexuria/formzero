@@ -1,0 +1,6 @@
+interface:
+  display_name: "GitHub Worktree Stack"
+  short_description: "Orchestrate agent worktrees as stacked PRs"
+  default_prompt: "Use $gh-worktree-stack to plan and coordinate dependent agent worktrees as a safe GitHub PR stack."
+policy:
+  allow_implicit_invocation: false
