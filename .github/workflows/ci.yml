@@ -147,6 +147,9 @@ jobs:
       - name: Provision toolchain
         run: scripts/setup-dev-env.sh
 
+      - name: Prepare Zig cache directories
+        run: mkdir -p "$HOME/.cache/zig/tmp" "$HOME/.cache/zig/p"
+
       - name: Report toolchain
         run: |
           just --version
