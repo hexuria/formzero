@@ -117,13 +117,13 @@
                   selected="{cell.selected}"
                   on-press="global_calendar_select_day:{cell.day}">
                   <if test="{cell.selected}">
-                    <row main="end">
+                    <row main="center">
                       <badge variant="primary">{cell.dayLabel}</badge>
                     </row>
                   </if>
                   <else>
-                    <text text-alignment="end">{cell.dayLabel}</text>
-                </else>
+                    <text text-alignment="center">{cell.dayLabel}</text>
+                  </else>
                 <if test="{cell.hasDeadlines}">
                     <row grow="1" main="center" cross="center">
                       <if test="{cell.overdue}">

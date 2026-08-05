@@ -51,9 +51,6 @@ pub const QualificationIssue = union(enum) {
         role: ids.Role,
         reusable_field: field.ReusableField,
     },
-    business_activity_selection_required: ids.Role,
-    unknown_business_activity: ids.Role,
-    inactive_business_activity: ids.Role,
 };
 
 pub const Qualification = struct {
@@ -116,14 +113,7 @@ pub fn qualify(
             requirement.source,
             on,
             binding.selection,
-        ) catch |err| {
-            result.add(switch (err) {
-                error.BusinessActivitySelectionRequired => .{ .business_activity_selection_required = binding.role },
-                error.UnknownBusinessActivity => .{ .unknown_business_activity = binding.role },
-                error.InactiveBusinessActivity => .{ .inactive_business_activity = binding.role },
-            });
-            continue;
-        };
+        ) catch unreachable;
         if (value == null and requirement.presence == .required) {
             result.add(.{ .missing_required_field = .{
                 .role = binding.role,
@@ -139,8 +129,6 @@ pub const Provenance = struct {
     revision_id: model.RevisionId,
     revision_sequence: u32,
     revision_source: model.RevisionSource,
-    business_activity_id: ?model.BusinessActivityId = null,
-    registration_fact_id: ?model.RegistrationFactId = null,
 };
 
 pub const SnapshotEntry = struct {
@@ -215,30 +203,6 @@ pub fn projectRole(
             on,
             binding.selection,
         ) catch unreachable) orelse continue;
-        var activity_id: ?model.BusinessActivityId = null;
-        var registration_fact_id: ?model.RegistrationFactId = null;
-        if (requirement.source == .atc or
-            requirement.source == .line_of_business)
-        {
-            const activity = capability.resolveBusinessActivity(
-                binding.revision,
-                on,
-                binding.selection,
-            ) catch unreachable;
-            if (activity) |selected| activity_id = selected.id;
-        }
-        const fact_kind: ?model.RegistrationFactKind =
-            switch (requirement.source) {
-                .tax_type => .tax_type,
-                .government_withholding_agent => .government_withholding_agent,
-                .special_rate_basis => .special_rate_basis,
-                else => null,
-            };
-        if (fact_kind) |kind| {
-            if (binding.revision.registrationFact(kind, on)) |fact| {
-                registration_fact_id = fact.id;
-            }
-        }
         try snapshot.append(.{
             .role = binding.role,
             .target = requirement.target,
@@ -248,17 +212,13 @@ pub fn projectRole(
                 .revision_id = binding.revision.id,
                 .revision_sequence = binding.revision.sequence,
                 .revision_source = binding.revision.source,
-                .business_activity_id = activity_id,
-                .registration_fact_id = registration_fact_id,
             },
         });
     }
     return snapshot;
 }
 
-fn exampleRevision(
-    activities: []const model.BusinessActivity,
-) !model.ProfileRevision {
+fn exampleRevision() !model.ProfileRevision {
     return .{
         .profile_id = try model.ProfileId.parse("profile-maria"),
         .id = try model.RevisionId.parse("revision-1"),
@@ -285,22 +245,13 @@ fn exampleRevision(
                 .citizenship = try field.Citizenship.parse("Filipino"),
             },
         } },
-        .business_activities = activities,
+        .accounting_period_basis = .calendar,
     };
 }
 
 test "2551Q projection owns the exact header and revision provenance" {
     const form_2551q = @import("../forms/form_2551q.zig");
-    const activities = [_]model.BusinessActivity{.{
-        .id = try model.BusinessActivityId.parse("activity-retail"),
-        .line_of_business = try field.LineOfBusiness.parse("Retail"),
-        .atc = try field.Atc.parse("PT010"),
-        .effective = try model.EffectivePeriod.init(
-            try model.Date.parseIso("2026-01-01"),
-            null,
-        ),
-    }};
-    var revision = try exampleRevision(&activities);
+    var revision = try exampleRevision();
     const on = try model.Date.parseIso("2026-03-31");
     var snapshot = try projectRole(
         form_2551q.revision,
@@ -309,7 +260,7 @@ test "2551Q projection owns the exact header and revision provenance" {
         on,
     );
 
-    try std.testing.expectEqual(@as(u8, 7), snapshot.len);
+    try std.testing.expectEqual(@as(u8, 8), snapshot.len);
     const tin = snapshot.get(
         ids.FieldId.initComptime("2551Q.2018-01-ENCS.input.tin"),
     ).?;
@@ -329,72 +280,46 @@ test "2551Q projection owns the exact header and revision provenance" {
     );
 }
 
-test "qualification explains missing and ambiguous business activity" {
-    const business_requirements = [_]spec.Requirement{.{
-        .source = .atc,
-        .target = ids.FieldId.initComptime("example.schedule.atc"),
+test "Base Line of Business projects without activity selection" {
+    const requirements = [_]spec.Requirement{.{
+        .source = .line_of_business,
+        .target = ids.FieldId.initComptime("example.input.line_of_business"),
     }};
     const role_spec: spec.RoleSpec = .{
         .role = .filer,
         .cardinality = .exactly_one,
         .allowed_subjects = model.SubjectKindSet.full,
-        .requirements = &business_requirements,
+        .requirements = &requirements,
     };
-    var no_activity = try exampleRevision(&.{});
+    var revision = try exampleRevision();
+    revision.primary_line_of_business =
+        try field.LineOfBusiness.parse("Base consulting");
     const on = try model.Date.parseIso("2026-03-31");
-    const missing = qualify(
-        role_spec,
-        .{ .role = .filer, .revision = &no_activity },
-        on,
-    );
-    try std.testing.expect(!missing.accepted());
-    try std.testing.expectEqual(
-        field.ReusableField.atc,
-        missing.slice()[0].missing_required_field.reusable_field,
-    );
 
-    const activities = [_]model.BusinessActivity{
-        .{
-            .id = try model.BusinessActivityId.parse("activity-one"),
-            .line_of_business = try field.LineOfBusiness.parse("Retail"),
-            .atc = try field.Atc.parse("PT010"),
-            .effective = try model.EffectivePeriod.init(
-                try model.Date.parseIso("2026-01-01"),
-                null,
-            ),
-        },
-        .{
-            .id = try model.BusinessActivityId.parse("activity-two"),
-            .line_of_business = try field.LineOfBusiness.parse("Services"),
-            .atc = try field.Atc.parse("PT040"),
-            .effective = try model.EffectivePeriod.init(
-                try model.Date.parseIso("2026-01-01"),
-                null,
-            ),
-        },
-    };
-    var ambiguous = try exampleRevision(&activities);
     const result = qualify(
         role_spec,
-        .{ .role = .filer, .revision = &ambiguous },
+        .{ .role = .filer, .revision = &revision },
         on,
     );
-    try std.testing.expect(!result.accepted());
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        result.slice().len,
+    try std.testing.expect(result.accepted());
+
+    const snapshot = try projectRole(
+        ids.FormRevision.initComptime("1601C", "2018-01-ENCS"),
+        role_spec,
+        .{ .role = .filer, .revision = &revision },
+        on,
     );
-    try std.testing.expectEqual(
-        std.meta.activeTag(
-            QualificationIssue{ .business_activity_selection_required = .filer },
-        ),
-        std.meta.activeTag(result.slice()[0]),
+    const entry = snapshot.get(
+        ids.FieldId.initComptime("example.input.line_of_business"),
+    ).?;
+    try std.testing.expectEqualStrings(
+        "Base consulting",
+        entry.value.line_of_business.asSlice(),
     );
 }
-
 test "2551Q rejects a profile missing a required contact capability" {
     const form_2551q = @import("../forms/form_2551q.zig");
-    var revision = try exampleRevision(&.{});
+    var revision = try exampleRevision();
     revision.contact.email_address = null;
     const result = qualify(
         form_2551q.roles[0],

@@ -1,11 +1,11 @@
 # Tax-profile architecture
 
-> Current execution contract (2026-08-04):
-> [Tax Profile and Registration audit](TAX_PROFILE_AND_REGISTRATION_AUDIT_2026-08-04.md)
-> and [Tax Profile and Tax Form Profile execution plan](TAX_PROFILE_AND_FORM_PROFILE_EXECUTION_PLAN_2026-08-04.md).
-> Those documents supersede older guidance that rejected typed, year-scoped
-> Tax Form Profiles. This file remains authoritative for immutable taxpayer
-> revisions, owned projections, and draft snapshots.
+> Current execution contract (2026-08-05): the current sections of the
+> [Form-profile ownership matrix](FORM_PROFILE_OWNERSHIP_MATRIX_2026-08-04.md)
+> and this document define the simplified Base Tax Profile, exact Tax Form
+> Profiles, owned projections, and draft snapshots. Registration activity and
+> obligation architecture survives only at explicit historical migration and
+> read-only provenance boundaries; it is not a current readiness source.
 
 ## Purpose
 
@@ -32,7 +32,7 @@ The design has four non-negotiable outcomes:
 | Validated newtypes | Bounded Zig field types with `parse` constructors |
 | Fine-grained capability traits | Exhaustive `ReusableField` union, `FieldSet`, and typed `valueFor` resolver |
 | Requirement supertraits | Compile-time-validated `FormSpec` and one `RoleSpec` per named role |
-| Concrete profile compositions | `Subject` tagged union plus cohesive identity, contact, activity, and registration-fact components |
+| Concrete profile compositions | `Subject` tagged union plus cohesive identity, contact, accounting-basis, EOPT-tier, and Primary-Line-of-Business fields |
 | Runtime adapter boundary | SQLite rows are decoded through the domain builder before use |
 | Typestate builder | `editor.Start -> editor.Ready -> ProfileRevision` and coarse filing lifecycle types |
 | Multi-role generics | Named role bindings checked for cardinality, subject type, capability, and distinct-profile constraints |
@@ -73,16 +73,18 @@ Each immutable revision consists of:
 - an effective period and source (`manual_entry`, `imported`, or `migrated`);
 - identity (`TIN`, `RDO code`);
 - registered contact;
+- accounting-period basis and fiscal year-end month when applicable;
+- one EOPT tier and one Primary Line of Business, each explicitly reviewable
+  when legacy migration cannot prove an unambiguous value;
 - exactly one truthful subject variant:
   - individual,
   - sole proprietor with an optional separate trade name, or
-  - legal entity with an explicit legal kind;
-- zero or more independently effective-dated business activities; and
-- zero or more independently effective-dated registration facts:
-  tax type, government-withholding-agent status, and special-rate basis.
+  - legal entity with an explicit legal kind.
 
-Repeated values are modeled as repeated components, not as numbered fields.
-Ambiguous effective business activities require an explicit selection.
+Current setup, projection, and readiness consume this one Base revision. Legacy
+Registration activities and obligations are not selectable current profile
+components; ambiguous migrated values remain review-required until explicitly
+confirmed in the Base Tax Profile.
 
 ## Form composition
 
@@ -109,7 +111,8 @@ owned snapshot with:
 - copied validated value;
 - role;
 - profile ID, revision ID, revision sequence, and revision source; and
-- selected business-activity or registration-fact ID where applicable.
+- exact Tax Form Profile identity and form-specific setup value provenance
+  where the generated form contract requires yearly setup.
 
 ## 2551Q boundary
 
@@ -128,6 +131,11 @@ Its tax base and rate are filing/policy inputs. No percentage-tax rate is
 hardcoded in the profile or form domain. The current editor persists two
 stable Schedule-row identities and recomputes their derived due amounts from
 the explicitly supplied rates.
+
+Item 13's income-tax-rate election is not a Registration fact or a generic
+Taxpayer-Year value. It is owned by the exact 2551Q Tax Form Profile for the
+selected profile, tax year, form revision, and generated setup specification;
+the UI labels it with that selected year.
 
 Calendar-quarter filing is supported. Fiscal selection is visibly disabled
 and rejected by the transaction domain for now because a fiscal period needs a
@@ -164,8 +172,10 @@ drift.
 - SQLite row IDs are internal implementation details.
 - Public bindings and provenance use stable opaque revision IDs.
 - A first profile and its first revision commit atomically.
-- Subject variants, activities, registration facts, effective periods, and
-  source references round-trip without flattening or loss.
+- Subject variants, Base identity/contact/classification values, effective
+  periods, and source references round-trip without flattening or loss.
+- Historical Registration rows remain readable for migration/export
+  provenance but cannot drive new setup, projection, or readiness.
 - Draft creation atomically persists draft identity, named role bindings,
   profile snapshots, and initial transaction values.
 - The persistence boundary independently validates the exact role constraints

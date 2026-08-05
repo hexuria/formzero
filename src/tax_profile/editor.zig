@@ -40,29 +40,9 @@ pub const Start = struct {
 pub const Ready = struct {
     base: Base,
     subject: model.Subject,
-    business_activities: []const model.BusinessActivity = &.{},
-    registration_facts: []const model.RegistrationFact = &.{},
 
     fn init(base: Base, subject: model.Subject) Ready {
         return .{ .base = base, .subject = subject };
-    }
-
-    pub fn withBusinessActivities(
-        self: Ready,
-        activities: []const model.BusinessActivity,
-    ) Ready {
-        var next = self;
-        next.business_activities = activities;
-        return next;
-    }
-
-    pub fn withRegistrationFacts(
-        self: Ready,
-        facts: []const model.RegistrationFact,
-    ) Ready {
-        var next = self;
-        next.registration_facts = facts;
-        return next;
     }
 
     pub fn build(self: Ready) model.RevisionError!model.ProfileRevision {
@@ -75,8 +55,6 @@ pub const Ready = struct {
             .identity = self.base.identity,
             .contact = self.base.contact,
             .subject = self.subject,
-            .business_activities = self.business_activities,
-            .registration_facts = self.registration_facts,
         };
         try revision.validate();
         return revision;
@@ -109,16 +87,6 @@ test "builder requires a subject before a revision can be built" {
             .email_address = try field.EmailAddress.parse("maria@example.ph"),
         },
     };
-    const activity = [_]model.BusinessActivity{.{
-        .id = try model.BusinessActivityId.parse("activity-retail"),
-        .line_of_business = try field.LineOfBusiness.parse("Retail"),
-        .atc = try field.Atc.parse("PT010"),
-        .effective = try model.EffectivePeriod.init(
-            try model.Date.parseIso("2026-01-01"),
-            null,
-        ),
-    }};
-
     // `begin(base).build()` cannot compile: only `Ready` exposes `build`.
     const revision = try begin(base)
         .soleProprietor(.{ .person = .{
@@ -126,9 +94,8 @@ test "builder requires a subject before a revision can be built" {
             .date_of_birth = try model.Date.parseIso("1995-06-01"),
             .citizenship = try field.Citizenship.parse("Filipino"),
         } })
-        .withBusinessActivities(&activity)
         .build();
-    try std.testing.expectEqual(@as(usize, 1), revision.business_activities.len);
+    try std.testing.expectEqual(@as(u32, 1), revision.sequence);
 }
 
 test "builder never hides an invalid revision behind defaults" {

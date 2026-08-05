@@ -37,7 +37,9 @@ pub const CatalogProfileKey = enum {
     date_of_birth,
     citizenship,
     foreign_tax_number,
+    accounting_period_basis,
     line_of_business,
+    eopt_tier,
     atc,
     tax_type,
     government_withholding_agent,
@@ -78,7 +80,9 @@ pub fn reusableField(raw: []const u8) ?field.ReusableField {
         .date_of_birth => .date_of_birth,
         .citizenship => .citizenship,
         .foreign_tax_number => .foreign_tax_number,
+        .accounting_period_basis => .accounting_period_basis,
         .line_of_business => .line_of_business,
+        .eopt_tier => .eopt_tier,
         .atc => .atc,
         .tax_type => .tax_type,
         .government_withholding_agent => .government_withholding_agent,
@@ -116,6 +120,7 @@ pub fn domainSubjectKind(
         .sole_proprietor => .sole_proprietor,
         .corporation => .corporation,
         .partnership => .partnership,
+        .cooperative => .cooperative,
         .estate => .estate,
         .trust => .trust,
         .other_legal_entity => .other_legal_entity,
@@ -154,9 +159,6 @@ pub const Issue = union(enum) {
         subject: model.SubjectKind,
     },
     missing_capability: TargetContext,
-    ambiguous_business_activity: TargetContext,
-    unknown_business_activity: TargetContext,
-    inactive_business_activity: TargetContext,
 };
 
 pub const OwnedProjection = struct {
@@ -221,9 +223,10 @@ const RoleState = struct {
 /// Project all direct profile targets for one exact editor revision.
 ///
 /// `bindings` is a named map expressed as a slice: position has no meaning.
-/// Each binding independently carries the selected business activity. A sole
-/// effective activity may be resolved by the domain capability layer; two or
-/// more effective activities without a selection produce an explicit issue.
+/// Forms Set membership is authoritative for the filer. Generated filer
+/// subject allowlists remain useful catalog metadata, but do not reject an
+/// explicitly activated form. Constraints for genuine secondary roles, such
+/// as spouse, remain enforced here.
 pub fn project(
     allocator: std.mem.Allocator,
     form_revision: ids.FormRevision,
@@ -345,7 +348,7 @@ pub fn project(
             continue;
         }
         const subject = binding.revision.subject.kind();
-        if (!allowsSubject(state.policy.?, subject)) {
+        if (role != .filer and !allowsSubject(state.policy.?, subject)) {
             try issues.append(allocator, .{ .subject_not_allowed = .{
                 .role = role,
                 .subject = subject,
@@ -385,20 +388,7 @@ pub fn project(
             reusable_field,
             effective_on,
             binding.selection,
-        ) catch |reason| {
-            try issues.append(allocator, switch (reason) {
-                error.BusinessActivitySelectionRequired => .{
-                    .ambiguous_business_activity = context,
-                },
-                error.UnknownBusinessActivity => .{
-                    .unknown_business_activity = context,
-                },
-                error.InactiveBusinessActivity => .{
-                    .inactive_business_activity = context,
-                },
-            });
-            continue;
-        };
+        ) catch unreachable;
         if (value == null) {
             if (catalog_field.profile_presence == .required) {
                 try issues.append(
@@ -414,11 +404,7 @@ pub fn project(
             .role = role,
             .target = target,
             .value = value.?,
-            .provenance = provenanceFor(
-                binding,
-                reusable_field,
-                effective_on,
-            ),
+            .provenance = provenanceFor(binding),
         });
     }
 
@@ -446,40 +432,12 @@ fn allowsSubject(
 
 fn provenanceFor(
     binding: Binding,
-    reusable_field: field.ReusableField,
-    effective_on: model.Date,
 ) projection.Provenance {
-    var business_activity_id: ?model.BusinessActivityId = null;
-    var registration_fact_id: ?model.RegistrationFactId = null;
-
-    if (reusable_field == .atc or reusable_field == .line_of_business) {
-        const activity = capability.resolveBusinessActivity(
-            binding.revision,
-            effective_on,
-            binding.selection,
-        ) catch unreachable;
-        if (activity) |selected| business_activity_id = selected.id;
-    }
-
-    const fact_kind: ?model.RegistrationFactKind = switch (reusable_field) {
-        .tax_type => .tax_type,
-        .government_withholding_agent => .government_withholding_agent,
-        .special_rate_basis => .special_rate_basis,
-        else => null,
-    };
-    if (fact_kind) |kind| {
-        if (binding.revision.registrationFact(kind, effective_on)) |fact| {
-            registration_fact_id = fact.id;
-        }
-    }
-
     return .{
         .profile_id = binding.revision.profile_id,
         .revision_id = binding.revision.id,
         .revision_sequence = binding.revision.sequence,
         .revision_source = binding.revision.source,
-        .business_activity_id = business_activity_id,
-        .registration_fact_id = registration_fact_id,
     };
 }
 
@@ -607,8 +565,6 @@ fn completeRevision(
     revision_id: []const u8,
     tin: []const u8,
     name: []const u8,
-    activities: []const model.BusinessActivity,
-    facts: []const model.RegistrationFact,
 ) !model.ProfileRevision {
     return .{
         .profile_id = try model.ProfileId.parse(profile_id),
@@ -646,8 +602,11 @@ fn completeRevision(
                 "EXAMPLE TRADING",
             ),
         } },
-        .business_activities = activities,
-        .registration_facts = facts,
+        .accounting_period_basis = .calendar,
+        .eopt_tier = .micro,
+        .primary_line_of_business = try field.LineOfBusiness.parse(
+            "Base consulting",
+        ),
     };
 }
 
@@ -655,16 +614,12 @@ fn completeLegalRevision(
     profile_id: []const u8,
     revision_id: []const u8,
     tin: []const u8,
-    activities: []const model.BusinessActivity,
-    facts: []const model.RegistrationFact,
 ) !model.ProfileRevision {
     var revision = try completeRevision(
         profile_id,
         revision_id,
         tin,
         "EXAMPLE CORPORATION",
-        activities,
-        facts,
     );
     revision.subject = .{ .legal_entity = .{
         .registered_name = try field.RegisteredName.parse(
@@ -697,7 +652,7 @@ fn spouseTargetCount(definition: *const catalog.FormDefinition) usize {
 
 test "closed generated key vocabulary maps exhaustively to ReusableField" {
     try std.testing.expectEqual(
-        @as(usize, 16),
+        @as(usize, 18),
         std.meta.fields(CatalogProfileKey).len,
     );
 
@@ -711,7 +666,7 @@ test "closed generated key vocabulary maps exhaustively to ReusableField" {
             @tagName(reusable),
         );
     }
-    try std.testing.expectEqual(@as(usize, 16), mapped.count());
+    try std.testing.expectEqual(@as(usize, 18), mapped.count());
     try std.testing.expect(reusableField("not_a_profile_key") == null);
 
     var observed = field.FieldSet.initEmpty();
@@ -743,7 +698,7 @@ test "closed generated key vocabulary maps exhaustively to ReusableField" {
         );
     }
     try std.testing.expectEqual(
-        @as(usize, 34),
+        @as(usize, 33),
         catalog.optional_profile_target_count,
     );
 }
@@ -751,69 +706,22 @@ test "closed generated key vocabulary maps exhaustively to ReusableField" {
 test "all ten editor revisions project all ninety-one profile targets" {
     const allocator = std.testing.allocator;
     const on = try model.Date.parseIso("2026-03-31");
-    const activities = [_]model.BusinessActivity{.{
-        .id = try model.BusinessActivityId.parse("activity-retail"),
-        .line_of_business = try field.LineOfBusiness.parse("Retail"),
-        .atc = try field.Atc.parse("PT010"),
-        .effective = try model.EffectivePeriod.init(
-            try model.Date.parseIso("2026-01-01"),
-            null,
-        ),
-    }};
-    const facts = [_]model.RegistrationFact{
-        .{
-            .id = try model.RegistrationFactId.parse("fact-tax-type"),
-            .effective = try model.EffectivePeriod.init(
-                try model.Date.parseIso("2026-01-01"),
-                null,
-            ),
-            .value = .{
-                .tax_type = try field.TaxType.parse("Percentage Tax"),
-            },
-        },
-        .{
-            .id = try model.RegistrationFactId.parse("fact-gwa"),
-            .effective = try model.EffectivePeriod.init(
-                try model.Date.parseIso("2026-01-01"),
-                null,
-            ),
-            .value = .{ .government_withholding_agent = .yes },
-        },
-        .{
-            .id = try model.RegistrationFactId.parse("fact-special-rate"),
-            .effective = try model.EffectivePeriod.init(
-                try model.Date.parseIso("2026-01-01"),
-                null,
-            ),
-            .value = .{
-                .special_rate_basis = try field.SpecialRateBasis.parse(
-                    "Treaty registration",
-                ),
-            },
-        },
-    };
     var filer = try completeRevision(
         "profile-filer",
         "revision-filer",
         "123-456-789-000",
         "JUAN DELA CRUZ",
-        &activities,
-        &facts,
     );
     var spouse = try completeRevision(
         "profile-spouse",
         "revision-spouse",
         "987-654-321-000",
         "ANA DELA CRUZ",
-        &activities,
-        &facts,
     );
     var legal_filer = try completeLegalRevision(
         "profile-legal-filer",
         "revision-legal-filer",
         "456-789-123-000",
-        &activities,
-        &facts,
     );
     const person_bindings = [_]Binding{
         .{ .role = .filer, .revision = &filer },
@@ -887,7 +795,6 @@ test "corrected ownership source contracts stay outside direct profile projectio
         provenance: catalog.Provenance,
         source_key: ?[]const u8 = null,
         fixed_value: ?[]const u8 = null,
-        optional_seed_source: ?[]const u8 = null,
     };
     const contracts = [_]Contract{
         .{
@@ -899,12 +806,6 @@ test "corrected ownership source contracts stay outside direct profile projectio
             .code = "0605",
             .id = "0605.1999-07-ENCS.input.tax_type_only_source_proven_pairs",
             .provenance = .transaction,
-        },
-        .{
-            .code = "0605",
-            .id = "0605.1999-07-ENCS.input.line_of_business_occupation",
-            .provenance = .transaction,
-            .optional_seed_source = "business_activity.line_of_business",
         },
         .{
             .code = "1601C",
@@ -942,8 +843,8 @@ test "corrected ownership source contracts stay outside direct profile projectio
         },
         .{
             .code = "2551Q",
-            .id = "2551Q.2018-01-ENCS.input.income_tax_rate_election",
-            .provenance = .taxpayer_year,
+            .id = "2551Q.2018-01-ENCS.input.what_income_tax_rates_are_you_availing",
+            .provenance = .tax_form_profile,
             .source_key = "income_tax_rate_election",
         },
     };
@@ -966,15 +867,20 @@ test "corrected ownership source contracts stay outside direct profile projectio
         if (expected.fixed_value) |value| {
             try std.testing.expectEqualStrings(value, actual.fixed_value.?);
         } else try std.testing.expect(actual.fixed_value == null);
-        if (expected.optional_seed_source) |value| {
-            try std.testing.expectEqualStrings(
-                value,
-                actual.optional_seed_source.?,
-            );
-        } else try std.testing.expect(actual.optional_seed_source == null);
     }
 
-    try std.testing.expectEqual(@as(usize, 2), catalog.taxpayer_year_target_count);
+    const payment_form = catalog.findForm("0605").?;
+    const line_of_business = for (payment_form.fields) |*catalog_field| {
+        if (std.mem.eql(
+            u8,
+            catalog_field.id,
+            "0605.1999-07-ENCS.input.line_of_business_occupation",
+        )) break catalog_field;
+    } else return error.TestUnexpectedResult;
+    try std.testing.expectEqual(catalog.Provenance.profile, line_of_business.provenance);
+    try std.testing.expectEqualStrings("line_of_business", line_of_business.profile_key.?);
+
+    try std.testing.expectEqual(@as(usize, 1), catalog.taxpayer_year_target_count);
     try std.testing.expectEqual(@as(usize, 4), catalog.form_policy_target_count);
 }
 
@@ -995,22 +901,11 @@ test "2551Q schedule ATC is transaction data and is never projected" {
     const allocator = std.testing.allocator;
     const definition = catalog.findForm("2551Q").?;
     const on = try model.Date.parseIso("2026-03-31");
-    const activities = [_]model.BusinessActivity{.{
-        .id = try model.BusinessActivityId.parse("activity-retail"),
-        .line_of_business = try field.LineOfBusiness.parse("Retail"),
-        .atc = try field.Atc.parse("PT010"),
-        .effective = try model.EffectivePeriod.init(
-            try model.Date.parseIso("2026-01-01"),
-            null,
-        ),
-    }};
     var filer = try completeRevision(
         "profile-filer",
         "revision-filer",
         "123-456-789-000",
         "JUAN DELA CRUZ",
-        &activities,
-        &.{},
     );
 
     var result = try project(
@@ -1024,7 +919,7 @@ test "2551Q schedule ATC is transaction data and is never projected" {
         .accepted => |accepted| accepted,
         .rejected => return error.TestUnexpectedResult,
     };
-    try std.testing.expectEqual(@as(usize, 7), accepted.entries.len);
+    try std.testing.expectEqual(@as(usize, 8), accepted.entries.len);
     try std.testing.expectEqual(@as(usize, 1), definition.profile_roles.len);
     try std.testing.expectEqual(
         catalog.ProfileCardinality.exactly_one,
@@ -1075,16 +970,12 @@ test "1701 and 1701Q omit an unbound optional spouse and add a bound spouse" {
         "revision-filer",
         "123-456-789-000",
         "JUAN DELA CRUZ",
-        &.{},
-        &.{},
     );
     var spouse = try completeRevision(
         "profile-spouse",
         "revision-spouse",
         "987-654-321-000",
         "ANA DELA CRUZ",
-        &.{},
-        &.{},
     );
 
     for ([_][]const u8{ "1701", "1701Q" }) |code| {
@@ -1153,8 +1044,6 @@ test "1701 and 1701Q reject the same stable profile in filer and spouse roles" {
         "revision-filer",
         "123-456-789-000",
         "JUAN DELA CRUZ",
-        &.{},
-        &.{},
     );
 
     for ([_][]const u8{ "1701", "1701Q" }) |code| {
@@ -1198,16 +1087,12 @@ test "catalog projection rejects bindings for undeclared profile roles" {
         "revision-filer",
         "123-456-789-000",
         "JUAN DELA CRUZ",
-        &.{},
-        &.{},
     );
     var unexpected = try completeRevision(
         "profile-unexpected",
         "revision-unexpected",
         "987-654-321-000",
         "UNEXPECTED PROFILE",
-        &.{},
-        &.{},
     );
     const bindings = [_]Binding{
         .{ .role = .filer, .revision = &filer },
@@ -1246,8 +1131,6 @@ test "missing optional applicability fields are omitted" {
         "revision-filer",
         "123-456-789-000",
         "JUAN DELA CRUZ",
-        &.{},
-        &.{},
     );
     filer.subject.sole_proprietor.person.date_of_birth = null;
     filer.subject.sole_proprietor.person.citizenship = null;
@@ -1275,32 +1158,54 @@ test "missing optional applicability fields are omitted" {
     }
 }
 
-test "disallowed subject produces a precise role issue" {
+test "active Forms Set filer is not rejected by a catalog subject allowlist" {
     const allocator = std.testing.allocator;
     const definition = catalog.findForm("1702MX").?;
     const on = try model.Date.parseIso("2026-03-31");
-    const activities = [_]model.BusinessActivity{.{
-        .id = try model.BusinessActivityId.parse("activity-retail"),
-        .line_of_business = try field.LineOfBusiness.parse("Retail"),
-        .atc = try field.Atc.parse("PT010"),
-        .effective = try model.EffectivePeriod.init(
-            try model.Date.parseIso("2026-01-01"),
-            null,
-        ),
-    }};
     var person = try completeRevision(
         "profile-person",
         "revision-person",
         "123-456-789-000",
         "JUAN DELA CRUZ",
-        &activities,
-        &.{},
     );
 
     var result = try project(
         allocator,
         try typedRevision(definition),
         &.{.{ .role = .filer, .revision = &person }},
+        on,
+    );
+    defer result.deinit(allocator);
+    const accepted = switch (result) {
+        .accepted => |accepted| accepted,
+        .rejected => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(profileTargetCount(definition), accepted.entries.len);
+}
+
+test "spouse subject policy remains enforced" {
+    const allocator = std.testing.allocator;
+    const definition = catalog.findForm("1701Q").?;
+    const on = try model.Date.parseIso("2026-03-31");
+    var filer = try completeRevision(
+        "profile-filer",
+        "revision-filer",
+        "123-456-789-000",
+        "JUAN DELA CRUZ",
+    );
+    var spouse = try completeLegalRevision(
+        "profile-spouse",
+        "revision-spouse",
+        "987-654-321-000",
+    );
+
+    var result = try project(
+        allocator,
+        try typedRevision(definition),
+        &.{
+            .{ .role = .filer, .revision = &filer },
+            .{ .role = .spouse, .revision = &spouse },
+        },
         on,
     );
     defer result.deinit(allocator);
@@ -1311,9 +1216,9 @@ test "disallowed subject produces a precise role issue" {
     try std.testing.expectEqual(@as(usize, 1), rejected.issues.len);
     switch (rejected.issues[0]) {
         .subject_not_allowed => |issue| {
-            try std.testing.expectEqual(ids.Role.filer, issue.role);
+            try std.testing.expectEqual(ids.Role.spouse, issue.role);
             try std.testing.expectEqual(
-                model.SubjectKind.sole_proprietor,
+                model.SubjectKind.corporation,
                 issue.subject,
             );
         },
@@ -1330,8 +1235,6 @@ test "missing capability identifies the exact concrete target" {
         "revision-filer",
         "123-456-789-000",
         "JUAN DELA CRUZ",
-        &.{},
-        &.{},
     );
     filer.contact.email_address = null;
 
@@ -1363,46 +1266,18 @@ test "missing capability identifies the exact concrete target" {
     }
 }
 
-test "ambiguous activities are reported only for activity-owned profile targets" {
+test "Base Line of Business projects directly" {
     const allocator = std.testing.allocator;
     const definition = catalog.findForm("1601C").?;
     const on = try model.Date.parseIso("2026-03-31");
-    const activities = [_]model.BusinessActivity{
-        .{
-            .id = try model.BusinessActivityId.parse("activity-retail"),
-            .line_of_business = try field.LineOfBusiness.parse("Retail"),
-            .atc = try field.Atc.parse("PT010"),
-            .effective = try model.EffectivePeriod.init(
-                try model.Date.parseIso("2026-01-01"),
-                null,
-            ),
-        },
-        .{
-            .id = try model.BusinessActivityId.parse("activity-services"),
-            .line_of_business = try field.LineOfBusiness.parse("Services"),
-            .atc = try field.Atc.parse("PT040"),
-            .effective = try model.EffectivePeriod.init(
-                try model.Date.parseIso("2026-01-01"),
-                null,
-            ),
-        },
-    };
-    const facts = [_]model.RegistrationFact{.{
-        .id = try model.RegistrationFactId.parse("fact-tax-type"),
-        .effective = try model.EffectivePeriod.init(
-            try model.Date.parseIso("2026-01-01"),
-            null,
-        ),
-        .value = .{ .tax_type = try field.TaxType.parse("Income Tax") },
-    }};
     var filer = try completeRevision(
         "profile-filer",
         "revision-filer",
         "123-456-789-000",
         "JUAN DELA CRUZ",
-        &activities,
-        &facts,
     );
+    filer.primary_line_of_business =
+        try field.LineOfBusiness.parse("Base consulting");
 
     var result = try project(
         allocator,
@@ -1411,23 +1286,59 @@ test "ambiguous activities are reported only for activity-owned profile targets"
         on,
     );
     defer result.deinit(allocator);
-    const rejected = switch (result) {
-        .accepted => return error.TestUnexpectedResult,
-        .rejected => |rejected| rejected,
+    const accepted = switch (result) {
+        .accepted => |accepted| accepted,
+        .rejected => return error.TestUnexpectedResult,
     };
-
-    var ambiguous_count: usize = 0;
-    for (rejected.issues) |issue| {
-        switch (issue) {
-            .ambiguous_business_activity => |context| {
-                try std.testing.expectEqual(
-                    field.ReusableField.line_of_business,
-                    context.reusable_field,
-                );
-                ambiguous_count += 1;
-            },
-            else => {},
+    const target = try ids.FieldId.parse(
+        "1601C.2018-01-ENCS.input.line_of_business",
+    );
+    const entry = blk: {
+        for (accepted.entries) |*candidate| {
+            if (candidate.target.eql(&target)) break :blk candidate;
         }
-    }
-    try std.testing.expectEqual(@as(usize, 1), ambiguous_count);
+        return error.TestUnexpectedResult;
+    };
+    try std.testing.expectEqualStrings(
+        "Base consulting",
+        entry.value.line_of_business.asSlice(),
+    );
+}
+
+test "2550Q projects EOPT tier from the Base Tax Profile" {
+    const allocator = std.testing.allocator;
+    const definition = catalog.findForm("2550Q").?;
+    const on = try model.Date.parseIso("2026-03-31");
+    var filer = try completeRevision(
+        "profile-filer",
+        "revision-filer",
+        "123-456-789-000",
+        "JUAN DELA CRUZ",
+    );
+    filer.eopt_tier = .large;
+
+    var result = try project(
+        allocator,
+        try typedRevision(definition),
+        &.{.{ .role = .filer, .revision = &filer }},
+        on,
+    );
+    defer result.deinit(allocator);
+    const accepted = switch (result) {
+        .accepted => |accepted| accepted,
+        .rejected => return error.TestUnexpectedResult,
+    };
+    const target = try ids.FieldId.parse(
+        "2550Q.2024-04-ENCS.input.eopt_taxpayer_classification",
+    );
+    const entry = blk: {
+        for (accepted.entries) |*candidate| {
+            if (candidate.target.eql(&target)) break :blk candidate;
+        }
+        return error.TestUnexpectedResult;
+    };
+    try std.testing.expectEqualStrings(
+        "Large",
+        entry.value.eopt_tier.asSlice(),
+    );
 }

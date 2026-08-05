@@ -6,8 +6,9 @@
   version `0.1.0` build `25`
 - Legacy source checkout:
   `/Volumes/goldcoders/reverse-engineer-ebir-forms/bir` at `e34fa848`
-- Status: historical evidence baseline at `abd45c6`, with the execution-branch
-  workflow result linked below
+- Status: **historical evidence only**. The Registration activity/obligation
+  pilot audited here was removed by the 2026-08-05 Tax Profile and Tax Form
+  Profile Simplification and is not the current runtime contract.
 - Governing execution contract:
   [`TAX_PROFILE_AND_FORM_PROFILE_EXECUTION_PLAN_2026-08-04.md`](TAX_PROFILE_AND_FORM_PROFILE_EXECUTION_PLAN_2026-08-04.md)
 

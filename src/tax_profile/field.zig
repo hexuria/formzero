@@ -24,6 +24,7 @@ const TextKind = enum {
     citizenship,
     foreign_tax_number,
     line_of_business,
+    eopt_tier,
     tax_type,
     special_rate_basis,
     source_reference,
@@ -71,6 +72,7 @@ pub const RegisteredAddress = BoundedText(.registered_address, 255);
 pub const Citizenship = BoundedText(.citizenship, 80);
 pub const ForeignTaxNumber = BoundedText(.foreign_tax_number, 64);
 pub const LineOfBusiness = BoundedText(.line_of_business, 160);
+pub const EoptTier = BoundedText(.eopt_tier, 16);
 pub const TaxType = BoundedText(.tax_type, 80);
 pub const SpecialRateBasis = BoundedText(.special_rate_basis, 160);
 pub const SourceReference = BoundedText(.source_reference, 160);
@@ -78,6 +80,21 @@ pub const SourceReference = BoundedText(.source_reference, 160);
 pub const GovernmentWithholdingAgent = enum {
     no,
     yes,
+};
+
+/// Reusable accounting-period ownership. Fiscal year-end month remains on
+/// the containing effective-dated profile revision because it is meaningful
+/// only when this value is `.fiscal`.
+pub const AccountingPeriodBasis = enum {
+    calendar,
+    fiscal,
+
+    pub fn label(self: AccountingPeriodBasis) []const u8 {
+        return switch (self) {
+            .calendar => "Calendar year",
+            .fiscal => "Fiscal year",
+        };
+    }
 };
 
 pub const TinError = error{
@@ -356,7 +373,9 @@ pub const ReusableField = enum {
     date_of_birth,
     citizenship,
     foreign_tax_number,
+    accounting_period_basis,
     line_of_business,
+    eopt_tier,
     atc,
     tax_type,
     government_withholding_agent,
@@ -377,7 +396,9 @@ pub const Value = union(ReusableField) {
     date_of_birth: Date,
     citizenship: Citizenship,
     foreign_tax_number: ForeignTaxNumber,
+    accounting_period_basis: AccountingPeriodBasis,
     line_of_business: LineOfBusiness,
+    eopt_tier: EoptTier,
     atc: Atc,
     tax_type: TaxType,
     government_withholding_agent: GovernmentWithholdingAgent,
@@ -401,7 +422,9 @@ pub const Value = union(ReusableField) {
             .date_of_birth => |value| value.eql(other.date_of_birth),
             .citizenship => |value| value.eql(&other.citizenship),
             .foreign_tax_number => |value| value.eql(&other.foreign_tax_number),
+            .accounting_period_basis => |value| value == other.accounting_period_basis,
             .line_of_business => |value| value.eql(&other.line_of_business),
+            .eopt_tier => |value| value.eql(&other.eopt_tier),
             .atc => |value| value.eql(&other.atc),
             .tax_type => |value| value.eql(&other.tax_type),
             .government_withholding_agent => |value| value == other.government_withholding_agent,

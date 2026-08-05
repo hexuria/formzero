@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "kind": "human-approved-form-field-ownership",
+  "approval": {
+    "status": "human_approved",
+    "basis": "Tax Profile and Tax Form Profile Simplification, 2026-08-05"
+  },
+  "publicationPolicy": {
+    "semanticOwnershipMayBeAutoInferred": false,
+    "generatorBehavior": "validate_only",
+    "catalogPublication": "explicit_human_change_required"
+  },
+  "form": {
+    "code": "2550Q",
+    "title": "Quarterly Value-Added Tax (VAT) Return",
+    "revision": "2024-04-ENCS",
+    "revisionLabel": "April 2024 (ENCS)",
+    "pageCount": 2
+  },
+  "sourceEvidence": {
+    "sourceFile": "2550Q  April 2024 ENCS_Final.pdf",
+    "localSourcePath": "/Users/uriah/Downloads/forms/2550Qv2024/2550Q  April 2024 ENCS_Final.pdf",
+    "sha256": "18eb16925010fdda820cef958221ba2c0d073066efa93a898113e39b31135a25",
+    "reviewedPages": [1, 2]
+  },
+  "fields": [
+    {"officialItemId":"1","officialLabel":"For the: Calendar / Fiscal","semanticKey":"accounting_period_basis","owner":"base","applicability":"always","evidence":{"page":1,"region":"filing header"}},
+    {"officialItemId":"2","officialLabel":"Year Ended (MM/YYYY)","semanticKey":"taxable_year_end","owner":"filing-context","applicability":"always; derived from filing year and accounting-period basis","evidence":{"page":1,"region":"filing header"}},
+    {"officialItemId":"3","officialLabel":"Quarter","semanticKey":"filing_quarter","owner":"filing-context","applicability":"always; selected filing route","evidence":{"page":1,"region":"filing header"}},
+    {"officialItemId":"4","officialLabel":"Return Period (MM/DD/YYYY): From / To","semanticKey":"return_period","owner":"filing-context","applicability":"always; derived from quarter, tax year, and accounting-period basis","evidence":{"page":1,"region":"filing header"}},
+    {"officialItemId":"5","officialLabel":"Amended Return?","semanticKey":"amended_return","owner":"transaction","applicability":"always","evidence":{"page":1,"region":"filing header"}},
+    {"officialItemId":"6","officialLabel":"Short Period Return?","semanticKey":"short_period_return","owner":"transaction","applicability":"always","evidence":{"page":1,"region":"filing header"}},
+    {"officialItemId":"7","officialLabel":"Taxpayer Identification Number (TIN)","semanticKey":"tin","owner":"base","applicability":"always","evidence":{"page":1,"region":"Part I - Background Information"}},
+    {"officialItemId":"8","officialLabel":"RDO Code","semanticKey":"rdo_code","owner":"base","applicability":"always","evidence":{"page":1,"region":"Part I - Background Information"}},
+    {"officialItemId":"9","officialLabel":"Taxpayer's Name (Last Name, First Name, Middle Name for Individual OR Registered Name for Non-Individual)","semanticKey":"registered_name","owner":"base","applicability":"always; natural-person formatting for individuals","evidence":{"page":1,"region":"Part I - Background Information"}},
+    {"officialItemId":"10","officialLabel":"Registered Address","semanticKey":"registered_address","owner":"base","applicability":"always","evidence":{"page":1,"region":"Part I - Background Information"}},
+    {"officialItemId":"10A","officialLabel":"ZIP Code","semanticKey":"zip_code","owner":"base","applicability":"always","evidence":{"page":1,"region":"Part I - Background Information"}},
+    {"officialItemId":"11","officialLabel":"Contact Number (Landline/Cellphone No.)","semanticKey":"contact_number","owner":"base","applicability":"always","evidence":{"page":1,"region":"Part I - Background Information"}},
+    {"officialItemId":"12","officialLabel":"Email Address","semanticKey":"registered_email","owner":"base","applicability":"always","evidence":{"page":1,"region":"Part I - Background Information"}},
+    {
+      "officialItemId": "13",
+      "officialLabel": "Taxpayer Classification: Micro / Small / Medium / Large",
+      "semanticKey": "eopt_tier",
+      "owner": "base",
+      "applicability": "always for this exact 2550Q revision; resolved from the effective Base Tax Profile EOPT tier",
+      "options": ["micro", "small", "medium", "large"],
+      "evidence": {"page":1,"region":"Part I - Background Information"}
+    },
+    {"officialItemId":"14","officialLabel":"Are you availing of tax relief under Special Law or International Tax Treaty?","semanticKey":"tax_relief_applicable","owner":"transaction","applicability":"per return","evidence":{"page":1,"region":"Part I - Background Information"}},
+    {"officialItemId":"14A","officialLabel":"If yes, specify","semanticKey":"tax_relief_basis","owner":"transaction","applicability":"when Item 14 is Yes","evidence":{"page":1,"region":"Part I - Background Information"}},
+    {"officialItemId":"15","officialLabel":"Net VAT Payable/(Excess Input Tax) (From Part IV, Item 61)","semanticKey":"net_vat_payable_excess_input_tax","owner":"transaction","applicability":"always","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
+    {"officialItemId":"16","officialLabel":"Creditable VAT Withheld (From Part V - Schedule 3, Column D)","semanticKey":"creditable_vat_withheld","owner":"transaction","applicability":"when Schedule 3 has entries","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
+    {"officialItemId":"17","officialLabel":"Advance VAT Payments (From Part V - Schedule 4)","semanticKey":"advance_vat_payments","owner":"transaction","applicability":"when Schedule 4 has entries","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
+    {"officialItemId":"18","officialLabel":"VAT paid in return previously filed, if this is an amended return","semanticKey":"prior_return_payment","owner":"transaction","applicability":"amended return only","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
+    {"officialItemId":"19","officialLabel":"Other Credits/Payment (Specify)","semanticKey":"other_credit_payment","owner":"transaction","applicability":"when another credit or payment applies","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
+    {"officialItemId":"20","officialLabel":"Total Tax Credits/Payment (Sum of Items 16 to 19)","semanticKey":"total_tax_credits_payment","owner":"transaction","applicability":"always","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
+    {"officialItemId":"21","officialLabel":"Tax Still Payable/(Excess Credits) (Item 15 Less Item 20)","semanticKey":"tax_payable_excess_credits","owner":"transaction","applicability":"always","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
+    {"officialItemId":"22","officialLabel":"Surcharge","semanticKey":"penalty_surcharge","owner":"transaction","applicability":"when a surcharge applies","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
+    {"officialItemId":"23","officialLabel":"Interest","semanticKey":"penalty_interest","owner":"transaction","applicability":"when interest applies","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
+    {"officialItemId":"24","officialLabel":"Compromise","semanticKey":"penalty_compromise","owner":"transaction","applicability":"when a compromise penalty applies","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
+    {"officialItemId":"25","officialLabel":"Total Penalties (Sum of Items 22 to 24)","semanticKey":"total_penalties","owner":"transaction","applicability":"always","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
+    {"officialItemId":"26","officialLabel":"TOTAL AMOUNT PAYABLE/(Excess Credits) (Sum of Items 21 and 25)","semanticKey":"total_amount_payable_excess_credits","owner":"transaction","applicability":"always","evidence":{"page":1,"region":"Part II - Total Tax Payable"}},
+    {"officialItemId":"27","officialLabel":"Cash/Bank Debit Advice","semanticKey":"payment_cash_bank_debit_advice","owner":"transaction","applicability":"when used","evidence":{"page":1,"region":"Part III - Details of Payment"}},
+    {"officialItemId":"28","officialLabel":"Check","semanticKey":"payment_check","owner":"transaction","applicability":"when used","evidence":{"page":1,"region":"Part III - Details of Payment"}},
+    {"officialItemId":"29","officialLabel":"Tax Debit Memo","semanticKey":"payment_tax_debit_memo","owner":"transaction","applicability":"when used","evidence":{"page":1,"region":"Part III - Details of Payment"}},
+    {"officialItemId":"30","officialLabel":"Others (Specify below)","semanticKey":"payment_other","owner":"transaction","applicability":"when used","evidence":{"page":1,"region":"Part III - Details of Payment"}},
+    {"officialItemId":"31","officialLabel":"VATable Sales","semanticKey":"vatable_sales","owner":"transaction","applicability":"when VATable sales exist","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"32","officialLabel":"Zero-Rated Sales","semanticKey":"zero_rated_sales","owner":"transaction","applicability":"when zero-rated sales exist","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"33","officialLabel":"Exempt Sales","semanticKey":"exempt_sales","owner":"transaction","applicability":"when exempt sales exist","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"34","officialLabel":"Total Sales & Output Tax Due","semanticKey":"total_sales_output_tax_due","owner":"transaction","applicability":"always","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"35","officialLabel":"Less: Output VAT on Uncollected Receivables","semanticKey":"output_vat_uncollected_receivables","owner":"transaction","applicability":"when applicable","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"36","officialLabel":"Add: Output VAT on Recovered Uncollected Receivables Previously Deducted","semanticKey":"output_vat_recovered_receivables","owner":"transaction","applicability":"when applicable","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"37","officialLabel":"Total Adjusted Output Tax Due","semanticKey":"total_adjusted_output_tax_due","owner":"transaction","applicability":"always","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"38","officialLabel":"Input Tax Carried Over from Previous Quarter","semanticKey":"input_tax_carried_over","owner":"transaction","applicability":"when a prior-quarter balance exists","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"39","officialLabel":"Input Tax Deferred on Capital Goods Exceeding P1 Million from Previous Quarter","semanticKey":"deferred_capital_goods_input_tax_previous_quarter","owner":"transaction","applicability":"when Schedule 1 has a prior-period balance","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"40","officialLabel":"Transitional Input Tax","semanticKey":"transitional_input_tax","owner":"transaction","applicability":"when applicable","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"41","officialLabel":"Presumptive Input Tax","semanticKey":"presumptive_input_tax","owner":"transaction","applicability":"when applicable","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"42","officialLabel":"Others (Specify)","semanticKey":"other_allowable_input_tax","owner":"transaction","applicability":"when applicable","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"43","officialLabel":"Total (Sum of Items 38B to 42B)","semanticKey":"total_prior_allowable_input_tax","owner":"transaction","applicability":"always","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"44","officialLabel":"Domestic Purchases","semanticKey":"domestic_purchases","owner":"transaction","applicability":"when applicable","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"45","officialLabel":"Services Rendered by Non-Residents","semanticKey":"nonresident_services","owner":"transaction","applicability":"when applicable","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"46","officialLabel":"Importations","semanticKey":"importations","owner":"transaction","applicability":"when applicable","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"47","officialLabel":"Others (Specify)","semanticKey":"other_current_purchases","owner":"transaction","applicability":"when applicable","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"48","officialLabel":"Domestic Purchases with No Input Tax","semanticKey":"domestic_purchases_no_input_tax","owner":"transaction","applicability":"when applicable","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"49","officialLabel":"VAT-Exempt Importations","semanticKey":"vat_exempt_importations","owner":"transaction","applicability":"when applicable","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"50","officialLabel":"Total Current Purchases/Input Tax","semanticKey":"total_current_purchases_input_tax","owner":"transaction","applicability":"always","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"51","officialLabel":"Total Available Input Tax","semanticKey":"total_available_input_tax","owner":"transaction","applicability":"always","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"52","officialLabel":"Input Tax on Purchases/Importation of Capital Goods exceeding P1 Million deferred for the succeeding period","semanticKey":"deferred_capital_goods_input_tax_next_period","owner":"transaction","applicability":"when Schedule 1 has a carry-forward balance","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"53","officialLabel":"Input Tax Attributable to VAT Exempt Sales","semanticKey":"input_tax_attributable_to_exempt_sales","owner":"transaction","applicability":"when Schedule 2 applies","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"54","officialLabel":"VAT Refund/TCC Claimed","semanticKey":"vat_refund_tcc_claimed","owner":"transaction","applicability":"when claimed","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"55","officialLabel":"Input VAT on Unpaid Payables","semanticKey":"input_vat_unpaid_payables","owner":"transaction","applicability":"when applicable","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"56","officialLabel":"Others (Specify)","semanticKey":"other_input_tax_deduction","owner":"transaction","applicability":"when applicable","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"57","officialLabel":"Total Deductions from Input Tax","semanticKey":"total_input_tax_deductions","owner":"transaction","applicability":"always","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"58","officialLabel":"Add: Input VAT on Settled Unpaid Payables Previously Deducted","semanticKey":"input_vat_settled_unpaid_payables","owner":"transaction","applicability":"when applicable","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"59","officialLabel":"Adjusted Deductions from Input Tax","semanticKey":"adjusted_input_tax_deductions","owner":"transaction","applicability":"always","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"60","officialLabel":"Total Allowable Input Tax","semanticKey":"total_allowable_input_tax","owner":"transaction","applicability":"always","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"61","officialLabel":"Net VAT Payable/(Excess Input Tax)","semanticKey":"net_vat_payable_excess_input_tax","owner":"transaction","applicability":"always","evidence":{"page":2,"region":"Part IV - Details of VAT Computation"}},
+    {"officialItemId":"Schedule1","officialLabel":"Amortized Input Tax from Capital Goods","semanticKey":"capital_goods_input_tax_schedule","owner":"transaction","applicability":"when qualifying capital goods exist","evidence":{"page":2,"region":"Part V - Schedules"}},
+    {"officialItemId":"Schedule2","officialLabel":"Input Tax Attributable to VAT Exempt Sales","semanticKey":"vat_exempt_sales_input_tax_schedule","owner":"transaction","applicability":"when VAT-exempt sales exist","evidence":{"page":2,"region":"Part V - Schedules"}},
+    {"officialItemId":"Schedule3","officialLabel":"Creditable VAT Withheld","semanticKey":"creditable_vat_withheld_schedule","owner":"transaction","applicability":"when withholding evidence exists","evidence":{"page":2,"region":"Part V - Schedules"}},
+    {"officialItemId":"Schedule4","officialLabel":"Advance VAT Payment","semanticKey":"advance_vat_payment_schedule","owner":"transaction","applicability":"when advance VAT payments exist","evidence":{"page":2,"region":"Part V - Schedules"}}
+  ],
+  "repeatedProjections": [
+    {"page":2,"officialLabel":"TIN","semanticKey":"tin","owner":"base"},
+    {"page":2,"officialLabel":"Taxpayer's Last Name (if Individual) / Registered Name (if Non-Individual)","semanticKey":"registered_name","owner":"base"}
+  ],
+  "absenceAssertions": [
+    {
+      "semanticKey": "line_of_business",
+      "officialLabel": "Line of Business",
+      "presence": "absent_from_exact_revision",
+      "applicability": "must not be projected into 2550Q 2024-04-ENCS",
+      "evidence": {
+        "reviewedPages": [1, 2],
+        "method": "visual inspection plus layout-preserving text extraction",
+        "result": "No Line of Business field appears anywhere in this exact two-page revision"
+      }
+    }
+  ]
+}

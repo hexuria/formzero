@@ -8,7 +8,7 @@
 //!
 //! Exact saves require a frozen, allocation-free annual provenance value.
 //! The preparation aggregate may therefore release its SQLite-owned history
-//! immediately; taxpayer-year, Tax Form Profile, component, source, and seed
+//! immediately; taxpayer-year, Tax Form Profile, source, and seed
 //! identities cannot drift before the exact revision commits.
 
 const std = @import("std");
@@ -23,7 +23,6 @@ const field = @import("../tax_profile/field.zig");
 const model = @import("../tax_profile/model.zig");
 const profile_persistence = @import("../tax_profile/persistence_adapter.zig");
 const projection = @import("../tax_profile/projection.zig");
-const registration = @import("../tax_profile/registration.zig");
 const store = @import("../tax_profile/store.zig");
 const annual_profile = @import("../tax_profile/tax_form_profile.zig");
 const year_settings = @import("../tax_profile/taxpayer_year_settings.zig");
@@ -36,7 +35,6 @@ pub const BindingError = error{
     MissingFilerRole,
     UnsupportedExactRole,
     InconsistentRoleProfileRevision,
-    InconsistentRoleBusinessActivity,
     DuplicateProfileRoleInstance,
 };
 
@@ -60,8 +58,6 @@ pub const BridgeError = BindingError || GuardError || error{
     HistoricalTaxpayerYearRevisionMismatch,
     MissingHistoricalTaxFormProfileRevision,
     HistoricalTaxFormProfileRevisionMismatch,
-    MissingHistoricalRegistrationComponent,
-    HistoricalRegistrationComponentMismatch,
     HistoricalFormsSetDecisionMismatch,
 };
 
@@ -286,7 +282,7 @@ pub const ResumeReport = union(enum) {
 
 /// Derives the exact adapter's relation bindings directly from the accepted,
 /// immutable projection. Every field for a role must name one profile
-/// revision and, when present, one business activity.
+/// revision.
 pub fn roleBindingsFromAcceptedProjection(
     accepted: *const projection.Snapshot,
 ) BindingError!DerivedRoleBindings {
@@ -318,7 +314,6 @@ fn bindingForRole(
     role: ids.Role,
 ) BindingError!?exact_persistence.RoleInstanceBinding {
     var representative: ?*const projection.Provenance = null;
-    var activity: ?*const model.BusinessActivityId = null;
     for (accepted.slice()) |*entry| {
         if (entry.role != role) continue;
         if (representative) |prior| {
@@ -328,24 +323,11 @@ fn bindingForRole(
         } else {
             representative = &entry.provenance;
         }
-        if (entry.provenance.business_activity_id) |*candidate| {
-            if (activity) |prior_activity| {
-                if (!prior_activity.eql(candidate)) {
-                    return error.InconsistentRoleBusinessActivity;
-                }
-            } else {
-                activity = candidate;
-            }
-        }
     }
     const provenance = representative orelse return null;
     return .{
         .role = role,
         .instance_id = provenance.profile_id.asSlice(),
-        .business_activity_id = if (activity) |selected|
-            selected.asSlice()
-        else
-            null,
         .provenance = "historical_profile_projection",
     };
 }
@@ -690,22 +672,6 @@ fn verifyHistoricalSourceSnapshots(
                 ) orelse return error.HistoricalSourceSnapshotMismatch;
                 break :blk try formProfileValue(value.value);
             },
-            .business_activity_fact => |key| try historicalActivityFact(
-                repository,
-                allocator,
-                frozen,
-                key.role,
-                key.anchor_id,
-                key.key,
-            ),
-            .registration_obligation_fact => |key| try historicalObligationFact(
-                repository,
-                allocator,
-                frozen,
-                key.role,
-                key.anchor_id,
-                key.key,
-            ),
         };
         const value = expected orelse
             return error.HistoricalSourceSnapshotMismatch;
@@ -713,24 +679,6 @@ fn verifyHistoricalSourceSnapshots(
             return error.HistoricalSourceSnapshotMismatch;
         }
     }
-
-    // A component identity is independently checked even when its optional
-    // source value is absent. This prevents an unused or forged anchor row
-    // from surviving only because no copied-value comparison happened.
-    for (snapshot.components()) |*component| switch (component.*) {
-        .business_activity => |binding| try verifyHistoricalActivity(
-            repository,
-            allocator,
-            frozen.applicability_date,
-            binding,
-        ),
-        .registration_obligation => |binding| try verifyHistoricalObligation(
-            repository,
-            allocator,
-            frozen.applicability_date,
-            binding,
-        ),
-    };
 }
 
 fn historicalRevisionForRole(
@@ -820,16 +768,6 @@ fn formProfileValue(
 ) !draft_provenance.SnapshotValue {
     return switch (value) {
         .profile_id => |item| .{ .profile_id = item },
-        .business_activity_anchor_id => |item| .{
-            .business_activity_anchor_id = try registration.ActivityAnchorId.parse(
-                item.asSlice(),
-            ),
-        },
-        .registration_obligation_anchor_id => |item| .{
-            .registration_obligation_anchor_id = try registration.ObligationAnchorId.parse(
-                item.asSlice(),
-            ),
-        },
         .text => |item| .{ .text = try draft_provenance.OwnedText.copy(
             item.asSlice(),
         ) },
@@ -840,224 +778,6 @@ fn formProfileValue(
         .integer => |item| .{ .integer = item },
         .date => |item| .{ .date = item },
         .year => |item| .{ .year = item },
-    };
-}
-
-fn historicalActivityFact(
-    repository: *store.Store,
-    allocator: std.mem.Allocator,
-    frozen: *const FrozenExactProvenance,
-    role: form_catalog.Role,
-    anchor_id: registration.ActivityAnchorId,
-    key: draft_provenance.ActivityFactKey,
-) anyerror!?draft_provenance.SnapshotValue {
-    const binding = findActivityBinding(
-        frozen.provenance_snapshot.components(),
-        role,
-        &anchor_id,
-    ) orelse return error.MissingHistoricalRegistrationComponent;
-    var history = try repository.listRegistrationHistory(
-        allocator,
-        binding.anchor.owner_profile_id.asSlice(),
-    );
-    defer history.deinit(allocator);
-    for (history.activities) |*row| {
-        if (!std.mem.eql(
-            u8,
-            row.metadata.id,
-            binding.component_revision_id.asSlice(),
-        )) continue;
-        try validateHistoricalRegistrationMetadata(
-            &row.metadata,
-            binding.anchor.owner_profile_id,
-            binding.component_revision_sequence,
-            frozen.applicability_date,
-        );
-        if (!std.mem.eql(u8, row.anchor_id, binding.anchor.id.asSlice())) {
-            return error.HistoricalRegistrationComponentMismatch;
-        }
-        return switch (key) {
-            .line_of_business => .{
-                .text = try draft_provenance.OwnedText.copy(
-                    row.line_of_business,
-                ),
-            },
-            .atc => if (row.atc) |value|
-                .{ .text = try draft_provenance.OwnedText.copy(value) }
-            else
-                null,
-        };
-    }
-    return error.MissingHistoricalRegistrationComponent;
-}
-
-fn historicalObligationFact(
-    repository: *store.Store,
-    allocator: std.mem.Allocator,
-    frozen: *const FrozenExactProvenance,
-    role: form_catalog.Role,
-    anchor_id: registration.ObligationAnchorId,
-    key: draft_provenance.ObligationFactKey,
-) anyerror!?draft_provenance.SnapshotValue {
-    _ = key;
-    const binding = findObligationBinding(
-        frozen.provenance_snapshot.components(),
-        role,
-        &anchor_id,
-    ) orelse return error.MissingHistoricalRegistrationComponent;
-    var history = try repository.listRegistrationHistory(
-        allocator,
-        binding.anchor.owner_profile_id.asSlice(),
-    );
-    defer history.deinit(allocator);
-    for (history.obligations) |*row| {
-        if (!std.mem.eql(
-            u8,
-            row.metadata.id,
-            binding.component_revision_id.asSlice(),
-        )) continue;
-        try validateHistoricalRegistrationMetadata(
-            &row.metadata,
-            binding.anchor.owner_profile_id,
-            binding.component_revision_sequence,
-            frozen.applicability_date,
-        );
-        if (!std.mem.eql(u8, row.anchor_id, binding.anchor.id.asSlice())) {
-            return error.HistoricalRegistrationComponentMismatch;
-        }
-        return .{ .choice = try draft_provenance.OwnedText.copy(
-            registrationObligationText(row.kind, row.value_text),
-        ) };
-    }
-    return error.MissingHistoricalRegistrationComponent;
-}
-
-fn findActivityBinding(
-    components: []const draft_provenance.ComponentBinding,
-    role: form_catalog.Role,
-    anchor_id: *const registration.ActivityAnchorId,
-) ?*const draft_provenance.ActivityComponentBinding {
-    for (components) |*component| switch (component.*) {
-        .business_activity => |*binding| if (binding.role == role and binding.anchor.id.eql(anchor_id)) return binding,
-        else => {},
-    };
-    return null;
-}
-
-fn findObligationBinding(
-    components: []const draft_provenance.ComponentBinding,
-    role: form_catalog.Role,
-    anchor_id: *const registration.ObligationAnchorId,
-) ?*const draft_provenance.ObligationComponentBinding {
-    for (components) |*component| switch (component.*) {
-        .registration_obligation => |*binding| if (binding.role == role and binding.anchor.id.eql(anchor_id)) return binding,
-        else => {},
-    };
-    return null;
-}
-
-fn verifyHistoricalActivity(
-    repository: *store.Store,
-    allocator: std.mem.Allocator,
-    applicability_date: model.Date,
-    binding: draft_provenance.ActivityComponentBinding,
-) anyerror!void {
-    var history = try repository.listRegistrationHistory(
-        allocator,
-        binding.anchor.owner_profile_id.asSlice(),
-    );
-    defer history.deinit(allocator);
-    for (history.activities) |*row| {
-        if (!std.mem.eql(
-            u8,
-            row.metadata.id,
-            binding.component_revision_id.asSlice(),
-        )) continue;
-        try validateHistoricalRegistrationMetadata(
-            &row.metadata,
-            binding.anchor.owner_profile_id,
-            binding.component_revision_sequence,
-            applicability_date,
-        );
-        if (!std.mem.eql(u8, row.anchor_id, binding.anchor.id.asSlice())) {
-            return error.HistoricalRegistrationComponentMismatch;
-        }
-        return;
-    }
-    return error.MissingHistoricalRegistrationComponent;
-}
-
-fn verifyHistoricalObligation(
-    repository: *store.Store,
-    allocator: std.mem.Allocator,
-    applicability_date: model.Date,
-    binding: draft_provenance.ObligationComponentBinding,
-) anyerror!void {
-    var history = try repository.listRegistrationHistory(
-        allocator,
-        binding.anchor.owner_profile_id.asSlice(),
-    );
-    defer history.deinit(allocator);
-    for (history.obligations) |*row| {
-        if (!std.mem.eql(
-            u8,
-            row.metadata.id,
-            binding.component_revision_id.asSlice(),
-        )) continue;
-        try validateHistoricalRegistrationMetadata(
-            &row.metadata,
-            binding.anchor.owner_profile_id,
-            binding.component_revision_sequence,
-            applicability_date,
-        );
-        if (!std.mem.eql(u8, row.anchor_id, binding.anchor.id.asSlice())) {
-            return error.HistoricalRegistrationComponentMismatch;
-        }
-        return;
-    }
-    return error.MissingHistoricalRegistrationComponent;
-}
-
-fn validateHistoricalRegistrationMetadata(
-    metadata: *const store.OwnedRegistrationRevisionMetadata,
-    owner: model.ProfileId,
-    sequence: u32,
-    applicability_date: model.Date,
-) anyerror!void {
-    if (!std.mem.eql(u8, metadata.profile_id, owner.asSlice()) or
-        metadata.component_sequence != sequence or
-        metadata.record_state != .present or
-        metadata.review_state != .confirmed)
-    {
-        return error.HistoricalRegistrationComponentMismatch;
-    }
-    const effective = try model.EffectivePeriod.init(
-        try model.Date.parseIso(metadata.effective_from),
-        if (metadata.effective_until) |value|
-            try model.Date.parseIso(value)
-        else
-            null,
-    );
-    if (!effective.contains(applicability_date)) {
-        return error.HistoricalRegistrationComponentMismatch;
-    }
-}
-
-fn registrationObligationText(
-    kind: store.RegistrationObligationKind,
-    value_text: ?[]const u8,
-) []const u8 {
-    return switch (kind) {
-        .registered_income_tax => "registered_income_tax",
-        .vat => "vat",
-        .percentage_tax => "percentage_tax",
-        .withholding_compensation => "withholding_compensation",
-        .withholding_expanded => "withholding_expanded",
-        .withholding_final => "withholding_final",
-        .withholding_other,
-        .withholding_unspecified_requires_review,
-        .unknown_requires_review,
-        => value_text orelse "",
     };
 }
 
@@ -1092,14 +812,6 @@ fn snapshotValueEql(
         },
         .profile_id => |value| switch (right) {
             .profile_id => |other| value.eql(&other),
-            else => false,
-        },
-        .business_activity_anchor_id => |value| switch (right) {
-            .business_activity_anchor_id => |other| value.eql(&other),
-            else => false,
-        },
-        .registration_obligation_anchor_id => |value| switch (right) {
-            .registration_obligation_anchor_id => |other| value.eql(&other),
             else => false,
         },
         .income_tax_rate_election => |value| switch (right) {
@@ -1322,9 +1034,6 @@ fn dateText(value: model.Date) store.DateText {
 fn testProfile() !projection.Snapshot {
     const effective_on = try test_context.profileAsOf();
     var snapshot = projection.Snapshot.init(form.revision, effective_on);
-    const activity_id = try model.BusinessActivityId.parse(
-        "runtime-activity",
-    );
     const provenance: projection.Provenance = .{
         .profile_id = try model.ProfileId.parse("runtime-exact-filer"),
         .revision_id = try model.RevisionId.parse("runtime-exact-filer-r1"),
@@ -1332,7 +1041,6 @@ fn testProfile() !projection.Snapshot {
         .revision_source = .manual_entry,
     };
     for (form.filer_requirements, 0..) |requirement, index| {
-        var entry_provenance = provenance;
         const value: field.Value = switch (index) {
             0 => .{ .tin = try field.Tin.parse("123-456-789-000") },
             1 => .{ .rdo_code = try field.RdoCode.parse("040") },
@@ -1353,16 +1061,11 @@ fn testProfile() !projection.Snapshot {
             ) },
             else => unreachable,
         };
-        if (requirement.source == .line_of_business or
-            requirement.source == .atc)
-        {
-            entry_provenance.business_activity_id = activity_id;
-        }
         try snapshot.append(.{
             .role = .filer,
             .target = requirement.target,
             .value = value,
-            .provenance = entry_provenance,
+            .provenance = provenance,
         });
     }
     return snapshot;
@@ -1398,14 +1101,11 @@ fn seedTestProfile(repository: *store.Store) !void {
                 .foreign_tax_number = "FOREIGN-TEST-1",
             } },
         },
-        .{},
     );
 }
 
 const test_taxpayer_year_revision_id = "runtime-taxpayer-year-r1";
 const test_form_profile_revision_id = "runtime-form-profile-r1";
-const test_activity_anchor_id = "runtime-primary-activity";
-const test_activity_revision_id = "runtime-primary-activity-r1";
 
 fn seedTestExactAnnualSources(
     repository: *store.Store,
@@ -1461,33 +1161,8 @@ fn seedTestExactAnnualSources(
         &year_revision,
     );
 
-    const activity_writes = [_]store.RegistrationActivityRevisionWrite{.{
-        .anchor_id = test_activity_anchor_id,
-        .metadata = .{
-            .id = test_activity_revision_id,
-            .expected_component_sequence = 0,
-            .effective = .{ .from = dateText(try model.Date.init(2026, 1, 1)) },
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 1_780_000_001,
-        },
-        .line_of_business = "Professional services",
-        .atc = "PT010",
-    }};
-    _ = try repository.appendRegistrationCommit(.{
-        .profile_id = profile_id.asSlice(),
-        .expected_current_sequence = 0,
-        .activities = &activity_writes,
-    });
-
     const definition = form_catalog.findForm("1701Q").?;
-    const form_profile_values = [_]annual_profile.SetupValue{.{
-        .semantic_key = .business_activity_anchor_id,
-        .role = .filer,
-        .value = .{ .business_activity_anchor_id = try annual_profile.ComponentAnchorId.parse(
-            test_activity_anchor_id,
-        ) },
-    }};
+    const form_profile_values = [_]annual_profile.SetupValue{};
     const form_profile_revision: annual_profile.Revision = .{
         .id = try annual_profile.RevisionId.parse(
             test_form_profile_revision_id,
@@ -1523,21 +1198,6 @@ fn seedTestExactAnnualSources(
         .profile_id = profile_id,
         .revision_id = try model.RevisionId.parse("runtime-exact-filer-r1"),
         .revision_sequence = 1,
-    }};
-    const component_bindings = [_]draft_provenance.ComponentBinding{.{
-        .business_activity = .{
-            .role = .filer,
-            .anchor = .{
-                .owner_profile_id = profile_id,
-                .id = try registration.ActivityAnchorId.parse(
-                    test_activity_anchor_id,
-                ),
-            },
-            .component_revision_id = try registration.ComponentRevisionId.parse(
-                test_activity_revision_id,
-            ),
-            .component_revision_sequence = 1,
-        },
     }};
     const source_snapshots = [_]draft_provenance.SourceSnapshot{
         .{
@@ -1599,39 +1259,6 @@ fn seedTestExactAnnualSources(
             } },
             .copied_value = .{ .deduction_method = .itemized_deduction },
         },
-        .{
-            .key = .{ .tax_form_profile_value = .{
-                .role = .filer,
-                .key = .business_activity_anchor_id,
-            } },
-            .copied_value = .{ .business_activity_anchor_id = try registration.ActivityAnchorId.parse(
-                test_activity_anchor_id,
-            ) },
-        },
-        .{
-            .key = .{ .business_activity_fact = .{
-                .role = .filer,
-                .anchor_id = try registration.ActivityAnchorId.parse(
-                    test_activity_anchor_id,
-                ),
-                .key = .line_of_business,
-            } },
-            .copied_value = .{ .text = try draft_provenance.OwnedText.copy(
-                "Professional services",
-            ) },
-        },
-        .{
-            .key = .{ .business_activity_fact = .{
-                .role = .filer,
-                .anchor_id = try registration.ActivityAnchorId.parse(
-                    test_activity_anchor_id,
-                ),
-                .key = .atc,
-            } },
-            .copied_value = .{ .text = try draft_provenance.OwnedText.copy(
-                "PT010",
-            ) },
-        },
     };
     const capture_input: draft_provenance.CaptureInput = .{
         .identity = .{
@@ -1667,7 +1294,6 @@ fn seedTestExactAnnualSources(
             .spec_revision = form_profile_revision.spec_revision,
             .spec_hash = form_profile_revision.spec_hash,
         },
-        .components = &component_bindings,
         .source_snapshots = &source_snapshots,
     };
     const provenance_snapshot = try draft_provenance.DraftProvenance.capture(
@@ -1709,7 +1335,7 @@ fn openCandidate(
     try out.generateEditableCandidate(.create);
 }
 
-test "exact runtime derives bounded role instances and candidate guard" {
+test "exact runtime derives bounded role instances" {
     var profile = try testProfile();
     const bindings = try roleBindingsFromAcceptedProjection(&profile);
     try std.testing.expectEqual(@as(usize, 1), bindings.slice().len);
@@ -1717,19 +1343,6 @@ test "exact runtime derives bounded role instances and candidate guard" {
     try std.testing.expectEqualStrings(
         "runtime-exact-filer",
         bindings.slice()[0].instance_id,
-    );
-
-    const first_activity_id = try model.BusinessActivityId.parse(
-        "runtime-activity",
-    );
-    const second_activity_id = try model.BusinessActivityId.parse(
-        "runtime-activity-other",
-    );
-    profile.entries[0].provenance.business_activity_id = first_activity_id;
-    profile.entries[1].provenance.business_activity_id = second_activity_id;
-    try std.testing.expectError(
-        error.InconsistentRoleBusinessActivity,
-        roleBindingsFromAcceptedProjection(&profile),
     );
 }
 
@@ -1766,7 +1379,7 @@ test "exact runtime blocks application save without frozen annual provenance" {
     }
 }
 
-test "v19 historical reconstruction rejects copied-source and component corruption" {
+test "v19 historical reconstruction rejects copied-source corruption" {
     const allocator = std.testing.allocator;
     var repository = try store.Store.openMemory(allocator);
     defer repository.close();
@@ -1795,22 +1408,6 @@ test "v19 historical reconstruction rejects copied-source and component corrupti
             &repository,
             allocator,
             &corrupt_source,
-            test_context,
-        ),
-    );
-
-    var corrupt_component = frozen;
-    corrupt_component.provenance_snapshot.components_storage[0]
-        .business_activity.component_revision_id =
-        try registration.ComponentRevisionId.parse(
-            "runtime-primary-activity-missing",
-        );
-    try std.testing.expectError(
-        error.MissingHistoricalRegistrationComponent,
-        reconstructHistoricalProjection(
-            &repository,
-            allocator,
-            &corrupt_component,
             test_context,
         ),
     );
@@ -1875,7 +1472,7 @@ test "v19 exact resume ignores current profile drift and reuses frozen history" 
             .citizenship = "FILIPINO",
             .foreign_tax_number = "FOREIGN-TEST-1",
         } },
-    }, .{});
+    });
     var current_revision = (try profile_persistence.loadRevision(
         &repository,
         allocator,

@@ -5,6 +5,35 @@
   </column>
 </template>
 
+<template name="profile-filing-readiness-toast">
+  <alert
+    width="360"
+    global-key="profile-filing-readiness-toast"
+    label="Filing setup required">
+    <column gap="10">
+      <row gap="12" cross="start">
+        <icon name="alert" foreground="warning" width="20" height="20"/>
+        <text grow="1" wrap="true">{profileFilingReadinessNotice}</text>
+        <button
+          width="44"
+          height="44"
+          size="icon"
+          variant="ghost"
+          radius="xl"
+          icon="x"
+          label="Dismiss filing setup notice"
+          on-press="dismiss_profile_filing_readiness_notice">
+        </button>
+      </row>
+      <button
+        variant="primary"
+        on-press="open_profile_filing_readiness_remediation">
+        {profileFilingReadinessActionLabel}
+      </button>
+    </column>
+  </alert>
+</template>
+
 <template name="form-field-bound" args="label v ph">
   <column gap="4">
     <text foreground="text_muted">{label}</text>
@@ -298,23 +327,6 @@
               active="{profile.active and taxpayerNavigationSelectionVisible}"/>
           </for>
 
-          <if test="{profileCanAddBranch}">
-            <row width="232" height="48" cross="center">
-              <list-item
-                key="{sidebarActionEpoch}"
-                width="232"
-                height="44"
-                padding="12"
-                radius="md"
-                icon="plus"
-                selected="false"
-                label="{profileAddBranchLabel}"
-                on-press="add_branch_profile">
-                Add branch
-              </list-item>
-            </row>
-          </if>
-
           <row width="232" height="48" cross="center">
             <list-item
               key="{sidebarActionEpoch}"
@@ -563,9 +575,9 @@
 
       <separator/>
       <column gap="2">
-        <text><span weight="bold">Reusable form bindings</span></text>
+        <text><span weight="bold">Reusable form details</span></text>
         <text wrap="true" foreground="text_muted">
-          Registered activity and spouse bindings are managed in the Tax Form Profile for this tax year.
+          Form-specific yearly values and spouse profiles are managed in the Tax Form Profile for this tax year.
         </text>
       </column>
     </column>
@@ -697,6 +709,9 @@
         </if>
         <if test="{profileCalendarExportNoticeVisible}">
           <use template="profile-calendar-export-toast"/>
+        </if>
+        <if test="{profileFilingReadinessNoticeVisible}">
+          <use template="profile-filing-readiness-toast"/>
         </if>
       </column>
     </if>

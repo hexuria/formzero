@@ -68,6 +68,7 @@ pub const max_persisted_field_id_len = 96;
 
 pub const Error = error{
     DivisionByZero,
+    TaxFormProfileChoiceConflict,
     DuplicateDraftField,
     Empty,
     FieldTooLong,
@@ -77,6 +78,7 @@ pub const Error = error{
     InvalidDraftLifecycle,
     InvalidDraftProvenance,
     InvalidDraftValue,
+    AccountingPeriodContextConflict,
     InvalidFormat,
     InvalidMoneySign,
     InvalidOverpaymentDisposition,
@@ -96,7 +98,16 @@ pub const Error = error{
     Overflow,
     TaxReliefReferenceNotApplicable,
     TooManyFractionDigits,
-    UnsupportedFiscalPeriod,
+};
+
+pub const AccountingPeriodContext = struct {
+    basis: field.AccountingPeriodBasis,
+    fiscal_year_end_month: ?u8 = null,
+};
+
+pub const TaxablePeriod = struct {
+    from: field.Date,
+    until: field.Date,
 };
 
 pub const TaxReliefChoice = enum {
@@ -165,7 +176,7 @@ pub const PersistedField = enum {
             .amended_return => "2551Q.2018-01-ENCS.input.amended_return",
             .tax_relief => "2551Q.2018-01-ENCS.input.tax_relief",
             .tax_relief_reference => "2551Q.2018-01-ENCS.input.tax_relief_specification",
-            .income_tax_rate_election => "2551Q.2018-01-ENCS.input.income_tax_rate_election",
+            .income_tax_rate_election => "2551Q.2018-01-ENCS.input.what_income_tax_rates_are_you_availing",
             .total_percentage_tax_due => "2551Q.2018-01-ENCS.input.total_percentage_tax_due",
             .creditable_percentage_tax_withheld => "2551Q.2018-01-ENCS.input.creditable_percentage_tax_withheld",
             .paid_in_previous_return => "2551Q.2018-01-ENCS.input.tax_paid_in_previous_return",
@@ -181,17 +192,17 @@ pub const PersistedField = enum {
 
     pub fn provenance(self: PersistedField) []const u8 {
         return switch (self) {
-            .period_basis,
             .year_end_month,
             .taxable_quarter,
             .taxable_year,
             .sheets_attached,
             .amended_return,
             => "filing_context",
+            .period_basis => "profile",
             .creditable_percentage_tax_withheld,
             .paid_in_previous_return,
             => "external_evidence",
-            .income_tax_rate_election => "taxpayer_year",
+            .income_tax_rate_election => "tax_form_profile",
             .total_percentage_tax_due,
             .total_tax_credits_or_payments,
             .tax_payable_or_overpayment,
@@ -455,6 +466,31 @@ pub const State = struct {
         self: *State,
         draft: *const store_module.OwnedDraft,
     ) Error!void {
+        return self.loadFromDraftInternal(draft, null, null);
+    }
+
+    /// Resumes a 2551Q draft against the exact saved Tax Form Profile choice.
+    /// Later quarters retain that choice for validation and provenance while
+    /// omitting the official Item 13 field from storage, print, and the editor.
+    pub fn loadFromDraftForTaxFormProfile(
+        self: *State,
+        draft: *const store_module.OwnedDraft,
+        profile_choice: ?form_2551q.IncomeTaxRateElection,
+        accounting_period: AccountingPeriodContext,
+    ) Error!void {
+        return self.loadFromDraftInternal(
+            draft,
+            profile_choice,
+            accounting_period,
+        );
+    }
+
+    fn loadFromDraftInternal(
+        self: *State,
+        draft: *const store_module.OwnedDraft,
+        profile_choice: ?form_2551q.IncomeTaxRateElection,
+        expected_accounting_period: ?AccountingPeriodContext,
+    ) Error!void {
         if (!std.mem.eql(
             u8,
             draft.form_code,
@@ -473,6 +509,12 @@ pub const State = struct {
         }
         const period = try parsePeriodKey(draft.period_key);
         try self.reset(period.year, period.number);
+        if (expected_accounting_period) |accounting_period| {
+            try self.bindAccountingPeriod(accounting_period);
+        }
+        if (profile_choice) |choice| {
+            self.income_tax_rate_election = choice;
+        }
         if (!validDraftLifecycle(draft.lifecycle)) {
             return error.InvalidDraftLifecycle;
         }
@@ -519,6 +561,11 @@ pub const State = struct {
                 ),
             }
         }
+        if (expected_accounting_period) |accounting_period| {
+            if (!self.accountingPeriodMatches(accounting_period)) {
+                return error.AccountingPeriodContextConflict;
+            }
+        }
         self.refresh();
 
         if (draft.values.len == 0) {
@@ -528,7 +575,10 @@ pub const State = struct {
         }
 
         var canonical: DraftValueSet = .{};
-        const expected = try self.draftValueWrites(&canonical);
+        const expected = if (profile_choice) |choice|
+            try self.draftValueWritesForTaxFormProfile(&canonical, choice)
+        else
+            try self.draftValueWrites(&canonical);
         if (draft.values.len != expected.len) {
             return error.InvalidDraftValue;
         }
@@ -568,18 +618,60 @@ pub const State = struct {
             => "Stored 2551Q filing values failed integrity checks. Saving is blocked; repair or discard the persisted draft.",
             error.InvalidStoredForm,
             error.InvalidPeriodContext,
+            error.AccountingPeriodContextConflict,
             => "The stored draft does not belong to this 2551Q filing period. Saving is blocked.",
             else => "The 2551Q filing values could not be resumed safely. Saving is blocked.",
         });
     }
 
-    pub fn setPeriodBasis(
+    /// Binds Item 1 and the derived year-end month from the exact immutable
+    /// Base Tax Profile revision frozen into this filing workspace.
+    pub fn bindAccountingPeriod(
         self: *State,
-        value: form_2551q.TaxablePeriodBasis,
-    ) void {
-        if (!self.editable) return;
-        self.period_basis = value;
+        context: AccountingPeriodContext,
+    ) Error!void {
+        self.period_basis = switch (context.basis) {
+            .calendar => .calendar,
+            .fiscal => .fiscal,
+        };
+        const month: u8 = switch (context.basis) {
+            .calendar => blk: {
+                if (context.fiscal_year_end_month != null) {
+                    return error.InvalidYearEndMonth;
+                }
+                break :blk 12;
+            },
+            .fiscal => context.fiscal_year_end_month orelse
+                return error.InvalidYearEndMonth,
+        };
+        if (month < 1 or month > 12) return error.InvalidYearEndMonth;
+        var buffer: [2]u8 = undefined;
+        try setBuffer(
+            &self.year_end_month,
+            try std.fmt.bufPrint(&buffer, "{d}", .{month}),
+        );
         self.refresh();
+    }
+
+    fn accountingPeriodMatches(
+        self: *const State,
+        expected: AccountingPeriodContext,
+    ) bool {
+        const expected_basis: form_2551q.TaxablePeriodBasis = switch (expected.basis) {
+            .calendar => .calendar,
+            .fiscal => .fiscal,
+        };
+        const expected_month: u8 = switch (expected.basis) {
+            .calendar => 12,
+            .fiscal => expected.fiscal_year_end_month orelse return false,
+        };
+        const actual_month = std.fmt.parseInt(
+            u8,
+            trimmed(self.year_end_month.text()),
+            10,
+        ) catch return false;
+        return self.period_basis == expected_basis and
+            actual_month == expected_month;
     }
 
     pub fn setTaxRelief(self: *State, value: TaxReliefChoice) void {
@@ -601,14 +693,28 @@ pub const State = struct {
         self.refresh();
     }
 
-    /// Annual election is owned by the confirmed taxpayer-year revision.
-    /// Filing screens may display it, but may not choose a different value.
+    /// The yearly choice is owned by the exact 2551Q Tax Form Profile
+    /// revision frozen into this filing workspace.
     pub fn bindIncomeTaxRateElection(
         self: *State,
         value: form_2551q.IncomeTaxRateElection,
     ) void {
         self.income_tax_rate_election = value;
         self.refresh();
+    }
+
+    pub fn incomeTaxRateElection(
+        self: *const State,
+    ) ?form_2551q.IncomeTaxRateElection {
+        return self.income_tax_rate_election;
+    }
+
+    /// The January 2018 ENCS instructs the filer to fill Item 13 only for the
+    /// initial quarter of the taxable year. Fiscal 2551Q is unsupported, so
+    /// the one truthful editor/print projection is calendar Q1.
+    pub fn incomeTaxRateElectionProjected(self: *const State) bool {
+        const context = self.context orelse return false;
+        return context.number == 1;
     }
 
     pub fn setOverpaymentDisposition(
@@ -618,15 +724,6 @@ pub const State = struct {
         if (!self.editable) return;
         self.overpayment_disposition = value;
         self.refresh();
-    }
-
-    pub fn editYearEndMonth(
-        self: *State,
-        edit: canvas.TextInputEvent,
-    ) void {
-        if (!self.editable) return;
-        self.year_end_month.apply(edit);
-        self.afterEdit(self.year_end_month.truncated);
     }
 
     pub fn editSheetsAttached(
@@ -742,9 +839,6 @@ pub const State = struct {
         const quarter = self.context orelse return error.InvalidPeriodContext;
         const period_basis = self.period_basis orelse
             return error.MissingPeriodBasis;
-        if (period_basis == .fiscal) {
-            return error.UnsupportedFiscalPeriod;
-        }
         const year_end_month = try parseRequiredInt(
             u8,
             self.year_end_month.text(),
@@ -827,6 +921,50 @@ pub const State = struct {
         return transaction;
     }
 
+    /// The selected tax year is the year in which the fiscal year ends.
+    /// Q1 begins in the month after the preceding fiscal year end; Q4 ends in
+    /// the configured fiscal year-end month of the selected tax year.
+    pub fn taxablePeriod(self: *const State) Error!TaxablePeriod {
+        const quarter = self.context orelse return error.InvalidPeriodContext;
+        const year_end_month = try parseRequiredInt(
+            u8,
+            self.year_end_month.text(),
+        );
+        if (year_end_month < 1 or year_end_month > 12) {
+            return error.InvalidYearEndMonth;
+        }
+        if (quarter.year == 1 and year_end_month != 12) {
+            return error.InvalidPeriodContext;
+        }
+        const previous_end_year: u32 = @as(u32, quarter.year) - 1;
+        const previous_end_total = previous_end_year * 12 +
+            @as(u32, year_end_month - 1);
+        const start_total = previous_end_total + 1 +
+            @as(u32, quarter.number - 1) * 3;
+        const end_total = start_total + 2;
+        const start_year: u16 = @intCast(start_total / 12);
+        const start_month: u8 = @intCast(start_total % 12 + 1);
+        const end_year: u16 = @intCast(end_total / 12);
+        const end_month: u8 = @intCast(end_total % 12 + 1);
+        return .{
+            .from = field.Date.init(start_year, start_month, 1) catch
+                return error.InvalidPeriodContext,
+            .until = field.Date.init(
+                end_year,
+                end_month,
+                daysInMonth(end_year, end_month),
+            ) catch return error.InvalidPeriodContext,
+        };
+    }
+
+    pub fn taxablePeriodStart(self: *const State) Error!field.Date {
+        return (try self.taxablePeriod()).from;
+    }
+
+    pub fn taxablePeriodEnd(self: *const State) Error!field.Date {
+        return (try self.taxablePeriod()).until;
+    }
+
     pub fn contactOverridden(
         self: *const State,
         contact_field: FilingContactField,
@@ -874,6 +1012,36 @@ pub const State = struct {
         self: *const State,
         output: *DraftValueSet,
     ) Error![]const store_module.DraftValueWrite {
+        return self.draftValueWritesInternal(output, true);
+    }
+
+    /// Builds the persisted/printed 2551Q payload against the exact yearly Tax
+    /// Form Profile. Item 13 is written only for the official initial quarter;
+    /// later quarters bind the saved choice while omitting that PDF field.
+    pub fn draftValueWritesForTaxFormProfile(
+        self: *const State,
+        output: *DraftValueSet,
+        profile_choice: form_2551q.IncomeTaxRateElection,
+    ) Error![]const store_module.DraftValueWrite {
+        _ = self.context orelse return error.InvalidPeriodContext;
+        if (self.income_tax_rate_election) |current_choice| {
+            if (current_choice != profile_choice) {
+                return error.TaxFormProfileChoiceConflict;
+            }
+        }
+        var bound = self.*;
+        bound.income_tax_rate_election = profile_choice;
+        return bound.draftValueWritesInternal(
+            output,
+            bound.incomeTaxRateElectionProjected(),
+        );
+    }
+
+    fn draftValueWritesInternal(
+        self: *const State,
+        output: *DraftValueSet,
+        include_item_13: bool,
+    ) Error![]const store_module.DraftValueWrite {
         var schedule: [max_schedule_rows]form_2551q.ScheduleLine = undefined;
         const transaction = try self.buildTransaction(&schedule);
         const calculation = try self.calculate();
@@ -915,10 +1083,12 @@ pub const State = struct {
                 .specified => |reference| reference.asSlice(),
             },
         );
-        try output.append(
-            .income_tax_rate_election,
-            @tagName(transaction.income_tax_rate_election),
-        );
+        if (include_item_13) {
+            try output.append(
+                .income_tax_rate_election,
+                @tagName(transaction.income_tax_rate_election),
+            );
+        }
         var packed_line_index: usize = 0;
         for (&self.schedule_rows) |*row| {
             if (row.isEmpty()) continue;
@@ -1576,13 +1746,24 @@ fn trimmed(raw: []const u8) []const u8 {
     return std.mem.trim(u8, raw, " \t\r\n");
 }
 
+fn daysInMonth(year: u16, month: u8) u8 {
+    return switch (month) {
+        1, 3, 5, 7, 8, 10, 12 => 31,
+        4, 6, 9, 11 => 30,
+        2 => if (year % 400 == 0 or
+            (year % 4 == 0 and year % 100 != 0)) 29 else 28,
+        else => 0,
+    };
+}
+
 fn validationMessage(err: anyerror) []const u8 {
     return switch (err) {
         error.InvalidPeriodContext => "Open a valid 2551Q filing quarter.",
-        error.MissingPeriodBasis => "Choose Calendar taxable-period basis.",
-        error.UnsupportedFiscalPeriod => "Fiscal-quarter profile dates are not supported yet. Choose Calendar so the tax-profile snapshot uses the correct effective date.",
+        error.MissingPeriodBasis => "Record the accounting-period basis in the Base Tax Profile before opening this 2551Q filing.",
+        error.AccountingPeriodContextConflict => "The stored filing accounting period does not match its frozen Base Tax Profile revision.",
         error.InvalidYearEndMonth, error.InvalidDraftValue => "Enter a valid year-end month and whole-number sheet count.",
         error.MissingIncomeTaxRateElection => "Choose the income-tax-rate election for this filing.",
+        error.TaxFormProfileChoiceConflict => "The filing value conflicts with the saved 2551Q Tax Form Profile.",
         error.MissingScheduleAtc => "Enter at least one valid Schedule 1 percentage-tax code.",
         error.MissingScheduleTaxBase => "Enter the Schedule 1 tax base.",
         error.MissingExternalRate => "Enter a current policy-supplied Schedule 1 rate. No rate is assumed.",
@@ -1599,15 +1780,56 @@ fn validationMessage(err: anyerror) []const u8 {
 fn configuredState() !State {
     var state: State = .{};
     try state.reset(2026, 1);
-    state.setPeriodBasis(.calendar);
+    try state.bindAccountingPeriod(.{ .basis = .calendar });
     state.setIncomeTaxRateElection(.graduated);
-    state.year_end_month.set("12");
     state.sheets_attached.set("0");
     state.schedule_rows[0].atc.set("PT010");
     state.schedule_rows[0].tax_base.set("450000.00");
     state.schedule_rows[0].rate.set("3.00");
     state.refresh();
     return state;
+}
+
+test "2551Q Item 13 payload and editor projection are initial-quarter only" {
+    var state = try configuredState();
+    try std.testing.expect(state.incomeTaxRateElectionProjected());
+
+    var initial_values: DraftValueSet = .{};
+    const initial = try state.draftValueWritesForTaxFormProfile(
+        &initial_values,
+        .graduated,
+    );
+    try std.testing.expect(
+        findWrite(initial, PersistedField.income_tax_rate_election.id()) != null,
+    );
+
+    state.context = try field.Quarter.init(2026, 2);
+    state.refresh();
+    try std.testing.expect(!state.incomeTaxRateElectionProjected());
+    var later_values: DraftValueSet = .{};
+    const later = try state.draftValueWritesForTaxFormProfile(
+        &later_values,
+        .graduated,
+    );
+    try std.testing.expect(
+        findWrite(later, PersistedField.income_tax_rate_election.id()) == null,
+    );
+    try std.testing.expectEqual(initial.len - 1, later.len);
+}
+
+test "later 2551Q quarters inherit the yearly choice without Item 13" {
+    var state = try configuredState();
+    state.context = try field.Quarter.init(2026, 2);
+    state.refresh();
+
+    var later_values: DraftValueSet = .{};
+    const later = try state.draftValueWritesForTaxFormProfile(
+        &later_values,
+        .graduated,
+    );
+    try std.testing.expect(
+        findWrite(later, PersistedField.income_tax_rate_election.id()) == null,
+    );
 }
 
 test "2551Q refuses to invent a percentage-tax rate" {
@@ -1622,15 +1844,37 @@ test "2551Q refuses to invent a percentage-tax rate" {
     try std.testing.expect(!state.canBuild());
 }
 
-test "2551Q fails closed for fiscal periods until profile dates support them" {
+test "2551Q derives fiscal quarters from the Base Tax Profile year end" {
     var state = try configuredState();
-    state.setPeriodBasis(.fiscal);
-    var schedule: [max_schedule_rows]form_2551q.ScheduleLine = undefined;
-    try std.testing.expectError(
-        error.UnsupportedFiscalPeriod,
-        state.buildTransaction(&schedule),
+    try state.bindAccountingPeriod(.{
+        .basis = .fiscal,
+        .fiscal_year_end_month = 3,
+    });
+
+    const q1 = try state.taxablePeriod();
+    try std.testing.expectEqual(
+        try field.Date.init(2025, 4, 1),
+        q1.from,
     );
-    try std.testing.expect(!state.canBuild());
+    try std.testing.expectEqual(
+        try field.Date.init(2025, 6, 30),
+        q1.until,
+    );
+
+    try state.reset(2026, 4);
+    try state.bindAccountingPeriod(.{
+        .basis = .fiscal,
+        .fiscal_year_end_month = 3,
+    });
+    const q4 = try state.taxablePeriod();
+    try std.testing.expectEqual(
+        try field.Date.init(2026, 1, 1),
+        q4.from,
+    );
+    try std.testing.expectEqual(
+        try field.Date.init(2026, 3, 31),
+        q4.until,
+    );
 }
 
 test "2551Q over-capacity input can be corrected without reopening" {
@@ -1655,7 +1899,6 @@ test "2551Q over-capacity input can be corrected without reopening" {
 test "2551Q read-only resumed state ignores programmatic mutations" {
     var state = try configuredState();
     state.editable = false;
-    state.setPeriodBasis(.fiscal);
     state.editScheduleAtc(0, .clear);
     state.editCreditableWithheld(.{ .insert_text = "500.00" });
 
@@ -1892,7 +2135,7 @@ test "resume rejects partial nonempty values and unknown lifecycle" {
     var partial_values: [1]store_module.OwnedDraftValue = .{.{
         .field_id = @constCast(PersistedField.period_basis.id()),
         .value_text = @constCast("calendar"),
-        .provenance = @constCast("filing_context"),
+        .provenance = @constCast("profile"),
     }};
     var empty_bindings: [0]store_module.OwnedRoleBinding = .{};
     var empty_snapshots: [0]store_module.OwnedSnapshotField = .{};

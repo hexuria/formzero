@@ -6,7 +6,8 @@
   "scripts": {
     "generate": "npm run generate:tax-catalog && node scripts/flatten-native.mjs",
     "generate:tax-catalog": "node --experimental-strip-types scripts/tax-catalog/generate.ts",
-    "check:tax-catalog": "npm run typecheck:tax-catalog && node --experimental-strip-types scripts/tax-catalog/generate.ts --check",
+    "check:tax-catalog": "npm run typecheck:tax-catalog && npm run check:field-ownership-manifests && node --experimental-strip-types scripts/tax-catalog/generate.ts --check",
+    "check:field-ownership-manifests": "node --experimental-strip-types scripts/tax-catalog/manifests/check.ts",
     "typecheck:tax-catalog": "tsc --noEmit -p tsconfig.tax-catalog.json"
   },
   "//": "--experimental-strip-types is required on Node 22.15, the documented minimum. Node 22.18+ and 23.6+ strip types by default and accept the flag as a no-op, so one invocation covers every supported runtime.",

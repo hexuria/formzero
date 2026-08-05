@@ -15,7 +15,6 @@ const provenance = @import("draft_provenance.zig");
 const field = @import("../tax_profile/field.zig");
 const forms_set = @import("../tax_profile/forms_set_resolver.zig");
 const model = @import("../tax_profile/model.zig");
-const registration = @import("../tax_profile/registration.zig");
 const annual_profile = @import("../tax_profile/tax_form_profile.zig");
 const year_settings = @import("../tax_profile/taxpayer_year_settings.zig");
 
@@ -24,7 +23,6 @@ pub const Error = std.mem.Allocator.Error ||
     forms_set.Error ||
     provenance.Error ||
     provenance.ParseError ||
-    registration.Error ||
     annual_profile.Error ||
     year_settings.Error || error{
     CalendarOnlyForm,
@@ -39,9 +37,6 @@ pub const Error = std.mem.Allocator.Error ||
     TaxFormProfileNotEffective,
     WrongTaxFormProfileOwner,
     WrongTaxFormProfileYear,
-    MissingRegistrationAggregate,
-    WrongRegistrationAggregateOwner,
-    MissingConfirmedComponentAnchor,
     MissingTransactionSeed,
     UnexpectedTransactionSeed,
     DuplicateTransactionSeed,
@@ -50,14 +45,12 @@ pub const Error = std.mem.Allocator.Error ||
     TooManyCompositionValues,
 };
 
-/// One already-resolved immutable taxpayer revision for a named catalog role.
-/// `legacy_business_activity_id` only qualifies existing direct profile
-/// projection. Stable annual bindings use `registration` anchors instead.
+/// One already-resolved immutable Base Tax Profile revision for a named role.
+/// Current composition uses direct Base Tax Profile revisions and explicit
+/// annual/form values only.
 pub const ResolvedProfile = struct {
     role: catalog.Role,
     revision: *const model.ProfileRevision,
-    legacy_business_activity_id: ?model.BusinessActivityId = null,
-    registration: ?*const registration.RegistrationAggregate = null,
 };
 
 pub const TransactionSeedOrigin = union(enum) {
@@ -101,8 +94,6 @@ pub const Composition = struct {
 const Builder = struct {
     taxpayer_revisions: [provenance.max_taxpayer_roles]provenance.TaxpayerRevisionBinding = undefined,
     taxpayer_revision_count: usize = 0,
-    components: [provenance.max_component_bindings]provenance.ComponentBinding = undefined,
-    component_count: usize = 0,
     sources: [provenance.max_source_snapshots]provenance.SourceSnapshot = undefined,
     source_count: usize = 0,
     seeds: [provenance.max_transaction_seeds]provenance.TransactionDefaultSeed = undefined,
@@ -117,17 +108,6 @@ const Builder = struct {
         }
         self.taxpayer_revisions[self.taxpayer_revision_count] = value;
         self.taxpayer_revision_count += 1;
-    }
-
-    fn addComponent(
-        self: *Builder,
-        value: provenance.ComponentBinding,
-    ) Error!void {
-        if (self.component_count == self.components.len) {
-            return error.TooManyCompositionValues;
-        }
-        self.components[self.component_count] = value;
-        self.component_count += 1;
     }
 
     fn addSource(self: *Builder, value: provenance.SourceSnapshot) Error!void {
@@ -236,7 +216,6 @@ fn composeDefinition(
         .taxpayer_revisions = builder.taxpayer_revisions[0..builder.taxpayer_revision_count],
         .taxpayer_year_revision = year_binding,
         .tax_form_profile_revision = form_profile_binding,
-        .components = builder.components[0..builder.component_count],
         .source_snapshots = builder.sources[0..builder.source_count],
         .transaction_seeds = builder.seeds[0..builder.seed_count],
     };
@@ -271,9 +250,7 @@ fn composeProfiles(
         projection_bindings[index] = .{
             .role = role,
             .revision = resolved.revision,
-            .selection = .{
-                .business_activity_id = resolved.legacy_business_activity_id,
-            },
+            .selection = .{},
         };
         try builder.addTaxpayerRevision(.{
             .role = resolved.role,
@@ -464,13 +441,6 @@ fn composeTaxFormProfile(
             continue;
         }
         const copied_value = try setupSnapshotValue(setup_value.value);
-        try addSelectedComponent(
-            input,
-            setup_value.role,
-            copied_value,
-            on,
-            builder,
-        );
         try builder.addSource(.{
             .key = .{ .tax_form_profile_value = .{
                 .role = setup_value.role,
@@ -528,6 +498,7 @@ fn composeUnambiguousSetupWithoutRevision(
     on: model.Date,
     builder: *Builder,
 ) Error!void {
+    _ = on;
     for (definition.tax_form_profile.values) |value_definition| {
         if (value_definition.availability != .supported) continue;
         if (value_definition.presence == .required) {
@@ -535,7 +506,7 @@ fn composeUnambiguousSetupWithoutRevision(
         }
         if (value_definition.ownership != .binding_selection) continue;
 
-        const resolved = findResolvedProfile(
+        _ = findResolvedProfile(
             input.profiles,
             value_definition.role,
         ) orelse {
@@ -543,60 +514,9 @@ fn composeUnambiguousSetupWithoutRevision(
             if (value_definition.source_kind == .named_profile_role) continue;
             return error.MissingRequiredProfileRole;
         };
-        const aggregate = resolved.registration orelse switch (value_definition.source_kind) {
-            .business_activity_anchor,
-            .registration_obligation_anchor,
-            => return error.MissingRegistrationAggregate,
-            else => continue,
-        };
-        if (!aggregate.profile_id.eql(&resolved.revision.profile_id)) {
-            return error.WrongRegistrationAggregateOwner;
-        }
 
         switch (value_definition.source_kind) {
             .named_profile_role => {},
-            .business_activity_anchor => {
-                var selected: ?registration.ActivityAnchorId = null;
-                for (aggregate.activity_anchors) |*anchor| {
-                    const resolution = try aggregate.resolveActivity(
-                        anchor.id,
-                        on,
-                    );
-                    if (resolution.confirmed == null) continue;
-                    if (selected != null) {
-                        return error.MissingTaxFormProfileRevision;
-                    }
-                    selected = anchor.id;
-                }
-                if (selected) |anchor_id| try addSelectedComponent(
-                    input,
-                    value_definition.role,
-                    .{ .business_activity_anchor_id = anchor_id },
-                    on,
-                    builder,
-                );
-            },
-            .registration_obligation_anchor => {
-                var selected: ?registration.ObligationAnchorId = null;
-                for (aggregate.obligation_anchors) |*anchor| {
-                    const resolution = try aggregate.resolveObligation(
-                        anchor.id,
-                        on,
-                    );
-                    if (resolution.confirmed == null) continue;
-                    if (selected != null) {
-                        return error.MissingTaxFormProfileRevision;
-                    }
-                    selected = anchor.id;
-                }
-                if (selected) |anchor_id| try addSelectedComponent(
-                    input,
-                    value_definition.role,
-                    .{ .registration_obligation_anchor_id = anchor_id },
-                    on,
-                    builder,
-                );
-            },
             .user_entry,
             .catalog_default,
             => return error.MissingTaxFormProfileRevision,
@@ -712,102 +632,6 @@ fn addTransactionSeed(
     });
 }
 
-fn addSelectedComponent(
-    input: *const Input,
-    role: catalog.Role,
-    value: provenance.SnapshotValue,
-    on: model.Date,
-    builder: *Builder,
-) Error!void {
-    const resolved_profile = findResolvedProfile(input.profiles, role) orelse
-        return error.MissingRequiredProfileRole;
-    const aggregate = resolved_profile.registration orelse switch (value) {
-        .business_activity_anchor_id,
-        .registration_obligation_anchor_id,
-        => return error.MissingRegistrationAggregate,
-        else => return,
-    };
-    if (!aggregate.profile_id.eql(&resolved_profile.revision.profile_id)) {
-        return error.WrongRegistrationAggregateOwner;
-    }
-
-    switch (value) {
-        .business_activity_anchor_id => |anchor_id| {
-            const resolution = aggregate.resolveActivity(anchor_id, on) catch |err| {
-                return switch (err) {
-                    error.MissingActivityAnchor => error.MissingConfirmedComponentAnchor,
-                    else => err,
-                };
-            };
-            const component = resolution.confirmed orelse
-                return error.MissingConfirmedComponentAnchor;
-            try builder.addComponent(.{ .business_activity = .{
-                .role = role,
-                .anchor = .{
-                    .owner_profile_id = aggregate.profile_id,
-                    .id = anchor_id,
-                },
-                .component_revision_id = component.metadata.revision_id,
-                .component_revision_sequence = component.metadata.sequence,
-            } });
-            try builder.addSource(.{
-                .key = .{ .business_activity_fact = .{
-                    .role = role,
-                    .anchor_id = anchor_id,
-                    .key = .line_of_business,
-                } },
-                .copied_value = .{
-                    .text = try provenance.OwnedText.copy(
-                        component.line_of_business.asSlice(),
-                    ),
-                },
-            });
-            if (component.atc) |atc| try builder.addSource(.{
-                .key = .{ .business_activity_fact = .{
-                    .role = role,
-                    .anchor_id = anchor_id,
-                    .key = .atc,
-                } },
-                .copied_value = .{
-                    .text = try provenance.OwnedText.copy(atc.asSlice()),
-                },
-            });
-        },
-        .registration_obligation_anchor_id => |anchor_id| {
-            const resolution = aggregate.resolveObligation(anchor_id, on) catch |err| {
-                return switch (err) {
-                    error.MissingObligationAnchor => error.MissingConfirmedComponentAnchor,
-                    else => err,
-                };
-            };
-            const component = resolution.confirmed orelse
-                return error.MissingConfirmedComponentAnchor;
-            try builder.addComponent(.{ .registration_obligation = .{
-                .role = role,
-                .anchor = .{
-                    .owner_profile_id = aggregate.profile_id,
-                    .id = anchor_id,
-                },
-                .component_revision_id = component.metadata.revision_id,
-                .component_revision_sequence = component.metadata.sequence,
-            } });
-            try builder.addSource(.{
-                .key = .{ .registration_obligation_fact = .{
-                    .role = role,
-                    .anchor_id = anchor_id,
-                    .key = .registration_kind,
-                } },
-                .copied_value = .{
-                    .choice = try provenance.OwnedText.copy(
-                        obligationKindText(&component.kind),
-                    ),
-                },
-            });
-        },
-        else => {},
-    }
-}
-
 fn findResolvedProfile(
     profiles: []const ResolvedProfile,
     role: catalog.Role,
@@ -841,10 +665,12 @@ fn taxpayerFactKey(value: field.ReusableField) ?provenance.TaxpayerFactKey {
         .zip_code => .zip_code,
         .contact_number => .contact_number,
         .email_address => .email_address,
+        .accounting_period_basis,
         .date_of_birth,
         .citizenship,
         .foreign_tax_number,
         .line_of_business,
+        .eopt_tier,
         .atc,
         .tax_type,
         .government_withholding_agent,
@@ -863,10 +689,14 @@ fn profileSnapshotValue(value: field.Value) provenance.ParseError!provenance.Sna
         .zip_code => |item| .{ .text = try provenance.OwnedText.copy(item.asSlice()) },
         .contact_number => |item| .{ .text = try provenance.OwnedText.copy(item.asSlice()) },
         .email_address => |item| .{ .text = try provenance.OwnedText.copy(item.asSlice()) },
+        .accounting_period_basis => |item| .{
+            .choice = try provenance.OwnedText.copy(@tagName(item)),
+        },
         .date_of_birth => |item| .{ .date = item },
         .citizenship => |item| .{ .text = try provenance.OwnedText.copy(item.asSlice()) },
         .foreign_tax_number => |item| .{ .text = try provenance.OwnedText.copy(item.asSlice()) },
         .line_of_business => |item| .{ .text = try provenance.OwnedText.copy(item.asSlice()) },
+        .eopt_tier => |item| .{ .choice = try provenance.OwnedText.copy(item.asSlice()) },
         .atc => |item| .{ .text = try provenance.OwnedText.copy(item.asSlice()) },
         .tax_type => |item| .{ .choice = try provenance.OwnedText.copy(item.asSlice()) },
         .government_withholding_agent => |item| .{ .boolean = item == .yes },
@@ -886,16 +716,6 @@ fn setupSnapshotValue(
 ) Error!provenance.SnapshotValue {
     return switch (value) {
         .profile_id => |item| .{ .profile_id = item },
-        .business_activity_anchor_id => |item| .{
-            .business_activity_anchor_id = try registration.ActivityAnchorId.parse(
-                item.asSlice(),
-            ),
-        },
-        .registration_obligation_anchor_id => |item| .{
-            .registration_obligation_anchor_id = try registration.ObligationAnchorId.parse(
-                item.asSlice(),
-            ),
-        },
         .text => |item| .{ .text = try provenance.OwnedText.copy(item.asSlice()) },
         .boolean => |item| .{ .boolean = item },
         .integer => |item| .{ .integer = item },
@@ -980,14 +800,6 @@ fn snapshotValueEql(
             .profile_id => |other| value.eql(&other),
             else => false,
         },
-        .business_activity_anchor_id => |value| switch (right) {
-            .business_activity_anchor_id => |other| value.eql(&other),
-            else => false,
-        },
-        .registration_obligation_anchor_id => |value| switch (right) {
-            .registration_obligation_anchor_id => |other| value.eql(&other),
-            else => false,
-        },
         .income_tax_rate_election => |value| switch (right) {
             .income_tax_rate_election => |other| value == other,
             else => false,
@@ -996,24 +808,6 @@ fn snapshotValueEql(
             .deduction_method => |other| value == other,
             else => false,
         },
-    };
-}
-
-fn obligationKindText(
-    kind: *const registration.RegistrationObligationKind,
-) []const u8 {
-    return switch (kind.*) {
-        .registered_income_tax => "registered_income_tax",
-        .vat => "vat",
-        .percentage_tax => "percentage_tax",
-        .withholding => |withholding| switch (withholding) {
-            .compensation => "withholding_compensation",
-            .expanded => "withholding_expanded",
-            .final => "withholding_final",
-            .other => |value| value.asSlice(),
-            .unspecified_requires_review => |value| value.asSlice(),
-        },
-        .unknown_requires_review => |value| value.asSlice(),
     };
 }
 
@@ -1057,6 +851,11 @@ fn fixtureProfile(
             .date_of_birth = try model.Date.parseIso("1990-01-01"),
             .citizenship = try field.Citizenship.parse("Filipino"),
         } },
+        .accounting_period_basis = .calendar,
+        .eopt_tier = .micro,
+        .primary_line_of_business = try field.LineOfBusiness.parse(
+            "Software consulting",
+        ),
     };
 }
 
@@ -1136,7 +935,7 @@ fn fixtureInput(
     };
 }
 
-test "2551Q no_setup captures exact profile and confirmed taxpayer-year without annual row" {
+test "2551Q setup captures exact profile and generic Tax Form Profile revision" {
     const definition = catalog.findForm("2551Q").?;
     var filer = try fixtureProfile(
         "profile-filer",
@@ -1148,13 +947,18 @@ test "2551Q no_setup captures exact profile and confirmed taxpayer-year without 
         .role = .filer,
         .revision = &filer,
     }};
-    const year_values = [_]year_settings.SettingValue{.{
-        .income_tax_rate_election = .eight_percent,
+    const setup_values = [_]annual_profile.SetupValue{.{
+        .semantic_key = .income_tax_rate_election,
+        .role = .filer,
+        .value = .{ .choice = try annual_profile.TextValue.parse(
+            "eight_percent",
+        ) },
     }};
-    var year_revision = try fixtureYearRevision(
+    var annual_revision = try fixtureAnnualRevision(
+        definition,
         filer.profile_id,
         2026,
-        &year_values,
+        &setup_values,
     );
     const forms = [_]forms_set.FormRegistration{.{
         .form_code = definition.code,
@@ -1164,15 +968,14 @@ test "2551Q no_setup captures exact profile and confirmed taxpayer-year without 
         definition,
         &filer,
         &profiles,
-        &year_revision,
         null,
+        &annual_revision,
         &forms,
         2026,
     );
     const result = try compose(std.testing.allocator, &input);
-    try std.testing.expect(result.provenance_snapshot.tax_form_profile_revision == null);
-    try std.testing.expect(result.provenance_snapshot.taxpayer_year_revision != null);
-    try std.testing.expectEqual(@as(usize, 0), result.provenance_snapshot.components().len);
+    try std.testing.expect(result.provenance_snapshot.tax_form_profile_revision != null);
+    try std.testing.expect(result.provenance_snapshot.taxpayer_year_revision == null);
 
     const setup_definition = catalog.findForm("1701Q").?;
     const spouse_value = [_]annual_profile.SetupValue{.{
@@ -1188,12 +991,12 @@ test "2551Q no_setup captures exact profile and confirmed taxpayer-year without 
     );
     input.tax_form_profile_revision = &fabricated;
     try std.testing.expectError(
-        error.UnexpectedTaxFormProfileRevision,
+        error.WrongForm,
         compose(std.testing.allocator, &input),
     );
 }
 
-test "1701Q optional spouse composes while an unresolved supported activity fails closed" {
+test "1701Q optional spouse composes without registration component bindings" {
     const definition = catalog.findForm("1701Q").?;
     var filer = try fixtureProfile(
         "profile-filer",
@@ -1247,7 +1050,6 @@ test "1701Q optional spouse composes while an unresolved supported activity fail
     );
     const result = try compose(std.testing.allocator, &input);
     try std.testing.expectEqual(@as(usize, 2), result.provenance_snapshot.taxpayerRevisions().len);
-    try std.testing.expectEqual(@as(usize, 0), result.provenance_snapshot.components().len);
 
     const eight_percent_values = [_]year_settings.SettingValue{.{
         .income_tax_rate_election = .eight_percent,
@@ -1268,148 +1070,10 @@ test "1701Q optional spouse composes while an unresolved supported activity fail
     try std.testing.expectEqual(@as(usize, 1), rate_source_count);
     try std.testing.expectEqual(@as(usize, 0), deduction_source_count);
     year_revision.values = &year_values;
-
-    const unresolved_activity = [_]annual_profile.SetupValue{.{
-        .semantic_key = .business_activity_anchor_id,
-        .role = .filer,
-        .value = .{
-            .business_activity_anchor_id = try annual_profile.ComponentAnchorId.parse(
-                "activity-primary",
-            ),
-        },
-    }};
-    var invalid_activity_revision = try fixtureAnnualRevision(
-        definition,
-        filer.profile_id,
-        2026,
-        &unresolved_activity,
-    );
-    input.tax_form_profile_revision = &invalid_activity_revision;
-    try std.testing.expectError(
-        error.MissingRegistrationAggregate,
-        compose(std.testing.allocator, &input),
-    );
-}
-
-test "1701Q supported activity requires a confirmed stable component anchor" {
-    const generated = catalog.findForm("1701Q").?;
-    var setup_definitions: [3]catalog.TaxFormProfileValueDefinition =
-        generated.tax_form_profile.values[0..3].*;
-    setup_definitions[1].availability = .supported;
-    var definition = generated.*;
-    definition.tax_form_profile.values = &setup_definitions;
-    definition.tax_form_profile.spec_hash =
-        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-
-    var filer = try fixtureProfile(
-        "profile-filer",
-        "filer-revision-1",
-        "JUAN DELA CRUZ",
-        2026,
-    );
-    const activity_anchor: registration.ActivityAnchor = .{
-        .owner_profile_id = filer.profile_id,
-        .id = try registration.ActivityAnchorId.parse("activity-primary"),
-    };
-    const activity: registration.BusinessActivity = .{
-        .anchor_id = activity_anchor.id,
-        .metadata = .{
-            .owner_profile_id = filer.profile_id,
-            .revision_id = try registration.ComponentRevisionId.parse(
-                "activity-revision-1",
-            ),
-            .sequence = 1,
-            .effective = try model.EffectivePeriod.init(
-                try model.Date.parseIso("2026-01-01"),
-                try model.Date.parseIso("2026-12-31"),
-            ),
-            .source = .manual_entry,
-            .review = .{ .confirmed = .{ .confirmed_at_unix_seconds = 1 } },
-        },
-        .line_of_business = try field.LineOfBusiness.parse("Consulting"),
-        .atc = try field.Atc.parse("PT010"),
-    };
-    const anchors = [_]registration.ActivityAnchor{activity_anchor};
-    const activities = [_]registration.BusinessActivity{activity};
-    const aggregate: registration.RegistrationAggregate = .{
-        .profile_id = filer.profile_id,
-        .activity_anchors = &anchors,
-        .business_activities = &activities,
-    };
-    const profiles = [_]ResolvedProfile{.{
-        .role = .filer,
-        .revision = &filer,
-        .registration = &aggregate,
-    }};
-    const year_values = [_]year_settings.SettingValue{
-        .{ .income_tax_rate_election = .graduated },
-        .{ .deduction_method = .itemized_deduction },
-    };
-    var year_revision = try fixtureYearRevision(
-        filer.profile_id,
-        2026,
-        &year_values,
-    );
-    const setup_values = [_]annual_profile.SetupValue{.{
-        .semantic_key = .business_activity_anchor_id,
-        .role = .filer,
-        .value = .{ .business_activity_anchor_id = try annual_profile.ComponentAnchorId.parse(
-            activity_anchor.id.asSlice(),
-        ) },
-    }};
-    var annual_revision = try fixtureAnnualRevision(
-        &definition,
-        filer.profile_id,
-        2026,
-        &setup_values,
-    );
-    const forms = [_]forms_set.FormRegistration{.{
-        .form_code = definition.code,
-        .form_revision = definition.revision.?,
-    }};
-    var input = try fixtureInput(
-        &definition,
-        &filer,
-        &profiles,
-        &year_revision,
-        &annual_revision,
-        &forms,
-        2026,
-    );
-    const result = try composeDefinition(
-        std.testing.allocator,
-        &input,
-        &definition,
-    );
-    try std.testing.expectEqual(@as(usize, 1), result.provenance_snapshot.components().len);
-
-    const no_registration = [_]ResolvedProfile{.{
-        .role = .filer,
-        .revision = &filer,
-    }};
-    input.profiles = &no_registration;
-    try std.testing.expectError(
-        error.MissingRegistrationAggregate,
-        composeDefinition(std.testing.allocator, &input, &definition),
-    );
-
-    const empty_aggregate: registration.RegistrationAggregate = .{
-        .profile_id = filer.profile_id,
-    };
-    const missing_anchor = [_]ResolvedProfile{.{
-        .role = .filer,
-        .revision = &filer,
-        .registration = &empty_aggregate,
-    }};
-    input.profiles = &missing_anchor;
-    try std.testing.expectError(
-        error.MissingConfirmedComponentAnchor,
-        composeDefinition(std.testing.allocator, &input, &definition),
-    );
 }
 
 test "taxpayer-year revision is isolated to the filing year" {
-    const definition = catalog.findForm("2551Q").?;
+    const definition = catalog.findForm("1701Q").?;
     var filer = try fixtureProfile(
         "profile-filer",
         "profile-revision-1",
@@ -1536,10 +1200,19 @@ test "date-effective Forms Set interval blocks only inactive filing dates" {
         2026,
     );
     const profiles = [_]ResolvedProfile{.{ .role = .filer, .revision = &filer }};
-    const year_values = [_]year_settings.SettingValue{.{
-        .income_tax_rate_election = .graduated,
+    const setup_values = [_]annual_profile.SetupValue{.{
+        .semantic_key = .income_tax_rate_election,
+        .role = .filer,
+        .value = .{ .choice = try annual_profile.TextValue.parse(
+            "graduated",
+        ) },
     }};
-    var year_revision = try fixtureYearRevision(filer.profile_id, 2026, &year_values);
+    var annual_revision = try fixtureAnnualRevision(
+        definition,
+        filer.profile_id,
+        2026,
+        &setup_values,
+    );
     const forms = [_]forms_set.FormRegistration{.{
         .form_code = definition.code,
         .form_revision = definition.revision.?,
@@ -1548,8 +1221,8 @@ test "date-effective Forms Set interval blocks only inactive filing dates" {
         definition,
         &filer,
         &profiles,
-        &year_revision,
         null,
+        &annual_revision,
         &forms,
         2026,
     );
@@ -1574,11 +1247,11 @@ test "date-effective Forms Set interval blocks only inactive filing dates" {
 test "transaction default is immutable provenance and only its filing copy mutates" {
     const generated = catalog.findForm("1701Q").?;
     const transaction_definition: catalog.TaxFormProfileValueDefinition = .{
-        .semantic_key = .special_rate_obligation_anchor_id,
-        .value_type = .choice,
+        .semantic_key = .special_rate_basis,
+        .value_type = .text,
         .role = .filer,
         .presence = .optional,
-        .validation_rule = .catalog_choice,
+        .validation_rule = .nonempty_text,
         .ownership = .transaction_default,
         .source_kind = .user_entry,
         .availability = .supported,
@@ -1606,9 +1279,9 @@ test "transaction default is immutable provenance and only its filing copy mutat
     };
     var year_revision = try fixtureYearRevision(filer.profile_id, 2026, &year_values);
     const setup_values = [_]annual_profile.SetupValue{.{
-        .semantic_key = .special_rate_obligation_anchor_id,
+        .semantic_key = .special_rate_basis,
         .role = .filer,
-        .value = .{ .choice = try annual_profile.TextValue.parse("seed-value") },
+        .value = .{ .text = try annual_profile.TextValue.parse("seed-value") },
     }};
     var annual_revision = try fixtureAnnualRevision(
         &definition,
@@ -1635,7 +1308,7 @@ test "transaction default is immutable provenance and only its filing copy mutat
     const seed_inputs = [_]TransactionSeedInput{.{
         .filing_field = filing_field,
         .role = .filer,
-        .semantic_key = .special_rate_obligation_anchor_id,
+        .semantic_key = .special_rate_basis,
         .origin = .tax_form_profile_revision,
     }};
     input.transaction_seeds = &seed_inputs;
@@ -1646,16 +1319,16 @@ test "transaction default is immutable provenance and only its filing copy mutat
     );
     try result.filing_owned_values.set(
         &filing_field,
-        .{ .choice = try provenance.OwnedText.copy("edited-in-filing") },
+        .{ .text = try provenance.OwnedText.copy("edited-in-filing") },
     );
     try std.testing.expectEqualStrings(
         "seed-value",
         result.provenance_snapshot.transactionSeedForField(
             &filing_field,
-        ).?.copied_seed_value.choice.asSlice(),
+        ).?.copied_seed_value.text.asSlice(),
     );
     try std.testing.expectEqualStrings(
         "edited-in-filing",
-        result.filing_owned_values.get(&filing_field).?.value.choice.asSlice(),
+        result.filing_owned_values.get(&filing_field).?.value.text.asSlice(),
     );
 }

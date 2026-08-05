@@ -374,12 +374,12 @@ pub const TaxFormLibraryRow = struct {
         if (!self.active) return "Inactive";
         if (!self.editorAvailable()) return "Calendar only";
         return switch (self.launch_assessment.status) {
+            .inactive => "Inactive",
+            .missing_base_profile => "Complete Tax Profile",
+            .missing_tax_form_profile => "Complete Tax Form Profile",
+            .unsupported_period => "Unavailable",
             .ready_new => "Open Form",
             .ready_resume => "Resume Draft",
-            .needs_profile => "Complete profile",
-            .needs_activity_selection => "Choose activity",
-            .profile_not_eligible => "Profile not eligible",
-            .unavailable => "Unavailable",
         };
     }
 
@@ -387,12 +387,12 @@ pub const TaxFormLibraryRow = struct {
         if (!self.active) return "Inactive";
         if (!self.editorAvailable()) return "Calendar only";
         return switch (self.launch_assessment.status) {
+            .inactive => "Inactive",
+            .missing_base_profile => "Tax Profile incomplete",
+            .missing_tax_form_profile => "Tax Form Profile incomplete",
+            .unsupported_period => "Filing period unavailable",
             .ready_new => "Ready",
             .ready_resume => "Draft available",
-            .needs_profile => "Needs profile",
-            .needs_activity_selection => "Choose activity",
-            .profile_not_eligible => "Not eligible",
-            .unavailable => "Launch blocked",
         };
     }
 
@@ -413,11 +413,11 @@ pub const TaxFormLibraryRow = struct {
     }
 
     pub fn taxFormProfileActionVisible(self: *const TaxFormLibraryRow) bool {
-        return self.tax_form_profile_action_visible;
+        return self.active and self.tax_form_profile_action_visible;
     }
 
     pub fn taxFormProfileActionDisabled(self: *const TaxFormLibraryRow) bool {
-        return self.tax_form_profile_action_disabled;
+        return !self.active or self.tax_form_profile_action_disabled;
     }
 };
 
@@ -706,4 +706,37 @@ test "editor capability never implies filing qualification" {
     };
     try std.testing.expectEqualStrings("Calendar only", calendar_row.capability());
     try std.testing.expectEqualStrings("No artifact", calendar_row.fileability());
+}
+
+test "library launch labels use only canonical readiness layers" {
+    const definition = form_catalog.findForm("2551Q") orelse
+        return error.TestUnexpectedResult;
+    var row: TaxFormLibraryRow = .{
+        .id = 0,
+        .definition = definition,
+        .active = true,
+        .selected = false,
+        .launch_disabled = true,
+    };
+
+    row.launch_assessment.status = .missing_base_profile;
+    try std.testing.expectEqualStrings("Complete Tax Profile", row.launchLabel());
+    try std.testing.expectEqualStrings("Tax Profile incomplete", row.launchStatus());
+
+    row.launch_assessment.status = .missing_tax_form_profile;
+    try std.testing.expectEqualStrings(
+        "Complete Tax Form Profile",
+        row.launchLabel(),
+    );
+    try std.testing.expectEqualStrings(
+        "Tax Form Profile incomplete",
+        row.launchStatus(),
+    );
+
+    row.launch_assessment.status = .unsupported_period;
+    try std.testing.expectEqualStrings("Unavailable", row.launchLabel());
+    try std.testing.expectEqualStrings(
+        "Filing period unavailable",
+        row.launchStatus(),
+    );
 }

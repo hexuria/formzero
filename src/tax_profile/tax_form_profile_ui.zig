@@ -26,6 +26,7 @@ pub const Error = tax_form_profile.Error || error{
     InactiveForm,
     ProfileUnavailable,
     SetupNotSupported,
+    LockedByFiling,
     NotEditing,
     ActionDisabled,
     TooManyValues,
@@ -223,7 +224,7 @@ pub const AnnualReadiness = struct {
     has_confirmed_revision: bool,
     review_required: bool,
     /// A confirmed revision can still become unusable when one of its
-    /// date-effective profile, activity, or obligation bindings is retired.
+    /// date-effective named-profile role bindings no longer resolves.
     bindings_resolved: bool,
 
     /// Candidate completeness answers whether the annual editor can be saved.
@@ -289,6 +290,10 @@ pub const OpenArgs = struct {
     tax_year: u16,
     form_code: []const u8,
     active: bool,
+    /// A queued or later filing has frozen the exact Tax Form Profile
+    /// revision used for this form/year stream.  The profile remains readable
+    /// and filing-ready, but no further setup revisions may be authored.
+    locked_by_filing: bool = false,
     /// Exact interval resolved from the Forms Set for this form revision.
     /// Kept optional in the input shape for source compatibility, but an
     /// active page fails closed when the caller omits it. Inactive/history
@@ -297,10 +302,9 @@ pub const OpenArgs = struct {
     activation_period: ?tax_form_profile.EffectivePeriod = null,
     history_exists: bool = false,
     inherited: InheritedReadiness = .{},
-    /// A generated conditional selector becomes required only when runtime
-    /// composition cannot choose a single effective activity/obligation.
-    /// Optional-only form contracts otherwise remain filing-ready without an
-    /// empty fabricated annual revision.
+    /// True when the generated form contract requires an explicit annual
+    /// candidate. Optional-only contracts otherwise remain filing-ready
+    /// without an empty fabricated revision.
     annual_setup_required: bool = false,
     saved_revision: ?*const tax_form_profile.Revision = null,
     /// Stream-wide optimistic head. This is separate from the revision shown
@@ -317,6 +321,7 @@ pub const State = struct {
     identity: ?ViewedIdentity = null,
     setup_mode: catalog.TaxFormProfileSetupMode = .calendar_only,
     active: bool = false,
+    locked_by_filing: bool = false,
     activation_period: ?tax_form_profile.EffectivePeriod = null,
     history_exists: bool = false,
     inherited: InheritedReadiness = .{},
@@ -357,6 +362,7 @@ pub const State = struct {
         result.opened = true;
         result.setup_mode = form.tax_form_profile.mode;
         result.active = args.active;
+        result.locked_by_filing = args.locked_by_filing;
         result.activation_period = args.activation_period;
         result.history_exists = args.history_exists or
             args.saved_revision != null;
@@ -498,6 +504,7 @@ pub const State = struct {
         if (form.tax_form_profile.mode != .setup) {
             return error.SetupNotSupported;
         }
+        if (self.locked_by_filing) return error.LockedByFiling;
         switch (self.page_state) {
             .needs_setup, .viewing_ready => {},
             else => return error.InvalidTransition,
@@ -818,7 +825,8 @@ pub const State = struct {
             else => {},
         }
         if (!self.inherited.ready()) return .missing_inherited_values;
-        if (self.setup_mode == .no_setup) return .ready;
+        if (self.setup_mode == .no_setup or
+            self.setup_mode == .calendar_only) return .ready;
         const annual = self.annualReadiness();
         if (annual.review_required) return .requires_review;
         if (!self.annual_setup_required and
@@ -848,7 +856,13 @@ pub const State = struct {
         };
         const editing = self.page_state == .editing;
         const form_supports_setup = self.setup_mode == .setup;
-        const draft_complete = self.annualReadiness().candidateComplete();
+        const annual = self.annualReadiness();
+        // A saved optional-only setup can be cleared.  The resulting empty
+        // revision is meaningful append-only history, not a fabricated first
+        // setup: a brand-new optional form remains clean and cannot save.
+        const draft_complete = annual.applicable and
+            annual.missing_required_count == 0 and
+            (annual.has_nonempty_candidate or !self.annual_setup_required);
         const review_complete = self.draft_review_requirement == .none or
             self.draft_review_acknowledged;
         const copy_exact = if (self.copy_offer) |offer|
@@ -863,7 +877,8 @@ pub const State = struct {
             offer.compatibility == .requires_mapping_review
         else
             false;
-        const mutable = self.active and form_supports_setup;
+        const mutable = self.active and form_supports_setup and
+            !self.locked_by_filing;
         const idle_enough = self.save_status != .saving;
         const has_conflict = self.conflict != null;
         return .{
@@ -888,7 +903,8 @@ pub const State = struct {
                 copy_needs_mapping,
             .can_reload_conflict = has_conflict,
             .can_rebase_conflict = has_conflict,
-            .can_start_new_filing = self.filingReadiness() == .ready,
+            .can_start_new_filing = self.setup_mode != .calendar_only and
+                self.filingReadiness() == .ready,
         };
     }
 
@@ -1061,11 +1077,9 @@ pub const State = struct {
         self: *const State,
         form: *const catalog.FormDefinition,
     ) PageState {
-        if (form.tax_form_profile.mode == .calendar_only) {
-            return .calendar_only_no_profile;
-        }
         if (!self.active) return .inactive_history_only;
-        if (form.tax_form_profile.mode == .no_setup) return .inherited_only;
+        if (form.tax_form_profile.mode == .calendar_only or
+            form.tax_form_profile.mode == .no_setup) return .inherited_only;
         if (self.baseline_confirmed and
             self.baseline_review_requirement == .none and
             self.saved_bindings_resolved)
@@ -1219,7 +1233,6 @@ fn validateHistoricalRevisionEnvelope(
     {
         return error.EffectivePeriodOutsideTaxYear;
     }
-    if (revision.values.len == 0) return error.EmptySetupRevision;
     for (revision.values, 0..) |value, index| {
         for (revision.values[index + 1 ..]) |other| {
             if (sameValueKey(value, other)) return error.DuplicateValue;
@@ -1303,7 +1316,6 @@ fn validateEditableValues(
         }
     }
     if (!require_complete) return;
-    if (values.len == 0) return error.IncompleteAnnualSetup;
     for (form.tax_form_profile.values) |definition| {
         if (definition.availability != .supported or
             definition.presence != .required)
@@ -1410,14 +1422,6 @@ fn scalarValueEqual(
             .profile_id => |other| value.eql(&other),
             else => false,
         },
-        .business_activity_anchor_id => |value| switch (right) {
-            .business_activity_anchor_id => |other| value.eql(&other),
-            else => false,
-        },
-        .registration_obligation_anchor_id => |value| switch (right) {
-            .registration_obligation_anchor_id => |other| value.eql(&other),
-            else => false,
-        },
         .text => |value| switch (right) {
             .text => |other| value.eql(&other),
             else => false,
@@ -1467,11 +1471,11 @@ fn optionalRevisionIdentityEql(
     return right == null;
 }
 
-fn activityValue(raw: []const u8) !tax_form_profile.SetupValue {
+fn incomeRateValue(raw: []const u8) !tax_form_profile.SetupValue {
     return .{
-        .semantic_key = .business_activity_anchor_id,
+        .semantic_key = .income_tax_rate_election,
         .role = .filer,
-        .value = .{ .business_activity_anchor_id = try tax_form_profile.ComponentAnchorId.parse(raw) },
+        .value = .{ .choice = try tax_form_profile.TextValue.parse(raw) },
     };
 }
 
@@ -1516,7 +1520,7 @@ fn fixtureRevision(
     };
 }
 
-test "calendar-only form exposes an explanation state and no profile actions" {
+test "active calendar-only form exposes inherited details without filing actions" {
     const profile_id = try model.ProfileId.parse("profile-one");
     var state = try State.open(.{
         .profile_id = profile_id,
@@ -1527,12 +1531,12 @@ test "calendar-only form exposes an explanation state and no profile actions" {
         .inherited = .{ .required_count = 3 },
     });
     try std.testing.expectEqual(
-        PageState.calendar_only_no_profile,
+        PageState.inherited_only,
         state.page().?,
     );
     try std.testing.expect(state.viewedIdentity().?.form_revision == null);
     try std.testing.expect(state.viewedIdentity().?.spec_hash == null);
-    try std.testing.expectEqual(FilingReadiness.unavailable, state.filingReadiness());
+    try std.testing.expectEqual(FilingReadiness.ready, state.filingReadiness());
     const actions = state.affordances();
     try std.testing.expect(!actions.can_edit_tax_form_profile);
     try std.testing.expect(!actions.can_start_new_filing);
@@ -1544,7 +1548,7 @@ test "active no-setup form is inherited-only and never creates annual values" {
     var state = try State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "2551Q",
+        .form_code = "1601C",
         .active = true,
         .activation_period = try fullYearActivation(2026),
         .inherited = .{ .required_count = 8 },
@@ -1573,7 +1577,7 @@ test "setup opens needs-setup and clean edit actions stay disabled" {
     var state = try State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = true,
         .activation_period = try fullYearActivation(2026),
         .inherited = .{ .required_count = 4 },
@@ -1592,13 +1596,42 @@ test "setup opens needs-setup and clean edit actions stay disabled" {
     try std.testing.expectError(error.ActionDisabled, state.beginSave());
     try std.testing.expectError(error.ActionDisabled, state.cancel());
 
-    try state.setDraftValue(try activityValue("activity-primary"));
+    try state.setDraftValue(try incomeRateValue("graduated"));
     try std.testing.expect(state.dirty());
     try std.testing.expect(state.affordances().can_save);
     try std.testing.expect(state.affordances().can_cancel);
     try state.cancel();
     try std.testing.expectEqual(PageState.needs_setup, state.page().?);
     try std.testing.expectEqual(@as(usize, 0), state.draftValues().len);
+}
+
+test "queued filing freezes the saved form-year profile without blocking filing" {
+    const profile_id = try model.ProfileId.parse("profile-locked");
+    const saved_value = try incomeRateValue("eight_percent");
+    const saved = try fixtureRevision(
+        "2551Q",
+        profile_id,
+        2026,
+        "locked-rate-r1",
+        1,
+        .confirmed,
+        &.{saved_value},
+    );
+    var state = try State.open(.{
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .form_code = "2551Q",
+        .active = true,
+        .locked_by_filing = true,
+        .activation_period = try fullYearActivation(2026),
+        .saved_revision = &saved,
+    });
+
+    try std.testing.expectEqual(PageState.viewing_ready, state.page().?);
+    try std.testing.expectEqual(FilingReadiness.ready, state.filingReadiness());
+    try std.testing.expect(state.affordances().can_start_new_filing);
+    try std.testing.expect(!state.affordances().can_edit_tax_form_profile);
+    try std.testing.expectError(error.LockedByFiling, state.beginEdit());
 }
 
 test "mid-year Forms Set activation is state-owned and emitted unchanged on save" {
@@ -1610,7 +1643,7 @@ test "mid-year Forms Set activation is state-owned and emitted unchanged on save
     var state = try State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = true,
         .activation_period = activation,
         .annual_setup_required = true,
@@ -1619,14 +1652,14 @@ test "mid-year Forms Set activation is state-owned and emitted unchanged on save
 
     try state.beginEdit();
     const values = [_]tax_form_profile.SetupValue{
-        try activityValue("activity-midyear"),
+        try incomeRateValue("graduated"),
     };
     try state.setDraftValues(&values);
     const intent = try state.beginSave();
     try std.testing.expect(intent.effective.eql(activation));
 
     var saved = try fixtureRevision(
-        "1601C",
+        "2551Q",
         profile_id,
         2026,
         "annual-midyear",
@@ -1645,7 +1678,7 @@ test "activation period is required for active routes and constrained to tax yea
     try std.testing.expectError(error.MissingActivationPeriod, State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = true,
     }));
 
@@ -1658,7 +1691,7 @@ test "activation period is required for active routes and constrained to tax yea
         State.open(.{
             .profile_id = profile_id,
             .tax_year = 2026,
-            .form_code = "1601C",
+            .form_code = "2551Q",
             .active = true,
             .activation_period = crosses_year,
         }),
@@ -1667,7 +1700,7 @@ test "activation period is required for active routes and constrained to tax yea
     try std.testing.expectError(error.UnexpectedActivationPeriod, State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = false,
         .activation_period = try fullYearActivation(2026),
     }));
@@ -1676,10 +1709,10 @@ test "activation period is required for active routes and constrained to tax yea
 test "inactive history has no current activation and active revisions must match it" {
     const profile_id = try model.ProfileId.parse("profile-history-period");
     const values = [_]tax_form_profile.SetupValue{
-        try activityValue("activity-history"),
+        try incomeRateValue("graduated"),
     };
     var historical = try fixtureRevision(
-        "1601C",
+        "2551Q",
         profile_id,
         2026,
         "annual-history-period",
@@ -1695,22 +1728,22 @@ test "inactive history has no current activation and active revisions must match
     var inactive = try State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = false,
         .saved_revision = &historical,
     });
     try std.testing.expect(inactive.activationPeriod() == null);
     try std.testing.expectEqual(PageState.inactive_history_only, inactive.page().?);
     try std.testing.expectEqualStrings(
-        "activity-history",
-        inactive.baselineValues()[0].value.business_activity_anchor_id.asSlice(),
+        "graduated",
+        inactive.baselineValues()[0].value.choice.asSlice(),
     );
     try std.testing.expectError(error.InactiveForm, inactive.beginEdit());
 
     try std.testing.expectError(error.WrongActivationPeriod, State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = true,
         .activation_period = try fullYearActivation(2026),
         .saved_revision = &historical,
@@ -1737,11 +1770,41 @@ test "optional-only setup is ready without an empty annual revision" {
     try std.testing.expectError(error.ActionDisabled, state.beginSave());
 }
 
+test "required 2551Q setup cannot be cleared and saved" {
+    const profile_id = try model.ProfileId.parse("profile-optional-clear");
+    const saved_value = try incomeRateValue("graduated");
+    const saved = try fixtureRevision(
+        "2551Q",
+        profile_id,
+        2026,
+        "optional-clear-r1",
+        1,
+        .confirmed,
+        &.{saved_value},
+    );
+    var state = try State.open(.{
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .form_code = "2551Q",
+        .active = true,
+        .activation_period = try fullYearActivation(2026),
+        .saved_revision = &saved,
+    });
+    try std.testing.expectEqual(PageState.viewing_ready, state.page().?);
+
+    try state.beginEdit();
+    try state.removeDraftValue(.filer, .income_tax_rate_election);
+    try std.testing.expect(state.dirty());
+    try std.testing.expectEqual(@as(usize, 0), state.draftValues().len);
+    try std.testing.expect(!state.affordances().can_save);
+    try std.testing.expectError(error.ActionDisabled, state.beginSave());
+}
+
 test "confirmed setup becomes repairable when shared bindings stop resolving" {
     const profile_id = try model.ProfileId.parse("profile-binding-owner");
-    const value = try activityValue("activity-retired-later");
+    const value = try incomeRateValue("graduated");
     const revision = try fixtureRevision(
-        "1601C",
+        "2551Q",
         profile_id,
         2026,
         "binding-revision-1",
@@ -1752,7 +1815,7 @@ test "confirmed setup becomes repairable when shared bindings stop resolving" {
     var state = try State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = true,
         .activation_period = try fullYearActivation(2026),
         .saved_revision = &revision,
@@ -1777,10 +1840,10 @@ test "confirmed setup becomes repairable when shared bindings stop resolving" {
 test "view edit compares normalized typed values and dirty cancel restores in place" {
     const profile_id = try model.ProfileId.parse("profile-one");
     const values = [_]tax_form_profile.SetupValue{
-        try activityValue("activity-primary"),
+        try incomeRateValue("graduated"),
     };
     const revision = try fixtureRevision(
-        "1601C",
+        "2551Q",
         profile_id,
         2026,
         "annual-one",
@@ -1791,7 +1854,7 @@ test "view edit compares normalized typed values and dirty cancel restores in pl
     var state = try State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = true,
         .activation_period = try fullYearActivation(2026),
         .saved_revision = &revision,
@@ -1803,30 +1866,30 @@ test "view edit compares normalized typed values and dirty cancel restores in pl
 
     // Domain parsing trims identifiers; a normalized no-op stays clean even
     // when it arrived through a new value object with different provenance.
-    var same = try activityValue("  activity-primary \n");
+    var same = try incomeRateValue("  graduated \n");
     same.source = .{ .migrated = try tax_form_profile.TextValue.parse("legacy") };
     try state.setDraftValue(same);
     try std.testing.expect(!state.dirty());
     try std.testing.expect(!state.affordances().can_save);
     try std.testing.expect(!state.affordances().can_cancel);
 
-    try state.setDraftValue(try activityValue("activity-secondary"));
+    try state.setDraftValue(try incomeRateValue("eight_percent"));
     try std.testing.expect(state.dirty());
     try state.cancel();
     try std.testing.expectEqual(PageState.viewing_ready, state.page().?);
     try std.testing.expectEqualStrings(
-        "activity-primary",
-        state.draftValues()[0].value.business_activity_anchor_id.asSlice(),
+        "graduated",
+        state.draftValues()[0].value.choice.asSlice(),
     );
 }
 
 test "inactive form preserves exact history identity and rejects every edit path" {
     const profile_id = try model.ProfileId.parse("profile-one");
     const values = [_]tax_form_profile.SetupValue{
-        try activityValue("activity-primary"),
+        try incomeRateValue("graduated"),
     };
     const revision = try fixtureRevision(
-        "1601C",
+        "2551Q",
         profile_id,
         2026,
         "annual-history",
@@ -1837,7 +1900,7 @@ test "inactive form preserves exact history identity and rejects every edit path
     var state = try State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = false,
         .saved_revision = &revision,
     });
@@ -1855,10 +1918,10 @@ test "inactive form preserves exact history identity and rejects every edit path
 test "inactive history keeps an old exact form and spec identity readable" {
     const profile_id = try model.ProfileId.parse("profile-one");
     const values = [_]tax_form_profile.SetupValue{
-        try activityValue("activity-primary"),
+        try incomeRateValue("graduated"),
     };
     var historical = try fixtureRevision(
-        "1601C",
+        "2551Q",
         profile_id,
         2026,
         "annual-old-spec",
@@ -1874,7 +1937,7 @@ test "inactive history keeps an old exact form and spec identity readable" {
     var inactive = try State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = false,
         .saved_revision = &historical,
     });
@@ -1892,7 +1955,7 @@ test "inactive history keeps an old exact form and spec identity readable" {
     try std.testing.expectError(error.WrongViewedIdentity, State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = true,
         .activation_period = try fullYearActivation(2026),
         .saved_revision = &historical,
@@ -1902,10 +1965,10 @@ test "inactive history keeps an old exact form and spec identity readable" {
 test "prior-year copy is explicit reviewable provenance and cancel restores baseline" {
     const profile_id = try model.ProfileId.parse("profile-one");
     const prior_values = [_]tax_form_profile.SetupValue{
-        try activityValue("activity-prior"),
+        try incomeRateValue("graduated"),
     };
     const prior = try fixtureRevision(
-        "1601C",
+        "2551Q",
         profile_id,
         2025,
         "annual-2025",
@@ -1916,7 +1979,7 @@ test "prior-year copy is explicit reviewable provenance and cancel restores base
     var state = try State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = true,
         .activation_period = try fullYearActivation(2026),
         .copy_offer = .{
@@ -1956,10 +2019,10 @@ test "prior-year copy is explicit reviewable provenance and cancel restores base
 test "mapping review and incompatible copy never bypass exact compatibility" {
     const profile_id = try model.ProfileId.parse("profile-one");
     const prior_values = [_]tax_form_profile.SetupValue{
-        try activityValue("activity-prior"),
+        try incomeRateValue("graduated"),
     };
     var prior = try fixtureRevision(
-        "1601C",
+        "2551Q",
         profile_id,
         2025,
         "annual-2025",
@@ -1975,7 +2038,7 @@ test "mapping review and incompatible copy never bypass exact compatibility" {
     var state = try State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = true,
         .activation_period = try fullYearActivation(2026),
         .copy_offer = .{
@@ -2007,7 +2070,7 @@ test "mapping review and incompatible copy never bypass exact compatibility" {
     );
 }
 
-test "mapping review surfaces removed changed and evidence gated values" {
+test "mapping review surfaces removed and changed values" {
     const profile_id = try model.ProfileId.parse("profile-one");
     const spouse_id = try model.ProfileId.parse("profile-spouse");
     const source_values = [_]tax_form_profile.SetupValue{
@@ -2017,19 +2080,14 @@ test "mapping review surfaces removed changed and evidence gated values" {
             .value = .{ .profile_id = spouse_id },
         },
         .{
-            .semantic_key = .spouse_business_activity_anchor_id,
+            .semantic_key = .income_tax_rate_election,
+            .role = .filer,
+            .value = .{ .choice = try tax_form_profile.TextValue.parse("graduated") },
+        },
+        .{
+            .semantic_key = .spouse_profile_id,
             .role = .spouse,
-            .value = .{ .business_activity_anchor_id = try tax_form_profile.ComponentAnchorId.parse("spouse-old") },
-        },
-        .{
-            .semantic_key = .special_rate_obligation_anchor_id,
-            .role = .filer,
-            .value = .{ .registration_obligation_anchor_id = try tax_form_profile.ComponentAnchorId.parse("special-old") },
-        },
-        .{
-            .semantic_key = .business_activity_anchor_id,
-            .role = .filer,
-            .value = .{ .profile_id = spouse_id },
+            .value = .{ .text = try tax_form_profile.TextValue.parse("legacy-spouse") },
         },
     };
     var prior = try fixtureRevision(
@@ -2061,18 +2119,14 @@ test "mapping review surfaces removed changed and evidence gated values" {
     try state.stageFormRevisionMapping(&source_values);
     const review = state.mappingReview().?;
     try std.testing.expectEqual(@as(u16, 1), review.mapped_count);
-    try std.testing.expectEqual(@as(usize, 3), review.issue_count);
+    try std.testing.expectEqual(@as(usize, 2), review.issue_count);
     try std.testing.expectEqual(
-        MappingIssueReason.evidence_gated,
+        MappingIssueReason.not_in_current_spec,
         review.issueSlice()[0].reason,
     );
     try std.testing.expectEqual(
-        MappingIssueReason.not_in_current_spec,
-        review.issueSlice()[1].reason,
-    );
-    try std.testing.expectEqual(
         MappingIssueReason.value_type_changed,
-        review.issueSlice()[2].reason,
+        review.issueSlice()[1].reason,
     );
     try std.testing.expectEqual(@as(usize, 1), state.draftValues().len);
     try std.testing.expect(!state.affordances().can_save);
@@ -2083,10 +2137,10 @@ test "mapping review surfaces removed changed and evidence gated values" {
 test "optimistic conflict preserves draft and exposes explicit rebase and reload" {
     const profile_id = try model.ProfileId.parse("profile-one");
     const baseline_values = [_]tax_form_profile.SetupValue{
-        try activityValue("activity-primary"),
+        try incomeRateValue("graduated"),
     };
     const baseline = try fixtureRevision(
-        "1601C",
+        "2551Q",
         profile_id,
         2026,
         "annual-one",
@@ -2097,19 +2151,19 @@ test "optimistic conflict preserves draft and exposes explicit rebase and reload
     var state = try State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = true,
         .activation_period = try fullYearActivation(2026),
         .saved_revision = &baseline,
     });
     try state.beginEdit();
-    try state.setDraftValue(try activityValue("activity-user-draft"));
+    try state.setDraftValue(try incomeRateValue("eight_percent"));
     _ = try state.beginSave();
     try state.noteConflict(4);
     try std.testing.expectEqual(FilingReadiness.conflict, state.filingReadiness());
     try std.testing.expectEqualStrings(
-        "activity-user-draft",
-        state.draftValues()[0].value.business_activity_anchor_id.asSlice(),
+        "eight_percent",
+        state.draftValues()[0].value.choice.asSlice(),
     );
     try std.testing.expect(state.affordances().can_reload_conflict);
     try std.testing.expect(state.affordances().can_rebase_conflict);
@@ -2125,10 +2179,10 @@ test "optimistic conflict preserves draft and exposes explicit rebase and reload
     try state.noteConflict(5);
 
     const latest_values = [_]tax_form_profile.SetupValue{
-        try activityValue("activity-latest"),
+        try incomeRateValue("graduated"),
     };
     const latest = try fixtureRevision(
-        "1601C",
+        "2551Q",
         profile_id,
         2026,
         "annual-latest",
@@ -2139,8 +2193,8 @@ test "optimistic conflict preserves draft and exposes explicit rebase and reload
     try state.reloadAfterConflict(&latest, 5);
     try std.testing.expectEqual(PageState.viewing_ready, state.page().?);
     try std.testing.expectEqualStrings(
-        "activity-latest",
-        state.draftValues()[0].value.business_activity_anchor_id.asSlice(),
+        "graduated",
+        state.draftValues()[0].value.choice.asSlice(),
     );
 }
 
@@ -2149,25 +2203,25 @@ test "successful save advances exact identity while failed save retains draft" {
     var state = try State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = true,
         .activation_period = try fullYearActivation(2026),
     });
     try state.beginEdit();
     const values = [_]tax_form_profile.SetupValue{
-        try activityValue("activity-primary"),
+        try incomeRateValue("graduated"),
     };
     try state.setDraftValues(&values);
     _ = try state.beginSave();
     try state.saveFailed();
     try std.testing.expectEqual(SaveStatus.failed, state.save_status);
     try std.testing.expectEqualStrings(
-        "activity-primary",
-        state.draftValues()[0].value.business_activity_anchor_id.asSlice(),
+        "graduated",
+        state.draftValues()[0].value.choice.asSlice(),
     );
     _ = try state.beginSave();
     const saved = try fixtureRevision(
-        "1601C",
+        "2551Q",
         profile_id,
         2026,
         "annual-saved",
@@ -2185,10 +2239,10 @@ test "successful save advances exact identity while failed save retains draft" {
 test "persisted unconfirmed revision remains needs-setup until explicit review" {
     const profile_id = try model.ProfileId.parse("profile-one");
     const values = [_]tax_form_profile.SetupValue{
-        try activityValue("activity-primary"),
+        try incomeRateValue("graduated"),
     };
     var pending = try fixtureRevision(
-        "1601C",
+        "2551Q",
         profile_id,
         2026,
         "annual-pending",
@@ -2206,7 +2260,7 @@ test "persisted unconfirmed revision remains needs-setup until explicit review" 
     var state = try State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = true,
         .activation_period = try fullYearActivation(2026),
         .saved_revision = &pending,
@@ -2234,10 +2288,10 @@ test "persisted unconfirmed revision remains needs-setup until explicit review" 
 test "reactivated confirmed setup requires an explicit review acknowledgement" {
     const profile_id = try model.ProfileId.parse("profile-one");
     const values = [_]tax_form_profile.SetupValue{
-        try activityValue("activity-primary"),
+        try incomeRateValue("graduated"),
     };
     const revision = try fixtureRevision(
-        "1601C",
+        "2551Q",
         profile_id,
         2026,
         "annual-reactivated",
@@ -2248,7 +2302,7 @@ test "reactivated confirmed setup requires an explicit review acknowledgement" {
     var state = try State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = true,
         .activation_period = try fullYearActivation(2026),
         .saved_revision = &revision,
@@ -2269,10 +2323,10 @@ test "reactivated confirmed setup requires an explicit review acknowledgement" {
 test "same-year reactivation offers compatible setup as an explicit reviewed draft" {
     const profile_id = try model.ProfileId.parse("profile-one");
     const values = [_]tax_form_profile.SetupValue{
-        try activityValue("activity-primary"),
+        try incomeRateValue("graduated"),
     };
     const prior_segment = try fixtureRevision(
-        "1601C",
+        "2551Q",
         profile_id,
         2026,
         "annual-first-segment",
@@ -2287,7 +2341,7 @@ test "same-year reactivation offers compatible setup as an explicit reviewed dra
     var state = try State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = true,
         .activation_period = second_segment,
         .history_exists = true,
@@ -2321,10 +2375,10 @@ test "same-year reactivation offers compatible setup as an explicit reviewed dra
 test "an older activation segment edits against the stream-wide optimistic head" {
     const profile_id = try model.ProfileId.parse("profile-one");
     const values = [_]tax_form_profile.SetupValue{
-        try activityValue("activity-first-segment"),
+        try incomeRateValue("graduated"),
     };
     var first_segment = try fixtureRevision(
-        "1601C",
+        "2551Q",
         profile_id,
         2026,
         "annual-first-segment",
@@ -2339,7 +2393,7 @@ test "an older activation segment edits against the stream-wide optimistic head"
     var state = try State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = true,
         .activation_period = first_segment.effective,
         .saved_revision = &first_segment,
@@ -2348,7 +2402,7 @@ test "an older activation segment edits against the stream-wide optimistic head"
     try std.testing.expectEqual(@as(u32, 1), state.viewedIdentity().?.annual_revision_sequence);
     try std.testing.expectEqual(@as(u32, 2), state.expected_sequence);
     try state.beginEdit();
-    try state.setDraftValue(try activityValue("activity-corrected"));
+    try state.setDraftValue(try incomeRateValue("eight_percent"));
     const intent = try state.beginSave();
     try std.testing.expectEqual(@as(u32, 2), intent.expected_sequence);
     try std.testing.expect(intent.effective.eql(first_segment.effective));
@@ -2365,7 +2419,7 @@ test "an older activation segment edits against the stream-wide optimistic head"
     try std.testing.expectError(error.WrongExpectedSequence, State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = true,
         .activation_period = first_segment.effective,
         .saved_revision = &first_segment,
@@ -2377,10 +2431,10 @@ test "wrong profile year and exact revision identities fail closed" {
     const profile_id = try model.ProfileId.parse("profile-one");
     const other_profile = try model.ProfileId.parse("profile-two");
     const values = [_]tax_form_profile.SetupValue{
-        try activityValue("activity-primary"),
+        try incomeRateValue("graduated"),
     };
     const wrong_owner = try fixtureRevision(
-        "1601C",
+        "2551Q",
         other_profile,
         2026,
         "annual-other",
@@ -2391,14 +2445,14 @@ test "wrong profile year and exact revision identities fail closed" {
     try std.testing.expectError(error.WrongViewedIdentity, State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = true,
         .activation_period = try fullYearActivation(2026),
         .saved_revision = &wrong_owner,
     }));
 
     const wrong_year = try fixtureRevision(
-        "1601C",
+        "2551Q",
         profile_id,
         2025,
         "annual-2025",
@@ -2409,14 +2463,14 @@ test "wrong profile year and exact revision identities fail closed" {
     try std.testing.expectError(error.WrongViewedIdentity, State.open(.{
         .profile_id = profile_id,
         .tax_year = 2026,
-        .form_code = "1601C",
+        .form_code = "2551Q",
         .active = true,
         .activation_period = try fullYearActivation(2026),
         .saved_revision = &wrong_year,
     }));
 }
 
-test "invalid inherited counts and evidence-gated values are rejected" {
+test "invalid inherited counts and values outside the current contract are rejected" {
     const profile_id = try model.ProfileId.parse("profile-one");
     try std.testing.expectError(error.InvalidInheritedReadiness, State.open(.{
         .profile_id = profile_id,
@@ -2435,12 +2489,10 @@ test "invalid inherited counts and evidence-gated values are rejected" {
         .activation_period = try fullYearActivation(2026),
     });
     try state.beginEdit();
-    // Filer activity is now a supported 1701Q binding. The spouse activity
-    // remains evidence-gated until the exact official revision proves it.
-    const gated: tax_form_profile.SetupValue = .{
-        .semantic_key = .spouse_business_activity_anchor_id,
-        .role = .spouse,
-        .value = .{ .business_activity_anchor_id = try tax_form_profile.ComponentAnchorId.parse("activity-primary") },
+    const unsupported: tax_form_profile.SetupValue = .{
+        .semantic_key = .income_tax_rate_election,
+        .role = .filer,
+        .value = .{ .choice = try tax_form_profile.TextValue.parse("graduated") },
     };
-    try std.testing.expectError(error.EvidenceRequired, state.setDraftValue(gated));
+    try std.testing.expectError(error.UnknownSemanticKey, state.setDraftValue(unsupported));
 }

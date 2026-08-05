@@ -5,7 +5,7 @@
     <!-- @include-template form-field-bound label="Taxpayer Name" v="{formFilerTaxpayerName}" ph="Registered taxpayer name" -->
     <!-- @include-template form-field-bound label="Registered Address" v="{formFilerRegisteredAddress}" ph="Registered address" -->
     <!-- @include-template form-field-bound label="ZIP Code" v="{formFilerZipCode}" ph="-" -->
-    <!-- @include-template form-field-bound label="Line of Business" v="{formFilerLineOfBusiness}" ph="Business activity" -->
+    <!-- @include-template form-field-bound label="Line of Business" v="{formFilerLineOfBusiness}" ph="Primary Line of Business" -->
     <!-- @include-template form-field-bound label="Contact Number" v="{formFilerContactNumber}" ph="Contact number" -->
     <!-- @include-template form-field-bound label="Email Address" v="{formFilerEmailAddress}" ph="-" -->
   </grid>

@@ -1369,15 +1369,7 @@ fn provenanceEql(
     return left.profile_id.eql(&right.profile_id) and
         left.revision_id.eql(&right.revision_id) and
         left.revision_sequence == right.revision_sequence and
-        revisionSourceEql(&left.revision_source, &right.revision_source) and
-        optionalBusinessActivityIdEql(
-            left.business_activity_id,
-            right.business_activity_id,
-        ) and
-        optionalRegistrationFactIdEql(
-            left.registration_fact_id,
-            right.registration_fact_id,
-        );
+        revisionSourceEql(&left.revision_source, &right.revision_source);
 }
 
 fn revisionSourceEql(
@@ -1400,28 +1392,6 @@ fn revisionSourceEql(
             right.migrated.asSlice(),
         ),
     };
-}
-
-fn optionalBusinessActivityIdEql(
-    left: ?model.BusinessActivityId,
-    right: ?model.BusinessActivityId,
-) bool {
-    if (left) |left_id| {
-        if (right) |right_id| return left_id.eql(&right_id);
-        return false;
-    }
-    return right == null;
-}
-
-fn optionalRegistrationFactIdEql(
-    left: ?model.RegistrationFactId,
-    right: ?model.RegistrationFactId,
-) bool {
-    if (left) |left_id| {
-        if (right) |right_id| return left_id.eql(&right_id);
-        return false;
-    }
-    return right == null;
 }
 
 fn controlSeed(control_id: []const u8) ?occurrences.ControlSeed {
@@ -1664,9 +1634,13 @@ fn hashProfileValue(
         .foreign_tax_number => |stored| {
             hashLengthPrefixed(hash, stored.asSlice());
         },
+        .accounting_period_basis => |stored| {
+            hashLengthPrefixed(hash, @tagName(stored));
+        },
         .line_of_business => |stored| {
             hashLengthPrefixed(hash, stored.asSlice());
         },
+        .eopt_tier => |stored| hashLengthPrefixed(hash, stored.asSlice()),
         .atc => |stored| hashLengthPrefixed(hash, stored.asSlice()),
         .tax_type => |stored| hashLengthPrefixed(hash, stored.asSlice()),
         .government_withholding_agent => |stored| {
@@ -1698,18 +1672,10 @@ fn hashProvenance(
             hashLengthPrefixed(hash, reference.asSlice());
         },
     }
-    if (provenance.business_activity_id) |activity_id| {
-        hash.update(&.{1});
-        hashLengthPrefixed(hash, activity_id.asSlice());
-    } else {
-        hash.update(&.{0});
-    }
-    if (provenance.registration_fact_id) |fact_id| {
-        hash.update(&.{1});
-        hashLengthPrefixed(hash, fact_id.asSlice());
-    } else {
-        hash.update(&.{0});
-    }
+    // Preserve the v1 digest framing for existing exact drafts. These two
+    // zero tags are compatibility padding for component identifiers that the
+    // simplified current provenance model no longer represents.
+    hash.update(&.{ 0, 0 });
 }
 
 fn hashValue(

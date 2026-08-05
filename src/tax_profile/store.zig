@@ -44,6 +44,20 @@
 //! source form revision and setup-spec identity. This permits an explicitly
 //! reviewed semantic-key mapping across form revisions without relabelling the
 //! result as manual entry or weakening append-only source checks.
+//! Schema v21 is a reserved version from a rejected pilot and performs no
+//! schema work.
+//! Schema v22 widens the canonical juridical-person vocabulary to include
+//! cooperatives. The profile revision table is rebuilt without changing its
+//! row IDs, revision IDs, foreign keys, timestamps, or append-only guards.
+//! Schema v23 and v24 are likewise reserved rejected-pilot versions and do no
+//! schema work. Schema v25 consolidates reusable accounting and registration
+//! facts onto the same effective-dated Base Tax Profile revision while keeping
+//! the old registration tables intact as migration and export evidence.
+//! Schema v26 rebuilds Tax Form Profile values as scalar-only storage. It
+//! preserves supported scalar history and parent revisions while retiring the
+//! obsolete registration-anchor column and its runtime triggers. Schema v27
+//! isolates obsolete provenance sidecars and records the first queued filing
+//! boundary as a permanent Tax Form Profile revision lock.
 
 const std = @import("std");
 const profile_field = @import("field.zig");
@@ -67,7 +81,7 @@ const sqlite = @cImport({
     @cInclude("sqlite3.h");
 });
 
-pub const latest_schema_version: u32 = 20;
+pub const latest_schema_version: u32 = 27;
 const migration_component = "tax_profile";
 pub const storage_classification =
     repository_opening.legacy_plaintext_repository_classification;
@@ -143,6 +157,7 @@ pub const Error = error{
     SqliteFailure,
     TaxFormProfileInactive,
     TaxFormProfileIntervalOverlap,
+    TaxFormProfileLockedByFiling,
     TaxFormProfileNoSetup,
     TaxFormProfileReferenceInvalid,
     TaxFormProfileSpecMismatch,
@@ -189,6 +204,7 @@ pub const SubjectKind = enum {
     sole_proprietor,
     corporation,
     partnership,
+    cooperative,
     estate,
     trust,
     other_legal_entity,
@@ -212,6 +228,7 @@ pub const NaturalPersonClassification = enum {
 pub const LegalEntityKind = enum {
     corporation,
     partnership,
+    cooperative,
     estate,
     trust,
     other,
@@ -281,6 +298,7 @@ pub const SubjectWrite = union(enum) {
             .legal_entity => |entity| switch (entity.kind) {
                 .corporation => .corporation,
                 .partnership => .partnership,
+                .cooperative => .cooperative,
                 .estate => .estate,
                 .trust => .trust,
                 .other => .other_legal_entity,
@@ -302,9 +320,9 @@ pub const ProfileLabelWrite = struct {
     label: []const u8,
 };
 
-/// A cohesive immutable revision row. Repeated components are passed
-/// separately through `RevisionComponentsWrite`; no tax-type fact is hidden
-/// inside a business activity and no subject is represented by a nullable bag.
+/// A cohesive immutable Base Tax Profile revision row. Retired repeated
+/// component rows are accepted only by the compatibility fixture helpers used
+/// to prove older-schema migration and export behavior.
 pub const RevisionWrite = struct {
     id: []const u8,
     profile_id: []const u8,
@@ -315,10 +333,44 @@ pub const RevisionWrite = struct {
     identity: IdentityWrite,
     contact: ContactWrite,
     subject: SubjectWrite,
+    accounting_period_basis: ?AccountingPeriodBasis = null,
+    fiscal_year_end_month: ?u8 = null,
+    eopt_tier: ?EoptTier = null,
+    primary_line_of_business: ?[]const u8 = null,
+    consolidation_review_state: ConsolidationReviewState = .confirmed,
     /// Durable key to the reviewed COR document this revision was accepted
     /// from. Only an `.imported` revision may carry one; the readable
     /// free-text reference in `source` stays alongside it.
     cor_document_id: ?[]const u8 = null,
+};
+
+pub const AccountingPeriodBasis = enum {
+    calendar,
+    fiscal,
+
+    fn text(self: AccountingPeriodBasis) []const u8 {
+        return @tagName(self);
+    }
+};
+
+pub const EoptTier = enum {
+    micro,
+    small,
+    medium,
+    large,
+
+    fn text(self: EoptTier) []const u8 {
+        return @tagName(self);
+    }
+};
+
+pub const ConsolidationReviewState = enum {
+    confirmed,
+    requires_review,
+
+    fn text(self: ConsolidationReviewState) []const u8 {
+        return @tagName(self);
+    }
 };
 
 pub const TaxpayerYearReviewState = enum {
@@ -452,8 +504,6 @@ pub const TaxFormProfileReviewState = enum {
 
 pub const TaxFormProfileScalarValueWrite = union(enum) {
     profile_id: []const u8,
-    business_activity_anchor_id: []const u8,
-    registration_obligation_anchor_id: []const u8,
     text: []const u8,
     boolean: bool,
     integer: i64,
@@ -466,8 +516,6 @@ pub const TaxFormProfileScalarValueWrite = union(enum) {
     ) form_catalog.TaxFormProfileValueType {
         return switch (self) {
             .profile_id => .profile_id,
-            .business_activity_anchor_id => .business_activity_anchor_id,
-            .registration_obligation_anchor_id => .registration_obligation_anchor_id,
             .text => .text,
             .boolean => .boolean,
             .integer => .integer,
@@ -524,8 +572,6 @@ pub const TaxFormProfileRevisionWrite = struct {
 
 pub const OwnedTaxFormProfileScalarValue = union(enum) {
     profile_id: []u8,
-    business_activity_anchor_id: []u8,
-    registration_obligation_anchor_id: []u8,
     text: []u8,
     boolean: bool,
     integer: i64,
@@ -539,8 +585,6 @@ pub const OwnedTaxFormProfileScalarValue = union(enum) {
     ) void {
         switch (self.*) {
             .profile_id,
-            .business_activity_anchor_id,
-            .registration_obligation_anchor_id,
             .text,
             .date,
             .choice,
@@ -707,16 +751,19 @@ pub const RegistrationFactWrite = struct {
 };
 
 pub const RevisionComponentsWrite = struct {
+    /// Retired pre-v25 component payloads. Current (v27+) Base Tax Profile
+    /// writes reject non-empty slices; the shape remains only so historical
+    /// migration fixtures can construct the rows an older release produced.
     business_activities: []const BusinessActivityWrite = &.{},
     registration_facts: []const RegistrationFactWrite = &.{},
 };
 
-pub const BusinessActivityAnchorRef = struct {
+const BusinessActivityAnchorRef = struct {
     profile_id: []const u8,
     anchor_id: []const u8,
 };
 
-pub const RegistrationFactAnchorRef = struct {
+const RegistrationFactAnchorRef = struct {
     profile_id: []const u8,
     anchor_id: []const u8,
     kind: RegistrationFactKind,
@@ -932,9 +979,8 @@ pub const ResolvedFormSetDecision = struct {
     }
 };
 
-/// Closed storage vocabulary for the independent v16 registration stream.
-/// These tags mirror `registration.zig`; adapters, rather than SQL callers,
-/// own conversion to and from the allocation-free domain unions.
+/// Closed storage vocabulary retained for decoding the retired v16
+/// registration stream through `legacy_registration_export`.
 pub const RegistrationComponentKind = enum {
     business_activity,
     registration_obligation,
@@ -991,7 +1037,7 @@ pub const RegistrationReviewReason = enum {
 /// Metadata shared by every immutable registration component event.
 /// `expected_component_sequence` is an optimistic local-history guard and is
 /// not stored. The store appends exactly the next component sequence.
-pub const RegistrationRevisionMetadataWrite = struct {
+const RegistrationRevisionMetadataWrite = struct {
     id: []const u8,
     expected_component_sequence: u32,
     effective: EffectivePeriodWrite,
@@ -1005,7 +1051,7 @@ pub const RegistrationRevisionMetadataWrite = struct {
     supersedes_id: ?[]const u8 = null,
 };
 
-pub const RegistrationActivityRevisionWrite = struct {
+const RegistrationActivityRevisionWrite = struct {
     anchor_id: []const u8,
     metadata: RegistrationRevisionMetadataWrite,
     line_of_business: []const u8,
@@ -1043,7 +1089,7 @@ pub const RegistrationObligationKind = enum {
     }
 };
 
-pub const RegistrationObligationRevisionWrite = struct {
+const RegistrationObligationRevisionWrite = struct {
     anchor_id: []const u8,
     metadata: RegistrationRevisionMetadataWrite,
     kind: RegistrationObligationKind,
@@ -1095,30 +1141,30 @@ pub const RegistrationSpecialBasisKind = enum {
     }
 };
 
-pub const RegistrationAgentDesignationRevisionWrite = struct {
+const RegistrationAgentDesignationRevisionWrite = struct {
     metadata: RegistrationRevisionMetadataWrite,
     value: RegistrationAgentDesignation,
 };
 
-pub const RegistrationEoptTierRevisionWrite = struct {
+const RegistrationEoptTierRevisionWrite = struct {
     metadata: RegistrationRevisionMetadataWrite,
     value: RegistrationEoptTier,
 };
 
-pub const RegistrationActivityStatusRevisionWrite = struct {
+const RegistrationActivityStatusRevisionWrite = struct {
     metadata: RegistrationRevisionMetadataWrite,
     value: RegistrationActivityStatus,
 };
 
-pub const RegistrationSpecialBasisRevisionWrite = struct {
+const RegistrationSpecialBasisRevisionWrite = struct {
     metadata: RegistrationRevisionMetadataWrite,
     kind: RegistrationSpecialBasisKind,
     value_text: []const u8,
 };
 
-/// One atomic registration-stream commit. The stream advances once whether
-/// the desired-set diff appends one component event or many.
-pub const RegistrationCommitWrite = struct {
+/// Compatibility shape for seeding or decoding the retired registration
+/// stream. Production mutation entry points are intentionally private.
+const RegistrationCommitWrite = struct {
     profile_id: []const u8,
     expected_current_sequence: u32,
     activities: []const RegistrationActivityRevisionWrite = &.{},
@@ -1305,15 +1351,6 @@ pub const DraftProvenanceTaxpayerYearSettingKey = enum {
     deduction_method,
 };
 
-pub const DraftProvenanceActivityFactKey = enum {
-    line_of_business,
-    atc,
-};
-
-pub const DraftProvenanceObligationFactKey = enum {
-    registration_kind,
-};
-
 pub const DraftProvenanceSourceKeyWrite = union(enum) {
     taxpayer_fact: struct {
         role: form_catalog.Role,
@@ -1327,16 +1364,6 @@ pub const DraftProvenanceSourceKeyWrite = union(enum) {
         role: form_catalog.Role,
         key: form_catalog.TaxFormProfileSemanticKey,
     },
-    business_activity_fact: struct {
-        role: form_catalog.Role,
-        anchor_id: []const u8,
-        key: DraftProvenanceActivityFactKey,
-    },
-    registration_obligation_fact: struct {
-        role: form_catalog.Role,
-        anchor_id: []const u8,
-        key: DraftProvenanceObligationFactKey,
-    },
 };
 
 pub const DraftProvenanceValueWrite = union(enum) {
@@ -1347,8 +1374,6 @@ pub const DraftProvenanceValueWrite = union(enum) {
     date: DateText,
     year: u16,
     profile_id: []const u8,
-    business_activity_anchor_id: []const u8,
-    registration_obligation_anchor_id: []const u8,
     income_tax_rate_election: TaxpayerYearIncomeTaxRateElection,
     deduction_method: TaxpayerYearDeductionMethod,
 };
@@ -1384,23 +1409,6 @@ pub const DraftProvenanceTaxFormProfileRevisionWrite = struct {
     revision_sequence: u32,
     spec_revision: u32,
     spec_hash: []const u8,
-};
-
-pub const DraftProvenanceComponentWrite = union(enum) {
-    business_activity: struct {
-        role: form_catalog.Role,
-        profile_id: []const u8,
-        anchor_id: []const u8,
-        revision_id: []const u8,
-        revision_sequence: u32,
-    },
-    registration_obligation: struct {
-        role: form_catalog.Role,
-        profile_id: []const u8,
-        anchor_id: []const u8,
-        revision_id: []const u8,
-        revision_sequence: u32,
-    },
 };
 
 pub const DraftProvenanceSourceSnapshotWrite = struct {
@@ -1441,7 +1449,6 @@ pub const DraftProvenanceWrite = struct {
     taxpayer_revisions: []const DraftProvenanceTaxpayerRevisionWrite,
     taxpayer_year_revision: ?DraftProvenanceTaxpayerYearRevisionWrite = null,
     tax_form_profile_revision: ?DraftProvenanceTaxFormProfileRevisionWrite = null,
-    components: []const DraftProvenanceComponentWrite = &.{},
     source_snapshots: []const DraftProvenanceSourceSnapshotWrite = &.{},
     transaction_seeds: []const DraftProvenanceTransactionSeedWrite = &.{},
 };
@@ -1462,7 +1469,6 @@ pub const ExactDraftProvenanceWrite = struct {
     taxpayer_revisions: []const DraftProvenanceTaxpayerRevisionWrite,
     taxpayer_year_revision: ?DraftProvenanceTaxpayerYearRevisionWrite = null,
     tax_form_profile_revision: ?DraftProvenanceTaxFormProfileRevisionWrite = null,
-    components: []const DraftProvenanceComponentWrite = &.{},
     source_snapshots: []const DraftProvenanceSourceSnapshotWrite = &.{},
     transaction_seeds: []const DraftProvenanceTransactionSeedWrite = &.{},
 };
@@ -1480,26 +1486,11 @@ pub const OwnedDraftProvenanceSourceKey = union(enum) {
         role: form_catalog.Role,
         key: form_catalog.TaxFormProfileSemanticKey,
     },
-    business_activity_fact: struct {
-        role: form_catalog.Role,
-        anchor_id: []u8,
-        key: DraftProvenanceActivityFactKey,
-    },
-    registration_obligation_fact: struct {
-        role: form_catalog.Role,
-        anchor_id: []u8,
-        key: DraftProvenanceObligationFactKey,
-    },
-
     pub fn deinit(
         self: *OwnedDraftProvenanceSourceKey,
         allocator: std.mem.Allocator,
     ) void {
-        switch (self.*) {
-            .business_activity_fact => |value| allocator.free(value.anchor_id),
-            .registration_obligation_fact => |value| allocator.free(value.anchor_id),
-            else => {},
-        }
+        _ = allocator;
         self.* = undefined;
     }
 };
@@ -1512,8 +1503,6 @@ pub const OwnedDraftProvenanceValue = union(enum) {
     date: []u8,
     year: u16,
     profile_id: []u8,
-    business_activity_anchor_id: []u8,
-    registration_obligation_anchor_id: []u8,
     income_tax_rate_election: TaxpayerYearIncomeTaxRateElection,
     deduction_method: TaxpayerYearDeductionMethod,
 
@@ -1526,8 +1515,6 @@ pub const OwnedDraftProvenanceValue = union(enum) {
             .choice,
             .date,
             .profile_id,
-            .business_activity_anchor_id,
-            .registration_obligation_anchor_id,
             => |value| allocator.free(value),
             else => {},
         }
@@ -1586,25 +1573,6 @@ pub const OwnedDraftProvenanceTaxFormProfileRevision = struct {
         allocator.free(self.form_revision);
         allocator.free(self.revision_id);
         allocator.free(self.spec_hash);
-        self.* = undefined;
-    }
-};
-
-pub const OwnedDraftProvenanceComponent = struct {
-    kind: RegistrationComponentKind,
-    role: form_catalog.Role,
-    profile_id: []u8,
-    anchor_id: []u8,
-    revision_id: []u8,
-    revision_sequence: u32,
-
-    pub fn deinit(
-        self: *OwnedDraftProvenanceComponent,
-        allocator: std.mem.Allocator,
-    ) void {
-        allocator.free(self.profile_id);
-        allocator.free(self.anchor_id);
-        allocator.free(self.revision_id);
         self.* = undefined;
     }
 };
@@ -1679,7 +1647,6 @@ pub const OwnedDraftProvenance = struct {
     taxpayer_revisions: []OwnedDraftProvenanceTaxpayerRevision,
     taxpayer_year_revision: ?OwnedDraftProvenanceTaxpayerYearRevision,
     tax_form_profile_revision: ?OwnedDraftProvenanceTaxFormProfileRevision,
-    components: []OwnedDraftProvenanceComponent,
     source_snapshots: []OwnedDraftProvenanceSourceSnapshot,
     transaction_seeds: []OwnedDraftProvenanceTransactionSeed,
 
@@ -1700,8 +1667,6 @@ pub const OwnedDraftProvenance = struct {
         allocator.free(self.taxpayer_revisions);
         if (self.taxpayer_year_revision) |*item| item.deinit(allocator);
         if (self.tax_form_profile_revision) |*item| item.deinit(allocator);
-        for (self.components) |*item| item.deinit(allocator);
-        allocator.free(self.components);
         for (self.source_snapshots) |*item| item.deinit(allocator);
         allocator.free(self.source_snapshots);
         for (self.transaction_seeds) |*item| item.deinit(allocator);
@@ -1743,7 +1708,6 @@ pub const OwnedExactDraftProvenance = struct {
     taxpayer_revisions: []OwnedDraftProvenanceTaxpayerRevision,
     taxpayer_year_revision: ?OwnedDraftProvenanceTaxpayerYearRevision,
     tax_form_profile_revision: ?OwnedDraftProvenanceTaxFormProfileRevision,
-    components: []OwnedDraftProvenanceComponent,
     source_snapshots: []OwnedDraftProvenanceSourceSnapshot,
     transaction_seeds: []OwnedDraftProvenanceTransactionSeed,
 
@@ -1763,8 +1727,6 @@ pub const OwnedExactDraftProvenance = struct {
         allocator.free(self.taxpayer_revisions);
         if (self.taxpayer_year_revision) |*item| item.deinit(allocator);
         if (self.tax_form_profile_revision) |*item| item.deinit(allocator);
-        for (self.components) |*item| item.deinit(allocator);
-        allocator.free(self.components);
         for (self.source_snapshots) |*item| item.deinit(allocator);
         allocator.free(self.source_snapshots);
         for (self.transaction_seeds) |*item| item.deinit(allocator);
@@ -2062,6 +2024,7 @@ pub const OwnedSubject = union(enum) {
             .legal_entity => |entity| switch (entity.kind) {
                 .corporation => .corporation,
                 .partnership => .partnership,
+                .cooperative => .cooperative,
                 .estate => .estate,
                 .trust => .trust,
                 .other => .other_legal_entity,
@@ -2132,6 +2095,24 @@ pub const OwnedRegistrationFact = struct {
     }
 };
 
+/// Physical pre-consolidation component rows exposed only through the
+/// read-only legacy export namespace.
+pub const OwnedLegacyProfileRevisionComponents = struct {
+    business_activities: []OwnedBusinessActivity,
+    registration_facts: []OwnedRegistrationFact,
+
+    pub fn deinit(
+        self: *OwnedLegacyProfileRevisionComponents,
+        allocator: std.mem.Allocator,
+    ) void {
+        for (self.business_activities) |*activity| activity.deinit(allocator);
+        allocator.free(self.business_activities);
+        for (self.registration_facts) |*fact| fact.deinit(allocator);
+        allocator.free(self.registration_facts);
+        self.* = undefined;
+    }
+};
+
 pub const OwnedBusinessActivityAnchor = struct {
     profile_id: []u8,
     anchor_id: []u8,
@@ -2172,6 +2153,11 @@ pub const OwnedProfileRevision = struct {
     rdo_code: []u8,
     contact: OwnedContact,
     subject: OwnedSubject,
+    accounting_period_basis: ?AccountingPeriodBasis,
+    fiscal_year_end_month: ?u8,
+    eopt_tier: ?EoptTier,
+    primary_line_of_business: ?[]u8,
+    consolidation_review_state: ConsolidationReviewState,
     business_activities: []OwnedBusinessActivity,
     registration_facts: []OwnedRegistrationFact,
 
@@ -2185,6 +2171,7 @@ pub const OwnedProfileRevision = struct {
         allocator.free(self.rdo_code);
         self.contact.deinit(allocator);
         self.subject.deinit(allocator);
+        freeOptional(allocator, self.primary_line_of_business);
         for (self.business_activities) |*activity| activity.deinit(allocator);
         allocator.free(self.business_activities);
         for (self.registration_facts) |*fact| fact.deinit(allocator);
@@ -3033,6 +3020,13 @@ pub const Store = struct {
         if (current < 18) try self.migrateToV18();
         if (try self.schemaVersion() < 19) try self.migrateToV19();
         if (try self.schemaVersion() < 20) try self.migrateToV20();
+        if (try self.schemaVersion() < 21) try self.migrateToV21();
+        if (try self.schemaVersion() < 22) try self.migrateToV22();
+        if (try self.schemaVersion() < 23) try self.migrateToV23();
+        if (try self.schemaVersion() < 24) try self.migrateToV24();
+        if (try self.schemaVersion() < 25) try self.migrateToV25();
+        if (try self.schemaVersion() < 26) try self.migrateToV26();
+        if (try self.schemaVersion() < 27) try self.migrateToV27();
     }
 
     fn migrateToV18(self: *Store) !void {
@@ -3159,6 +3153,206 @@ pub const Store = struct {
         try self.exec("PRAGMA foreign_keys = ON;");
         restore_pragmas = false;
         if (!(try self.foreignKeysEnabled())) return Error.SqliteFailure;
+    }
+
+    fn migrateToV21(self: *Store) !void {
+        if (try self.schemaVersion() != 20) return Error.SqliteFailure;
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        // Version 21 was reserved by a rejected branch-only pilot. Keep the
+        // migration number monotonic without creating that pilot's tables.
+        var version = try self.prepare(
+            \\UPDATE app_component_migrations
+            \\SET version = 21, updated_at = unixepoch()
+            \\WHERE component = ? AND version = 20;
+        );
+        defer version.deinit();
+        try version.bindText(1, migration_component);
+        try version.expectDone();
+        if (sqlite.sqlite3_changes(try self.handle()) != 1) {
+            return Error.SqliteFailure;
+        }
+
+        try self.commit();
+        committed = true;
+    }
+
+    fn migrateToV22(self: *Store) !void {
+        if (try self.schemaVersion() != 21) return Error.SqliteFailure;
+
+        // SQLite cannot widen a table-level CHECK in place. Legacy rename
+        // behavior keeps child declarations pointed at the canonical table
+        // while the exact v21 rows are copied into the widened replacement.
+        try self.exec("PRAGMA foreign_keys = OFF;");
+        var restore_pragmas = true;
+        defer if (restore_pragmas) {
+            self.exec("PRAGMA legacy_alter_table = OFF;") catch {};
+            self.exec("PRAGMA foreign_keys = ON;") catch {};
+        };
+        try self.exec("PRAGMA legacy_alter_table = ON;");
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        try self.exec(schema_v22);
+        {
+            var version = try self.prepare(
+                \\UPDATE app_component_migrations
+                \\SET version = 22, updated_at = unixepoch()
+                \\WHERE component = ? AND version = 21;
+            );
+            defer version.deinit();
+            try version.bindText(1, migration_component);
+            try version.expectDone();
+            if (sqlite.sqlite3_changes(try self.handle()) != 1) {
+                return Error.SqliteFailure;
+            }
+        }
+        {
+            var foreign_key_check = try self.prepare(
+                "PRAGMA foreign_key_check;",
+            );
+            defer foreign_key_check.deinit();
+            if (try foreign_key_check.step() != .done) {
+                return Error.SqliteFailure;
+            }
+        }
+        try self.commit();
+        committed = true;
+
+        try self.exec("PRAGMA legacy_alter_table = OFF;");
+        try self.exec("PRAGMA foreign_keys = ON;");
+        restore_pragmas = false;
+        if (!(try self.foreignKeysEnabled())) return Error.SqliteFailure;
+    }
+
+    fn migrateToV23(self: *Store) !void {
+        if (try self.schemaVersion() != 22) return Error.SqliteFailure;
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        // Version 23 was reserved by the same rejected pilot. No schema work
+        // belongs to this production migration step.
+        var version = try self.prepare(
+            \\UPDATE app_component_migrations
+            \\SET version = 23, updated_at = unixepoch()
+            \\WHERE component = ? AND version = 22;
+        );
+        defer version.deinit();
+        try version.bindText(1, migration_component);
+        try version.expectDone();
+        if (sqlite.sqlite3_changes(try self.handle()) != 1) {
+            return Error.SqliteFailure;
+        }
+
+        try self.commit();
+        committed = true;
+    }
+
+    fn migrateToV24(self: *Store) !void {
+        if (try self.schemaVersion() != 23) return Error.SqliteFailure;
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        // Version 24 was reserved by the same rejected pilot. Taxpayer-Year
+        // history and draft provenance remain untouched.
+        var version = try self.prepare(
+            \\UPDATE app_component_migrations
+            \\SET version = 24, updated_at = unixepoch()
+            \\WHERE component = ? AND version = 23;
+        );
+        defer version.deinit();
+        try version.bindText(1, migration_component);
+        try version.expectDone();
+        if (sqlite.sqlite3_changes(try self.handle()) != 1) {
+            return Error.SqliteFailure;
+        }
+
+        try self.commit();
+        committed = true;
+    }
+
+    fn migrateToV25(self: *Store) !void {
+        if (try self.schemaVersion() != 24) return Error.SqliteFailure;
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        // Consolidate the safe, reusable registration facts onto the same
+        // effective-dated Base Tax Profile revision. The old normalized
+        // tables remain untouched and readable as historical evidence.
+        try self.exec(schema_v25);
+        var version = try self.prepare(
+            \\UPDATE app_component_migrations
+            \\SET version = 25, updated_at = unixepoch()
+            \\WHERE component = ? AND version = 24;
+        );
+        defer version.deinit();
+        try version.bindText(1, migration_component);
+        try version.expectDone();
+        if (sqlite.sqlite3_changes(try self.handle()) != 1) {
+            return Error.SqliteFailure;
+        }
+
+        try self.commit();
+        committed = true;
+    }
+
+    fn migrateToV26(self: *Store) !void {
+        if (try self.schemaVersion() != 25) return Error.SqliteFailure;
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        try self.exec(schema_v26);
+        var version = try self.prepare(
+            \\UPDATE app_component_migrations
+            \\SET version = 26, updated_at = unixepoch()
+            \\WHERE component = ? AND version = 25;
+        );
+        defer version.deinit();
+        try version.bindText(1, migration_component);
+        try version.expectDone();
+        if (sqlite.sqlite3_changes(try self.handle()) != 1) {
+            return Error.SqliteFailure;
+        }
+
+        try self.commit();
+        committed = true;
+    }
+
+    fn migrateToV27(self: *Store) !void {
+        if (try self.schemaVersion() != 26) return Error.SqliteFailure;
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        try self.exec(schema_v27);
+        var version = try self.prepare(
+            \\UPDATE app_component_migrations
+            \\SET version = 27, updated_at = unixepoch()
+            \\WHERE component = ? AND version = 26;
+        );
+        defer version.deinit();
+        try version.bindText(1, migration_component);
+        try version.expectDone();
+        if (sqlite.sqlite3_changes(try self.handle()) != 1) {
+            return Error.SqliteFailure;
+        }
+
+        try self.commit();
+        committed = true;
     }
 
     fn validateLegacyComponentAnchorHistories(self: *Store) !void {
@@ -3339,11 +3533,44 @@ pub const Store = struct {
         try statement.expectDone();
     }
 
-    /// Production first-save path. The profile shell, first immutable
-    /// revision, repeated components, and current pointer either all commit or
-    /// none do, so a validation/constraint failure cannot leave an orphan
-    /// profile.
+    /// Production first-save path. The profile shell, first immutable Base
+    /// revision, and current pointer either all commit or none do.
     pub fn createProfileWithRevision(
+        self: *Store,
+        profile: ProfileCreate,
+        revision: RevisionWrite,
+    ) !void {
+        try validateProfileCreate(profile);
+        try validateRevision(revision, .{});
+        if (!std.mem.eql(u8, profile.id, revision.profile_id)) {
+            return Error.InvalidValue;
+        }
+        if (revision.sequence != 1) return Error.RevisionConflict;
+        if (revision.expected_current_sequence) |expected| {
+            if (expected != 0) return Error.RevisionConflict;
+        }
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        try self.createProfileWithRevisionInTx(profile, revision);
+
+        try self.commit();
+        committed = true;
+    }
+
+    fn createProfileWithRevisionInTx(
+        self: *Store,
+        profile: ProfileCreate,
+        revision: RevisionWrite,
+    ) !void {
+        try self.createProfileWithRevisionRowsInTx(profile, revision, .{});
+    }
+
+    /// Test-only constructor for an older schema fixture. Production code has
+    /// no API that accepts retired profile-attached components.
+    fn createLegacyProfileWithRevisionForMigrationTest(
         self: *Store,
         profile: ProfileCreate,
         revision: RevisionWrite,
@@ -3363,6 +3590,22 @@ pub const Store = struct {
         var committed = false;
         errdefer if (!committed) self.rollbackNoFail();
 
+        try self.createProfileWithRevisionRowsInTx(
+            profile,
+            revision,
+            components,
+        );
+
+        try self.commit();
+        committed = true;
+    }
+
+    fn createProfileWithRevisionRowsInTx(
+        self: *Store,
+        profile: ProfileCreate,
+        revision: RevisionWrite,
+        components: RevisionComponentsWrite,
+    ) !void {
         // Inside the immediate transaction so a second window cannot register
         // the same taxpayer between this check and the insert. Identity
         // anchors only exist from v3, and migrations replay creates against
@@ -3405,9 +3648,6 @@ pub const Store = struct {
         if (sqlite.sqlite3_changes(try self.handle()) != 1) {
             return Error.RevisionConflict;
         }
-
-        try self.commit();
-        committed = true;
     }
 
     pub fn setProfileStatus(
@@ -3472,10 +3712,9 @@ pub const Store = struct {
         if (sqlite.sqlite3_changes(try self.handle()) == 0) return Error.NotFound;
     }
 
-    /// Resolves a stable business-activity identity without selecting any one
-    /// effective revision row. Future annual form setup can persist this key
-    /// and resolve the component value for its own effective date.
-    pub fn getBusinessActivityAnchor(
+    /// Test-only lookup for proving that a historical anchor survives an old
+    /// schema migration. No production API resolves retired activity anchors.
+    fn getLegacyBusinessActivityAnchorForTest(
         self: *Store,
         allocator: std.mem.Allocator,
         reference: BusinessActivityAnchorRef,
@@ -3498,9 +3737,8 @@ pub const Store = struct {
         };
     }
 
-    /// Resolves a stable registration identity only when both its taxpayer
-    /// owner and semantic fact kind agree with the requested reference.
-    pub fn getRegistrationFactAnchor(
+    /// Test-only lookup for historical registration-anchor migration checks.
+    fn getLegacyRegistrationFactAnchorForTest(
         self: *Store,
         allocator: std.mem.Allocator,
         reference: RegistrationFactAnchorRef,
@@ -3537,21 +3775,51 @@ pub const Store = struct {
     pub fn appendRevision(
         self: *Store,
         value: RevisionWrite,
-        components: RevisionComponentsWrite,
     ) !void {
-        try validateRevision(value, components);
+        try validateRevision(value, .{});
 
         try self.beginImmediate();
         var committed = false;
         errdefer if (!committed) self.rollbackNoFail();
 
-        try self.appendRevisionInTx(value, components);
+        try self.appendRevisionInTx(value);
+
+        try self.commit();
+        committed = true;
+    }
+
+    /// Test-only older-schema fixture path used to prove that the explicit
+    /// compatibility reader can still export physical legacy rows.
+    fn appendLegacyRevisionForMigrationTest(
+        self: *Store,
+        value: RevisionWrite,
+        components: RevisionComponentsWrite,
+    ) !void {
+        try validateRevision(value, components);
+        if (components.business_activities.len == 0 and
+            components.registration_facts.len == 0)
+        {
+            return Error.InvalidValue;
+        }
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        try self.appendRevisionRowsInTx(value, components);
 
         try self.commit();
         committed = true;
     }
 
     fn appendRevisionInTx(
+        self: *Store,
+        value: RevisionWrite,
+    ) !void {
+        try self.appendRevisionRowsInTx(value, .{});
+    }
+
+    fn appendRevisionRowsInTx(
         self: *Store,
         value: RevisionWrite,
         components: RevisionComponentsWrite,
@@ -3615,12 +3883,11 @@ pub const Store = struct {
     pub fn applyCorReview(
         self: *Store,
         revision: RevisionWrite,
-        components: RevisionComponentsWrite,
         forms_tax_year: i32,
         forms: []const FormRegistrationWrite,
         forms_mode: FormSetApplyMode,
     ) !void {
-        try validateRevision(revision, components);
+        try validateRevision(revision, .{});
         try validateTaxYear(forms_tax_year);
         for (forms) |form| {
             try requireValue(form.form_code);
@@ -3631,7 +3898,7 @@ pub const Store = struct {
         var committed = false;
         errdefer if (!committed) self.rollbackNoFail();
 
-        try self.appendRevisionInTx(revision, components);
+        try self.appendRevisionInTx(revision);
         switch (forms_mode) {
             .create => try self.createFormSetInTx(
                 revision.profile_id,
@@ -3712,7 +3979,7 @@ pub const Store = struct {
 
         var statement = try self.prepare(
             \\SELECT anchor.profile_id, profile.status,
-            \\       profile.local_label,
+            \\       COALESCE(revision.taxpayer_name, revision.registered_name),
             \\       COALESCE(revision.taxpayer_name, revision.registered_name)
             \\FROM tax_profile_identity_anchors AS anchor
             \\JOIN tax_profiles AS profile ON profile.id = anchor.profile_id
@@ -3866,6 +4133,10 @@ pub const Store = struct {
         const new_tin = profile_field.Tin.parse(
             value.new_canonical_tin,
         ) catch return Error.InvalidValue;
+        // Identity corrections are the audited normalization boundary. A
+        // readable 9/12/13-digit legacy value may remain on its old anchor,
+        // but a newly recorded correction must use the complete 3-3-3-5 TIN.
+        if (new_tin.asDigits().len != 14) return Error.InvalidValue;
 
         try self.beginImmediate();
         var committed = false;
@@ -4179,6 +4450,7 @@ pub const Store = struct {
         const link_supported = schema_version >= 10;
         const component_anchors_supported = schema_version >= 12;
         const natural_person_classification_supported = schema_version >= 13;
+        const complete_profile_supported = schema_version >= 25;
         if (value.cor_document_id != null and !link_supported) {
             return Error.InvalidValue;
         }
@@ -4236,7 +4508,21 @@ pub const Store = struct {
             .sole_proprietor => sole_trade_name,
             .legal_entity => |entity| entity.trade_name,
         };
-        const insert_sql: []const u8 = if (natural_person_classification_supported)
+        const insert_sql: []const u8 = if (complete_profile_supported)
+            \\INSERT INTO tax_profile_revisions (
+            \\    id, profile_id, sequence, effective_from, effective_until,
+            \\    source_tag, source_reference, tin, rdo_code,
+            \\    registered_address, zip_code, contact_number, email_address,
+            \\    subject_kind, taxpayer_name, registered_name,
+            \\    date_of_birth, citizenship, foreign_tax_number,
+            \\    natural_person_classification, trade_name, cor_document_id,
+            \\    accounting_period_basis, fiscal_year_end_month, eopt_tier,
+            \\    primary_line_of_business, consolidation_review_state
+            \\) VALUES (
+            \\    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            \\    ?, ?, ?, ?, ?, ?, ?, ?
+            \\);
+        else if (natural_person_classification_supported)
             \\INSERT INTO tax_profile_revisions (
             \\    id, profile_id, sequence, effective_from, effective_until,
             \\    source_tag, source_reference, tin, rdo_code,
@@ -4316,6 +4602,31 @@ pub const Store = struct {
             );
             try insert.bindOptionalText(21, trade_name);
             try insert.bindOptionalText(22, value.cor_document_id);
+            if (complete_profile_supported) {
+                try insert.bindOptionalText(
+                    23,
+                    if (value.accounting_period_basis) |basis|
+                        basis.text()
+                    else
+                        null,
+                );
+                try insert.bindOptionalInt64(
+                    24,
+                    if (value.fiscal_year_end_month) |month|
+                        @as(i64, month)
+                    else
+                        null,
+                );
+                try insert.bindOptionalText(
+                    25,
+                    if (value.eopt_tier) |tier| tier.text() else null,
+                );
+                try insert.bindOptionalText(26, value.primary_line_of_business);
+                try insert.bindText(
+                    27,
+                    value.consolidation_review_state.text(),
+                );
+            }
         } else if (link_supported) {
             try insert.bindOptionalText(20, value.cor_document_id);
         }
@@ -4468,15 +4779,32 @@ pub const Store = struct {
         profile_id: []const u8,
     ) !?OwnedProfileRevision {
         try validateOpaqueText(profile_id);
-        const canonical_subject = try self.schemaVersion() >= 13;
-        const sql: []const u8 = if (canonical_subject)
+        const schema_version = try self.schemaVersion();
+        const canonical_subject = schema_version >= 13;
+        const sql: []const u8 = if (schema_version >= 25)
             \\SELECT r.id, r.sequence, r.profile_id, r.effective_from,
             \\       r.effective_until, r.source_tag, r.source_reference,
             \\       r.tin, r.rdo_code, r.registered_address, r.zip_code,
             \\       r.contact_number, r.email_address, r.subject_kind,
             \\       r.taxpayer_name, r.registered_name, r.date_of_birth,
             \\       r.citizenship, r.foreign_tax_number,
-            \\       r.natural_person_classification, r.trade_name
+            \\       r.natural_person_classification, r.trade_name,
+            \\       r.accounting_period_basis, r.fiscal_year_end_month,
+            \\       r.eopt_tier, r.primary_line_of_business,
+            \\       r.consolidation_review_state
+            \\FROM tax_profiles AS p
+            \\JOIN tax_profile_revisions AS r
+            \\  ON r.profile_id = p.id AND r.id = p.current_revision_id
+            \\WHERE p.id = ?;
+        else if (canonical_subject)
+            \\SELECT r.id, r.sequence, r.profile_id, r.effective_from,
+            \\       r.effective_until, r.source_tag, r.source_reference,
+            \\       r.tin, r.rdo_code, r.registered_address, r.zip_code,
+            \\       r.contact_number, r.email_address, r.subject_kind,
+            \\       r.taxpayer_name, r.registered_name, r.date_of_birth,
+            \\       r.citizenship, r.foreign_tax_number,
+            \\       r.natural_person_classification, r.trade_name,
+            \\       NULL, NULL, NULL, NULL, 'confirmed'
             \\FROM tax_profiles AS p
             \\JOIN tax_profile_revisions AS r
             \\  ON r.profile_id = p.id AND r.id = p.current_revision_id
@@ -4487,7 +4815,8 @@ pub const Store = struct {
             \\       r.tin, r.rdo_code, r.registered_address, r.zip_code,
             \\       r.contact_number, r.email_address, r.subject_kind,
             \\       r.taxpayer_name, r.registered_name, r.date_of_birth,
-            \\       r.citizenship, r.foreign_tax_number, NULL, NULL
+            \\       r.citizenship, r.foreign_tax_number, NULL, NULL,
+            \\       NULL, NULL, NULL, NULL, 'confirmed'
             \\FROM tax_profiles AS p
             \\JOIN tax_profile_revisions AS r
             \\  ON r.profile_id = p.id AND r.id = p.current_revision_id
@@ -4514,15 +4843,28 @@ pub const Store = struct {
     ) !?OwnedProfileRevision {
         try validateIdText(profile_id);
         try validateIdText(revision_id);
-        const canonical_subject = try self.schemaVersion() >= 13;
-        const sql: []const u8 = if (canonical_subject)
+        const schema_version = try self.schemaVersion();
+        const canonical_subject = schema_version >= 13;
+        const sql: []const u8 = if (schema_version >= 25)
             \\SELECT id, sequence, profile_id, effective_from,
             \\       effective_until, source_tag, source_reference, tin,
             \\       rdo_code, registered_address, zip_code, contact_number,
             \\       email_address, subject_kind, taxpayer_name,
             \\       registered_name, date_of_birth, citizenship,
             \\       foreign_tax_number, natural_person_classification,
-            \\       trade_name
+            \\       trade_name, accounting_period_basis,
+            \\       fiscal_year_end_month, eopt_tier,
+            \\       primary_line_of_business, consolidation_review_state
+            \\FROM tax_profile_revisions
+            \\WHERE profile_id = ? AND id = ?;
+        else if (canonical_subject)
+            \\SELECT id, sequence, profile_id, effective_from,
+            \\       effective_until, source_tag, source_reference, tin,
+            \\       rdo_code, registered_address, zip_code, contact_number,
+            \\       email_address, subject_kind, taxpayer_name,
+            \\       registered_name, date_of_birth, citizenship,
+            \\       foreign_tax_number, natural_person_classification,
+            \\       trade_name, NULL, NULL, NULL, NULL, 'confirmed'
             \\FROM tax_profile_revisions
             \\WHERE profile_id = ? AND id = ?;
         else
@@ -4531,7 +4873,8 @@ pub const Store = struct {
             \\       rdo_code, registered_address, zip_code, contact_number,
             \\       email_address, subject_kind, taxpayer_name,
             \\       registered_name, date_of_birth, citizenship,
-            \\       foreign_tax_number, NULL, NULL
+            \\       foreign_tax_number, NULL, NULL,
+            \\       NULL, NULL, NULL, NULL, 'confirmed'
             \\FROM tax_profile_revisions
             \\WHERE profile_id = ? AND id = ?;
         ;
@@ -4557,15 +4900,28 @@ pub const Store = struct {
     ) !?OwnedProfileRevision {
         try validateIdText(profile_id);
         if (sequence == 0) return Error.InvalidValue;
-        const canonical_subject = try self.schemaVersion() >= 13;
-        const sql: []const u8 = if (canonical_subject)
+        const schema_version = try self.schemaVersion();
+        const canonical_subject = schema_version >= 13;
+        const sql: []const u8 = if (schema_version >= 25)
             \\SELECT id, sequence, profile_id, effective_from,
             \\       effective_until, source_tag, source_reference, tin,
             \\       rdo_code, registered_address, zip_code, contact_number,
             \\       email_address, subject_kind, taxpayer_name,
             \\       registered_name, date_of_birth, citizenship,
             \\       foreign_tax_number, natural_person_classification,
-            \\       trade_name
+            \\       trade_name, accounting_period_basis,
+            \\       fiscal_year_end_month, eopt_tier,
+            \\       primary_line_of_business, consolidation_review_state
+            \\FROM tax_profile_revisions
+            \\WHERE profile_id = ? AND sequence = ?;
+        else if (canonical_subject)
+            \\SELECT id, sequence, profile_id, effective_from,
+            \\       effective_until, source_tag, source_reference, tin,
+            \\       rdo_code, registered_address, zip_code, contact_number,
+            \\       email_address, subject_kind, taxpayer_name,
+            \\       registered_name, date_of_birth, citizenship,
+            \\       foreign_tax_number, natural_person_classification,
+            \\       trade_name, NULL, NULL, NULL, NULL, 'confirmed'
             \\FROM tax_profile_revisions
             \\WHERE profile_id = ? AND sequence = ?;
         else
@@ -4574,7 +4930,8 @@ pub const Store = struct {
             \\       rdo_code, registered_address, zip_code, contact_number,
             \\       email_address, subject_kind, taxpayer_name,
             \\       registered_name, date_of_birth, citizenship,
-            \\       foreign_tax_number, NULL, NULL
+            \\       foreign_tax_number, NULL, NULL,
+            \\       NULL, NULL, NULL, NULL, 'confirmed'
             \\FROM tax_profile_revisions
             \\WHERE profile_id = ? AND sequence = ?;
         ;
@@ -4600,15 +4957,32 @@ pub const Store = struct {
     ) !?OwnedProfileRevision {
         try validateOpaqueText(profile_id);
         try validateDate(effective_on);
-        const canonical_subject = try self.schemaVersion() >= 13;
-        const sql: []const u8 = if (canonical_subject)
+        const schema_version = try self.schemaVersion();
+        const canonical_subject = schema_version >= 13;
+        const sql: []const u8 = if (schema_version >= 25)
             \\SELECT id, sequence, profile_id, effective_from,
             \\       effective_until, source_tag, source_reference, tin,
             \\       rdo_code, registered_address, zip_code, contact_number,
             \\       email_address, subject_kind, taxpayer_name,
             \\       registered_name, date_of_birth, citizenship,
             \\       foreign_tax_number, natural_person_classification,
-            \\       trade_name
+            \\       trade_name, accounting_period_basis,
+            \\       fiscal_year_end_month, eopt_tier,
+            \\       primary_line_of_business, consolidation_review_state
+            \\FROM tax_profile_revisions
+            \\WHERE profile_id = ?
+            \\  AND effective_from <= ?
+            \\  AND (effective_until IS NULL OR effective_until >= ?)
+            \\ORDER BY sequence DESC
+            \\LIMIT 1;
+        else if (canonical_subject)
+            \\SELECT id, sequence, profile_id, effective_from,
+            \\       effective_until, source_tag, source_reference, tin,
+            \\       rdo_code, registered_address, zip_code, contact_number,
+            \\       email_address, subject_kind, taxpayer_name,
+            \\       registered_name, date_of_birth, citizenship,
+            \\       foreign_tax_number, natural_person_classification,
+            \\       trade_name, NULL, NULL, NULL, NULL, 'confirmed'
             \\FROM tax_profile_revisions
             \\WHERE profile_id = ?
             \\  AND effective_from <= ?
@@ -4621,7 +4995,8 @@ pub const Store = struct {
             \\       rdo_code, registered_address, zip_code, contact_number,
             \\       email_address, subject_kind, taxpayer_name,
             \\       registered_name, date_of_birth, citizenship,
-            \\       foreign_tax_number, NULL, NULL
+            \\       foreign_tax_number, NULL, NULL,
+            \\       NULL, NULL, NULL, NULL, 'confirmed'
             \\FROM tax_profile_revisions
             \\WHERE profile_id = ?
             \\  AND effective_from <= ?
@@ -4659,8 +5034,7 @@ pub const Store = struct {
         // with the TIN it has, rather than vanishing from the sidebar.
         var statement = try self.prepare(
             \\SELECT p.id, p.status, p.current_revision_id, r.sequence,
-            \\       COALESCE(p.local_label,
-            \\           COALESCE(r.taxpayer_name, r.registered_name)),
+            \\       COALESCE(r.taxpayer_name, r.registered_name),
             \\       COALESCE(r.taxpayer_name, r.registered_name),
             \\       COALESCE(anchor.canonical_tin, r.tin), r.subject_kind
             \\FROM tax_profiles AS p
@@ -4674,10 +5048,8 @@ pub const Store = struct {
             \\     WHERE profile_id = p.id
             \\ )
             \\WHERE (? = 1 OR p.status = 'active')
-            \\ORDER BY COALESCE(
-            \\    p.local_label,
-            \\    COALESCE(r.taxpayer_name, r.registered_name)
-            \\) COLLATE NOCASE, p.id;
+            \\ORDER BY COALESCE(r.taxpayer_name, r.registered_name)
+            \\    COLLATE NOCASE, p.id;
         );
         defer statement.deinit();
         try statement.bindBool(1, include_archived);
@@ -5252,6 +5624,14 @@ pub const Store = struct {
         if (current_sequence != value.expected_current_sequence) {
             return Error.RevisionConflict;
         }
+        if (current_sequence != 0) {
+            if (try self.taxFormProfileStreamLockedByFilingInTx(
+                value.profile_id,
+                value.tax_year,
+                value.form_code,
+                value.form_revision,
+            )) return Error.TaxFormProfileLockedByFiling;
+        }
         if (current_sequence == std.math.maxInt(u32) or
             value.sequence != current_sequence + 1)
         {
@@ -5343,17 +5723,16 @@ pub const Store = struct {
             \\INSERT INTO tax_profile_form_profile_values (
             \\    profile_id, tax_year, form_code, form_revision,
             \\    revision_id, revision_sequence, semantic_key, role,
-            \\    value_type, profile_value, anchor_value, text_value,
-            \\    boolean_value, integer_value, date_value, year_value,
-            \\    choice_value, source_tag, source_revision_id,
-            \\    source_reference
+            \\    value_type, profile_value, text_value, boolean_value,
+            \\    integer_value, date_value, year_value, choice_value,
+            \\    source_tag, source_revision_id, source_reference
             \\) VALUES (
-            \\    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            \\    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             \\);
         );
         defer add_value.deinit();
-        // Profile references precede dependent spouse anchors so the schema
-        // guard can resolve the profile-owned anchor without a revision-row ID.
+        // Profile references are written first so later scalar values retain
+        // deterministic ordering independent of their generated definition.
         for (value.values) |setup_value| {
             if (std.meta.activeTag(setup_value.value) == .profile_id) {
                 try self.insertTaxFormProfileValue(
@@ -5375,6 +5754,85 @@ pub const Store = struct {
 
         try self.commit();
         committed = true;
+    }
+
+    /// Once a filer-bound draft has frozen this exact Tax Form Profile
+    /// revision and crossed the filing boundary, that revision is immutable.
+    /// Drafts without exact provenance and drafts that are still
+    /// editing/prepared do not lock it. Cancelling a queued filing preserves
+    /// the lock because the filing boundary has already been crossed.
+    pub fn isTaxFormProfileLockedByFiling(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: u16,
+        form_code: []const u8,
+        form_revision: []const u8,
+        revision_id: []const u8,
+        revision_sequence: u32,
+    ) !bool {
+        try validateOpaqueText(profile_id);
+        if (tax_year == 0) return Error.InvalidValue;
+        try requireValue(form_code);
+        try requireValue(form_revision);
+        try validateIdText(revision_id);
+        if (revision_sequence == 0) return Error.InvalidValue;
+        return self.taxFormProfileRevisionLockedByFilingInTx(
+            profile_id,
+            tax_year,
+            form_code,
+            form_revision,
+            revision_id,
+            revision_sequence,
+        );
+    }
+
+    fn taxFormProfileRevisionLockedByFilingInTx(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: u16,
+        form_code: []const u8,
+        form_revision: []const u8,
+        revision_id: []const u8,
+        revision_sequence: u32,
+    ) !bool {
+        var statement = try self.prepare(
+            \\SELECT 1
+            \\FROM tax_profile_form_profile_filing_locks
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\  AND form_code = ? AND form_revision = ?
+            \\  AND revision_id = ? AND revision_sequence = ?
+            \\LIMIT 1;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindInt64(2, tax_year);
+        try statement.bindText(3, form_code);
+        try statement.bindText(4, form_revision);
+        try statement.bindText(5, revision_id);
+        try statement.bindInt64(6, revision_sequence);
+        return try statement.step() == .row;
+    }
+
+    fn taxFormProfileStreamLockedByFilingInTx(
+        self: *Store,
+        profile_id: []const u8,
+        tax_year: u16,
+        form_code: []const u8,
+        form_revision: []const u8,
+    ) !bool {
+        var statement = try self.prepare(
+            \\SELECT 1
+            \\FROM tax_profile_form_profile_filing_locks
+            \\WHERE profile_id = ? AND tax_year = ?
+            \\  AND form_code = ? AND form_revision = ?
+            \\LIMIT 1;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, profile_id);
+        try statement.bindInt64(2, tax_year);
+        try statement.bindText(3, form_code);
+        try statement.bindText(4, form_revision);
+        return try statement.step() == .row;
     }
 
     pub fn listTaxFormProfileRevisions(
@@ -5725,43 +6183,6 @@ pub const Store = struct {
                     return Error.TaxFormProfileReferenceInvalid;
                 }
             },
-            .business_activity_anchor_id => |anchor_id| {
-                const owner_profile_id = switch (setup_value.role) {
-                    .filer => revision.profile_id,
-                    .spouse => findTaxFormProfileReferencedProfile(
-                        revision.values,
-                        .spouse,
-                        .spouse_profile_id,
-                    ) orelse return Error.TaxFormProfileReferenceInvalid,
-                    else => return Error.TaxFormProfileReferenceInvalid,
-                };
-                var anchor = try self.prepare(
-                    \\SELECT 1 FROM tax_profile_business_activity_anchors
-                    \\WHERE profile_id = ? AND id = ?;
-                );
-                defer anchor.deinit();
-                try anchor.bindText(1, owner_profile_id);
-                try anchor.bindText(2, anchor_id);
-                if (try anchor.step() != .row) {
-                    return Error.TaxFormProfileReferenceInvalid;
-                }
-            },
-            .registration_obligation_anchor_id => |anchor_id| {
-                if (setup_value.role != .filer) {
-                    return Error.TaxFormProfileReferenceInvalid;
-                }
-                var anchor = try self.prepare(
-                    \\SELECT 1 FROM tax_profile_registration_fact_anchors
-                    \\WHERE profile_id = ? AND id = ?
-                    \\  AND kind = 'special_rate_basis';
-                );
-                defer anchor.deinit();
-                try anchor.bindText(1, revision.profile_id);
-                try anchor.bindText(2, anchor_id);
-                if (try anchor.step() != .row) {
-                    return Error.TaxFormProfileReferenceInvalid;
-                }
-            },
             .text, .boolean, .integer, .date, .year, .choice => {},
         };
     }
@@ -5847,12 +6268,6 @@ pub const Store = struct {
             .profile_id => |value| value,
             else => null,
         };
-        const anchor_value: ?[]const u8 = switch (setup_value.value) {
-            .business_activity_anchor_id,
-            .registration_obligation_anchor_id,
-            => |value| value,
-            else => null,
-        };
         const text_value: ?[]const u8 = switch (setup_value.value) {
             .text => |value| value,
             else => null,
@@ -5896,16 +6311,15 @@ pub const Store = struct {
         try statement.bindText(8, @tagName(setup_value.role));
         try statement.bindText(9, @tagName(setup_value.value.valueType()));
         try statement.bindOptionalText(10, profile_value);
-        try statement.bindOptionalText(11, anchor_value);
-        try statement.bindOptionalText(12, text_value);
-        try statement.bindOptionalInt64(13, boolean_value);
-        try statement.bindOptionalInt64(14, integer_value);
-        try statement.bindOptionalText(15, date_value);
-        try statement.bindOptionalInt64(16, year_value);
-        try statement.bindOptionalText(17, choice_value);
-        try statement.bindText(18, source_tag);
-        try statement.bindOptionalText(19, source_revision_id);
-        try statement.bindOptionalText(20, source_reference);
+        try statement.bindOptionalText(11, text_value);
+        try statement.bindOptionalInt64(12, boolean_value);
+        try statement.bindOptionalInt64(13, integer_value);
+        try statement.bindOptionalText(14, date_value);
+        try statement.bindOptionalInt64(15, year_value);
+        try statement.bindOptionalText(16, choice_value);
+        try statement.bindText(17, source_tag);
+        try statement.bindOptionalText(18, source_revision_id);
+        try statement.bindOptionalText(19, source_reference);
         try statement.expectDone();
         try statement.reset();
     }
@@ -5991,8 +6405,8 @@ pub const Store = struct {
     ) ![]OwnedTaxFormProfileSetupValue {
         var statement = try self.prepare(
             \\SELECT semantic_key, role, value_type, profile_value,
-            \\       anchor_value, text_value, boolean_value, integer_value,
-            \\       date_value, year_value, choice_value, source_tag,
+            \\       text_value, boolean_value, integer_value, date_value,
+            \\       year_value, choice_value, source_tag,
             \\       source_revision_id, source_reference
             \\FROM tax_profile_form_profile_values
             \\WHERE profile_id = ? AND tax_year = ? AND form_code = ?
@@ -6030,7 +6444,7 @@ pub const Store = struct {
             var source = try readTaxFormProfileValueSource(
                 allocator,
                 statement.raw,
-                11,
+                10,
             );
             errdefer source.deinit(allocator);
             try values.append(allocator, .{
@@ -6043,9 +6457,10 @@ pub const Store = struct {
         return values.toOwnedSlice(allocator);
     }
 
-    /// Finds taxpayers whose local label or current legal/taxpayer name
-    /// contains the query, or whose canonical TIN contains the query's digits,
-    /// across the whole store.
+    /// Finds taxpayers whose current legal/taxpayer name contains the query,
+    /// or whose canonical TIN contains the query's digits, across the whole
+    /// store. Legacy local labels remain stored only for migration history;
+    /// they are not a display identity or search key.
     ///
     /// This exists because the sidebar holds a bounded number of rows: a
     /// taxpayer past that bound must still be findable by typing, otherwise
@@ -6086,8 +6501,7 @@ pub const Store = struct {
 
         var statement = try self.prepare(
             \\SELECT p.id, p.status, p.current_revision_id, r.sequence,
-            \\       COALESCE(p.local_label,
-            \\           COALESCE(r.taxpayer_name, r.registered_name)),
+            \\       COALESCE(r.taxpayer_name, r.registered_name),
             \\       COALESCE(r.taxpayer_name, r.registered_name),
             \\       COALESCE(anchor.canonical_tin, r.tin), r.subject_kind
             \\FROM tax_profiles AS p
@@ -6102,23 +6516,19 @@ pub const Store = struct {
             \\ )
             \\WHERE (? = 1 OR p.status = 'active')
             \\  AND (
-            \\      p.local_label LIKE ? ESCAPE '\'
-            \\      OR COALESCE(r.taxpayer_name, r.registered_name)
+            \\      COALESCE(r.taxpayer_name, r.registered_name)
             \\          LIKE ? ESCAPE '\'
             \\      OR (? IS NOT NULL AND
             \\          COALESCE(anchor.canonical_tin, r.tin) LIKE ? ESCAPE '\')
             \\  )
-            \\ORDER BY COALESCE(
-            \\    p.local_label,
-            \\    COALESCE(r.taxpayer_name, r.registered_name)
-            \\) COLLATE NOCASE, p.id;
+            \\ORDER BY COALESCE(r.taxpayer_name, r.registered_name)
+            \\    COLLATE NOCASE, p.id;
         );
         defer statement.deinit();
         try statement.bindBool(1, include_archived);
         try statement.bindText(2, name_pattern);
-        try statement.bindText(3, name_pattern);
+        try statement.bindOptionalText(3, tin_pattern);
         try statement.bindOptionalText(4, tin_pattern);
-        try statement.bindOptionalText(5, tin_pattern);
 
         var items: std.ArrayList(OwnedProfileSummary) = .empty;
         errdefer {
@@ -6138,7 +6548,7 @@ pub const Store = struct {
 
     /// Current optimistic sequence of the independent registration stream.
     /// A profile without registration commits is sequence zero.
-    pub fn registrationStreamSequence(
+    fn registrationStreamSequence(
         self: *Store,
         profile_id: []const u8,
     ) !u32 {
@@ -6158,10 +6568,9 @@ pub const Store = struct {
         return @intCast(raw);
     }
 
-    /// Appends one atomic desired-set diff. Stable anchors may be introduced
-    /// in the same transaction, while every component value is an immutable
-    /// event in its own local history.
-    pub fn appendRegistrationCommit(
+    /// Legacy test/migration fixture helper. Historical registration remains
+    /// readable, but production callers cannot append new component rows.
+    fn appendLegacyRegistrationCommitForMigrationTest(
         self: *Store,
         value: RegistrationCommitWrite,
     ) !u32 {
@@ -6171,6 +6580,17 @@ pub const Store = struct {
         var committed = false;
         errdefer if (!committed) self.rollbackNoFail();
 
+        const next = try self.appendLegacyRegistrationCommitInTxForMigrationTest(value);
+
+        try self.commit();
+        committed = true;
+        return next;
+    }
+
+    fn appendLegacyRegistrationCommitInTxForMigrationTest(
+        self: *Store,
+        value: RegistrationCommitWrite,
+    ) !u32 {
         if (!(try self.profileExists(value.profile_id))) return Error.NotFound;
         const current = try self.registrationStreamSequence(value.profile_id);
         if (current != value.expected_current_sequence) {
@@ -6232,14 +6652,11 @@ pub const Store = struct {
             );
         }
         try self.validateRegistrationObligationsInTx(value.profile_id);
-
-        try self.commit();
-        committed = true;
         return next;
     }
 
     /// Complete immutable registration event history for one taxpayer.
-    pub fn listRegistrationHistory(
+    fn listRegistrationHistory(
         self: *Store,
         allocator: std.mem.Allocator,
         profile_id: []const u8,
@@ -6250,7 +6667,7 @@ pub const Store = struct {
     /// Exact-date registration projection. Confirmed histories resolve to
     /// their highest-sequence active event; every review-required proposal is
     /// retained so callers cannot make it disappear by saving another row.
-    pub fn resolveRegistrationOn(
+    fn resolveRegistrationOn(
         self: *Store,
         allocator: std.mem.Allocator,
         profile_id: []const u8,
@@ -8566,27 +8983,6 @@ pub const Store = struct {
             try add_taxpayer.reset();
         }
 
-        var add_component = try self.prepare(
-            \\INSERT INTO tax_form_draft_provenance_components (
-            \\    draft_id, ordinal, component_kind, role, profile_id,
-            \\    anchor_id, revision_id, revision_sequence
-            \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
-        );
-        defer add_component.deinit();
-        for (value.components, 0..) |component, ordinal| {
-            const encoded = draftProvenanceComponentColumns(component);
-            try add_component.bindText(1, value.draft_id);
-            try add_component.bindInt64(2, @intCast(ordinal));
-            try add_component.bindText(3, encoded.kind.text());
-            try add_component.bindText(4, @tagName(encoded.role));
-            try add_component.bindText(5, encoded.profile_id);
-            try add_component.bindText(6, encoded.anchor_id);
-            try add_component.bindText(7, encoded.revision_id);
-            try add_component.bindInt64(8, encoded.revision_sequence);
-            try add_component.expectDone();
-            try add_component.reset();
-        }
-
         var add_source = try self.prepare(
             \\INSERT INTO tax_form_draft_provenance_sources (
             \\    draft_id, ordinal, source_kind, role, source_key,
@@ -8809,14 +9205,7 @@ pub const Store = struct {
             for (taxpayers) |*item| item.deinit(allocator);
             allocator.free(taxpayers);
         }
-        const components = try self.loadDraftProvenanceComponents(
-            allocator,
-            draft_id,
-        );
-        errdefer {
-            for (components) |*item| item.deinit(allocator);
-            allocator.free(components);
-        }
+        try self.rejectLegacyDraftProvenanceComponents(draft_id);
         const sources = try self.loadDraftProvenanceSources(
             allocator,
             draft_id,
@@ -8846,7 +9235,6 @@ pub const Store = struct {
             .taxpayer_revisions = taxpayers,
             .taxpayer_year_revision = taxpayer_year_revision,
             .tax_form_profile_revision = tax_form_profile_revision,
-            .components = components,
             .source_snapshots = sources,
             .transaction_seeds = seeds,
         } };
@@ -9093,6 +9481,9 @@ pub const Store = struct {
         if (!lifecycleTransitionAllowed(expected, next)) {
             return Error.InvalidTransition;
         }
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
         var statement = try self.prepare(
             \\UPDATE tax_form_drafts
             \\SET lifecycle = ?, updated_at = unixepoch()
@@ -9107,6 +9498,35 @@ pub const Store = struct {
             if (try self.draftExists(draft_id)) return Error.RevisionConflict;
             return Error.NotFound;
         }
+        if (std.mem.eql(u8, next, "queued")) {
+            var lock = try self.prepare(
+                \\INSERT INTO tax_profile_form_profile_filing_locks (
+                \\    profile_id, tax_year, form_code, form_revision,
+                \\    revision_id, revision_sequence, draft_id
+                \\)
+                \\SELECT provenance.form_profile_profile_id,
+                \\       provenance.form_profile_tax_year,
+                \\       provenance.form_profile_form_code,
+                \\       provenance.form_profile_form_revision,
+                \\       provenance.form_profile_revision_id,
+                \\       provenance.form_profile_revision_sequence,
+                \\       draft.id
+                \\FROM tax_form_drafts AS draft
+                \\JOIN tax_form_draft_role_bindings AS binding
+                \\  ON binding.draft_id = draft.id AND binding.role = 'filer'
+                \\JOIN tax_form_draft_provenance AS provenance
+                \\  ON provenance.draft_id = draft.id
+                \\WHERE draft.id = ?
+                \\  AND provenance.form_profile_profile_id = binding.profile_id
+                \\  AND provenance.form_profile_revision_id IS NOT NULL
+                \\ON CONFLICT(draft_id) DO NOTHING;
+            );
+            defer lock.deinit();
+            try lock.bindText(1, draft_id);
+            try lock.expectDone();
+        }
+        try self.commit();
+        committed = true;
     }
 
     pub fn deleteDraft(self: *Store, draft_id: []const u8) !bool {
@@ -9662,33 +10082,6 @@ pub const Store = struct {
         }
         try parent.expectDone();
 
-        var add_component = try self.prepare(
-            \\INSERT INTO tax_exact_draft_provenance_components (
-            \\    workspace_id, exact_schema_digest, revision, ordinal,
-            \\    component_kind, role, profile_id, anchor_id,
-            \\    revision_id, revision_sequence
-            \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-        );
-        defer add_component.deinit();
-        for (value.components, 0..) |component, ordinal| {
-            const encoded = draftProvenanceComponentColumns(component);
-            try add_component.bindBlob(1, &draft_identity.workspace_id.bytes);
-            try add_component.bindBlob(
-                2,
-                draft_identity.exact_schema_digest.asBytes(),
-            );
-            try add_component.bindInt64(3, revision_value);
-            try add_component.bindInt64(4, @intCast(ordinal));
-            try add_component.bindText(5, encoded.kind.text());
-            try add_component.bindText(6, @tagName(encoded.role));
-            try add_component.bindText(7, encoded.profile_id);
-            try add_component.bindText(8, encoded.anchor_id);
-            try add_component.bindText(9, encoded.revision_id);
-            try add_component.bindInt64(10, encoded.revision_sequence);
-            try add_component.expectDone();
-            try add_component.reset();
-        }
-
         var add_source = try self.prepare(
             \\INSERT INTO tax_exact_draft_provenance_sources (
             \\    workspace_id, exact_schema_digest, revision, ordinal,
@@ -10147,15 +10540,10 @@ pub const Store = struct {
             for (taxpayers) |*item| item.deinit(allocator);
             allocator.free(taxpayers);
         }
-        const components = try self.loadExactDraftProvenanceComponents(
-            allocator,
+        try self.rejectLegacyExactDraftProvenanceComponents(
             draft_identity,
             revision,
         );
-        errdefer {
-            for (components) |*item| item.deinit(allocator);
-            allocator.free(components);
-        }
         const sources = try self.loadExactDraftProvenanceSources(
             allocator,
             draft_identity,
@@ -10192,7 +10580,6 @@ pub const Store = struct {
             .taxpayer_revisions = taxpayers,
             .taxpayer_year_revision = taxpayer_year_revision,
             .tax_form_profile_revision = tax_form_profile_revision,
-            .components = components,
             .source_snapshots = sources,
             .transaction_seeds = seeds,
         };
@@ -11151,62 +11538,20 @@ pub const Store = struct {
         return items.toOwnedSlice(allocator);
     }
 
-    fn loadDraftProvenanceComponents(
+    fn rejectLegacyDraftProvenanceComponents(
         self: *Store,
-        allocator: std.mem.Allocator,
         draft_id: []const u8,
-    ) ![]OwnedDraftProvenanceComponent {
+    ) !void {
         var statement = try self.prepare(
-            \\SELECT component_kind, role, profile_id, anchor_id,
-            \\       revision_id, revision_sequence
+            \\SELECT 1
             \\FROM tax_form_draft_provenance_components
-            \\WHERE draft_id = ? ORDER BY ordinal;
+            \\WHERE draft_id = ? LIMIT 1;
         );
         defer statement.deinit();
         try statement.bindText(1, draft_id);
-        var items: std.ArrayList(OwnedDraftProvenanceComponent) = .empty;
-        errdefer {
-            for (items.items) |*item| item.deinit(allocator);
-            items.deinit(allocator);
+        if (try statement.step() == .row) {
+            return Error.DraftProvenanceInvalidBinding;
         }
-        while (try statement.step() == .row) {
-            const kind = parseEnumText(
-                RegistrationComponentKind,
-                columnText(statement.raw, 0) orelse return Error.SqliteFailure,
-            ) orelse return Error.SqliteFailure;
-            if (kind != .business_activity and
-                kind != .registration_obligation)
-            {
-                return Error.SqliteFailure;
-            }
-            const role = parseEnumText(
-                form_catalog.Role,
-                columnText(statement.raw, 1) orelse return Error.SqliteFailure,
-            ) orelse return Error.SqliteFailure;
-            const sequence_raw = sqlite.sqlite3_column_int64(statement.raw, 5);
-            if (sequence_raw < 1 or sequence_raw > std.math.maxInt(u32)) {
-                return Error.SqliteFailure;
-            }
-            const profile = try dupColumn(allocator, statement.raw, 2);
-            errdefer allocator.free(profile);
-            const anchor = try dupColumn(allocator, statement.raw, 3);
-            errdefer allocator.free(anchor);
-            const revision = try dupColumn(allocator, statement.raw, 4);
-            const item: OwnedDraftProvenanceComponent = .{
-                .kind = kind,
-                .role = role,
-                .profile_id = profile,
-                .anchor_id = anchor,
-                .revision_id = revision,
-                .revision_sequence = @intCast(sequence_raw),
-            };
-            errdefer {
-                var owned = item;
-                owned.deinit(allocator);
-            }
-            try items.append(allocator, item);
-        }
-        return items.toOwnedSlice(allocator);
     }
 
     fn loadDraftProvenanceSources(
@@ -11385,18 +11730,16 @@ pub const Store = struct {
         return items.toOwnedSlice(allocator);
     }
 
-    fn loadExactDraftProvenanceComponents(
+    fn rejectLegacyExactDraftProvenanceComponents(
         self: *Store,
-        allocator: std.mem.Allocator,
         draft_identity: ExactDraftIdentity,
         revision: DraftRevision,
-    ) ![]OwnedDraftProvenanceComponent {
+    ) !void {
         var statement = try self.prepare(
-            \\SELECT component_kind, role, profile_id, anchor_id,
-            \\       revision_id, revision_sequence
+            \\SELECT 1
             \\FROM tax_exact_draft_provenance_components
             \\WHERE workspace_id = ? AND exact_schema_digest = ?
-            \\  AND revision = ? ORDER BY ordinal;
+            \\  AND revision = ? LIMIT 1;
         );
         defer statement.deinit();
         try bindExactDraftProvenanceKey(
@@ -11404,50 +11747,9 @@ pub const Store = struct {
             &draft_identity,
             revision,
         );
-        var items: std.ArrayList(OwnedDraftProvenanceComponent) = .empty;
-        errdefer {
-            for (items.items) |*item| item.deinit(allocator);
-            items.deinit(allocator);
+        if (try statement.step() == .row) {
+            return Error.DraftProvenanceInvalidBinding;
         }
-        while (try statement.step() == .row) {
-            if (items.items.len == 32) return Error.SqliteFailure;
-            const kind = parseEnumText(
-                RegistrationComponentKind,
-                columnText(statement.raw, 0) orelse return Error.SqliteFailure,
-            ) orelse return Error.SqliteFailure;
-            if (kind != .business_activity and
-                kind != .registration_obligation)
-            {
-                return Error.SqliteFailure;
-            }
-            const role = parseEnumText(
-                form_catalog.Role,
-                columnText(statement.raw, 1) orelse return Error.SqliteFailure,
-            ) orelse return Error.SqliteFailure;
-            const sequence_raw = sqlite.sqlite3_column_int64(statement.raw, 5);
-            if (sequence_raw < 1 or sequence_raw > std.math.maxInt(u32)) {
-                return Error.SqliteFailure;
-            }
-            const profile = try dupColumn(allocator, statement.raw, 2);
-            errdefer allocator.free(profile);
-            const anchor = try dupColumn(allocator, statement.raw, 3);
-            errdefer allocator.free(anchor);
-            const revision_id = try dupColumn(allocator, statement.raw, 4);
-            const item: OwnedDraftProvenanceComponent = .{
-                .kind = kind,
-                .role = role,
-                .profile_id = profile,
-                .anchor_id = anchor,
-                .revision_id = revision_id,
-                .revision_sequence = @intCast(sequence_raw),
-            };
-            errdefer {
-                var owned = item;
-                owned.deinit(allocator);
-            }
-            try items.append(allocator, item);
-        }
-        return items.toOwnedSlice(allocator);
     }
 
     fn loadExactDraftProvenanceSources(
@@ -11808,20 +12110,43 @@ pub const Store = struct {
             canonical_subject,
         );
         errdefer subject.deinit(allocator);
-        const activities = try self.loadBusinessActivities(
+        const accounting_period_basis = if (columnText(row, 21)) |text|
+            parseEnumText(AccountingPeriodBasis, text) orelse
+                return Error.SqliteFailure
+        else
+            null;
+        const fiscal_year_end_month: ?u8 = if (sqlite.sqlite3_column_type(row, 22) == sqlite.SQLITE_NULL) null else blk: {
+            const month = sqlite.sqlite3_column_int64(row, 22);
+            if (month < 1 or month > 12) return Error.SqliteFailure;
+            break :blk @intCast(month);
+        };
+        const eopt_tier = if (columnText(row, 23)) |text|
+            parseEnumText(EoptTier, text) orelse return Error.SqliteFailure
+        else
+            null;
+        const primary_line_of_business = try dupOptionalColumn(
             allocator,
-            profile_id,
-            id,
+            row,
+            24,
         );
+        errdefer freeOptional(allocator, primary_line_of_business);
+        const consolidation_review_state = parseEnumText(
+            ConsolidationReviewState,
+            columnText(row, 25) orelse return Error.SqliteFailure,
+        ) orelse return Error.SqliteFailure;
+        const expose_retired_components = try self.schemaVersion() < 27;
+        const activities = if (expose_retired_components)
+            try self.loadBusinessActivities(allocator, profile_id, id)
+        else
+            try allocator.alloc(OwnedBusinessActivity, 0);
         errdefer {
             for (activities) |*activity| activity.deinit(allocator);
             allocator.free(activities);
         }
-        const facts = try self.loadRegistrationFacts(
-            allocator,
-            profile_id,
-            id,
-        );
+        const facts = if (expose_retired_components)
+            try self.loadRegistrationFacts(allocator, profile_id, id)
+        else
+            try allocator.alloc(OwnedRegistrationFact, 0);
         errdefer {
             for (facts) |*fact| fact.deinit(allocator);
             allocator.free(facts);
@@ -11843,6 +12168,11 @@ pub const Store = struct {
                 .email_address = email_address,
             },
             .subject = subject,
+            .accounting_period_basis = accounting_period_basis,
+            .fiscal_year_end_month = fiscal_year_end_month,
+            .eopt_tier = eopt_tier,
+            .primary_line_of_business = primary_line_of_business,
+            .consolidation_review_state = consolidation_review_state,
             .business_activities = activities,
             .registration_facts = facts,
         };
@@ -11976,6 +12306,47 @@ pub const Store = struct {
         return items.toOwnedSlice(allocator);
     }
 
+    fn loadLegacyProfileRevisionComponents(
+        self: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        revision_id: []const u8,
+    ) !?OwnedLegacyProfileRevisionComponents {
+        try validateOpaqueText(profile_id);
+        try validateIdText(revision_id);
+        var exists = try self.prepare(
+            \\SELECT 1 FROM tax_profile_revisions
+            \\WHERE profile_id = ? AND id = ?;
+        );
+        defer exists.deinit();
+        try exists.bindText(1, profile_id);
+        try exists.bindText(2, revision_id);
+        if (try exists.step() == .done) return null;
+
+        const activities = try self.loadBusinessActivities(
+            allocator,
+            profile_id,
+            revision_id,
+        );
+        errdefer {
+            for (activities) |*activity| activity.deinit(allocator);
+            allocator.free(activities);
+        }
+        const facts = try self.loadRegistrationFacts(
+            allocator,
+            profile_id,
+            revision_id,
+        );
+        errdefer {
+            for (facts) |*fact| fact.deinit(allocator);
+            allocator.free(facts);
+        }
+        return .{
+            .business_activities = activities,
+            .registration_facts = facts,
+        };
+    }
+
     fn beginImmediate(self: *Store) !void {
         try self.exec("BEGIN IMMEDIATE;");
     }
@@ -12013,6 +12384,41 @@ pub const Store = struct {
     }
 };
 
+/// Read-only boundary for exporting retired Registration component streams.
+/// Application workflows must use the consolidated Base Tax Profile fields;
+/// this namespace cannot create or mutate legacy rows.
+pub const legacy_registration_export = struct {
+    pub fn loadProfileRevisionComponents(
+        store: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        revision_id: []const u8,
+    ) !?OwnedLegacyProfileRevisionComponents {
+        return store.loadLegacyProfileRevisionComponents(
+            allocator,
+            profile_id,
+            revision_id,
+        );
+    }
+
+    pub fn listHistory(
+        store: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+    ) !RegistrationHistoryList {
+        return store.listRegistrationHistory(allocator, profile_id);
+    }
+
+    pub fn resolveOn(
+        store: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        as_of: []const u8,
+    ) !RegistrationHistoryList {
+        return store.resolveRegistrationOn(allocator, profile_id, as_of);
+    }
+};
+
 /// Narrow test-only access for upgrade fixtures that must represent rows
 /// written by an older generated catalog. Production builds expose an empty
 /// namespace and cannot bypass the current catalog write guard.
@@ -12022,6 +12428,36 @@ pub const testing = if (@import("builtin").is_test) struct {
         sql_text: [*:0]const u8,
     ) !void {
         try store.exec(sql_text);
+    }
+
+    /// Seeds component rows exactly as an older release did. Current public
+    /// Base revision write signatures cannot accept these payloads.
+    pub fn appendLegacyRevision(
+        store: *Store,
+        value: RevisionWrite,
+        components: RevisionComponentsWrite,
+    ) !void {
+        return store.appendLegacyRevisionForMigrationTest(value, components);
+    }
+
+    /// Reads retired registration rows for migration/compatibility tests.
+    /// Normal runtime code must project the consolidated Base revision.
+    pub fn listLegacyRegistrationHistory(
+        store: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+    ) !RegistrationHistoryList {
+        return store.listRegistrationHistory(allocator, profile_id);
+    }
+
+    /// Resolves retired registration rows for migration/compatibility tests.
+    pub fn resolveLegacyRegistrationOn(
+        store: *Store,
+        allocator: std.mem.Allocator,
+        profile_id: []const u8,
+        as_of: []const u8,
+    ) !RegistrationHistoryList {
+        return store.resolveRegistrationOn(allocator, profile_id, as_of);
     }
 } else struct {};
 
@@ -12984,32 +13420,18 @@ fn readTaxFormProfileScalarValue(
         .profile_id => .{
             .profile_id = try dupColumn(allocator, row, value_type_column + 1),
         },
-        .business_activity_anchor_id => .{
-            .business_activity_anchor_id = try dupColumn(
-                allocator,
-                row,
-                value_type_column + 2,
-            ),
-        },
-        .registration_obligation_anchor_id => .{
-            .registration_obligation_anchor_id = try dupColumn(
-                allocator,
-                row,
-                value_type_column + 2,
-            ),
-        },
         .text => .{
-            .text = try dupColumn(allocator, row, value_type_column + 3),
+            .text = try dupColumn(allocator, row, value_type_column + 2),
         },
         .boolean => blk: {
-            if (sqlite.sqlite3_column_type(row, value_type_column + 4) !=
+            if (sqlite.sqlite3_column_type(row, value_type_column + 3) !=
                 sqlite.SQLITE_INTEGER)
             {
                 return Error.SqliteFailure;
             }
             break :blk .{ .boolean = switch (sqlite.sqlite3_column_int64(
                 row,
-                value_type_column + 4,
+                value_type_column + 3,
             )) {
                 0 => false,
                 1 => true,
@@ -13017,23 +13439,23 @@ fn readTaxFormProfileScalarValue(
             } };
         },
         .integer => blk: {
-            if (sqlite.sqlite3_column_type(row, value_type_column + 5) !=
+            if (sqlite.sqlite3_column_type(row, value_type_column + 4) !=
                 sqlite.SQLITE_INTEGER)
             {
                 return Error.SqliteFailure;
             }
             break :blk .{ .integer = sqlite.sqlite3_column_int64(
                 row,
-                value_type_column + 5,
+                value_type_column + 4,
             ) };
         },
         .date => .{
-            .date = try dupColumn(allocator, row, value_type_column + 6),
+            .date = try dupColumn(allocator, row, value_type_column + 5),
         },
         .year => blk: {
             const year = sqlite.sqlite3_column_int64(
                 row,
-                value_type_column + 7,
+                value_type_column + 6,
             );
             if (year < 1 or year > std.math.maxInt(u16)) {
                 return Error.SqliteFailure;
@@ -13041,7 +13463,7 @@ fn readTaxFormProfileScalarValue(
             break :blk .{ .year = @intCast(year) };
         },
         .choice => .{
-            .choice = try dupColumn(allocator, row, value_type_column + 8),
+            .choice = try dupColumn(allocator, row, value_type_column + 7),
         },
     };
 }
@@ -13317,6 +13739,7 @@ fn readSubject(
         },
         .corporation,
         .partnership,
+        .cooperative,
         .estate,
         .trust,
         .other_legal_entity,
@@ -13348,6 +13771,7 @@ fn readSubject(
                 .kind = switch (kind) {
                     .corporation => .corporation,
                     .partnership => .partnership,
+                    .cooperative => .cooperative,
                     .estate => .estate,
                     .trust => .trust,
                     .other_legal_entity => .other,
@@ -13678,7 +14102,7 @@ fn legalPersonClassText(value: LegalPersonClass) []const u8 {
 fn legalPersonClassForSubjectKind(value: SubjectKind) LegalPersonClass {
     return switch (value) {
         .individual, .sole_proprietor => .natural_person,
-        .corporation, .partnership => .juridical_person,
+        .corporation, .partnership, .cooperative => .juridical_person,
         .estate => .estate,
         .trust => .trust,
         .other_legal_entity => .reviewed_other,
@@ -13848,6 +14272,21 @@ fn validateRevision(
     try validateOptionalValue(value.contact.zip_code);
     try validateOptionalValue(value.contact.contact_number);
     try validateOptionalValue(value.contact.email_address);
+    if (value.accounting_period_basis) |basis| {
+        switch (basis) {
+            .calendar => if (value.fiscal_year_end_month != null) {
+                return Error.InvalidValue;
+            },
+            .fiscal => {
+                const month = value.fiscal_year_end_month orelse
+                    return Error.InvalidValue;
+                if (month < 1 or month > 12) return Error.InvalidValue;
+            },
+        }
+    } else if (value.fiscal_year_end_month != null) {
+        return Error.InvalidValue;
+    }
+    try validateOptionalValue(value.primary_line_of_business);
     switch (value.subject) {
         .individual => |person| try validateIndividual(person),
         .sole_proprietor => |proprietor| {
@@ -14027,7 +14466,9 @@ fn validateTaxFormProfileRevisionWrite(
     {
         return Error.TaxFormProfileSpecMismatch;
     }
-    if (value.values.len == 0) return Error.TaxFormProfileValueInvalid;
+    // Empty value sets are explicit clears for optional-only Tax Form Profile
+    // contracts. Required generated values are checked below; the parent
+    // revision itself remains append-only and therefore records the clear.
     switch (value.review_state) {
         .requires_review => if (value.confirmed_at_unix_seconds != null) {
             return Error.InvalidValue;
@@ -14107,9 +14548,6 @@ fn validateTaxFormProfileScalarValue(
 ) Error!void {
     switch (value) {
         .profile_id => |profile_id| try validateOpaqueText(profile_id),
-        .business_activity_anchor_id,
-        .registration_obligation_anchor_id,
-        => |anchor_id| try validateIdText(anchor_id),
         .text, .choice => |text| {
             try requireValue(text);
             if (text.len > 255) return Error.InvalidValue;
@@ -14131,25 +14569,6 @@ fn findTaxFormProfileDefinition(
         {
             return definition;
         }
-    }
-    return null;
-}
-
-fn findTaxFormProfileReferencedProfile(
-    values: []const TaxFormProfileSetupValueWrite,
-    role: form_catalog.Role,
-    semantic_key: form_catalog.TaxFormProfileSemanticKey,
-) ?[]const u8 {
-    for (values) |setup_value| {
-        if (setup_value.role != role or
-            setup_value.semantic_key != semantic_key)
-        {
-            continue;
-        }
-        return switch (setup_value.value) {
-            .profile_id => |profile_id| profile_id,
-            else => null,
-        };
     }
     return null;
 }
@@ -15122,16 +15541,9 @@ fn exactDraftProvenanceDigest(
         hash.update(&.{0});
     }
 
-    updateDigestU32(&hash, @intCast(value.components.len));
-    for (value.components) |component| {
-        const columns = draftProvenanceComponentColumns(component);
-        updateDigestLengthPrefixed(&hash, columns.kind.text());
-        updateDigestLengthPrefixed(&hash, @tagName(columns.role));
-        updateDigestLengthPrefixed(&hash, columns.profile_id);
-        updateDigestLengthPrefixed(&hash, columns.anchor_id);
-        updateDigestLengthPrefixed(&hash, columns.revision_id);
-        updateDigestU32(&hash, columns.revision_sequence);
-    }
+    // Preserve the v1 digest slot for registration components. Current
+    // provenance never emits them; legacy rows containing them fail closed.
+    updateDigestU32(&hash, 0);
 
     updateDigestU32(&hash, @intCast(value.source_snapshots.len));
     for (value.source_snapshots) |*source| {
@@ -15291,7 +15703,6 @@ fn exactDraftProvenanceAsCoarse(
         .taxpayer_revisions = value.taxpayer_revisions,
         .taxpayer_year_revision = value.taxpayer_year_revision,
         .tax_form_profile_revision = value.tax_form_profile_revision,
-        .components = value.components,
         .source_snapshots = value.source_snapshots,
         .transaction_seeds = value.transaction_seeds,
     };
@@ -15372,25 +15783,6 @@ fn validateExactDraftAndProvenanceIdentity(
         {
             return Error.DraftProvenanceInvalidBinding;
         }
-
-        // A v16 component anchor is not a legacy profile-revision activity
-        // row. Persisting it in the old binding FK would either fail or, worse,
-        // point at a different historical object. The typed v19 child is the
-        // sole activity identity whenever one is present for this role.
-        for (provenance.components) |component| switch (component) {
-            .business_activity => |activity| {
-                if (activity.role == revision.role and
-                    std.mem.eql(
-                        u8,
-                        activity.profile_id,
-                        revision.profile_id,
-                    ) and binding.business_activity_id != null)
-                {
-                    return Error.DraftProvenanceInvalidBinding;
-                }
-            },
-            .registration_obligation => {},
-        };
     }
 }
 
@@ -15420,20 +15812,6 @@ fn borrowedOwnedDraftProvenanceSourceKey(
                 .key = key.key,
             },
         },
-        .business_activity_fact => |key| .{
-            .business_activity_fact = .{
-                .role = key.role,
-                .anchor_id = key.anchor_id,
-                .key = key.key,
-            },
-        },
-        .registration_obligation_fact => |key| .{
-            .registration_obligation_fact = .{
-                .role = key.role,
-                .anchor_id = key.anchor_id,
-                .key = key.key,
-            },
-        },
     };
 }
 
@@ -15448,12 +15826,6 @@ fn borrowedOwnedDraftProvenanceValue(
         .date => |date| .{ .date = try storedDateText(date) },
         .year => |year| .{ .year = year },
         .profile_id => |id| .{ .profile_id = id },
-        .business_activity_anchor_id => |id| .{
-            .business_activity_anchor_id = id,
-        },
-        .registration_obligation_anchor_id => |id| .{
-            .registration_obligation_anchor_id = id,
-        },
         .income_tax_rate_election => |choice| .{
             .income_tax_rate_election = choice,
         },
@@ -15482,7 +15854,7 @@ fn validateOwnedExactDraftProvenanceIntegrity(
     if (value.revision.value == 0 or
         checkedU64ToI64(value.revision.value) == null or
         value.taxpayer_revisions.len > max_exact_role_bindings or
-        value.components.len > 32 or value.source_snapshots.len > 96 or
+        value.source_snapshots.len > 96 or
         value.transaction_seeds.len > 32)
     {
         return Error.SqliteFailure;
@@ -15527,29 +15899,6 @@ fn validateOwnedExactDraftProvenanceIntegrity(
             };
             break :blk form_profile_storage;
         } else null;
-
-    var component_storage: [32]DraftProvenanceComponentWrite = undefined;
-    for (value.components, 0..) |component, index| {
-        component_storage[index] = switch (component.kind) {
-            .business_activity => .{ .business_activity = .{
-                .role = component.role,
-                .profile_id = component.profile_id,
-                .anchor_id = component.anchor_id,
-                .revision_id = component.revision_id,
-                .revision_sequence = component.revision_sequence,
-            } },
-            .registration_obligation => .{
-                .registration_obligation = .{
-                    .role = component.role,
-                    .profile_id = component.profile_id,
-                    .anchor_id = component.anchor_id,
-                    .revision_id = component.revision_id,
-                    .revision_sequence = component.revision_sequence,
-                },
-            },
-            else => return Error.SqliteFailure,
-        };
-    }
 
     var source_storage: [96]DraftProvenanceSourceSnapshotWrite = undefined;
     for (value.source_snapshots, 0..) |*source, index| {
@@ -15624,7 +15973,6 @@ fn validateOwnedExactDraftProvenanceIntegrity(
         .taxpayer_revisions = taxpayer_storage[0..value.taxpayer_revisions.len],
         .taxpayer_year_revision = year_revision,
         .tax_form_profile_revision = form_profile_revision,
-        .components = component_storage[0..value.components.len],
         .source_snapshots = source_storage[0..value.source_snapshots.len],
         .transaction_seeds = seed_storage[0..value.transaction_seeds.len],
     };
@@ -15741,38 +16089,6 @@ fn validateFormSetDecisionStream(
     try requireValue(form_revision);
 }
 
-const DraftProvenanceComponentColumns = struct {
-    kind: RegistrationComponentKind,
-    role: form_catalog.Role,
-    profile_id: []const u8,
-    anchor_id: []const u8,
-    revision_id: []const u8,
-    revision_sequence: u32,
-};
-
-fn draftProvenanceComponentColumns(
-    value: DraftProvenanceComponentWrite,
-) DraftProvenanceComponentColumns {
-    return switch (value) {
-        .business_activity => |component| .{
-            .kind = .business_activity,
-            .role = component.role,
-            .profile_id = component.profile_id,
-            .anchor_id = component.anchor_id,
-            .revision_id = component.revision_id,
-            .revision_sequence = component.revision_sequence,
-        },
-        .registration_obligation => |component| .{
-            .kind = .registration_obligation,
-            .role = component.role,
-            .profile_id = component.profile_id,
-            .anchor_id = component.anchor_id,
-            .revision_id = component.revision_id,
-            .revision_sequence = component.revision_sequence,
-        },
-    };
-}
-
 const DraftProvenanceSourceKeyColumns = struct {
     kind: []const u8,
     role: form_catalog.Role,
@@ -15801,18 +16117,6 @@ fn draftProvenanceSourceKeyColumns(
             .role = key.role,
             .key = @tagName(key.key),
             .anchor_id = null,
-        },
-        .business_activity_fact => |key| .{
-            .kind = "business_activity_fact",
-            .role = key.role,
-            .key = @tagName(key.key),
-            .anchor_id = key.anchor_id,
-        },
-        .registration_obligation_fact => |key| .{
-            .kind = "registration_obligation_fact",
-            .role = key.role,
-            .key = @tagName(key.key),
-            .anchor_id = key.anchor_id,
         },
     };
 }
@@ -15847,16 +16151,6 @@ fn draftProvenanceValueColumns(
         },
         .profile_id => |id| .{
             .kind = "profile_id",
-            .text = id,
-            .integer = null,
-        },
-        .business_activity_anchor_id => |id| .{
-            .kind = "business_activity_anchor_id",
-            .text = id,
-            .integer = null,
-        },
-        .registration_obligation_anchor_id => |id| .{
-            .kind = "registration_obligation_anchor_id",
             .text = id,
             .integer = null,
         },
@@ -15920,7 +16214,7 @@ fn validateDraftProvenanceWrite(value: DraftProvenanceWrite) Error!void {
         try requireValue(reference);
     }
     if (value.taxpayer_revisions.len == 0 or
-        value.taxpayer_revisions.len > 10 or value.components.len > 32 or
+        value.taxpayer_revisions.len > 10 or
         value.source_snapshots.len > 96 or value.transaction_seeds.len > 32)
     {
         return Error.InvalidValue;
@@ -15978,30 +16272,6 @@ fn validateDraftProvenanceWrite(value: DraftProvenanceWrite) Error!void {
             !std.mem.eql(u8, revision.spec_hash, value.setup_spec_hash))
         {
             return Error.DraftProvenanceInvalidBinding;
-        }
-    }
-
-    for (value.components, 0..) |component, index| {
-        const columns = draftProvenanceComponentColumns(component);
-        try validateOpaqueText(columns.profile_id);
-        try validateIdText(columns.anchor_id);
-        try validateIdText(columns.revision_id);
-        if (columns.revision_sequence == 0 or
-            !draftProvenanceRoleOwnsProfile(
-                value.taxpayer_revisions,
-                columns.role,
-                columns.profile_id,
-            ))
-        {
-            return Error.DraftProvenanceInvalidBinding;
-        }
-        for (value.components[index + 1 ..]) |other| {
-            const right = draftProvenanceComponentColumns(other);
-            if (columns.kind == right.kind and columns.role == right.role and
-                std.mem.eql(u8, columns.anchor_id, right.anchor_id))
-            {
-                return Error.DraftProvenanceInvalidBinding;
-            }
         }
     }
 
@@ -16122,22 +16392,6 @@ fn validateDraftProvenanceSourceKey(
         .tax_form_profile_value => if (value.tax_form_profile_revision == null) {
             return Error.DraftProvenanceInvalidBinding;
         },
-        .business_activity_fact => |activity| {
-            if (!draftProvenanceHasComponent(
-                value.components,
-                .business_activity,
-                activity.role,
-                activity.anchor_id,
-            )) return Error.DraftProvenanceInvalidBinding;
-        },
-        .registration_obligation_fact => |obligation| {
-            if (!draftProvenanceHasComponent(
-                value.components,
-                .registration_obligation,
-                obligation.role,
-                obligation.anchor_id,
-            )) return Error.DraftProvenanceInvalidBinding;
-        },
     }
 }
 
@@ -16146,20 +16400,6 @@ fn draftProvenanceRoleExists(
     role: form_catalog.Role,
 ) bool {
     for (revisions) |revision| if (revision.role == role) return true;
-    return false;
-}
-
-fn draftProvenanceHasComponent(
-    components: []const DraftProvenanceComponentWrite,
-    kind: RegistrationComponentKind,
-    role: form_catalog.Role,
-    anchor_id: []const u8,
-) bool {
-    for (components) |component| {
-        const columns = draftProvenanceComponentColumns(component);
-        if (columns.kind == kind and columns.role == role and
-            std.mem.eql(u8, columns.anchor_id, anchor_id)) return true;
-    }
     return false;
 }
 
@@ -16186,10 +16426,7 @@ fn validateDraftProvenanceValue(
         .text, .choice => |text| if (text.len > 255) return Error.InvalidValue,
         .boolean, .integer, .year => {},
         .date => |*date| try validateDate(date),
-        .profile_id,
-        .business_activity_anchor_id,
-        .registration_obligation_anchor_id,
-        => |id| try validateIdText(id),
+        .profile_id => |id| try validateIdText(id),
         .income_tax_rate_election, .deduction_method => {},
     }
 }
@@ -16199,6 +16436,7 @@ fn readDraftProvenanceSourceKey(
     row: *sqlite.sqlite3_stmt,
     kind_column: c_int,
 ) !OwnedDraftProvenanceSourceKey {
+    _ = allocator;
     const kind = columnText(row, kind_column) orelse return Error.SqliteFailure;
     const role = parseEnumText(
         form_catalog.Role,
@@ -16231,28 +16469,11 @@ fn readDraftProvenanceSourceKey(
             ) orelse return Error.SqliteFailure,
         },
     };
-    const anchor = try dupColumn(allocator, row, kind_column + 3);
-    if (std.mem.eql(u8, kind, "business_activity_fact")) return .{
-        .business_activity_fact = .{
-            .role = role,
-            .anchor_id = anchor,
-            .key = parseEnumText(DraftProvenanceActivityFactKey, key) orelse {
-                allocator.free(anchor);
-                return Error.SqliteFailure;
-            },
-        },
-    };
-    if (std.mem.eql(u8, kind, "registration_obligation_fact")) return .{
-        .registration_obligation_fact = .{
-            .role = role,
-            .anchor_id = anchor,
-            .key = parseEnumText(DraftProvenanceObligationFactKey, key) orelse {
-                allocator.free(anchor);
-                return Error.SqliteFailure;
-            },
-        },
-    };
-    allocator.free(anchor);
+    if (std.mem.eql(u8, kind, "business_activity_fact") or
+        std.mem.eql(u8, kind, "registration_obligation_fact"))
+    {
+        return Error.DraftProvenanceInvalidBinding;
+    }
     return Error.SqliteFailure;
 }
 
@@ -16289,20 +16510,11 @@ fn readDraftProvenanceValue(
     if (std.mem.eql(u8, kind, "profile_id")) return .{
         .profile_id = try dupColumn(allocator, row, text_column),
     };
-    if (std.mem.eql(u8, kind, "business_activity_anchor_id")) return .{
-        .business_activity_anchor_id = try dupColumn(
-            allocator,
-            row,
-            text_column,
-        ),
-    };
-    if (std.mem.eql(u8, kind, "registration_obligation_anchor_id")) return .{
-        .registration_obligation_anchor_id = try dupColumn(
-            allocator,
-            row,
-            text_column,
-        ),
-    };
+    if (std.mem.eql(u8, kind, "business_activity_anchor_id") or
+        std.mem.eql(u8, kind, "registration_obligation_anchor_id"))
+    {
+        return Error.DraftProvenanceInvalidBinding;
+    }
     if (std.mem.eql(u8, kind, "income_tax_rate_election")) {
         return .{ .income_tax_rate_election = parseEnumText(
             TaxpayerYearIncomeTaxRateElection,
@@ -19903,7 +20115,8 @@ const schema_v17 =
     \\        (source_kind = 'tax_form_profile_value' AND source_key IN (
     \\            'business_activity_anchor_id', 'spouse_profile_id',
     \\            'spouse_business_activity_anchor_id',
-    \\            'special_rate_obligation_anchor_id'
+    \\            'special_rate_obligation_anchor_id',
+    \\            'income_tax_rate_election', 'special_rate_basis'
     \\        )) OR
     \\        (source_kind = 'business_activity_fact' AND source_key IN (
     \\            'line_of_business', 'atc'
@@ -19987,7 +20200,8 @@ const schema_v17 =
     \\    source_key TEXT NOT NULL CHECK (source_key IN (
     \\        'business_activity_anchor_id', 'spouse_profile_id',
     \\        'spouse_business_activity_anchor_id',
-    \\        'special_rate_obligation_anchor_id'
+    \\        'special_rate_obligation_anchor_id',
+    \\        'income_tax_rate_election', 'special_rate_basis'
     \\    )),
     \\    anchor_id TEXT,
     \\    seed_source_kind TEXT NOT NULL CHECK (seed_source_kind IN (
@@ -20546,8 +20760,7 @@ const schema_v19 =
     \\    ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 95),
     \\    source_kind TEXT NOT NULL CHECK (source_kind IN (
     \\        'taxpayer_fact', 'taxpayer_year_setting',
-    \\        'tax_form_profile_value', 'business_activity_fact',
-    \\        'registration_obligation_fact'
+    \\        'tax_form_profile_value'
     \\    )),
     \\    role TEXT NOT NULL,
     \\    source_key TEXT NOT NULL CHECK (
@@ -20561,22 +20774,14 @@ const schema_v19 =
     \\            'income_tax_rate_election', 'deduction_method'
     \\        )) OR
     \\        (source_kind = 'tax_form_profile_value' AND source_key IN (
-    \\            'business_activity_anchor_id', 'spouse_profile_id',
-    \\            'spouse_business_activity_anchor_id',
-    \\            'special_rate_obligation_anchor_id'
-    \\        )) OR
-    \\        (source_kind = 'business_activity_fact' AND source_key IN (
-    \\            'line_of_business', 'atc'
-    \\        )) OR
-    \\        (source_kind = 'registration_obligation_fact' AND
-    \\            source_key = 'registration_kind')
+    \\            'spouse_profile_id', 'income_tax_rate_election',
+    \\            'special_rate_basis'
+    \\        ))
     \\    ),
-    \\    anchor_id TEXT,
+    \\    anchor_id TEXT CHECK (anchor_id IS NULL),
     \\    value_kind TEXT NOT NULL CHECK (value_kind IN (
     \\        'text', 'choice', 'boolean', 'integer', 'date', 'year',
-    \\        'profile_id', 'business_activity_anchor_id',
-    \\        'registration_obligation_anchor_id',
-    \\        'income_tax_rate_election', 'deduction_method'
+    \\        'profile_id', 'income_tax_rate_election', 'deduction_method'
     \\    )),
     \\    value_text TEXT,
     \\    value_integer INTEGER,
@@ -20588,20 +20793,8 @@ const schema_v19 =
     \\            workspace_id, exact_schema_digest, revision
     \\        ) ON DELETE RESTRICT,
     \\    CHECK (
-    \\        (source_kind IN (
-    \\            'business_activity_fact',
-    \\            'registration_obligation_fact'
-    \\        ) AND length(trim(anchor_id)) > 0) OR
-    \\        (source_kind NOT IN (
-    \\            'business_activity_fact',
-    \\            'registration_obligation_fact'
-    \\        ) AND anchor_id IS NULL)
-    \\    ),
-    \\    CHECK (
     \\        (value_kind IN (
     \\            'text', 'choice', 'date', 'profile_id',
-    \\            'business_activity_anchor_id',
-    \\            'registration_obligation_anchor_id',
     \\            'income_tax_rate_election', 'deduction_method'
     \\        ) AND value_text IS NOT NULL AND value_integer IS NULL) OR
     \\        (value_kind IN ('boolean', 'integer', 'year') AND
@@ -20620,7 +20813,7 @@ const schema_v19 =
     \\CREATE UNIQUE INDEX tax_exact_draft_provenance_source_unique
     \\    ON tax_exact_draft_provenance_sources (
     \\        workspace_id, exact_schema_digest, revision,
-    \\        source_kind, role, source_key, COALESCE(anchor_id, '')
+    \\        source_kind, role, source_key
     \\    );
     \\CREATE TRIGGER tax_exact_draft_provenance_source_update_guard
     \\BEFORE UPDATE ON tax_exact_draft_provenance_sources
@@ -20647,9 +20840,8 @@ const schema_v19 =
     \\    ),
     \\    role TEXT NOT NULL,
     \\    source_key TEXT NOT NULL CHECK (source_key IN (
-    \\        'business_activity_anchor_id', 'spouse_profile_id',
-    \\        'spouse_business_activity_anchor_id',
-    \\        'special_rate_obligation_anchor_id'
+    \\        'spouse_profile_id', 'income_tax_rate_election',
+    \\        'special_rate_basis'
     \\    )),
     \\    anchor_id TEXT CHECK (anchor_id IS NULL),
     \\    seed_source_kind TEXT NOT NULL CHECK (seed_source_kind IN (
@@ -20660,9 +20852,7 @@ const schema_v19 =
     \\    seed_catalog_sha256 TEXT,
     \\    value_kind TEXT NOT NULL CHECK (value_kind IN (
     \\        'text', 'choice', 'boolean', 'integer', 'date', 'year',
-    \\        'profile_id', 'business_activity_anchor_id',
-    \\        'registration_obligation_anchor_id',
-    \\        'income_tax_rate_election', 'deduction_method'
+    \\        'profile_id', 'income_tax_rate_election', 'deduction_method'
     \\    )),
     \\    value_text TEXT,
     \\    value_integer INTEGER,
@@ -20693,13 +20883,20 @@ const schema_v19 =
     \\    CHECK (
     \\        (value_kind IN (
     \\            'text', 'choice', 'date', 'profile_id',
-    \\            'business_activity_anchor_id',
-    \\            'registration_obligation_anchor_id',
     \\            'income_tax_rate_election', 'deduction_method'
     \\        ) AND value_text IS NOT NULL AND value_integer IS NULL) OR
     \\        (value_kind IN ('boolean', 'integer', 'year') AND
     \\            value_text IS NULL AND value_integer IS NOT NULL)
-    \\    )
+    \\    ),
+    \\    CHECK (value_kind <> 'boolean' OR value_integer IN (0, 1)),
+    \\    CHECK (value_kind <> 'year' OR value_integer BETWEEN 0 AND 65535),
+    \\    CHECK (value_kind <> 'date' OR length(value_text) = 10),
+    \\    CHECK (value_kind <> 'income_tax_rate_election' OR value_text IN (
+    \\        'graduated', 'eight_percent'
+    \\    )),
+    \\    CHECK (value_kind <> 'deduction_method' OR value_text IN (
+    \\        'itemized_deduction', 'optional_standard_deduction'
+    \\    ))
     \\);
     \\CREATE TRIGGER tax_exact_draft_provenance_seed_update_guard
     \\BEFORE UPDATE ON tax_exact_draft_provenance_transaction_seeds
@@ -20919,6 +21116,1079 @@ const schema_v20 =
     \\END;
 ;
 
+/// Cooperative is a juridical taxpayer kind, not an alias for corporation or
+/// `other_legal_entity`. SQLite cannot widen the v1 table CHECK or the v13
+/// shape trigger in place, so this migration rebuilds the parent and restores
+/// every index and identity/immutability guard around an exact row copy.
+const schema_v22 =
+    \\DROP TRIGGER tax_profile_revisions_immutable;
+    \\DROP TRIGGER tax_profile_revisions_delete_guard;
+    \\DROP TRIGGER tax_profile_revision_first_anchor_guard;
+    \\DROP TRIGGER tax_profile_revision_identity_guard;
+    \\DROP TRIGGER tax_profile_revision_anchor_initialize;
+    \\DROP TRIGGER tax_profile_revision_cor_document_guard;
+    \\DROP TRIGGER tax_profile_revision_subject_shape_insert_guard;
+    \\DROP INDEX tax_profile_revisions_effective_idx;
+    \\DROP INDEX tax_profile_revisions_cor_document_idx;
+    \\ALTER TABLE tax_profile_revisions
+    \\    RENAME TO tax_profile_revisions_v21_migration;
+    \\CREATE TABLE tax_profile_revisions (
+    \\    storage_rowid INTEGER PRIMARY KEY,
+    \\    id TEXT NOT NULL
+    \\        CHECK (length(id) BETWEEN 1 AND 64 AND id = trim(id)),
+    \\    profile_id TEXT NOT NULL
+    \\        REFERENCES tax_profiles(id) ON DELETE CASCADE,
+    \\    sequence INTEGER NOT NULL CHECK (
+    \\        sequence > 0 AND sequence <= 4294967295
+    \\    ),
+    \\    effective_from TEXT NOT NULL,
+    \\    effective_until TEXT,
+    \\    source_tag TEXT NOT NULL
+    \\        CHECK (source_tag IN ('manual_entry', 'imported', 'migrated')),
+    \\    source_reference TEXT,
+    \\    tin TEXT NOT NULL CHECK (length(trim(tin)) > 0),
+    \\    rdo_code TEXT NOT NULL CHECK (length(trim(rdo_code)) > 0),
+    \\    registered_address TEXT NOT NULL
+    \\        CHECK (length(trim(registered_address)) > 0),
+    \\    zip_code TEXT,
+    \\    contact_number TEXT,
+    \\    email_address TEXT,
+    \\    subject_kind TEXT NOT NULL CHECK (subject_kind IN (
+    \\        'individual', 'sole_proprietor', 'corporation',
+    \\        'partnership', 'cooperative', 'estate', 'trust',
+    \\        'other_legal_entity'
+    \\    )),
+    \\    taxpayer_name TEXT,
+    \\    registered_name TEXT,
+    \\    date_of_birth TEXT,
+    \\    citizenship TEXT,
+    \\    foreign_tax_number TEXT,
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    cor_document_id TEXT
+    \\        REFERENCES tax_profile_cor_documents(id) ON DELETE RESTRICT,
+    \\    natural_person_classification TEXT CHECK (
+    \\        natural_person_classification IS NULL OR
+    \\        natural_person_classification IN (
+    \\            'classification_unknown', 'pure_compensation',
+    \\            'self_employed', 'mixed_income'
+    \\        )
+    \\    ),
+    \\    trade_name TEXT CHECK (
+    \\        trade_name IS NULL OR length(trim(trade_name)) > 0
+    \\    ),
+    \\    UNIQUE (profile_id, id),
+    \\    UNIQUE (profile_id, sequence),
+    \\    UNIQUE (profile_id, id, sequence),
+    \\    CHECK (
+    \\        effective_until IS NULL OR effective_from <= effective_until
+    \\    ),
+    \\    CHECK (
+    \\        (source_tag = 'manual_entry' AND source_reference IS NULL) OR
+    \\        (source_tag IN ('imported', 'migrated') AND
+    \\            length(trim(source_reference)) > 0)
+    \\    ),
+    \\    CHECK (
+    \\        (subject_kind = 'individual' AND
+    \\            length(trim(taxpayer_name)) > 0 AND
+    \\            registered_name IS NULL) OR
+    \\        (subject_kind = 'sole_proprietor' AND
+    \\            length(trim(taxpayer_name)) > 0) OR
+    \\        (subject_kind IN (
+    \\            'corporation', 'partnership', 'cooperative', 'estate',
+    \\            'trust', 'other_legal_entity'
+    \\        ) AND taxpayer_name IS NULL AND
+    \\            length(trim(registered_name)) > 0 AND
+    \\            date_of_birth IS NULL AND citizenship IS NULL AND
+    \\            foreign_tax_number IS NULL)
+    \\    )
+    \\);
+    \\INSERT INTO tax_profile_revisions (
+    \\    storage_rowid, id, profile_id, sequence, effective_from,
+    \\    effective_until, source_tag, source_reference, tin, rdo_code,
+    \\    registered_address, zip_code, contact_number, email_address,
+    \\    subject_kind, taxpayer_name, registered_name, date_of_birth,
+    \\    citizenship, foreign_tax_number, created_at, cor_document_id,
+    \\    natural_person_classification, trade_name
+    \\)
+    \\SELECT storage_rowid, id, profile_id, sequence, effective_from,
+    \\       effective_until, source_tag, source_reference, tin, rdo_code,
+    \\       registered_address, zip_code, contact_number, email_address,
+    \\       subject_kind, taxpayer_name, registered_name, date_of_birth,
+    \\       citizenship, foreign_tax_number, created_at, cor_document_id,
+    \\       natural_person_classification, trade_name
+    \\FROM tax_profile_revisions_v21_migration
+    \\ORDER BY storage_rowid;
+    \\DROP TABLE tax_profile_revisions_v21_migration;
+    \\CREATE INDEX tax_profile_revisions_effective_idx
+    \\    ON tax_profile_revisions(profile_id, effective_from, effective_until);
+    \\CREATE INDEX tax_profile_revisions_cor_document_idx
+    \\    ON tax_profile_revisions(cor_document_id)
+    \\    WHERE cor_document_id IS NOT NULL;
+    \\CREATE TRIGGER tax_profile_revisions_immutable
+    \\BEFORE UPDATE ON tax_profile_revisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'tax profile revisions are append-only');
+    \\END;
+    \\CREATE TRIGGER tax_profile_revisions_delete_guard
+    \\BEFORE DELETE ON tax_profile_revisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'tax profile revisions are append-only');
+    \\END;
+    \\CREATE TRIGGER tax_profile_revision_first_anchor_guard
+    \\BEFORE INSERT ON tax_profile_revisions
+    \\WHEN NOT EXISTS (
+    \\    SELECT 1 FROM tax_profile_identity_anchors
+    \\    WHERE profile_id = NEW.profile_id
+    \\) AND NEW.sequence <> 1
+    \\BEGIN
+    \\    SELECT RAISE(
+    \\        ABORT,
+    \\        'first profile revision must establish identity at sequence 1'
+    \\    );
+    \\END;
+    \\CREATE TRIGGER tax_profile_revision_identity_guard
+    \\BEFORE INSERT ON tax_profile_revisions
+    \\WHEN EXISTS (
+    \\    SELECT 1 FROM tax_profile_identity_anchors
+    \\    WHERE profile_id = NEW.profile_id
+    \\) AND (
+    \\    replace(replace(replace(replace(replace(replace(replace(
+    \\        NEW.tin, '-', ''), ' ', ''), char(9), ''),
+    \\        char(10), ''), char(11), ''), char(12), ''),
+    \\        char(13), '') <> (
+    \\        SELECT canonical_tin
+    \\        FROM tax_profile_identity_anchors
+    \\        WHERE profile_id = NEW.profile_id
+    \\        ORDER BY sequence DESC
+    \\        LIMIT 1
+    \\    ) OR
+    \\    CASE
+    \\        WHEN NEW.subject_kind IN (
+    \\            'individual', 'sole_proprietor'
+    \\        ) THEN 'natural_person'
+    \\        WHEN NEW.subject_kind IN (
+    \\            'corporation', 'partnership', 'cooperative'
+    \\        ) THEN 'juridical_person'
+    \\        WHEN NEW.subject_kind = 'estate' THEN 'estate'
+    \\        WHEN NEW.subject_kind = 'trust' THEN 'trust'
+    \\        ELSE 'reviewed_other'
+    \\    END <> (
+    \\        SELECT legal_person_class
+    \\        FROM tax_profile_identity_anchors
+    \\        WHERE profile_id = NEW.profile_id
+    \\        ORDER BY sequence DESC
+    \\        LIMIT 1
+    \\    )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(
+    \\        ABORT,
+    \\        'ordinary revision changes canonical taxpayer identity'
+    \\    );
+    \\END;
+    \\CREATE TRIGGER tax_profile_revision_anchor_initialize
+    \\AFTER INSERT ON tax_profile_revisions
+    \\WHEN NOT EXISTS (
+    \\    SELECT 1 FROM tax_profile_identity_anchors
+    \\    WHERE profile_id = NEW.profile_id
+    \\)
+    \\BEGIN
+    \\    INSERT INTO tax_profile_identity_anchors (
+    \\        profile_id, sequence, jurisdiction, tax_authority,
+    \\        canonical_tin, legal_person_class,
+    \\        established_from_revision_id, identity_correction_id
+    \\    ) VALUES (
+    \\        NEW.profile_id, 1, 'philippines',
+    \\        'bureau_of_internal_revenue',
+    \\        replace(replace(replace(replace(replace(replace(replace(
+    \\            NEW.tin, '-', ''), ' ', ''), char(9), ''),
+    \\            char(10), ''), char(11), ''), char(12), ''),
+    \\            char(13), ''),
+    \\        CASE
+    \\            WHEN NEW.subject_kind IN (
+    \\                'individual', 'sole_proprietor'
+    \\            ) THEN 'natural_person'
+    \\            WHEN NEW.subject_kind IN (
+    \\                'corporation', 'partnership', 'cooperative'
+    \\            ) THEN 'juridical_person'
+    \\            WHEN NEW.subject_kind = 'estate' THEN 'estate'
+    \\            WHEN NEW.subject_kind = 'trust' THEN 'trust'
+    \\            ELSE 'reviewed_other'
+    \\        END,
+    \\        NEW.id, NULL
+    \\    );
+    \\END;
+    \\CREATE TRIGGER tax_profile_revision_cor_document_guard
+    \\BEFORE INSERT ON tax_profile_revisions
+    \\WHEN NEW.cor_document_id IS NOT NULL AND (
+    \\    NEW.source_tag <> 'imported' OR NOT EXISTS (
+    \\        SELECT 1 FROM tax_profile_cor_documents
+    \\        WHERE id = NEW.cor_document_id
+    \\          AND profile_id = NEW.profile_id
+    \\    )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(
+    \\        ABORT,
+    \\        'cor link must cite this taxpayer''s imported document'
+    \\    );
+    \\END;
+    \\CREATE TRIGGER tax_profile_revision_subject_shape_insert_guard
+    \\BEFORE INSERT ON tax_profile_revisions
+    \\WHEN
+    \\    NEW.subject_kind = 'sole_proprietor' OR
+    \\    (NEW.subject_kind = 'individual' AND (
+    \\        NEW.natural_person_classification IS NULL OR
+    \\        NEW.registered_name IS NOT NULL
+    \\    )) OR
+    \\    (NEW.subject_kind IN (
+    \\        'corporation', 'partnership', 'cooperative', 'estate', 'trust',
+    \\        'other_legal_entity'
+    \\    ) AND (
+    \\        NEW.natural_person_classification IS NOT NULL OR
+    \\        NEW.taxpayer_name IS NOT NULL OR
+    \\        NEW.date_of_birth IS NOT NULL OR
+    \\        NEW.citizenship IS NOT NULL OR
+    \\        NEW.foreign_tax_number IS NOT NULL
+    \\    ))
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid canonical taxpayer subject shape');
+    \\END;
+;
+
+/// The complete Base Tax Profile owns reusable accounting/registration
+/// facts. Historical Registration rows are intentionally retained as an
+/// append-only audit source; only an explicit primary activity, or a single
+/// unambiguous effective activity, is promoted. Unknown/ambiguous legacy
+/// evidence is left empty and marked for review.
+const schema_v25 =
+    \\DROP TRIGGER IF EXISTS tax_profile_revisions_immutable;
+    \\ALTER TABLE tax_profile_revisions ADD COLUMN
+    \\    accounting_period_basis TEXT CHECK (
+    \\        accounting_period_basis IS NULL OR
+    \\        accounting_period_basis IN ('calendar', 'fiscal')
+    \\    );
+    \\ALTER TABLE tax_profile_revisions ADD COLUMN
+    \\    fiscal_year_end_month INTEGER CHECK (
+    \\        fiscal_year_end_month IS NULL OR
+    \\        fiscal_year_end_month BETWEEN 1 AND 12
+    \\    );
+    \\ALTER TABLE tax_profile_revisions ADD COLUMN
+    \\    eopt_tier TEXT CHECK (
+    \\        eopt_tier IS NULL OR
+    \\        eopt_tier IN ('micro', 'small', 'medium', 'large')
+    \\    );
+    \\ALTER TABLE tax_profile_revisions ADD COLUMN
+    \\    primary_line_of_business TEXT CHECK (
+    \\        primary_line_of_business IS NULL OR (
+    \\            length(trim(primary_line_of_business)) > 0 AND
+    \\            length(CAST(primary_line_of_business AS BLOB)) <= 160
+    \\        )
+    \\    );
+    \\ALTER TABLE tax_profile_revisions ADD COLUMN
+    \\    consolidation_review_state TEXT NOT NULL DEFAULT 'confirmed'
+    \\        CHECK (consolidation_review_state IN (
+    \\            'confirmed', 'requires_review'
+    \\        ));
+    \\CREATE TEMP TABLE tax_profile_v25_activity_candidates AS
+    \\SELECT profile_id, revision_id, history_key, line_of_business,
+    \\       review_state
+    \\FROM (
+    \\    SELECT base.profile_id, base.id AS revision_id,
+    \\           component.history_key, component.record_state,
+    \\           value.line_of_business, component.review_state,
+    \\           ROW_NUMBER() OVER (
+    \\               PARTITION BY base.profile_id, base.id,
+    \\                            component.history_key
+    \\               ORDER BY component.component_sequence DESC,
+    \\                        component.id DESC
+    \\           ) AS position
+    \\    FROM tax_profile_revisions base
+    \\    JOIN tax_profile_registration_component_revisions component
+    \\      ON component.profile_id = base.profile_id
+    \\     AND component.component_kind = 'business_activity'
+    \\     AND component.effective_from <= base.effective_from
+    \\     AND (component.effective_until IS NULL OR
+    \\          component.effective_until >= base.effective_from)
+    \\    JOIN tax_profile_registration_activity_values value
+    \\      ON value.profile_id = component.profile_id
+    \\     AND value.revision_id = component.id
+    \\)
+    \\WHERE position = 1 AND record_state = 'present';
+    \\UPDATE tax_profile_revisions AS base
+    \\SET primary_line_of_business = (
+    \\    SELECT candidate.line_of_business
+    \\    FROM tax_profile_v25_activity_candidates candidate
+    \\    WHERE candidate.profile_id = base.profile_id
+    \\      AND candidate.revision_id = base.id
+    \\      AND candidate.review_state = 'confirmed'
+    \\      AND (
+    \\          candidate.history_key = 'primary' OR
+    \\          NOT EXISTS (
+    \\              SELECT 1
+    \\              FROM tax_profile_v25_activity_candidates explicit
+    \\              WHERE explicit.profile_id = base.profile_id
+    \\                AND explicit.revision_id = base.id
+    \\                AND explicit.history_key = 'primary'
+    \\          )
+    \\      )
+    \\    ORDER BY candidate.history_key = 'primary' DESC,
+    \\             candidate.history_key
+    \\    LIMIT 1
+    \\)
+    \\WHERE EXISTS (
+    \\    SELECT 1 FROM tax_profile_v25_activity_candidates candidate
+    \\    WHERE candidate.profile_id = base.profile_id
+    \\      AND candidate.revision_id = base.id
+    \\      AND candidate.history_key = 'primary'
+    \\) OR 1 = (
+    \\    SELECT COUNT(*)
+    \\    FROM tax_profile_v25_activity_candidates candidate
+    \\    WHERE candidate.profile_id = base.profile_id
+    \\      AND candidate.revision_id = base.id
+    \\);
+    \\UPDATE tax_profile_revisions AS base
+    \\SET consolidation_review_state = 'requires_review'
+    \\WHERE EXISTS (
+    \\    SELECT 1 FROM tax_profile_v25_activity_candidates candidate
+    \\    WHERE candidate.profile_id = base.profile_id
+    \\      AND candidate.revision_id = base.id
+    \\      AND candidate.review_state <> 'confirmed'
+    \\) OR (NOT EXISTS (
+    \\    SELECT 1 FROM tax_profile_v25_activity_candidates candidate
+    \\    WHERE candidate.profile_id = base.profile_id
+    \\      AND candidate.revision_id = base.id
+    \\      AND candidate.history_key = 'primary'
+    \\) AND 1 < (
+    \\    SELECT COUNT(*)
+    \\    FROM tax_profile_v25_activity_candidates candidate
+    \\    WHERE candidate.profile_id = base.profile_id
+    \\      AND candidate.revision_id = base.id
+    \\));
+    \\DROP TABLE tax_profile_v25_activity_candidates;
+    \\CREATE TEMP TABLE tax_profile_v25_eopt_candidates AS
+    \\SELECT profile_id, revision_id, value_tag, review_state
+    \\FROM (
+    \\    SELECT base.profile_id, base.id AS revision_id,
+    \\           value.value_tag, component.review_state,
+    \\           component.record_state,
+    \\           ROW_NUMBER() OVER (
+    \\               PARTITION BY base.profile_id, base.id
+    \\               ORDER BY component.component_sequence DESC,
+    \\                        component.id DESC
+    \\           ) AS position
+    \\    FROM tax_profile_revisions base
+    \\    JOIN tax_profile_registration_component_revisions component
+    \\      ON component.profile_id = base.profile_id
+    \\     AND component.component_kind = 'eopt_tier'
+    \\     AND component.effective_from <= base.effective_from
+    \\     AND (component.effective_until IS NULL OR
+    \\          component.effective_until >= base.effective_from)
+    \\    JOIN tax_profile_registration_fact_values value
+    \\      ON value.profile_id = component.profile_id
+    \\     AND value.revision_id = component.id
+    \\     AND value.fact_kind = 'eopt_tier'
+    \\)
+    \\WHERE position = 1 AND record_state = 'present';
+    \\UPDATE tax_profile_revisions AS base
+    \\SET eopt_tier = (
+    \\    SELECT candidate.value_tag
+    \\    FROM tax_profile_v25_eopt_candidates candidate
+    \\    WHERE candidate.profile_id = base.profile_id
+    \\      AND candidate.revision_id = base.id
+    \\      AND candidate.review_state = 'confirmed'
+    \\      AND candidate.value_tag IN ('micro', 'small', 'medium', 'large')
+    \\    LIMIT 1
+    \\);
+    \\UPDATE tax_profile_revisions AS base
+    \\SET consolidation_review_state = 'requires_review'
+    \\WHERE EXISTS (
+    \\    SELECT 1 FROM tax_profile_v25_eopt_candidates candidate
+    \\    WHERE candidate.profile_id = base.profile_id
+    \\      AND candidate.revision_id = base.id
+    \\      AND (candidate.review_state <> 'confirmed' OR
+    \\           candidate.value_tag = 'unknown_requires_review')
+    \\);
+    \\DROP TABLE tax_profile_v25_eopt_candidates;
+    \\CREATE TRIGGER tax_profile_revisions_immutable
+    \\BEFORE UPDATE ON tax_profile_revisions
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'tax profile revisions are append-only');
+    \\END;
+;
+
+/// Tax Form Profile runtime values are scalar facts. The registration-anchor
+/// variants belonged to an abandoned composition pilot and are deliberately
+/// filtered during this physical rebuild. Parent revisions remain intact even
+/// when their only old values were anchors, preserving the immutable audit
+/// timeline without exposing those anchors through current APIs.
+const schema_v26 =
+    \\DROP TABLE IF EXISTS tax_profile_annual_income_tax_election_events;
+    \\DROP TRIGGER IF EXISTS
+    \\    tax_profile_form_profile_profile_reference_guard;
+    \\DROP TRIGGER IF EXISTS
+    \\    tax_profile_form_profile_activity_anchor_guard;
+    \\DROP TRIGGER IF EXISTS
+    \\    tax_profile_form_profile_obligation_anchor_guard;
+    \\DROP TRIGGER IF EXISTS tax_profile_form_profile_values_update_guard;
+    \\DROP TRIGGER IF EXISTS tax_profile_form_profile_values_delete_guard;
+    \\ALTER TABLE tax_profile_form_profile_values
+    \\    RENAME TO tax_profile_form_profile_values_v25;
+    \\CREATE TABLE tax_profile_form_profile_values (
+    \\    profile_id TEXT NOT NULL,
+    \\    tax_year INTEGER NOT NULL,
+    \\    form_code TEXT NOT NULL,
+    \\    form_revision TEXT NOT NULL,
+    \\    revision_id TEXT NOT NULL,
+    \\    revision_sequence INTEGER NOT NULL,
+    \\    semantic_key TEXT NOT NULL CHECK (semantic_key IN (
+    \\        'spouse_profile_id', 'income_tax_rate_election',
+    \\        'special_rate_basis'
+    \\    )),
+    \\    role TEXT NOT NULL CHECK (role IN (
+    \\        'filer', 'spouse', 'filing', 'payment', 'preparer',
+    \\        'employer', 'withholding_agent', 'attachment', 'evidence',
+    \\        'system'
+    \\    )),
+    \\    value_type TEXT NOT NULL CHECK (value_type IN (
+    \\        'profile_id', 'text', 'boolean', 'integer', 'date', 'year',
+    \\        'choice'
+    \\    )),
+    \\    profile_value TEXT REFERENCES tax_profiles(id) ON DELETE RESTRICT,
+    \\    text_value TEXT,
+    \\    boolean_value INTEGER,
+    \\    integer_value INTEGER,
+    \\    date_value TEXT,
+    \\    year_value INTEGER,
+    \\    choice_value TEXT,
+    \\    source_tag TEXT NOT NULL CHECK (source_tag IN (
+    \\        'manual_confirmation', 'copied_from_revision', 'migrated'
+    \\    )),
+    \\    source_revision_id TEXT,
+    \\    source_reference TEXT,
+    \\    PRIMARY KEY (
+    \\        profile_id, tax_year, form_code, form_revision, revision_id,
+    \\        role, semantic_key
+    \\    ),
+    \\    FOREIGN KEY (
+    \\        profile_id, tax_year, form_code, form_revision,
+    \\        revision_id, revision_sequence
+    \\    ) REFERENCES tax_profile_form_profile_revisions (
+    \\        profile_id, tax_year, form_code, form_revision, id, sequence
+    \\    ) ON DELETE RESTRICT,
+    \\    CHECK (
+    \\        (value_type = 'profile_id' AND profile_value IS NOT NULL AND
+    \\            text_value IS NULL AND boolean_value IS NULL AND
+    \\            integer_value IS NULL AND date_value IS NULL AND
+    \\            year_value IS NULL AND choice_value IS NULL) OR
+    \\        (value_type = 'text' AND text_value IS NOT NULL AND
+    \\            profile_value IS NULL AND boolean_value IS NULL AND
+    \\            integer_value IS NULL AND date_value IS NULL AND
+    \\            year_value IS NULL AND choice_value IS NULL) OR
+    \\        (value_type = 'boolean' AND boolean_value IN (0, 1) AND
+    \\            profile_value IS NULL AND text_value IS NULL AND
+    \\            integer_value IS NULL AND date_value IS NULL AND
+    \\            year_value IS NULL AND choice_value IS NULL) OR
+    \\        (value_type = 'integer' AND integer_value IS NOT NULL AND
+    \\            profile_value IS NULL AND text_value IS NULL AND
+    \\            boolean_value IS NULL AND date_value IS NULL AND
+    \\            year_value IS NULL AND choice_value IS NULL) OR
+    \\        (value_type = 'date' AND length(date_value) = 10 AND
+    \\            profile_value IS NULL AND text_value IS NULL AND
+    \\            boolean_value IS NULL AND integer_value IS NULL AND
+    \\            year_value IS NULL AND choice_value IS NULL) OR
+    \\        (value_type = 'year' AND year_value BETWEEN 1 AND 9999 AND
+    \\            profile_value IS NULL AND text_value IS NULL AND
+    \\            boolean_value IS NULL AND integer_value IS NULL AND
+    \\            date_value IS NULL AND choice_value IS NULL) OR
+    \\        (value_type = 'choice' AND choice_value IS NOT NULL AND
+    \\            profile_value IS NULL AND text_value IS NULL AND
+    \\            boolean_value IS NULL AND integer_value IS NULL AND
+    \\            date_value IS NULL AND year_value IS NULL)
+    \\    ),
+    \\    CHECK (
+    \\        (source_tag = 'manual_confirmation' AND
+    \\            source_revision_id IS NULL AND source_reference IS NULL) OR
+    \\        (source_tag = 'copied_from_revision' AND
+    \\            length(trim(source_revision_id)) > 0 AND
+    \\            source_reference IS NULL) OR
+    \\        (source_tag = 'migrated' AND
+    \\            source_revision_id IS NULL AND
+    \\            length(trim(source_reference)) > 0)
+    \\    )
+    \\);
+    \\INSERT INTO tax_profile_form_profile_values (
+    \\    rowid, profile_id, tax_year, form_code, form_revision,
+    \\    revision_id, revision_sequence, semantic_key, role, value_type,
+    \\    profile_value, text_value, boolean_value, integer_value,
+    \\    date_value, year_value, choice_value, source_tag,
+    \\    source_revision_id, source_reference
+    \\)
+    \\SELECT rowid, profile_id, tax_year, form_code, form_revision,
+    \\       revision_id, revision_sequence, semantic_key, role, value_type,
+    \\       profile_value, text_value, boolean_value, integer_value,
+    \\       date_value, year_value, choice_value, source_tag,
+    \\       source_revision_id, source_reference
+    \\FROM tax_profile_form_profile_values_v25
+    \\WHERE semantic_key IN (
+    \\    'spouse_profile_id', 'income_tax_rate_election',
+    \\    'special_rate_basis'
+    \\) AND value_type IN (
+    \\    'profile_id', 'text', 'boolean', 'integer', 'date', 'year', 'choice'
+    \\)
+    \\ORDER BY rowid;
+    \\DROP TABLE tax_profile_form_profile_values_v25;
+    \\CREATE TRIGGER tax_profile_form_profile_profile_reference_guard
+    \\BEFORE INSERT ON tax_profile_form_profile_values
+    \\WHEN NEW.semantic_key = 'spouse_profile_id' AND (
+    \\    NEW.role <> 'spouse' OR NEW.profile_value = NEW.profile_id OR
+    \\    NOT EXISTS (
+    \\        SELECT 1
+    \\        FROM tax_profiles AS owner
+    \\        JOIN tax_profiles AS selected
+    \\          ON selected.owner_id = owner.owner_id
+    \\        WHERE owner.id = NEW.profile_id
+    \\          AND selected.id = NEW.profile_value
+    \\    )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid Tax Form Profile profile reference');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_profile_values_update_guard
+    \\BEFORE UPDATE ON tax_profile_form_profile_values
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'Tax Form Profile values are immutable');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_profile_values_delete_guard
+    \\BEFORE DELETE ON tax_profile_form_profile_values
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'Tax Form Profile values are permanent');
+    \\END;
+;
+
+/// Current provenance accepts only the surviving Base, Taxpayer-Year, and
+/// scalar Tax Form Profile vocabularies. Rows from the rejected
+/// activity/obligation pilot remain in isolated legacy tables for forensic
+/// export, while ordinary resume paths see only the narrowed tables. The lock
+/// table is append-only: once an exact Tax Form Profile revision crosses the
+/// queued filing boundary, cancellation cannot make that yearly choice
+/// editable again.
+const schema_v27 =
+    \\DROP TRIGGER IF EXISTS tax_form_draft_provenance_source_update_guard;
+    \\DROP TRIGGER IF EXISTS tax_form_draft_provenance_source_delete_guard;
+    \\DROP INDEX IF EXISTS tax_form_draft_provenance_source_key_unique;
+    \\ALTER TABLE tax_form_draft_provenance_sources
+    \\    RENAME TO tax_form_draft_provenance_sources_v26_legacy;
+    \\CREATE TABLE tax_form_draft_provenance_sources (
+    \\    draft_id TEXT NOT NULL
+    \\        REFERENCES tax_form_draft_provenance(draft_id)
+    \\        ON DELETE RESTRICT,
+    \\    ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 95),
+    \\    source_kind TEXT NOT NULL CHECK (source_kind IN (
+    \\        'taxpayer_fact', 'taxpayer_year_setting',
+    \\        'tax_form_profile_value'
+    \\    )),
+    \\    role TEXT NOT NULL CHECK (role IN (
+    \\        'filer', 'spouse', 'filing', 'payment', 'preparer',
+    \\        'employer', 'withholding_agent', 'attachment', 'evidence',
+    \\        'system'
+    \\    )),
+    \\    source_key TEXT NOT NULL CHECK (
+    \\        (source_kind = 'taxpayer_fact' AND source_key IN (
+    \\            'tin', 'rdo_code', 'taxpayer_name', 'registered_name',
+    \\            'trade_name', 'registered_address', 'zip_code',
+    \\            'contact_number', 'email_address', 'subject_kind',
+    \\            'natural_person_classification'
+    \\        )) OR
+    \\        (source_kind = 'taxpayer_year_setting' AND source_key IN (
+    \\            'income_tax_rate_election', 'deduction_method'
+    \\        )) OR
+    \\        (source_kind = 'tax_form_profile_value' AND source_key IN (
+    \\            'spouse_profile_id', 'income_tax_rate_election',
+    \\            'special_rate_basis'
+    \\        ))
+    \\    ),
+    \\    anchor_id TEXT CHECK (anchor_id IS NULL),
+    \\    value_kind TEXT NOT NULL CHECK (value_kind IN (
+    \\        'text', 'choice', 'boolean', 'integer', 'date', 'year',
+    \\        'profile_id', 'income_tax_rate_election', 'deduction_method'
+    \\    )),
+    \\    value_text TEXT,
+    \\    value_integer INTEGER,
+    \\    PRIMARY KEY (draft_id, ordinal),
+    \\    CHECK (
+    \\        (value_kind IN (
+    \\            'text', 'choice', 'date', 'profile_id',
+    \\            'income_tax_rate_election', 'deduction_method'
+    \\        ) AND value_text IS NOT NULL AND value_integer IS NULL) OR
+    \\        (value_kind IN ('boolean', 'integer', 'year') AND
+    \\            value_text IS NULL AND value_integer IS NOT NULL)
+    \\    ),
+    \\    CHECK (value_kind <> 'boolean' OR value_integer IN (0, 1)),
+    \\    CHECK (value_kind <> 'year' OR value_integer BETWEEN 0 AND 65535),
+    \\    CHECK (value_kind <> 'date' OR length(value_text) = 10),
+    \\    CHECK (value_kind <> 'income_tax_rate_election' OR value_text IN (
+    \\        'graduated', 'eight_percent'
+    \\    )),
+    \\    CHECK (value_kind <> 'deduction_method' OR value_text IN (
+    \\        'itemized_deduction', 'optional_standard_deduction'
+    \\    ))
+    \\);
+    \\INSERT INTO tax_form_draft_provenance_sources (
+    \\    draft_id, ordinal, source_kind, role, source_key, anchor_id,
+    \\    value_kind, value_text, value_integer
+    \\)
+    \\SELECT draft_id, ordinal, source_kind, role, source_key, NULL,
+    \\       value_kind, value_text, value_integer
+    \\FROM tax_form_draft_provenance_sources_v26_legacy
+    \\WHERE anchor_id IS NULL AND (
+    \\    source_kind IN ('taxpayer_fact', 'taxpayer_year_setting') OR
+    \\    (source_kind = 'tax_form_profile_value' AND source_key IN (
+    \\        'spouse_profile_id', 'income_tax_rate_election',
+    \\        'special_rate_basis'
+    \\    ))
+    \\) AND value_kind IN (
+    \\    'text', 'choice', 'boolean', 'integer', 'date', 'year',
+    \\    'profile_id', 'income_tax_rate_election', 'deduction_method'
+    \\)
+    \\ORDER BY draft_id, ordinal;
+    \\CREATE UNIQUE INDEX tax_form_draft_provenance_source_key_unique
+    \\    ON tax_form_draft_provenance_sources (
+    \\        draft_id, source_kind, role, source_key
+    \\    );
+    \\CREATE TRIGGER tax_form_draft_provenance_source_update_guard
+    \\BEFORE UPDATE ON tax_form_draft_provenance_sources
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'draft source provenance is immutable');
+    \\END;
+    \\CREATE TRIGGER tax_form_draft_provenance_source_delete_guard
+    \\BEFORE DELETE ON tax_form_draft_provenance_sources
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'draft source provenance is permanent');
+    \\END;
+    \\CREATE TRIGGER tax_form_draft_provenance_legacy_source_update_guard
+    \\BEFORE UPDATE ON tax_form_draft_provenance_sources_v26_legacy
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'legacy draft source provenance is immutable');
+    \\END;
+    \\CREATE TRIGGER tax_form_draft_provenance_legacy_source_delete_guard
+    \\BEFORE DELETE ON tax_form_draft_provenance_sources_v26_legacy
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'legacy draft source provenance is permanent');
+    \\END;
+    \\DROP TRIGGER IF EXISTS tax_form_draft_provenance_seed_source_guard;
+    \\DROP TRIGGER IF EXISTS tax_form_draft_provenance_seed_update_guard;
+    \\DROP TRIGGER IF EXISTS tax_form_draft_provenance_seed_delete_guard;
+    \\ALTER TABLE tax_form_draft_provenance_transaction_seeds
+    \\    RENAME TO tax_form_draft_provenance_transaction_seeds_v26_legacy;
+    \\CREATE TABLE tax_form_draft_provenance_transaction_seeds (
+    \\    draft_id TEXT NOT NULL
+    \\        REFERENCES tax_form_draft_provenance(draft_id)
+    \\        ON DELETE RESTRICT,
+    \\    ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 31),
+    \\    filing_field TEXT NOT NULL CHECK (
+    \\        length(filing_field) BETWEEN 1 AND 96 AND
+    \\        filing_field = trim(filing_field)
+    \\    ),
+    \\    source_kind TEXT NOT NULL CHECK (
+    \\        source_kind = 'tax_form_profile_value'
+    \\    ),
+    \\    role TEXT NOT NULL CHECK (role IN (
+    \\        'filer', 'spouse', 'filing', 'payment', 'preparer',
+    \\        'employer', 'withholding_agent', 'attachment', 'evidence',
+    \\        'system'
+    \\    )),
+    \\    source_key TEXT NOT NULL CHECK (source_key IN (
+    \\        'spouse_profile_id', 'income_tax_rate_election',
+    \\        'special_rate_basis'
+    \\    )),
+    \\    anchor_id TEXT CHECK (anchor_id IS NULL),
+    \\    seed_source_kind TEXT NOT NULL CHECK (seed_source_kind IN (
+    \\        'tax_form_profile_revision', 'catalog_default'
+    \\    )),
+    \\    seed_revision_id TEXT,
+    \\    seed_catalog_revision TEXT,
+    \\    seed_catalog_sha256 TEXT,
+    \\    value_kind TEXT NOT NULL CHECK (value_kind IN (
+    \\        'text', 'choice', 'boolean', 'integer', 'date', 'year',
+    \\        'profile_id', 'income_tax_rate_election', 'deduction_method'
+    \\    )),
+    \\    value_text TEXT,
+    \\    value_integer INTEGER,
+    \\    PRIMARY KEY (draft_id, ordinal),
+    \\    UNIQUE (draft_id, filing_field),
+    \\    UNIQUE (draft_id, source_kind, role, source_key),
+    \\    CHECK (
+    \\        (seed_source_kind = 'tax_form_profile_revision' AND
+    \\            length(trim(seed_revision_id)) > 0 AND
+    \\            seed_catalog_revision IS NULL AND
+    \\            seed_catalog_sha256 IS NULL) OR
+    \\        (seed_source_kind = 'catalog_default' AND
+    \\            seed_revision_id IS NULL AND
+    \\            length(seed_catalog_revision) BETWEEN 1 AND 64 AND
+    \\            length(seed_catalog_sha256) = 64)
+    \\    ),
+    \\    CHECK (
+    \\        (value_kind IN (
+    \\            'text', 'choice', 'date', 'profile_id',
+    \\            'income_tax_rate_election', 'deduction_method'
+    \\        ) AND value_text IS NOT NULL AND value_integer IS NULL) OR
+    \\        (value_kind IN ('boolean', 'integer', 'year') AND
+    \\            value_text IS NULL AND value_integer IS NOT NULL)
+    \\    ),
+    \\    CHECK (value_kind <> 'boolean' OR value_integer IN (0, 1)),
+    \\    CHECK (value_kind <> 'year' OR value_integer BETWEEN 0 AND 65535),
+    \\    CHECK (value_kind <> 'date' OR length(value_text) = 10),
+    \\    CHECK (value_kind <> 'income_tax_rate_election' OR value_text IN (
+    \\        'graduated', 'eight_percent'
+    \\    )),
+    \\    CHECK (value_kind <> 'deduction_method' OR value_text IN (
+    \\        'itemized_deduction', 'optional_standard_deduction'
+    \\    ))
+    \\);
+    \\INSERT INTO tax_form_draft_provenance_transaction_seeds (
+    \\    draft_id, ordinal, filing_field, source_kind, role, source_key,
+    \\    anchor_id, seed_source_kind, seed_revision_id,
+    \\    seed_catalog_revision, seed_catalog_sha256, value_kind,
+    \\    value_text, value_integer
+    \\)
+    \\SELECT draft_id, ordinal, filing_field, source_kind, role, source_key,
+    \\       NULL, seed_source_kind, seed_revision_id,
+    \\       seed_catalog_revision, seed_catalog_sha256, value_kind,
+    \\       value_text, value_integer
+    \\FROM tax_form_draft_provenance_transaction_seeds_v26_legacy
+    \\WHERE anchor_id IS NULL AND source_kind = 'tax_form_profile_value'
+    \\  AND source_key IN (
+    \\      'spouse_profile_id', 'income_tax_rate_election',
+    \\      'special_rate_basis'
+    \\  ) AND value_kind IN (
+    \\      'text', 'choice', 'boolean', 'integer', 'date', 'year',
+    \\      'profile_id', 'income_tax_rate_election', 'deduction_method'
+    \\  )
+    \\ORDER BY draft_id, ordinal;
+    \\CREATE TRIGGER tax_form_draft_provenance_seed_source_guard
+    \\BEFORE INSERT ON tax_form_draft_provenance_transaction_seeds
+    \\WHEN NOT EXISTS (
+    \\    SELECT 1 FROM tax_form_draft_provenance provenance
+    \\    WHERE provenance.draft_id = NEW.draft_id AND (
+    \\        (NEW.seed_source_kind = 'tax_form_profile_revision' AND
+    \\            provenance.form_profile_revision_id =
+    \\                NEW.seed_revision_id) OR
+    \\        (NEW.seed_source_kind = 'catalog_default' AND
+    \\            provenance.catalog_revision =
+    \\                NEW.seed_catalog_revision AND
+    \\            provenance.catalog_sha256 = NEW.seed_catalog_sha256)
+    \\    )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'invalid draft transaction seed source');
+    \\END;
+    \\CREATE TRIGGER tax_form_draft_provenance_seed_update_guard
+    \\BEFORE UPDATE ON tax_form_draft_provenance_transaction_seeds
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'draft transaction seed is immutable');
+    \\END;
+    \\CREATE TRIGGER tax_form_draft_provenance_seed_delete_guard
+    \\BEFORE DELETE ON tax_form_draft_provenance_transaction_seeds
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'draft transaction seed is permanent');
+    \\END;
+    \\CREATE TRIGGER tax_form_draft_provenance_legacy_seed_update_guard
+    \\BEFORE UPDATE ON tax_form_draft_provenance_transaction_seeds_v26_legacy
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'legacy draft transaction seed is immutable');
+    \\END;
+    \\CREATE TRIGGER tax_form_draft_provenance_legacy_seed_delete_guard
+    \\BEFORE DELETE ON tax_form_draft_provenance_transaction_seeds_v26_legacy
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'legacy draft transaction seed is permanent');
+    \\END;
+    \\DROP TRIGGER IF EXISTS tax_exact_draft_provenance_source_update_guard;
+    \\DROP TRIGGER IF EXISTS tax_exact_draft_provenance_source_delete_guard;
+    \\DROP INDEX IF EXISTS tax_exact_draft_provenance_source_unique;
+    \\ALTER TABLE tax_exact_draft_provenance_sources
+    \\    RENAME TO tax_exact_draft_provenance_sources_v26_legacy;
+    \\CREATE TABLE tax_exact_draft_provenance_sources (
+    \\    workspace_id BLOB NOT NULL,
+    \\    exact_schema_digest BLOB NOT NULL,
+    \\    revision INTEGER NOT NULL,
+    \\    ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 95),
+    \\    source_kind TEXT NOT NULL CHECK (source_kind IN (
+    \\        'taxpayer_fact', 'taxpayer_year_setting',
+    \\        'tax_form_profile_value'
+    \\    )),
+    \\    role TEXT NOT NULL,
+    \\    source_key TEXT NOT NULL CHECK (
+    \\        (source_kind = 'taxpayer_fact' AND source_key IN (
+    \\            'tin', 'rdo_code', 'taxpayer_name', 'registered_name',
+    \\            'trade_name', 'registered_address', 'zip_code',
+    \\            'contact_number', 'email_address', 'subject_kind',
+    \\            'natural_person_classification'
+    \\        )) OR
+    \\        (source_kind = 'taxpayer_year_setting' AND source_key IN (
+    \\            'income_tax_rate_election', 'deduction_method'
+    \\        )) OR
+    \\        (source_kind = 'tax_form_profile_value' AND source_key IN (
+    \\            'spouse_profile_id', 'income_tax_rate_election',
+    \\            'special_rate_basis'
+    \\        ))
+    \\    ),
+    \\    anchor_id TEXT CHECK (anchor_id IS NULL),
+    \\    value_kind TEXT NOT NULL CHECK (value_kind IN (
+    \\        'text', 'choice', 'boolean', 'integer', 'date', 'year',
+    \\        'profile_id', 'income_tax_rate_election', 'deduction_method'
+    \\    )),
+    \\    value_text TEXT,
+    \\    value_integer INTEGER,
+    \\    PRIMARY KEY (
+    \\        workspace_id, exact_schema_digest, revision, ordinal
+    \\    ),
+    \\    FOREIGN KEY (workspace_id, exact_schema_digest, revision)
+    \\        REFERENCES tax_exact_draft_revision_provenance(
+    \\            workspace_id, exact_schema_digest, revision
+    \\        ) ON DELETE RESTRICT,
+    \\    CHECK (
+    \\        (value_kind IN (
+    \\            'text', 'choice', 'date', 'profile_id',
+    \\            'income_tax_rate_election', 'deduction_method'
+    \\        ) AND value_text IS NOT NULL AND value_integer IS NULL) OR
+    \\        (value_kind IN ('boolean', 'integer', 'year') AND
+    \\            value_text IS NULL AND value_integer IS NOT NULL)
+    \\    ),
+    \\    CHECK (value_kind <> 'boolean' OR value_integer IN (0, 1)),
+    \\    CHECK (value_kind <> 'year' OR value_integer BETWEEN 0 AND 65535),
+    \\    CHECK (value_kind <> 'date' OR length(value_text) = 10),
+    \\    CHECK (value_kind <> 'income_tax_rate_election' OR value_text IN (
+    \\        'graduated', 'eight_percent'
+    \\    )),
+    \\    CHECK (value_kind <> 'deduction_method' OR value_text IN (
+    \\        'itemized_deduction', 'optional_standard_deduction'
+    \\    ))
+    \\);
+    \\INSERT INTO tax_exact_draft_provenance_sources (
+    \\    workspace_id, exact_schema_digest, revision, ordinal,
+    \\    source_kind, role, source_key, anchor_id,
+    \\    value_kind, value_text, value_integer
+    \\)
+    \\SELECT workspace_id, exact_schema_digest, revision, ordinal,
+    \\       source_kind, role, source_key, NULL,
+    \\       value_kind, value_text, value_integer
+    \\FROM tax_exact_draft_provenance_sources_v26_legacy
+    \\WHERE anchor_id IS NULL AND (
+    \\    source_kind IN ('taxpayer_fact', 'taxpayer_year_setting') OR
+    \\    (source_kind = 'tax_form_profile_value' AND source_key IN (
+    \\        'spouse_profile_id', 'income_tax_rate_election',
+    \\        'special_rate_basis'
+    \\    ))
+    \\) AND value_kind IN (
+    \\    'text', 'choice', 'boolean', 'integer', 'date', 'year',
+    \\    'profile_id', 'income_tax_rate_election', 'deduction_method'
+    \\)
+    \\ORDER BY workspace_id, exact_schema_digest, revision, ordinal;
+    \\CREATE UNIQUE INDEX tax_exact_draft_provenance_source_unique
+    \\    ON tax_exact_draft_provenance_sources (
+    \\        workspace_id, exact_schema_digest, revision,
+    \\        source_kind, role, source_key
+    \\    );
+    \\CREATE UNIQUE INDEX tax_exact_draft_provenance_legacy_source_unique
+    \\    ON tax_exact_draft_provenance_sources_v26_legacy (
+    \\        workspace_id, exact_schema_digest, revision,
+    \\        source_kind, role, source_key, COALESCE(anchor_id, '')
+    \\    );
+    \\CREATE TRIGGER tax_exact_draft_provenance_source_update_guard
+    \\BEFORE UPDATE ON tax_exact_draft_provenance_sources
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'exact source provenance is immutable');
+    \\END;
+    \\CREATE TRIGGER tax_exact_draft_provenance_source_delete_guard
+    \\BEFORE DELETE ON tax_exact_draft_provenance_sources
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'exact source provenance is permanent');
+    \\END;
+    \\CREATE TRIGGER tax_exact_draft_provenance_legacy_source_update_guard
+    \\BEFORE UPDATE ON tax_exact_draft_provenance_sources_v26_legacy
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'legacy exact source provenance is immutable');
+    \\END;
+    \\CREATE TRIGGER tax_exact_draft_provenance_legacy_source_delete_guard
+    \\BEFORE DELETE ON tax_exact_draft_provenance_sources_v26_legacy
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'legacy exact source provenance is permanent');
+    \\END;
+    \\DROP TRIGGER IF EXISTS tax_exact_draft_provenance_seed_update_guard;
+    \\DROP TRIGGER IF EXISTS tax_exact_draft_provenance_seed_delete_guard;
+    \\ALTER TABLE tax_exact_draft_provenance_transaction_seeds
+    \\    RENAME TO tax_exact_draft_provenance_transaction_seeds_v26_legacy;
+    \\CREATE TABLE tax_exact_draft_provenance_transaction_seeds (
+    \\    workspace_id BLOB NOT NULL,
+    \\    exact_schema_digest BLOB NOT NULL,
+    \\    revision INTEGER NOT NULL,
+    \\    ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 31),
+    \\    filing_field TEXT NOT NULL CHECK (
+    \\        length(filing_field) BETWEEN 1 AND 96 AND
+    \\        filing_field = trim(filing_field)
+    \\    ),
+    \\    source_kind TEXT NOT NULL CHECK (
+    \\        source_kind = 'tax_form_profile_value'
+    \\    ),
+    \\    role TEXT NOT NULL,
+    \\    source_key TEXT NOT NULL CHECK (source_key IN (
+    \\        'spouse_profile_id', 'income_tax_rate_election',
+    \\        'special_rate_basis'
+    \\    )),
+    \\    anchor_id TEXT CHECK (anchor_id IS NULL),
+    \\    seed_source_kind TEXT NOT NULL CHECK (seed_source_kind IN (
+    \\        'tax_form_profile_revision', 'catalog_default'
+    \\    )),
+    \\    seed_revision_id TEXT,
+    \\    seed_catalog_revision TEXT,
+    \\    seed_catalog_sha256 TEXT,
+    \\    value_kind TEXT NOT NULL CHECK (value_kind IN (
+    \\        'text', 'choice', 'boolean', 'integer', 'date', 'year',
+    \\        'profile_id', 'income_tax_rate_election', 'deduction_method'
+    \\    )),
+    \\    value_text TEXT,
+    \\    value_integer INTEGER,
+    \\    PRIMARY KEY (
+    \\        workspace_id, exact_schema_digest, revision, ordinal
+    \\    ),
+    \\    UNIQUE (
+    \\        workspace_id, exact_schema_digest, revision, filing_field
+    \\    ),
+    \\    UNIQUE (
+    \\        workspace_id, exact_schema_digest, revision,
+    \\        source_kind, role, source_key
+    \\    ),
+    \\    FOREIGN KEY (workspace_id, exact_schema_digest, revision)
+    \\        REFERENCES tax_exact_draft_revision_provenance(
+    \\            workspace_id, exact_schema_digest, revision
+    \\        ) ON DELETE RESTRICT,
+    \\    CHECK (
+    \\        (seed_source_kind = 'tax_form_profile_revision' AND
+    \\            length(trim(seed_revision_id)) > 0 AND
+    \\            seed_catalog_revision IS NULL AND
+    \\            seed_catalog_sha256 IS NULL) OR
+    \\        (seed_source_kind = 'catalog_default' AND
+    \\            seed_revision_id IS NULL AND
+    \\            length(seed_catalog_revision) BETWEEN 1 AND 64 AND
+    \\            length(seed_catalog_sha256) = 64)
+    \\    ),
+    \\    CHECK (
+    \\        (value_kind IN (
+    \\            'text', 'choice', 'date', 'profile_id',
+    \\            'income_tax_rate_election', 'deduction_method'
+    \\        ) AND value_text IS NOT NULL AND value_integer IS NULL) OR
+    \\        (value_kind IN ('boolean', 'integer', 'year') AND
+    \\            value_text IS NULL AND value_integer IS NOT NULL)
+    \\    ),
+    \\    CHECK (value_kind <> 'boolean' OR value_integer IN (0, 1)),
+    \\    CHECK (value_kind <> 'year' OR value_integer BETWEEN 0 AND 65535),
+    \\    CHECK (value_kind <> 'date' OR length(value_text) = 10),
+    \\    CHECK (value_kind <> 'income_tax_rate_election' OR value_text IN (
+    \\        'graduated', 'eight_percent'
+    \\    )),
+    \\    CHECK (value_kind <> 'deduction_method' OR value_text IN (
+    \\        'itemized_deduction', 'optional_standard_deduction'
+    \\    ))
+    \\);
+    \\INSERT INTO tax_exact_draft_provenance_transaction_seeds (
+    \\    workspace_id, exact_schema_digest, revision, ordinal,
+    \\    filing_field, source_kind, role, source_key, anchor_id,
+    \\    seed_source_kind, seed_revision_id,
+    \\    seed_catalog_revision, seed_catalog_sha256,
+    \\    value_kind, value_text, value_integer
+    \\)
+    \\SELECT workspace_id, exact_schema_digest, revision, ordinal,
+    \\       filing_field, source_kind, role, source_key, NULL,
+    \\       seed_source_kind, seed_revision_id,
+    \\       seed_catalog_revision, seed_catalog_sha256,
+    \\       value_kind, value_text, value_integer
+    \\FROM tax_exact_draft_provenance_transaction_seeds_v26_legacy
+    \\WHERE anchor_id IS NULL AND source_kind = 'tax_form_profile_value'
+    \\  AND source_key IN (
+    \\      'spouse_profile_id', 'income_tax_rate_election',
+    \\      'special_rate_basis'
+    \\  ) AND value_kind IN (
+    \\      'text', 'choice', 'boolean', 'integer', 'date', 'year',
+    \\      'profile_id', 'income_tax_rate_election', 'deduction_method'
+    \\  )
+    \\ORDER BY workspace_id, exact_schema_digest, revision, ordinal;
+    \\CREATE TRIGGER tax_exact_draft_provenance_seed_update_guard
+    \\BEFORE UPDATE ON tax_exact_draft_provenance_transaction_seeds
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'exact transaction seed is immutable');
+    \\END;
+    \\CREATE TRIGGER tax_exact_draft_provenance_seed_delete_guard
+    \\BEFORE DELETE ON tax_exact_draft_provenance_transaction_seeds
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'exact transaction seed is permanent');
+    \\END;
+    \\CREATE TRIGGER tax_exact_draft_provenance_legacy_seed_update_guard
+    \\BEFORE UPDATE ON tax_exact_draft_provenance_transaction_seeds_v26_legacy
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'legacy exact transaction seed is immutable');
+    \\END;
+    \\CREATE TRIGGER tax_exact_draft_provenance_legacy_seed_delete_guard
+    \\BEFORE DELETE ON tax_exact_draft_provenance_transaction_seeds_v26_legacy
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'legacy exact transaction seed is permanent');
+    \\END;
+    \\CREATE TABLE tax_profile_form_profile_filing_locks (
+    \\    profile_id TEXT NOT NULL,
+    \\    tax_year INTEGER NOT NULL CHECK (tax_year BETWEEN 1 AND 9999),
+    \\    form_code TEXT NOT NULL CHECK (length(trim(form_code)) > 0),
+    \\    form_revision TEXT NOT NULL CHECK (
+    \\        length(trim(form_revision)) > 0
+    \\    ),
+    \\    revision_id TEXT NOT NULL,
+    \\    revision_sequence INTEGER NOT NULL CHECK (
+    \\        revision_sequence > 0 AND revision_sequence <= 4294967295
+    \\    ),
+    \\    draft_id TEXT NOT NULL UNIQUE
+    \\        REFERENCES tax_form_drafts(id) ON DELETE RESTRICT,
+    \\    locked_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    PRIMARY KEY (
+    \\        profile_id, tax_year, form_code, form_revision,
+    \\        revision_id, revision_sequence, draft_id
+    \\    ),
+    \\    FOREIGN KEY (
+    \\        profile_id, tax_year, form_code, form_revision,
+    \\        revision_id, revision_sequence
+    \\    ) REFERENCES tax_profile_form_profile_revisions (
+    \\        profile_id, tax_year, form_code, form_revision, id, sequence
+    \\    ) ON DELETE RESTRICT
+    \\);
+    \\INSERT INTO tax_profile_form_profile_filing_locks (
+    \\    profile_id, tax_year, form_code, form_revision,
+    \\    revision_id, revision_sequence, draft_id
+    \\)
+    \\SELECT provenance.form_profile_profile_id,
+    \\       provenance.form_profile_tax_year,
+    \\       provenance.form_profile_form_code,
+    \\       provenance.form_profile_form_revision,
+    \\       provenance.form_profile_revision_id,
+    \\       provenance.form_profile_revision_sequence,
+    \\       draft.id
+    \\FROM tax_form_drafts draft
+    \\JOIN tax_form_draft_role_bindings binding
+    \\  ON binding.draft_id = draft.id AND binding.role = 'filer'
+    \\JOIN tax_form_draft_provenance provenance
+    \\  ON provenance.draft_id = draft.id
+    \\WHERE draft.lifecycle IN ('queued', 'submitted', 'confirmed', 'paid')
+    \\  AND provenance.form_profile_profile_id = binding.profile_id
+    \\  AND provenance.form_profile_revision_id IS NOT NULL;
+    \\CREATE TRIGGER tax_profile_form_profile_filing_locks_update_guard
+    \\BEFORE UPDATE ON tax_profile_form_profile_filing_locks
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'Tax Form Profile filing lock is immutable');
+    \\END;
+    \\CREATE TRIGGER tax_profile_form_profile_filing_locks_delete_guard
+    \\BEFORE DELETE ON tax_profile_form_profile_filing_locks
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'Tax Form Profile filing lock is permanent');
+    \\END;
+;
+
 test "tax profile migration is namespaced idempotent and preserves user_version" {
     var store = try Store.openMemory(std.testing.allocator);
     defer store.close();
@@ -20938,6 +22208,639 @@ test "tax profile migration is namespaced idempotent and preserves user_version"
     );
 }
 
+test "fresh schema does not create the rejected annual election table" {
+    var store = try Store.openMemory(std.testing.allocator);
+    defer store.close();
+
+    var statement = try store.prepare(
+        \\SELECT COUNT(*)
+        \\FROM sqlite_master
+        \\WHERE type = 'table'
+        \\  AND name = 'tax_profile_annual_income_tax_election_events';
+    );
+    defer statement.deinit();
+    try std.testing.expectEqual(StepResult.row, try statement.step());
+    try std.testing.expectEqual(
+        @as(i64, 0),
+        sqlite.sqlite3_column_int64(statement.raw, 0),
+    );
+}
+
+test "v26 removes a rejected annual election table left by a pilot build" {
+    var store = try openLegacyStoreForTest(25);
+    defer store.close();
+
+    try store.exec(
+        \\CREATE TABLE tax_profile_annual_income_tax_election_events (
+        \\    id TEXT PRIMARY KEY
+        \\);
+    );
+    try std.testing.expect(try tableExistsForTest(
+        &store,
+        "tax_profile_annual_income_tax_election_events",
+    ));
+
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+    try std.testing.expect(!(try tableExistsForTest(
+        &store,
+        "tax_profile_annual_income_tax_election_events",
+    )));
+}
+
+test "v25 promotes safe registration facts and marks ambiguous evidence" {
+    const allocator = std.testing.allocator;
+    var store = try openLegacyStoreForTest(21);
+    defer store.close();
+
+    const safe_profile = "v25-safe-consolidation";
+    try store.createProfileWithRevision(
+        .{ .id = safe_profile },
+        testRevisionWithTin(
+            safe_profile,
+            0,
+            "Safe Consolidation",
+            "2026-01-01",
+            "123456789000",
+        ),
+    );
+    const safe_activities = [_]RegistrationActivityRevisionWrite{
+        .{
+            .anchor_id = "primary",
+            .metadata = .{
+                .id = "v25-safe-primary-r1",
+                .expected_component_sequence = 0,
+                .effective = testPeriod("2026-01-01", null),
+                .source = .documented,
+                .evidence_reference = "v25-safe-primary",
+                .review_state = .confirmed,
+                .confirmed_at_unix_seconds = 1,
+            },
+            .line_of_business = "Primary professional services",
+            .atc = "PT010",
+        },
+        .{
+            .anchor_id = "secondary",
+            .metadata = .{
+                .id = "v25-safe-secondary-r1",
+                .expected_component_sequence = 0,
+                .effective = testPeriod("2026-01-01", null),
+                .source = .documented,
+                .evidence_reference = "v25-safe-secondary",
+                .review_state = .confirmed,
+                .confirmed_at_unix_seconds = 2,
+            },
+            .line_of_business = "Secondary retail services",
+            .atc = "PT030",
+        },
+    };
+    const safe_eopt = [_]RegistrationEoptTierRevisionWrite{.{
+        .metadata = .{
+            .id = "v25-safe-eopt-r1",
+            .expected_component_sequence = 0,
+            .effective = testPeriod("2026-01-01", null),
+            .source = .documented,
+            .evidence_reference = "v25-safe-eopt",
+            .review_state = .confirmed,
+            .confirmed_at_unix_seconds = 3,
+        },
+        .value = .micro,
+    }};
+    _ = try store.appendLegacyRegistrationCommitForMigrationTest(.{
+        .profile_id = safe_profile,
+        .expected_current_sequence = 0,
+        .activities = &safe_activities,
+        .eopt_tiers = &safe_eopt,
+    });
+
+    const ambiguous_profile = "v25-ambiguous-consolidation";
+    try store.createProfileWithRevision(
+        .{ .id = ambiguous_profile },
+        testRevisionWithTin(
+            ambiguous_profile,
+            0,
+            "Ambiguous Consolidation",
+            "2026-01-01",
+            "987654321000",
+        ),
+    );
+    const ambiguous_activities = [_]RegistrationActivityRevisionWrite{
+        .{
+            .anchor_id = "consulting",
+            .metadata = .{
+                .id = "v25-ambiguous-consulting-r1",
+                .expected_component_sequence = 0,
+                .effective = testPeriod("2026-01-01", null),
+                .source = .imported,
+                .evidence_reference = "v25-ambiguous-consulting",
+                .review_state = .confirmed,
+                .confirmed_at_unix_seconds = 4,
+            },
+            .line_of_business = "Consulting",
+        },
+        .{
+            .anchor_id = "retail",
+            .metadata = .{
+                .id = "v25-ambiguous-retail-r1",
+                .expected_component_sequence = 0,
+                .effective = testPeriod("2026-01-01", null),
+                .source = .imported,
+                .evidence_reference = "v25-ambiguous-retail",
+                .review_state = .confirmed,
+                .confirmed_at_unix_seconds = 5,
+            },
+            .line_of_business = "Retail",
+        },
+    };
+    const ambiguous_eopt = [_]RegistrationEoptTierRevisionWrite{.{
+        .metadata = .{
+            .id = "v25-ambiguous-eopt-r1",
+            .expected_component_sequence = 0,
+            .effective = testPeriod("2026-01-01", null),
+            .source = .imported,
+            .evidence_reference = "v25-ambiguous-eopt",
+            .review_state = .requires_review,
+            .review_reason = .migrated_without_confirmation,
+        },
+        .value = .unknown_requires_review,
+    }};
+    _ = try store.appendLegacyRegistrationCommitForMigrationTest(.{
+        .profile_id = ambiguous_profile,
+        .expected_current_sequence = 0,
+        .activities = &ambiguous_activities,
+        .eopt_tiers = &ambiguous_eopt,
+    });
+
+    const sole_profile = "v25-sole-activity";
+    try store.createProfileWithRevision(
+        .{ .id = sole_profile },
+        testRevisionWithTin(
+            sole_profile,
+            0,
+            "Sole Activity Consolidation",
+            "2026-01-01",
+            "456789123000",
+        ),
+    );
+    const sole_activity = [_]RegistrationActivityRevisionWrite{.{
+        .anchor_id = "consulting",
+        .metadata = .{
+            .id = "v25-sole-consulting-r1",
+            .expected_component_sequence = 0,
+            .effective = testPeriod("2026-01-01", null),
+            .source = .documented,
+            .evidence_reference = "v25-sole-activity",
+            .review_state = .confirmed,
+            .confirmed_at_unix_seconds = 6,
+        },
+        .line_of_business = "Sole consulting activity",
+    }};
+    _ = try store.appendLegacyRegistrationCommitForMigrationTest(.{
+        .profile_id = sole_profile,
+        .expected_current_sequence = 0,
+        .activities = &sole_activity,
+    });
+
+    const review_profile = "v25-latest-activity-review";
+    try store.createProfileWithRevision(
+        .{ .id = review_profile },
+        testRevisionWithTin(
+            review_profile,
+            0,
+            "Activity Review Consolidation",
+            "2026-01-01",
+            "654321987000",
+        ),
+    );
+    const reviewed_activity = [_]RegistrationActivityRevisionWrite{.{
+        .anchor_id = "consulting",
+        .metadata = .{
+            .id = "v25-review-consulting-r1",
+            .expected_component_sequence = 0,
+            .effective = testPeriod("2026-01-01", null),
+            .source = .documented,
+            .evidence_reference = "v25-reviewed-activity",
+            .review_state = .confirmed,
+            .confirmed_at_unix_seconds = 7,
+        },
+        .line_of_business = "Previously confirmed consulting",
+    }};
+    _ = try store.appendLegacyRegistrationCommitForMigrationTest(.{
+        .profile_id = review_profile,
+        .expected_current_sequence = 0,
+        .activities = &reviewed_activity,
+    });
+    const pending_activity = [_]RegistrationActivityRevisionWrite{.{
+        .anchor_id = "consulting",
+        .metadata = .{
+            .id = "v25-review-consulting-r2",
+            .expected_component_sequence = 1,
+            .effective = testPeriod("2026-01-01", null),
+            .source = .imported,
+            .evidence_reference = "v25-pending-activity",
+            .review_state = .requires_review,
+            .review_reason = .migrated_without_confirmation,
+        },
+        .line_of_business = "Imported consulting awaiting review",
+    }};
+    _ = try store.appendLegacyRegistrationCommitForMigrationTest(.{
+        .profile_id = review_profile,
+        .expected_current_sequence = 1,
+        .activities = &pending_activity,
+    });
+
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+
+    var safe = (try store.getCurrentRevision(allocator, safe_profile)).?;
+    defer safe.deinit(allocator);
+    try std.testing.expectEqualStrings(
+        "Primary professional services",
+        safe.primary_line_of_business.?,
+    );
+    try std.testing.expectEqual(EoptTier.micro, safe.eopt_tier.?);
+    try std.testing.expectEqual(
+        ConsolidationReviewState.confirmed,
+        safe.consolidation_review_state,
+    );
+
+    var ambiguous = (try store.getCurrentRevision(
+        allocator,
+        ambiguous_profile,
+    )).?;
+    defer ambiguous.deinit(allocator);
+    try std.testing.expectEqual(
+        @as(?[]u8, null),
+        ambiguous.primary_line_of_business,
+    );
+    try std.testing.expectEqual(@as(?EoptTier, null), ambiguous.eopt_tier);
+    try std.testing.expectEqual(
+        ConsolidationReviewState.requires_review,
+        ambiguous.consolidation_review_state,
+    );
+
+    var sole = (try store.getCurrentRevision(allocator, sole_profile)).?;
+    defer sole.deinit(allocator);
+    try std.testing.expectEqualStrings(
+        "Sole consulting activity",
+        sole.primary_line_of_business.?,
+    );
+    try std.testing.expectEqual(
+        ConsolidationReviewState.confirmed,
+        sole.consolidation_review_state,
+    );
+
+    var review = (try store.getCurrentRevision(allocator, review_profile)).?;
+    defer review.deinit(allocator);
+    try std.testing.expectEqual(
+        @as(?[]u8, null),
+        review.primary_line_of_business,
+    );
+    try std.testing.expectEqual(
+        ConsolidationReviewState.requires_review,
+        review.consolidation_review_state,
+    );
+
+    var legacy_history = try store.listRegistrationHistory(
+        allocator,
+        safe_profile,
+    );
+    defer legacy_history.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), legacy_history.activities.len);
+    try std.testing.expectEqual(@as(usize, 1), legacy_history.eopt_tiers.len);
+}
+
+test "v26 preserves scalar Tax Form Profile history and removes anchor storage" {
+    const allocator = std.testing.allocator;
+    var store = try openLegacyStoreForTest(25);
+    defer store.close();
+    try std.testing.expectEqual(@as(u32, 25), try store.schemaVersion());
+
+    const owner_profile_id = "v26-scalar-owner";
+    const owner_activities = [_]BusinessActivityWrite{.{
+        .id = "v26-owner-activity-r1",
+        .anchor_id = "v26-owner-activity",
+        .line_of_business = "Owner legacy activity",
+        .effective = testPeriod("2026-01-01", null),
+    }};
+    try store.createLegacyProfileWithRevisionForMigrationTest(
+        .{ .id = owner_profile_id },
+        testRevisionWithTin(
+            owner_profile_id,
+            0,
+            "V26 Scalar Owner",
+            "2026-01-01",
+            "123456789000",
+        ),
+        .{ .business_activities = &owner_activities },
+    );
+    const spouse_profile_id = "v26-scalar-spouse";
+    const spouse_activities = [_]BusinessActivityWrite{.{
+        .id = "v26-spouse-activity-r1",
+        .anchor_id = "v26-spouse-activity",
+        .line_of_business = "Spouse legacy activity",
+        .effective = testPeriod("2026-01-01", null),
+    }};
+    try store.createLegacyProfileWithRevisionForMigrationTest(
+        .{ .id = spouse_profile_id },
+        testRevisionWithTin(
+            spouse_profile_id,
+            0,
+            "V26 Scalar Spouse",
+            "2026-01-01",
+            "987654321000",
+        ),
+        .{ .business_activities = &spouse_activities },
+    );
+
+    const form = form_catalog.findForm("1701Q").?;
+    var add_parent = try store.prepare(
+        \\INSERT INTO tax_profile_form_profile_revisions (
+        \\    profile_id, tax_year, form_code, form_revision, id,
+        \\    sequence, effective_from, spec_revision, spec_hash,
+        \\    review_state, confirmed_at_unix_seconds, source_tag
+        \\) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, 'confirmed', 1,
+        \\          'manual_entry');
+    );
+    defer add_parent.deinit();
+    for ([_]struct { year: u16, id: []const u8 }{
+        .{ .year = 2026, .id = "v26-mixed-values-r1" },
+        .{ .year = 2027, .id = "v26-anchor-only-r1" },
+    }) |revision| {
+        try add_parent.bindText(1, owner_profile_id);
+        try add_parent.bindInt64(2, revision.year);
+        try add_parent.bindText(3, form.code);
+        try add_parent.bindText(4, form.revision.?);
+        try add_parent.bindText(5, revision.id);
+        var effective_from: [10]u8 = undefined;
+        _ = try std.fmt.bufPrint(
+            &effective_from,
+            "{d:0>4}-01-01",
+            .{revision.year},
+        );
+        try add_parent.bindText(6, &effective_from);
+        try add_parent.bindInt64(7, form.tax_form_profile.spec_revision.?);
+        try add_parent.bindText(8, form.tax_form_profile.spec_hash.?);
+        try add_parent.expectDone();
+        try add_parent.reset();
+    }
+
+    var add_scalar = try store.prepare(
+        \\INSERT INTO tax_profile_form_profile_values (
+        \\    profile_id, tax_year, form_code, form_revision,
+        \\    revision_id, revision_sequence, semantic_key, role,
+        \\    value_type, profile_value, source_tag
+        \\) VALUES (?, 2026, ?, ?, 'v26-mixed-values-r1', 1,
+        \\          'spouse_profile_id', 'spouse', 'profile_id', ?,
+        \\          'manual_confirmation');
+    );
+    defer add_scalar.deinit();
+    try add_scalar.bindText(1, owner_profile_id);
+    try add_scalar.bindText(2, form.code);
+    try add_scalar.bindText(3, form.revision.?);
+    try add_scalar.bindText(4, spouse_profile_id);
+    try add_scalar.expectDone();
+
+    var add_anchor = try store.prepare(
+        \\INSERT INTO tax_profile_form_profile_values (
+        \\    profile_id, tax_year, form_code, form_revision,
+        \\    revision_id, revision_sequence, semantic_key, role,
+        \\    value_type, anchor_value, source_tag
+        \\) VALUES (?, ?, ?, ?, ?, 1, ?, ?,
+        \\          'business_activity_anchor_id', ?,
+        \\          'manual_confirmation');
+    );
+    defer add_anchor.deinit();
+    const anchors = [_]struct {
+        year: u16,
+        revision_id: []const u8,
+        semantic_key: []const u8,
+        role: []const u8,
+        anchor_id: []const u8,
+    }{
+        .{
+            .year = 2026,
+            .revision_id = "v26-mixed-values-r1",
+            .semantic_key = "spouse_business_activity_anchor_id",
+            .role = "spouse",
+            .anchor_id = "v26-spouse-activity",
+        },
+        .{
+            .year = 2027,
+            .revision_id = "v26-anchor-only-r1",
+            .semantic_key = "business_activity_anchor_id",
+            .role = "filer",
+            .anchor_id = "v26-owner-activity",
+        },
+    };
+    for (anchors) |anchor| {
+        try add_anchor.bindText(1, owner_profile_id);
+        try add_anchor.bindInt64(2, anchor.year);
+        try add_anchor.bindText(3, form.code);
+        try add_anchor.bindText(4, form.revision.?);
+        try add_anchor.bindText(5, anchor.revision_id);
+        try add_anchor.bindText(6, anchor.semantic_key);
+        try add_anchor.bindText(7, anchor.role);
+        try add_anchor.bindText(8, anchor.anchor_id);
+        try add_anchor.expectDone();
+        try add_anchor.reset();
+    }
+
+    var scalar_rowid: i64 = undefined;
+    {
+        var rowid = try store.prepare(
+            \\SELECT rowid FROM tax_profile_form_profile_values
+            \\WHERE revision_id = 'v26-mixed-values-r1'
+            \\  AND semantic_key = 'spouse_profile_id';
+        );
+        defer rowid.deinit();
+        try std.testing.expectEqual(StepResult.row, try rowid.step());
+        scalar_rowid = sqlite.sqlite3_column_int64(rowid.raw, 0);
+    }
+
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+
+    var mixed = try store.listTaxFormProfileRevisions(
+        allocator,
+        owner_profile_id,
+        2026,
+        form.code,
+        form.revision.?,
+    );
+    defer mixed.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), mixed.items.len);
+    try std.testing.expectEqual(@as(usize, 1), mixed.items[0].values.len);
+    try std.testing.expect(
+        std.meta.activeTag(mixed.items[0].values[0].value) == .profile_id,
+    );
+    try std.testing.expectEqualStrings(
+        spouse_profile_id,
+        mixed.items[0].values[0].value.profile_id,
+    );
+
+    var anchor_only = try store.listTaxFormProfileRevisions(
+        allocator,
+        owner_profile_id,
+        2027,
+        form.code,
+        form.revision.?,
+    );
+    defer anchor_only.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), anchor_only.items.len);
+    try std.testing.expectEqual(@as(usize, 0), anchor_only.items[0].values.len);
+
+    {
+        var rowid = try store.prepare(
+            \\SELECT rowid FROM tax_profile_form_profile_values
+            \\WHERE revision_id = 'v26-mixed-values-r1';
+        );
+        defer rowid.deinit();
+        try std.testing.expectEqual(StepResult.row, try rowid.step());
+        try std.testing.expectEqual(
+            scalar_rowid,
+            sqlite.sqlite3_column_int64(rowid.raw, 0),
+        );
+        try std.testing.expectEqual(StepResult.done, try rowid.step());
+    }
+    {
+        var removed_column = try store.prepare(
+            \\SELECT COUNT(*) FROM pragma_table_info(
+            \\    'tax_profile_form_profile_values'
+            \\) WHERE name = 'anchor_value';
+        );
+        defer removed_column.deinit();
+        try std.testing.expectEqual(StepResult.row, try removed_column.step());
+        try std.testing.expectEqual(
+            @as(i64, 0),
+            sqlite.sqlite3_column_int64(removed_column.raw, 0),
+        );
+    }
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\INSERT INTO tax_profile_form_profile_values (
+            \\    profile_id, tax_year, form_code, form_revision,
+            \\    revision_id, revision_sequence, semantic_key, role,
+            \\    value_type, text_value, source_tag
+            \\) VALUES (
+            \\    'v26-scalar-owner', 2027, '1701Q', '2018-01-ENCS',
+            \\    'v26-anchor-only-r1', 1, 'special_rate_basis', 'filer',
+            \\    'business_activity_anchor_id', 'v26-owner-activity',
+            \\    'manual_confirmation'
+            \\);
+        ),
+    );
+    var foreign_key_check = try store.prepare("PRAGMA foreign_key_check;");
+    defer foreign_key_check.deinit();
+    try std.testing.expectEqual(StepResult.done, try foreign_key_check.step());
+}
+
+test "v22 cooperative migration preserves revision rowids foreign keys and guards" {
+    const allocator = std.testing.allocator;
+    var store = try openLegacyStoreForTest(21);
+    defer store.close();
+
+    const legacy_profile = "cooperative-migration-existing";
+    const legacy_activity = [_]BusinessActivityWrite{.{
+        .id = "activity-preserved",
+        .line_of_business = "Community retail services",
+        .effective = testPeriod("2026-01-01", null),
+    }};
+    try store.createLegacyProfileWithRevisionForMigrationTest(
+        .{ .id = legacy_profile },
+        testRevision(
+            legacy_profile,
+            0,
+            "Migration Existing Taxpayer",
+            "2026-01-01",
+        ),
+        .{ .business_activities = &legacy_activity },
+    );
+    const rowid_before = try revisionStorageRowidForTest(
+        &store,
+        legacy_profile,
+        "revision-1",
+    );
+
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+    try std.testing.expect(try store.foreignKeysEnabled());
+    try std.testing.expectEqual(
+        rowid_before,
+        try revisionStorageRowidForTest(
+            &store,
+            legacy_profile,
+            "revision-1",
+        ),
+    );
+    var existing = (try store.getCurrentRevision(
+        allocator,
+        legacy_profile,
+    )).?;
+    defer existing.deinit(allocator);
+    try std.testing.expectEqualStrings("revision-1", existing.id);
+    try std.testing.expectEqual(@as(usize, 0), existing.business_activities.len);
+    var existing_legacy = (try legacy_registration_export.loadProfileRevisionComponents(
+        &store,
+        allocator,
+        legacy_profile,
+        "revision-1",
+    )).?;
+    defer existing_legacy.deinit(allocator);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        existing_legacy.business_activities.len,
+    );
+    try std.testing.expectEqualStrings(
+        "activity-preserved",
+        existing_legacy.business_activities[0].id,
+    );
+
+    var cooperative = testRevisionWithTin(
+        "cooperative-profile",
+        0,
+        "unused natural-person name",
+        "2026-01-01",
+        "123456789001",
+    );
+    cooperative.subject = .{ .legal_entity = .{
+        .registered_name = "EXAMPLE WORKERS COOPERATIVE",
+        .trade_name = "EXAMPLE COMMUNITY STORE",
+        .kind = .cooperative,
+    } };
+    try store.createProfileWithRevision(
+        .{ .id = cooperative.profile_id },
+        cooperative,
+    );
+    var loaded = (try store.getCurrentRevision(
+        allocator,
+        cooperative.profile_id,
+    )).?;
+    defer loaded.deinit(allocator);
+    try std.testing.expectEqual(SubjectKind.cooperative, loaded.subject.kind());
+    try std.testing.expectEqual(
+        LegalEntityKind.cooperative,
+        loaded.subject.legal_entity.kind,
+    );
+
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\UPDATE tax_profile_revisions
+            \\SET registered_name = 'MUTATED'
+            \\WHERE profile_id = 'cooperative-profile';
+        ),
+    );
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\DELETE FROM tax_profile_revisions
+            \\WHERE profile_id = 'cooperative-profile';
+        ),
+    );
+}
+
 test "local owner is opaque stable and attached to new profiles" {
     var store = try Store.openMemory(std.testing.allocator);
     defer store.close();
@@ -20950,7 +22853,6 @@ test "local owner is opaque stable and attached to new profiles" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Owned Profile", "2026-01-01"),
-        .{},
     );
     var owner = try store.prepare(
         "SELECT owner_id FROM tax_profiles WHERE id = ?;",
@@ -20980,7 +22882,6 @@ test "owner scoping is enforced where rows are written, not where they are read"
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Guarded Owner", "2026-01-01"),
-        .{},
     );
 
     // A profile's owner is immutable: re-pointing a row at another owner is
@@ -21022,7 +22923,6 @@ test "on-demand occurrence allocation is scoped monotonic and legacy aware" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "On-demand Counter", "2026-01-01"),
-        .{},
     );
 
     const base_scope: OnDemandOccurrenceScope = .{
@@ -21196,7 +23096,6 @@ test "schema version one upgrades append-only delete guards atomically" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Upgrade Guard", "2026-01-01"),
-        .{},
     );
     try std.testing.expectError(
         Error.SqliteConstraint,
@@ -21223,7 +23122,6 @@ test "schema v3 creates immutable identity anchor on first revision" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         first,
-        .{},
     );
     var anchor = (try store.getIdentityAnchor(allocator, profile_id)).?;
     defer anchor.deinit(allocator);
@@ -21283,7 +23181,7 @@ test "evolution writes fail closed for a revision-less profile shell" {
             .id = "identity-correction-without-anchor",
             .profile_id = profile_id,
             .expected_anchor_sequence = 1,
-            .new_canonical_tin = "123456789000",
+            .new_canonical_tin = "12345678900000",
             .new_legal_person_class = .natural_person,
             .reason = "synthetic invalid correction",
             .actor_reference = "operator:test-reviewer",
@@ -21313,7 +23211,6 @@ test "individual and sole proprietor share identity but corporation does not" {
     try store.createProfileWithRevision(
         .{ .id = natural_id },
         individual,
-        .{},
     );
     try store.appendRevision(
         testRevision(
@@ -21322,7 +23219,6 @@ test "individual and sole proprietor share identity but corporation does not" {
             "Natural Person",
             "2026-01-01",
         ),
-        .{},
     );
 
     var changed_tin = testRevision(
@@ -21334,7 +23230,7 @@ test "individual and sole proprietor share identity but corporation does not" {
     changed_tin.identity.tin = "999888777000";
     try std.testing.expectError(
         Error.CanonicalTaxpayerIdentifierChanged,
-        store.appendRevision(changed_tin, .{}),
+        store.appendRevision(changed_tin),
     );
     try std.testing.expectError(
         Error.SqliteConstraint,
@@ -21353,7 +23249,7 @@ test "individual and sole proprietor share identity but corporation does not" {
     } };
     try std.testing.expectError(
         Error.LegalPersonClassChanged,
-        store.appendRevision(corporation_in_same_profile, .{}),
+        store.appendRevision(corporation_in_same_profile),
     );
     var still_natural = (try store.getCurrentRevision(
         allocator,
@@ -21377,7 +23273,6 @@ test "individual and sole proprietor share identity but corporation does not" {
     try store.createProfileWithRevision(
         .{ .id = corporation_id },
         corporation,
-        .{},
     );
     try std.testing.expectError(
         Error.InvalidRelationship,
@@ -21429,7 +23324,6 @@ test "relationship vocabulary is effective dated and class checked" {
     try store.createProfileWithRevision(
         .{ .id = first_id },
         testRevision(first_id, 0, "First Person", "2025-01-01"),
-        .{},
     );
     var second = testRevision(
         second_id,
@@ -21438,7 +23332,7 @@ test "relationship vocabulary is effective dated and class checked" {
         "2025-01-01",
     );
     second.identity.tin = "222333444000";
-    try store.createProfileWithRevision(.{ .id = second_id }, second, .{});
+    try store.createProfileWithRevision(.{ .id = second_id }, second);
 
     try store.addProfileRelationship(.{
         .id = "relationship-spouse",
@@ -21518,7 +23412,6 @@ test "civil status revisions resolve future single to married transition" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Civil Status", "2025-01-01"),
-        .{},
     );
     try store.appendCivilStatusRevision(.{
         .profile_id = profile_id,
@@ -21587,7 +23480,6 @@ test "listing a taxpayer reports its corrected TIN, not the superseded one" {
     try store.createProfileWithRevision(
         .{ .id = "tax-profile-corrected" },
         testRevision("tax-profile-corrected", 0, "Corrected Person", "2026-01-01"),
-        .{},
     );
 
     // An audited correction records a new identity anchor and deliberately
@@ -21597,7 +23489,7 @@ test "listing a taxpayer reports its corrected TIN, not the superseded one" {
         .id = "identity-correction-listing",
         .profile_id = "tax-profile-corrected",
         .expected_anchor_sequence = 1,
-        .new_canonical_tin = "987-654-321-000",
+        .new_canonical_tin = "987-654-321-00000",
         .new_legal_person_class = .natural_person,
         .reason = "clerical correction confirmed by source record",
         .actor_reference = "operator:test-reviewer",
@@ -21608,7 +23500,7 @@ test "listing a taxpayer reports its corrected TIN, not the superseded one" {
     var profiles = try store.listProfiles(allocator, false);
     defer profiles.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 1), profiles.items.len);
-    try std.testing.expectEqualStrings("987654321000", profiles.items[0].tin);
+    try std.testing.expectEqualStrings("98765432100000", profiles.items[0].tin);
 }
 
 test "a mid-year forms change supersedes the year set only within its dates" {
@@ -21620,7 +23512,6 @@ test "a mid-year forms change supersedes the year set only within its dates" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Interval Taxpayer", "2026-01-01"),
-        .{},
     );
     try store.createFormSet(profile_id, 2026, &.{.{
         .form_code = "2551Q",
@@ -21674,7 +23565,6 @@ test "a year's recorded changes list oldest first with their form counts" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Listing Taxpayer", "2026-01-01"),
-        .{},
     );
     try store.createFormSetInterval(.{
         .id = "interval-late",
@@ -21730,7 +23620,6 @@ test "two active form set intervals cannot claim the same day" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Overlap Taxpayer", "2026-01-01"),
-        .{},
     );
 
     try store.createFormSetInterval(.{
@@ -21804,14 +23693,12 @@ test "one canonical TIN cannot be held by two taxpayers" {
     try store.createProfileWithRevision(
         .{ .id = "tax-profile-first" },
         testRevision("tax-profile-first", 0, "First Taxpayer", "2026-01-01"),
-        .{},
     );
     try std.testing.expectError(
         Error.DuplicateCanonicalTin,
         store.createProfileWithRevision(
             .{ .id = "tax-profile-second" },
             testRevision("tax-profile-second", 0, "Second", "2026-01-01"),
-            .{},
         ),
     );
 
@@ -21827,7 +23714,6 @@ test "one canonical TIN cannot be held by two taxpayers" {
         store.createProfileWithRevision(
             .{ .id = "tax-profile-third" },
             testRevision("tax-profile-third", 0, "Third", "2026-01-01"),
-            .{},
         ),
     );
 
@@ -21856,8 +23742,13 @@ test "a correction cannot move a taxpayer onto an occupied TIN" {
 
     try store.createProfileWithRevision(
         .{ .id = "tax-profile-holder" },
-        testRevision("tax-profile-holder", 0, "Holder", "2026-01-01"),
-        .{},
+        testRevisionWithTin(
+            "tax-profile-holder",
+            0,
+            "Holder",
+            "2026-01-01",
+            "12345678900000",
+        ),
     );
     try store.createProfileWithRevision(
         .{ .id = "tax-profile-mover" },
@@ -21866,9 +23757,8 @@ test "a correction cannot move a taxpayer onto an occupied TIN" {
             0,
             "Mover",
             "2026-01-01",
-            "987654321000",
+            "98765432100000",
         ),
-        .{},
     );
 
     // Correcting onto the holder's TIN would merge two identities by side
@@ -21879,7 +23769,7 @@ test "a correction cannot move a taxpayer onto an occupied TIN" {
             .id = "identity-correction-collide",
             .profile_id = "tax-profile-mover",
             .expected_anchor_sequence = 1,
-            .new_canonical_tin = "123-456-789-000",
+            .new_canonical_tin = "123-456-789-00000",
             .new_legal_person_class = .natural_person,
             .reason = "clerical correction confirmed by source record",
             .actor_reference = "operator:test-reviewer",
@@ -21895,7 +23785,7 @@ test "a correction cannot move a taxpayer onto an occupied TIN" {
     )).?;
     defer anchor.deinit(allocator);
     try std.testing.expectEqual(@as(u32, 1), anchor.sequence);
-    try std.testing.expectEqualStrings("987654321000", anchor.canonical_tin);
+    try std.testing.expectEqualStrings("98765432100000", anchor.canonical_tin);
 
     // A correction onto a free TIN still succeeds, and moves the ownership.
     try std.testing.expectEqual(
@@ -21904,7 +23794,7 @@ test "a correction cannot move a taxpayer onto an occupied TIN" {
             .id = "identity-correction-free",
             .profile_id = "tax-profile-mover",
             .expected_anchor_sequence = 1,
-            .new_canonical_tin = "555-666-777-000",
+            .new_canonical_tin = "555-666-777-00000",
             .new_legal_person_class = .natural_person,
             .reason = "clerical correction confirmed by source record",
             .actor_reference = "operator:test-reviewer",
@@ -21914,7 +23804,7 @@ test "a correction cannot move a taxpayer onto an occupied TIN" {
     );
     var moved = (try store.findProfileWithCanonicalTin(
         allocator,
-        "555666777000",
+        "55566677700000",
         null,
     )).?;
     defer moved.deinit(allocator);
@@ -21923,7 +23813,7 @@ test "a correction cannot move a taxpayer onto an occupied TIN" {
     // The TIN it vacated is free again for the taxpayer it truly belongs to.
     try std.testing.expect((try store.findProfileWithCanonicalTin(
         allocator,
-        "987654321000",
+        "98765432100000",
         null,
     )) == null);
 }
@@ -21937,7 +23827,20 @@ test "identity correction is audited and failed event rolls back anchor" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Correction Person", "2026-01-01"),
-        .{},
+    );
+    try std.testing.expectError(
+        Error.InvalidValue,
+        store.recordIdentityCorrection(.{
+            .id = "identity-correction-short-tin",
+            .profile_id = profile_id,
+            .expected_anchor_sequence = 1,
+            .new_canonical_tin = "987-654-321-000",
+            .new_legal_person_class = .natural_person,
+            .reason = "synthetic incomplete identity correction",
+            .actor_reference = "operator:test-reviewer",
+            .recorded_at_unix_seconds = 1_785_369_599,
+            .provenance = "synthetic reviewed identity source",
+        }),
     );
     try std.testing.expectEqual(
         @as(u32, 2),
@@ -21945,7 +23848,7 @@ test "identity correction is audited and failed event rolls back anchor" {
             .id = "identity-correction-1",
             .profile_id = profile_id,
             .expected_anchor_sequence = 1,
-            .new_canonical_tin = "987-654-321-000",
+            .new_canonical_tin = "987-654-321-00000",
             .new_legal_person_class = .natural_person,
             .reason = "clerical correction confirmed by source record",
             .actor_reference = "operator:test-reviewer",
@@ -21963,7 +23866,7 @@ test "identity correction is audited and failed event rolls back anchor" {
         event.old_canonical_tin,
     );
     try std.testing.expectEqualStrings(
-        "987654321000",
+        "98765432100000",
         event.new_canonical_tin,
     );
     try std.testing.expectEqualStrings(
@@ -21989,8 +23892,8 @@ test "identity correction is audited and failed event rolls back anchor" {
         "Correction Person",
         "2026-07-01",
     );
-    revised.identity.tin = "987654321000";
-    try store.appendRevision(revised, .{});
+    revised.identity.tin = "98765432100000";
+    try store.appendRevision(revised);
 
     try store.exec(
         \\CREATE TRIGGER synthetic_identity_event_failure
@@ -22006,7 +23909,7 @@ test "identity correction is audited and failed event rolls back anchor" {
             .id = "identity-correction-rollback",
             .profile_id = profile_id,
             .expected_anchor_sequence = 2,
-            .new_canonical_tin = "555444333000",
+            .new_canonical_tin = "55544433300000",
             .new_legal_person_class = .natural_person,
             .reason = "synthetic rollback exercise",
             .actor_reference = "operator:test-reviewer",
@@ -22029,7 +23932,7 @@ test "identity correction is audited and failed event rolls back anchor" {
     var anchor = (try store.getIdentityAnchor(allocator, profile_id)).?;
     defer anchor.deinit(allocator);
     try std.testing.expectEqual(@as(u32, 2), anchor.sequence);
-    try std.testing.expectEqualStrings("987654321000", anchor.canonical_tin);
+    try std.testing.expectEqualStrings("98765432100000", anchor.canonical_tin);
     try std.testing.expectEqualStrings(
         "identity-correction-1",
         anchor.identity_correction_id.?,
@@ -22040,7 +23943,7 @@ test "identity correction is audited and failed event rolls back anchor" {
             .id = "identity-correction-noop",
             .profile_id = profile_id,
             .expected_anchor_sequence = 2,
-            .new_canonical_tin = "987654321000",
+            .new_canonical_tin = "98765432100000",
             .new_legal_person_class = .natural_person,
             .reason = "synthetic no-op",
             .actor_reference = "operator:test-reviewer",
@@ -22081,7 +23984,6 @@ test "v1 and v2 histories migrate to v3 deterministically and idempotently" {
         try store.createProfileWithRevision(
             .{ .id = profile_id },
             first,
-            .{},
         );
         const second = testRevision(
             profile_id,
@@ -22167,7 +24069,6 @@ test "v3 migration rejects contradictory legacy identity histories atomically" {
         try store.createProfileWithRevision(
             .{ .id = profile_id },
             testRevision(profile_id, 0, "Legacy Person", "2025-01-01"),
-            .{},
         );
         var second = testRevision(
             profile_id,
@@ -22229,24 +24130,9 @@ test "atomic first revision and optimistic append maintain current revision" {
     defer store.close();
 
     const profile_id = "tax-profile-test-0001";
-    const activities = [_]BusinessActivityWrite{.{
-        .id = "business-main",
-        .line_of_business = "Professional services",
-        .atc = "PT010",
-        .effective = testPeriod("2026-01-01", null),
-    }};
-    const facts = [_]RegistrationFactWrite{.{
-        .id = "tax-type-main",
-        .effective = testPeriod("2026-01-01", null),
-        .value = .{ .tax_type = "Percentage Tax" },
-    }};
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Juan Dela Cruz", "2026-01-01"),
-        .{
-            .business_activities = &activities,
-            .registration_facts = &facts,
-        },
     );
 
     var first = (try store.getCurrentRevision(allocator, profile_id)).?;
@@ -22257,27 +24143,15 @@ test "atomic first revision and optimistic append maintain current revision" {
         "Juan Dela Cruz",
         first.subject.individual.name,
     );
-    try std.testing.expectEqual(@as(usize, 1), first.business_activities.len);
-    try std.testing.expectEqualStrings(
-        "PT010",
-        first.business_activities[0].atc.?,
-    );
-    try std.testing.expectEqual(@as(usize, 1), first.registration_facts.len);
-    try std.testing.expectEqualStrings(
-        "Percentage Tax",
-        first.registration_facts[0].value.tax_type,
-    );
 
     try std.testing.expectError(
         Error.RevisionConflict,
         store.appendRevision(
             testRevision(profile_id, 0, "Juan Updated", "2026-07-01"),
-            .{},
         ),
     );
     try store.appendRevision(
         testRevision(profile_id, 1, "Juan Updated", "2026-07-01"),
-        .{},
     );
 
     var current = (try store.getCurrentRevision(allocator, profile_id)).?;
@@ -22307,7 +24181,6 @@ test "atomic first revision and optimistic append maintain current revision" {
             "Juan Retroactive",
             "2026-06-01",
         ),
-        .{},
     );
     var retroactive = (try store.getEffectiveRevision(
         allocator,
@@ -22332,22 +24205,6 @@ test "atomic first revision and optimistic append maintain current revision" {
     try std.testing.expectError(
         Error.SqliteConstraint,
         store.exec(
-            \\DELETE FROM tax_profile_business_activities
-            \\WHERE profile_id = 'tax-profile-test-0001'
-            \\  AND revision_id = 'revision-1';
-        ),
-    );
-    try std.testing.expectError(
-        Error.SqliteConstraint,
-        store.exec(
-            \\DELETE FROM tax_profile_registration_facts
-            \\WHERE profile_id = 'tax-profile-test-0001'
-            \\  AND revision_id = 'revision-1';
-        ),
-    );
-    try std.testing.expectError(
-        Error.SqliteConstraint,
-        store.exec(
             \\DELETE FROM tax_profile_revisions
             \\WHERE profile_id = 'tax-profile-test-0001'
             \\  AND id = 'revision-1';
@@ -22364,7 +24221,6 @@ test "Forms Set distinguishes unconfigured configured-empty and populated" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Forms Profile", "2026-01-01"),
-        .{},
     );
 
     try std.testing.expect(
@@ -22405,7 +24261,6 @@ test "Forms Set resolution distinguishes new legacy empty and nonempty" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "New Forms Profile", "2026-01-01"),
-        .{},
     );
     var needs = try store.resolveFormSet(allocator, profile_id, 2026);
     defer needs.deinit(allocator);
@@ -22440,7 +24295,6 @@ test "schema v5 missing Forms Sets migrate to explicit legacy fallback" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Legacy Forms Profile", "2026-01-01"),
-        .{},
     );
     try store.exec(
         \\INSERT INTO tax_profile_form_sets(profile_id, tax_year)
@@ -22488,7 +24342,6 @@ test "profile calendar selection distinguishes all none and subsets" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Calendar Profile", "2026-01-01"),
-        .{},
     );
 
     try std.testing.expect(
@@ -22568,7 +24421,6 @@ test "draft summaries belong only to the filer profile and track lifecycle" {
     try store.createProfileWithRevision(
         .{ .id = filer_id },
         testRevision(filer_id, 0, "Calendar Filer", "2026-01-01"),
-        .{},
     );
     var spouse = testRevision(
         spouse_id,
@@ -22577,7 +24429,7 @@ test "draft summaries belong only to the filer profile and track lifecycle" {
         "2026-01-01",
     );
     spouse.identity.tin = "987654321000";
-    try store.createProfileWithRevision(.{ .id = spouse_id }, spouse, .{});
+    try store.createProfileWithRevision(.{ .id = spouse_id }, spouse);
 
     try store.createDraft(
         .{
@@ -22691,18 +24543,7 @@ test "draft role bindings are named and snapshots survive profile revision chang
     try store.createProfileWithRevision(
         .{ .id = employer_id },
         testRevision(employer_id, 0, "ACME OPC", "2026-01-01"),
-        .{},
     );
-    const employee_activities = [_]BusinessActivityWrite{.{
-        .id = "activity-employment",
-        .line_of_business = "Employment",
-        .effective = testPeriod("2026-01-01", null),
-    }};
-    const employee_facts = [_]RegistrationFactWrite{.{
-        .id = "fact-withholding-agent",
-        .effective = testPeriod("2026-01-01", null),
-        .value = .{ .government_withholding_agent = .yes },
-    }};
     try store.createProfileWithRevision(
         .{ .id = employee_id },
         testRevisionWithTin(
@@ -22712,10 +24553,6 @@ test "draft role bindings are named and snapshots survive profile revision chang
             "2026-01-01",
             "987654321000",
         ),
-        .{
-            .business_activities = &employee_activities,
-            .registration_facts = &employee_facts,
-        },
     );
     const revision_id = "revision-1";
 
@@ -22731,7 +24568,6 @@ test "draft role bindings are named and snapshots survive profile revision chang
             .profile_id = employee_id,
             .profile_revision_id = revision_id,
             .profile_revision_sequence = 1,
-            .business_activity_id = "activity-employment",
         },
     };
     const snapshots = [_]SnapshotFieldWrite{
@@ -22745,8 +24581,6 @@ test "draft role bindings are named and snapshots survive profile revision chang
             .profile_revision_id = revision_id,
             .profile_revision_sequence = 1,
             .revision_source = .{ .imported = "test fixture" },
-            .business_activity_id = "activity-employment",
-            .registration_fact_id = "fact-withholding-agent",
         },
         .{
             .role = "employer",
@@ -22869,14 +24703,8 @@ test "draft role bindings are named and snapshots survive profile revision chang
         "test fixture",
         original.snapshots[0].revision_source.imported,
     );
-    try std.testing.expectEqualStrings(
-        "activity-employment",
-        original.snapshots[0].business_activity_id.?,
-    );
-    try std.testing.expectEqualStrings(
-        "fact-withholding-agent",
-        original.snapshots[0].registration_fact_id.?,
-    );
+    try std.testing.expect(original.snapshots[0].business_activity_id == null);
+    try std.testing.expect(original.snapshots[0].registration_fact_id == null);
 
     try store.appendRevision(
         testRevisionWithTin(
@@ -22886,7 +24714,6 @@ test "draft role bindings are named and snapshots survive profile revision chang
             "2027-01-01",
             "987654321000",
         ),
-        .{},
     );
     var after_revision = (try store.getDraft(allocator, draft_id)).?;
     defer after_revision.deinit(allocator);
@@ -22994,7 +24821,6 @@ test "failed first save rolls back and immutable rows reject updates" {
         store.createProfileWithRevision(
             .{ .id = profile_id },
             invalid_revision,
-            .{},
         ),
     );
     try std.testing.expect(!(try store.profileExists(profile_id)));
@@ -23002,7 +24828,6 @@ test "failed first save rolls back and immutable rows reject updates" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Immutable", "2026-01-01"),
-        .{},
     );
     try std.testing.expectError(
         Error.SqliteConstraint,
@@ -23050,7 +24875,6 @@ test "file store reopens with revisions Forms Set and drafts intact" {
         try store.createProfileWithRevision(
             .{ .id = profile_id },
             testRevision(profile_id, 0, "Reopen Profile", "2026-01-01"),
-            .{},
         );
         const revision_id = "revision-1";
         try store.replaceFormSet(profile_id, 2026, &.{.{
@@ -23211,7 +25035,6 @@ test "a COR review decision commits the revision and the forms together or not a
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Atomic Person", "2026-01-01"),
-        .{},
     );
     try store.attachCorDocument(testCorDocument("cor-doc-atomic", profile_id));
     const forms = [_]FormRegistrationWrite{
@@ -23225,7 +25048,7 @@ test "a COR review decision commits the revision and the forms together or not a
     second.cor_document_id = "cor-doc-atomic";
     try std.testing.expectError(
         Error.FormSetAlreadyExists,
-        store.applyCorReview(second, .{}, 2026, &forms, .create),
+        store.applyCorReview(second, 2026, &forms, .create),
     );
     try std.testing.expectEqual(
         @as(i64, 1),
@@ -23233,7 +25056,7 @@ test "a COR review decision commits the revision and the forms together or not a
     );
 
     // Update mode against the existing year succeeds as one commit.
-    try store.applyCorReview(second, .{}, 2026, &forms, .update);
+    try store.applyCorReview(second, 2026, &forms, .update);
     try std.testing.expectEqual(
         @as(i64, 2),
         try revisionCountForTest(&store, profile_id),
@@ -23258,7 +25081,7 @@ test "a COR review decision commits the revision and the forms together or not a
     third.cor_document_id = "cor-doc-atomic";
     try std.testing.expectError(
         Error.NotFound,
-        store.applyCorReview(third, .{}, 2027, &forms, .update),
+        store.applyCorReview(third, 2027, &forms, .update),
     );
     try std.testing.expectEqual(
         @as(i64, 2),
@@ -23275,12 +25098,10 @@ test "a revision's COR link cites this taxpayer's imported document and pins it"
     try store.createProfileWithRevision(
         .{ .id = first_id },
         testRevision(first_id, 0, "Linked Person", "2026-01-01"),
-        .{},
     );
     try store.createProfileWithRevision(
         .{ .id = other_id },
         testRevisionWithTin(other_id, 0, "Other Person", "2026-01-01", "987654321000"),
-        .{},
     );
     try store.attachCorDocument(testCorDocument("cor-doc-own", first_id));
     try store.attachCorDocument(testCorDocument("cor-doc-foreign", other_id));
@@ -23290,7 +25111,7 @@ test "a revision's COR link cites this taxpayer's imported document and pins it"
     wrong_owner.cor_document_id = "cor-doc-foreign";
     try std.testing.expectError(
         Error.SqliteConstraint,
-        store.appendRevision(wrong_owner, .{}),
+        store.appendRevision(wrong_owner),
     );
 
     // A link without an imported source never reaches SQL.
@@ -23299,14 +25120,14 @@ test "a revision's COR link cites this taxpayer's imported document and pins it"
     manual.cor_document_id = "cor-doc-own";
     try std.testing.expectError(
         Error.InvalidValue,
-        store.appendRevision(manual, .{}),
+        store.appendRevision(manual),
     );
 
     // A cited document is pinned by the RESTRICT foreign key; an uncited one
     // stays deletable — the spec's conditional-deletion semantics.
     var linked = testRevision(first_id, 1, "Linked Person Two", "2026-02-01");
     linked.cor_document_id = "cor-doc-own";
-    try store.appendRevision(linked, .{});
+    try store.appendRevision(linked);
     try std.testing.expectError(
         Error.SqliteConstraint,
         store.exec(
@@ -23334,7 +25155,6 @@ test "schema v10 adds the COR link to v9 stores without touching history" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Legacy Nine", "2026-01-01"),
-        .{},
     );
     try store.attachCorDocument(testCorDocument("cor-doc-v9", profile_id));
 
@@ -23344,7 +25164,7 @@ test "schema v10 adds the COR link to v9 stores without touching history" {
     early.cor_document_id = "cor-doc-v9";
     try std.testing.expectError(
         Error.InvalidValue,
-        store.appendRevision(early, .{}),
+        store.appendRevision(early),
     );
 
     try store.migrate();
@@ -23355,7 +25175,7 @@ test "schema v10 adds the COR link to v9 stores without touching history" {
         "revision-1",
     );
     try std.testing.expectEqual(@as(?[]u8, null), pre_existing);
-    try store.appendRevision(early, .{});
+    try store.appendRevision(early);
     const linked = (try store.corDocumentIdForRevision(
         allocator,
         profile_id,
@@ -23383,11 +25203,9 @@ test "schema v11 backfills labels from current saved taxpayer and registered nam
     try store.createProfileWithRevision(
         .{ .id = person_id },
         testRevision(person_id, 0, "Earlier Person Name", "2025-01-01"),
-        .{},
     );
     try store.appendRevision(
         testRevision(person_id, 1, "Current Person Name", "2026-01-01"),
-        .{},
     );
 
     const entity_id = "tax-profile-v10-entity-label";
@@ -23402,7 +25220,7 @@ test "schema v11 backfills labels from current saved taxpayer and registered nam
         .registered_name = "Current Registered Corporation",
         .kind = .corporation,
     } };
-    try store.createProfileWithRevision(.{ .id = entity_id }, entity, .{});
+    try store.createProfileWithRevision(.{ .id = entity_id }, entity);
 
     try std.testing.expectEqual(@as(u32, 10), try store.schemaVersion());
     try store.migrate();
@@ -23449,7 +25267,7 @@ test "schema v11 backfills labels from current saved taxpayer and registered nam
     );
 }
 
-test "local profile label is mutable metadata and legal name remains revision owned" {
+test "legacy local label never replaces legal display identity or search" {
     const allocator = std.testing.allocator;
     var store = try Store.openMemory(allocator);
     defer store.close();
@@ -23467,7 +25285,6 @@ test "local profile label is mutable metadata and legal name remains revision ow
             "2026-01-01",
             "987654321000",
         ),
-        .{},
     );
     var defaulted_label = (try store.getProfileLabel(allocator, shell_id)).?;
     defer defaulted_label.deinit(allocator);
@@ -23480,7 +25297,6 @@ test "local profile label is mutable metadata and legal name remains revision ow
     try store.createProfileWithRevision(
         .{ .id = profile_id, .label = "My 2026 filings" },
         testRevision(profile_id, 0, "Juan Dela Cruz", "2026-01-01"),
-        .{},
     );
     try store.updateProfileLabel(.{
         .profile_id = profile_id,
@@ -23500,14 +25316,13 @@ test "local profile label is mutable metadata and legal name remains revision ow
 
     try store.appendRevision(
         testRevision(profile_id, 1, "Juan Dela Cruz Updated", "2026-07-01"),
-        .{},
     );
     var summaries = try store.listProfiles(allocator, false);
     defer summaries.deinit(allocator);
     const summary = for (summaries.items) |item| {
         if (std.mem.eql(u8, item.id, profile_id)) break item;
     } else return error.TestExpectedEqual;
-    try std.testing.expectEqualStrings("Household account", summary.profile_label);
+    try std.testing.expectEqualStrings("Juan Dela Cruz Updated", summary.profile_label);
     try std.testing.expectEqualStrings("Juan Dela Cruz Updated", summary.display_name);
 
     var owner = (try store.findProfileWithCanonicalTin(
@@ -23516,13 +25331,12 @@ test "local profile label is mutable metadata and legal name remains revision ow
         null,
     )).?;
     defer owner.deinit(allocator);
-    try std.testing.expectEqualStrings("Household account", owner.profile_label.?);
+    try std.testing.expectEqualStrings("Juan Dela Cruz Updated", owner.profile_label.?);
     try std.testing.expectEqualStrings("Juan Dela Cruz Updated", owner.display_name.?);
 
     var by_label = try store.searchProfiles(allocator, "household", false);
     defer by_label.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 1), by_label.items.len);
-    try std.testing.expectEqualStrings(profile_id, by_label.items[0].id);
+    try std.testing.expectEqual(@as(usize, 0), by_label.items.len);
     var by_legal_name = try store.searchProfiles(allocator, "Cruz Updated", false);
     defer by_legal_name.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 1), by_legal_name.items.len);
@@ -23557,7 +25371,7 @@ test "schema v12 backfills stable component anchors without changing revision va
         .effective = testPeriod("2025-01-01", null),
         .value = .{ .tax_type = "Earlier Percentage Tax" },
     }};
-    try store.createProfileWithRevision(
+    try store.createLegacyProfileWithRevisionForMigrationTest(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Anchor Migration", "2025-01-01"),
         .{
@@ -23576,7 +25390,7 @@ test "schema v12 backfills stable component anchors without changing revision va
         .effective = testPeriod("2026-01-01", null),
         .value = .{ .tax_type = "Current Percentage Tax" },
     }};
-    try store.appendRevision(
+    try store.appendLegacyRevisionForMigrationTest(
         testRevision(profile_id, 1, "Anchor Migration", "2026-01-01"),
         .{
             .business_activities = &current_activities,
@@ -23610,40 +25424,54 @@ test "schema v12 backfills stable component anchors without changing revision va
         profile_id,
     )).?;
     defer after_current.deinit(allocator);
+    var after_first_components = (try legacy_registration_export.loadProfileRevisionComponents(
+        &store,
+        allocator,
+        profile_id,
+        after_first.id,
+    )).?;
+    defer after_first_components.deinit(allocator);
+    var after_current_components = (try legacy_registration_export.loadProfileRevisionComponents(
+        &store,
+        allocator,
+        profile_id,
+        after_current.id,
+    )).?;
+    defer after_current_components.deinit(allocator);
 
     try std.testing.expectEqualStrings(before_first.id, after_first.id);
     try std.testing.expectEqualStrings(
         before_first.business_activities[0].line_of_business,
-        after_first.business_activities[0].line_of_business,
+        after_first_components.business_activities[0].line_of_business,
     );
     try std.testing.expectEqualStrings(
         before_first.business_activities[0].atc.?,
-        after_first.business_activities[0].atc.?,
+        after_first_components.business_activities[0].atc.?,
     );
     try std.testing.expectEqualStrings(
         before_first.registration_facts[0].value.tax_type,
-        after_first.registration_facts[0].value.tax_type,
+        after_first_components.registration_facts[0].value.tax_type,
     );
-    try std.testing.expectEqualStrings("primary", after_first.business_activities[0].anchor_id);
-    try std.testing.expectEqualStrings("primary", after_current.business_activities[0].anchor_id);
-    try std.testing.expectEqualStrings("tax-type", after_first.registration_facts[0].anchor_id);
-    try std.testing.expectEqualStrings("tax-type", after_current.registration_facts[0].anchor_id);
+    try std.testing.expectEqualStrings("primary", after_first_components.business_activities[0].anchor_id);
+    try std.testing.expectEqualStrings("primary", after_current_components.business_activities[0].anchor_id);
+    try std.testing.expectEqualStrings("tax-type", after_first_components.registration_facts[0].anchor_id);
+    try std.testing.expectEqualStrings("tax-type", after_current_components.registration_facts[0].anchor_id);
     try std.testing.expectEqualStrings(
         before_current.business_activities[0].line_of_business,
-        after_current.business_activities[0].line_of_business,
+        after_current_components.business_activities[0].line_of_business,
     );
     try std.testing.expectEqualStrings(
         before_current.registration_facts[0].value.tax_type,
-        after_current.registration_facts[0].value.tax_type,
+        after_current_components.registration_facts[0].value.tax_type,
     );
 
-    var activity_anchor = (try store.getBusinessActivityAnchor(
+    var activity_anchor = (try store.getLegacyBusinessActivityAnchorForTest(
         allocator,
         .{ .profile_id = profile_id, .anchor_id = "primary" },
     )).?;
     defer activity_anchor.deinit(allocator);
     try std.testing.expectEqualStrings(profile_id, activity_anchor.profile_id);
-    var fact_anchor = (try store.getRegistrationFactAnchor(
+    var fact_anchor = (try store.getLegacyRegistrationFactAnchorForTest(
         allocator,
         .{
             .profile_id = profile_id,
@@ -23682,143 +25510,6 @@ test "schema v12 backfills stable component anchors without changing revision va
     try std.testing.expectEqual(StepResult.done, try foreign_key_check.step());
 }
 
-test "component anchors remain stable and reject cross-owner or wrong-kind use" {
-    const allocator = std.testing.allocator;
-    var store = try Store.openMemory(allocator);
-    defer store.close();
-    const profile_id = "tax-profile-stable-component-anchors";
-    const first_activities = [_]BusinessActivityWrite{.{
-        .id = "activity-row-one",
-        .anchor_id = "primary",
-        .line_of_business = "Consulting",
-        .effective = testPeriod("2026-01-01", null),
-    }};
-    const first_facts = [_]RegistrationFactWrite{.{
-        .id = "tax-type-row-one",
-        .anchor_id = "tax-type",
-        .effective = testPeriod("2026-01-01", null),
-        .value = .{ .tax_type = "Percentage Tax" },
-    }};
-    try store.createProfileWithRevision(
-        .{ .id = profile_id },
-        testRevision(profile_id, 0, "Stable Anchors", "2026-01-01"),
-        .{
-            .business_activities = &first_activities,
-            .registration_facts = &first_facts,
-        },
-    );
-    const second_activities = [_]BusinessActivityWrite{.{
-        .id = "activity-row-two",
-        .anchor_id = "primary",
-        .line_of_business = "Expanded consulting",
-        .effective = testPeriod("2026-07-01", null),
-    }};
-    const second_facts = [_]RegistrationFactWrite{.{
-        .id = "tax-type-row-two",
-        .anchor_id = "tax-type",
-        .effective = testPeriod("2026-07-01", null),
-        .value = .{ .tax_type = "Percentage Tax Updated" },
-    }};
-    try store.appendRevision(
-        testRevision(profile_id, 1, "Stable Anchors", "2026-07-01"),
-        .{
-            .business_activities = &second_activities,
-            .registration_facts = &second_facts,
-        },
-    );
-    var current = (try store.getCurrentRevision(allocator, profile_id)).?;
-    defer current.deinit(allocator);
-    try std.testing.expectEqualStrings("activity-row-two", current.business_activities[0].id);
-    try std.testing.expectEqualStrings("primary", current.business_activities[0].anchor_id);
-    try std.testing.expectEqualStrings("tax-type-row-two", current.registration_facts[0].id);
-    try std.testing.expectEqualStrings("tax-type", current.registration_facts[0].anchor_id);
-
-    const other_profile = "tax-profile-other-anchor-owner";
-    try store.createProfileWithRevision(
-        .{ .id = other_profile },
-        testRevisionWithTin(
-            other_profile,
-            0,
-            "Other Anchor Owner",
-            "2026-01-01",
-            "987654321000",
-        ),
-        .{},
-    );
-    try std.testing.expect((try store.getBusinessActivityAnchor(
-        allocator,
-        .{ .profile_id = other_profile, .anchor_id = "primary" },
-    )) == null);
-    try std.testing.expect((try store.getRegistrationFactAnchor(
-        allocator,
-        .{
-            .profile_id = profile_id,
-            .anchor_id = "tax-type",
-            .kind = .special_rate_basis,
-        },
-    )) == null);
-    try std.testing.expectError(
-        Error.SqliteConstraint,
-        store.exec(
-            \\INSERT INTO tax_profile_business_activities (
-            \\    profile_id, revision_id, id, line_of_business,
-            \\    effective_from, ordinal, anchor_id
-            \\) VALUES (
-            \\    'tax-profile-other-anchor-owner', 'revision-1',
-            \\    'cross-owner-activity', 'Invalid cross-owner activity',
-            \\    '2026-01-01', 0, 'primary'
-            \\);
-        ),
-    );
-    try std.testing.expectError(
-        Error.SqliteConstraint,
-        store.exec(
-            \\INSERT INTO tax_profile_registration_facts (
-            \\    profile_id, revision_id, id, kind, value_text,
-            \\    effective_from, ordinal, anchor_id
-            \\) VALUES (
-            \\    'tax-profile-other-anchor-owner', 'revision-1',
-            \\    'cross-owner-fact', 'tax_type', 'Invalid cross-owner fact',
-            \\    '2026-01-01', 0, 'tax-type'
-            \\);
-        ),
-    );
-
-    const wrong_kind = [_]RegistrationFactWrite{.{
-        .id = "wrong-kind-row",
-        .anchor_id = "tax-type",
-        .effective = testPeriod("2026-08-01", null),
-        .value = .{ .special_rate_basis = "Treaty rate" },
-    }};
-    try std.testing.expectError(
-        Error.SqliteConstraint,
-        store.appendRevision(
-            testRevision(profile_id, 2, "Stable Anchors", "2026-08-01"),
-            .{ .registration_facts = &wrong_kind },
-        ),
-    );
-    var after_failure = (try store.getCurrentRevision(allocator, profile_id)).?;
-    defer after_failure.deinit(allocator);
-    try std.testing.expectEqual(@as(u32, 2), after_failure.sequence);
-
-    try std.testing.expectError(
-        Error.SqliteConstraint,
-        store.exec(
-            \\DELETE FROM tax_profile_business_activity_anchors
-            \\WHERE profile_id = 'tax-profile-stable-component-anchors'
-            \\  AND id = 'primary';
-        ),
-    );
-    try std.testing.expectError(
-        Error.SqliteConstraint,
-        store.exec(
-            \\DELETE FROM tax_profile_registration_fact_anchors
-            \\WHERE profile_id = 'tax-profile-stable-component-anchors'
-            \\  AND id = 'tax-type';
-        ),
-    );
-}
-
 test "schema v12 rejects ambiguous legacy registration anchor kinds atomically" {
     const allocator = std.testing.allocator;
     var store = try openLegacyStoreForTest(11);
@@ -23829,7 +25520,7 @@ test "schema v12 rejects ambiguous legacy registration anchor kinds atomically" 
         .effective = testPeriod("2025-01-01", null),
         .value = .{ .tax_type = "Percentage Tax" },
     }};
-    try store.createProfileWithRevision(
+    try store.createLegacyProfileWithRevisionForMigrationTest(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Ambiguous Anchor", "2025-01-01"),
         .{ .registration_facts = &first_facts },
@@ -23839,7 +25530,7 @@ test "schema v12 rejects ambiguous legacy registration anchor kinds atomically" 
         .effective = testPeriod("2026-01-01", null),
         .value = .{ .special_rate_basis = "Special law" },
     }};
-    try store.appendRevision(
+    try store.appendLegacyRevisionForMigrationTest(
         testRevision(profile_id, 1, "Ambiguous Anchor", "2026-01-01"),
         .{ .registration_facts = &second_facts },
     );
@@ -23864,11 +25555,16 @@ test "schema v12 rejects ambiguous legacy registration anchor kinds atomically" 
 test "latest schema rejects a newer tax-profile schema before mutation" {
     var store = try openLegacyStoreForTest(11);
     defer store.close();
-    try store.exec(
-        \\UPDATE app_component_migrations
-        \\SET version = 21
-        \\WHERE component = 'tax_profile';
-    );
+    {
+        var future = try store.prepare(
+            \\UPDATE app_component_migrations
+            \\SET version = ?
+            \\WHERE component = 'tax_profile';
+        );
+        defer future.deinit();
+        try future.bindInt64(1, latest_schema_version + 1);
+        try future.expectDone();
+    }
     try std.testing.expectError(Error.SchemaTooNew, store.migrate());
     try std.testing.expect(!(try tableExistsForTest(
         &store,
@@ -23894,7 +25590,7 @@ test "schema v14 adds empty annual streams without rewriting v13 records" {
         .effective = testPeriod("2026-01-01", null),
         .value = .{ .tax_type = "Percentage Tax" },
     }};
-    try store.createProfileWithRevision(
+    try store.createLegacyProfileWithRevisionForMigrationTest(
         .{ .id = profile_id, .label = "Preserved local label" },
         testRevision(profile_id, 0, "Preserved Taxpayer", "2026-01-01"),
         .{
@@ -23944,12 +25640,12 @@ test "schema v14 adds empty annual streams without rewriting v13 records" {
         profile_id,
     )).?;
     defer revision_before.deinit(allocator);
-    var activity_before = (try store.getBusinessActivityAnchor(
+    var activity_before = (try store.getLegacyBusinessActivityAnchorForTest(
         allocator,
         .{ .profile_id = profile_id, .anchor_id = "v14-activity-anchor" },
     )).?;
     defer activity_before.deinit(allocator);
-    var fact_before = (try store.getRegistrationFactAnchor(
+    var fact_before = (try store.getLegacyRegistrationFactAnchorForTest(
         allocator,
         .{
             .profile_id = profile_id,
@@ -24005,17 +25701,24 @@ test "schema v14 adds empty annual streams without rewriting v13 records" {
         profile_id,
     )).?;
     defer revision_after.deinit(allocator);
+    var revision_after_components = (try legacy_registration_export.loadProfileRevisionComponents(
+        &store,
+        allocator,
+        profile_id,
+        revision_after.id,
+    )).?;
+    defer revision_after_components.deinit(allocator);
     try std.testing.expectEqualStrings(revision_before.id, revision_after.id);
     try std.testing.expectEqualStrings(revision_before.tin, revision_after.tin);
     try std.testing.expectEqualStrings(
         revision_before.business_activities[0].anchor_id,
-        revision_after.business_activities[0].anchor_id,
+        revision_after_components.business_activities[0].anchor_id,
     );
     try std.testing.expectEqualStrings(
         revision_before.registration_facts[0].anchor_id,
-        revision_after.registration_facts[0].anchor_id,
+        revision_after_components.registration_facts[0].anchor_id,
     );
-    var activity_after = (try store.getBusinessActivityAnchor(
+    var activity_after = (try store.getLegacyBusinessActivityAnchorForTest(
         allocator,
         .{ .profile_id = profile_id, .anchor_id = "v14-activity-anchor" },
     )).?;
@@ -24028,7 +25731,7 @@ test "schema v14 adds empty annual streams without rewriting v13 records" {
         activity_before.anchor_id,
         activity_after.anchor_id,
     );
-    var fact_after = (try store.getRegistrationFactAnchor(
+    var fact_after = (try store.getLegacyRegistrationFactAnchorForTest(
         allocator,
         .{
             .profile_id = profile_id,
@@ -24075,7 +25778,7 @@ test "schema v13 canonicalizes legacy people without changing revision anchors o
         .effective = testPeriod("2025-01-01", null),
         .value = .{ .tax_type = "Percentage Tax" },
     }};
-    try store.createProfileWithRevision(
+    try store.createLegacyProfileWithRevisionForMigrationTest(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Legacy Owner", "2025-01-01"),
         .{
@@ -24095,7 +25798,7 @@ test "schema v13 canonicalizes legacy people without changing revision anchors o
         .effective = testPeriod("2026-01-01", null),
         .value = .{ .tax_type = "Percentage Tax Updated" },
     }};
-    try store.appendRevision(
+    try store.appendLegacyRevisionForMigrationTest(
         testRevision(profile_id, 1, "Legacy Owner Updated", "2026-01-01"),
         .{
             .business_activities = &second_activities,
@@ -24119,7 +25822,6 @@ test "schema v13 canonicalizes legacy people without changing revision anchors o
     try store.createProfileWithRevision(
         .{ .id = individual_profile_id },
         legacy_individual,
-        .{},
     );
 
     try store.createDraft(
@@ -24219,6 +25921,20 @@ test "schema v13 canonicalizes legacy people without changing revision anchors o
         profile_id,
     )).?;
     defer current_after.deinit(allocator);
+    var first_after_components = (try legacy_registration_export.loadProfileRevisionComponents(
+        &store,
+        allocator,
+        profile_id,
+        first_after.id,
+    )).?;
+    defer first_after_components.deinit(allocator);
+    var current_after_components = (try legacy_registration_export.loadProfileRevisionComponents(
+        &store,
+        allocator,
+        profile_id,
+        current_after.id,
+    )).?;
+    defer current_after_components.deinit(allocator);
     try std.testing.expectEqualStrings("revision-1", first_after.id);
     try std.testing.expectEqual(@as(u32, 1), first_after.sequence);
     try std.testing.expectEqualStrings("revision-2", current_after.id);
@@ -24239,19 +25955,19 @@ test "schema v13 canonicalizes legacy people without changing revision anchors o
     }
     try std.testing.expectEqualStrings(
         "primary-business",
-        first_after.business_activities[0].anchor_id,
+        first_after_components.business_activities[0].anchor_id,
     );
     try std.testing.expectEqualStrings(
         "primary-business",
-        current_after.business_activities[0].anchor_id,
+        current_after_components.business_activities[0].anchor_id,
     );
     try std.testing.expectEqualStrings(
         "primary-tax-type",
-        first_after.registration_facts[0].anchor_id,
+        first_after_components.registration_facts[0].anchor_id,
     );
     try std.testing.expectEqualStrings(
         "primary-tax-type",
-        current_after.registration_facts[0].anchor_id,
+        current_after_components.registration_facts[0].anchor_id,
     );
 
     var unknown_after = (try store.getCurrentRevision(
@@ -24333,7 +26049,7 @@ test "schema v13 round trips every classification and legal trade names" {
             .classification = classification,
             .trade_name = "INDIVIDUAL TRADE",
         } };
-        try store.createProfileWithRevision(.{ .id = profile_id }, revision, .{});
+        try store.createProfileWithRevision(.{ .id = profile_id }, revision);
         var loaded = (try store.getCurrentRevision(allocator, profile_id)).?;
         defer loaded.deinit(allocator);
         try std.testing.expectEqual(
@@ -24360,7 +26076,7 @@ test "schema v13 round trips every classification and legal trade names" {
         .trade_name = "CANONICAL TRADE",
         .kind = .corporation,
     } };
-    try store.createProfileWithRevision(.{ .id = legal_profile_id }, legal, .{});
+    try store.createProfileWithRevision(.{ .id = legal_profile_id }, legal);
     var loaded_legal = (try store.getCurrentRevision(
         allocator,
         legal_profile_id,
@@ -24385,7 +26101,6 @@ test "schema v13 round trips every classification and legal trade names" {
             "2026-01-01",
             "100000000006",
         ),
-        .{},
     );
     var compatibility = (try store.getCurrentRevision(
         allocator,
@@ -24573,7 +26288,6 @@ test "forged synthetic plaintext capability cannot access or mutate exact drafts
             "Forged Plaintext Authority",
             "2026-01-01",
         ),
-        .{},
     );
 
     var forged_token: u8 = 0;
@@ -24644,7 +26358,6 @@ test "forged public exact snapshots fail closed atomically for both shapes" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Forged Snapshot", "2026-01-01"),
-        .{},
     );
 
     const oversized_value = try allocator.alloc(
@@ -24829,7 +26542,6 @@ test "exact draft reads cap corrupted columns before large allocation" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Corrupt Caps", "2026-01-01"),
-        .{},
     );
     const editable_identity = try persistTestExactRevision(
         &store,
@@ -24975,7 +26687,6 @@ test "validation evidence receipt is typed immutable and preflighted" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Validation Evidence", "2026-01-01"),
-        .{},
     );
     const editable_identity = try persistTestExactRevision(
         &store,
@@ -25055,7 +26766,6 @@ test "exact draft reads reject extra persisted rows for both shapes" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Extra Row", "2026-01-01"),
-        .{},
     );
     const shapes = [_]exact_draft.PayloadShape{
         .editable_save,
@@ -25118,7 +26828,6 @@ test "exact history aggregate preflight and append fail before allocation" {
         try store.createProfileWithRevision(
             .{ .id = profile_id },
             testRevision(profile_id, 0, "History Bytes", "2026-01-01"),
-            .{},
         );
         const manifest = try exactManifestForShape(shape);
         const values = try testExactValues(
@@ -25233,7 +26942,6 @@ test "exact history revision cap is atomic and full reads use cap plus one" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "History Revision Cap", "2026-01-01"),
-        .{},
     );
     const manifest = try exactManifestForShape(.editable_save);
     const values = try testExactValues(allocator, manifest, 1);
@@ -25390,7 +27098,6 @@ test "alternate listing succeeds at its cap and rejects cap plus one" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Alternate Cap", "2026-01-01"),
-        .{},
     );
     const base_identity = try persistTestExactRevision(
         &store,
@@ -25462,7 +27169,6 @@ test "workspace creation cap is transactional and permits sibling shape" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Workspace Cap", "2026-01-01"),
-        .{},
     );
     _ = try persistTestExactRevision(
         &store,
@@ -25658,7 +27364,6 @@ test "persisted readiness is metadata and cannot override built-in evidence" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Readiness Authority", "2026-01-01"),
-        .{},
     );
     const identity = try persistTestExactRevision(
         &store,
@@ -25716,7 +27421,6 @@ test "exact draft revisions reopen byte-for-byte and retain old profile bindings
         try store.createProfileWithRevision(
             .{ .id = profile_id },
             testRevision(profile_id, 0, "Original Profile", "2026-01-01"),
-            .{},
         );
 
         const manifest = try exact_form_occurrences.editableManifest();
@@ -25760,7 +27464,6 @@ test "exact draft revisions reopen byte-for-byte and retain old profile bindings
 
         try store.appendRevision(
             testRevision(profile_id, 1, "Evolved Profile", "2026-04-01"),
-            .{},
         );
         seedTestExactValues(values, manifest, 2);
         const second_snapshot = try engine_history.appendRevision(
@@ -25961,7 +27664,6 @@ test "exact draft transaction rollback removes a failed new stream" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Rollback Profile", "2026-01-01"),
-        .{},
     );
 
     const workspace_id = try testDraftWorkspaceId(41);
@@ -26024,7 +27726,6 @@ test "editable and Final Copy share a workspace without becoming alternates" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Two Shapes", "2026-01-01"),
-        .{},
     );
     const filing_key = testFilingKey(profile_id);
     const bindings = [_]ExactDraftRoleBindingWrite{.{
@@ -26791,7 +28492,6 @@ test "schema v15 backfills exact decisions without changing v14 projections" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "V15 Backfill", "2026-01-01"),
-        .{},
     );
     const base_forms = [_]FormRegistrationWrite{
         .{ .form_code = "1701Q", .form_revision = "2018" },
@@ -26816,7 +28516,6 @@ test "schema v15 backfills exact decisions without changing v14 projections" {
             "2026-01-01",
             "987654321000",
         ),
-        .{},
     );
     try store.createFormSetInterval(.{
         .id = "v15-interval-without-base",
@@ -26921,7 +28620,6 @@ test "exact Forms Set decision API preserves manual authority and review history
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Decision API", "2026-01-01"),
-        .{},
     );
     try store.appendFormSetDecision(.{
         .id = "manual-active",
@@ -27053,7 +28751,6 @@ test "legacy Forms Set writes append manual decisions atomically" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Projection History", "2026-01-01"),
-        .{},
     );
     const active = [_]FormRegistrationWrite{.{
         .form_code = "2551Q",
@@ -27109,26 +28806,19 @@ test "legacy Forms Set writes append manual decisions atomically" {
     try std.testing.expectEqual(FormSetDecisionState.active, resolved.decision.?.state);
 }
 
-test "v18 migrates v17 Tax Form Profile copies and persists confirmed review" {
+test "Tax Form Profile scalar copies persist confirmed review and provenance" {
     const allocator = std.testing.allocator;
-    var store = try openLegacyStoreForTest(17);
+    var store = try Store.openMemory(allocator);
     defer store.close();
-    try std.testing.expectEqual(@as(u32, 17), try store.schemaVersion());
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
 
     const profile_id = "tax-form-profile-copy-v18";
-    const activities = [_]BusinessActivityWrite{.{
-        .id = "copy-activity-r1",
-        .anchor_id = "copy-activity",
-        .line_of_business = "Professional services",
-        .effective = testPeriod("2025-01-01", null),
-    }};
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Copy Migration", "2025-01-01"),
-        .{ .business_activities = &activities },
     );
 
-    const form = form_catalog.findForm("1601C").?;
+    const form = form_catalog.findForm("2551Q").?;
     const registration = [_]FormRegistrationWrite{.{
         .form_code = form.code,
         .form_revision = form.revision.?,
@@ -27138,9 +28828,9 @@ test "v18 migrates v17 Tax Form Profile copies and persists confirmed review" {
     try store.replaceFormSet(profile_id, 2027, &registration);
 
     const source_values = [_]TaxFormProfileSetupValueWrite{.{
-        .semantic_key = .business_activity_anchor_id,
+        .semantic_key = .income_tax_rate_election,
         .role = .filer,
-        .value = .{ .business_activity_anchor_id = "copy-activity" },
+        .value = .{ .choice = "eight_percent" },
     }};
     try store.appendTaxFormProfileRevision(.{
         .id = "tfp-source-2025",
@@ -27160,9 +28850,9 @@ test "v18 migrates v17 Tax Form Profile copies and persists confirmed review" {
     });
 
     const copied_values = [_]TaxFormProfileSetupValueWrite{.{
-        .semantic_key = .business_activity_anchor_id,
+        .semantic_key = .income_tax_rate_election,
         .role = .filer,
-        .value = .{ .business_activity_anchor_id = "copy-activity" },
+        .value = .{ .choice = "eight_percent" },
         .source = .{ .copied_from_revision = "tfp-source-2025" },
     }};
     try store.appendTaxFormProfileRevision(.{
@@ -27342,7 +29032,176 @@ test "v18 migrates v17 Tax Form Profile copies and persists confirmed review" {
     try std.testing.expectEqual(StepResult.done, try foreign_key_check.step());
 }
 
-test "v20 preserves reviewed prior-year copies across form revisions" {
+test "queued filer draft permanently locks its exact Tax Form Profile" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    const profile_id = "tax-form-profile-filing-lock";
+    try store.createProfileWithRevision(
+        .{ .id = profile_id },
+        testRevision(profile_id, 0, "Filing Lock", "2026-01-01"),
+    );
+    const form = form_catalog.findForm("2551Q").?;
+    try store.replaceFormSet(profile_id, 2026, &.{.{
+        .form_code = form.code,
+        .form_revision = form.revision.?,
+    }});
+    var decisions = try store.listFormSetDecisions(
+        allocator,
+        profile_id,
+        2026,
+        form.code,
+        form.revision.?,
+    );
+    defer decisions.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), decisions.items.len);
+    const graduated = [_]TaxFormProfileSetupValueWrite{.{
+        .semantic_key = .income_tax_rate_election,
+        .role = .filer,
+        .value = .{ .choice = "graduated" },
+    }};
+    try store.appendTaxFormProfileRevision(.{
+        .id = "filing-lock-profile-r1",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .form_code = form.code,
+        .form_revision = form.revision.?,
+        .sequence = 1,
+        .expected_current_sequence = 0,
+        .effective = testPeriod("2026-01-01", "2026-12-31"),
+        .spec_revision = form.tax_form_profile.spec_revision.?,
+        .spec_hash = form.tax_form_profile.spec_hash.?,
+        .review_state = .confirmed,
+        .confirmed_at_unix_seconds = 1,
+        .source = .manual_entry,
+        .values = &graduated,
+    });
+
+    const binding = [_]RoleBindingWrite{.{
+        .role = "filer",
+        .profile_id = profile_id,
+        .profile_revision_id = "revision-1",
+        .profile_revision_sequence = 1,
+    }};
+    try store.createDraft(
+        .{
+            .id = "filing-lock-draft-q1",
+            .form_code = form.code,
+            .form_revision = form.revision.?,
+            .period_key = "2026-Q1",
+            .profile_as_of = testDate("2026-03-31"),
+            .mapping_revision = "filing-lock-test-v1",
+        },
+        &binding,
+        &.{},
+        &.{},
+    );
+    const taxpayer_revisions = [_]DraftProvenanceTaxpayerRevisionWrite{.{
+        .role = .filer,
+        .profile_id = profile_id,
+        .revision_id = "revision-1",
+        .revision_sequence = 1,
+    }};
+    _ = try store.appendDraftProvenance(.{
+        .draft_id = "filing-lock-draft-q1",
+        .expected_current_sequence = 0,
+        .owner_profile_id = profile_id,
+        .tax_year = 2026,
+        .form_code = form.code,
+        .form_revision = form.revision.?,
+        .catalog_revision = "catalog/filing-lock-test-v1",
+        .catalog_sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        .setup_spec_revision = form.tax_form_profile.spec_revision.?,
+        .setup_spec_hash = form.tax_form_profile.spec_hash.?,
+        .forms_set_decision = .{
+            .id = decisions.items[0].id,
+            .sequence = decisions.items[0].sequence,
+            .source = decisions.items[0].source,
+            .evidence_reference = decisions.items[0].evidence_reference,
+            .applicability_date = "2026-03-31".*,
+        },
+        .taxpayer_revisions = &taxpayer_revisions,
+        .tax_form_profile_revision = .{
+            .profile_id = profile_id,
+            .tax_year = 2026,
+            .form_code = form.code,
+            .form_revision = form.revision.?,
+            .revision_id = "filing-lock-profile-r1",
+            .revision_sequence = 1,
+            .spec_revision = form.tax_form_profile.spec_revision.?,
+            .spec_hash = form.tax_form_profile.spec_hash.?,
+        },
+    });
+    try std.testing.expect(!(try store.isTaxFormProfileLockedByFiling(
+        profile_id,
+        2026,
+        form.code,
+        form.revision.?,
+        "filing-lock-profile-r1",
+        1,
+    )));
+    try store.transitionDraft("filing-lock-draft-q1", "editing", "prepared");
+    try std.testing.expect(!(try store.isTaxFormProfileLockedByFiling(
+        profile_id,
+        2026,
+        form.code,
+        form.revision.?,
+        "filing-lock-profile-r1",
+        1,
+    )));
+    try store.transitionDraft("filing-lock-draft-q1", "prepared", "queued");
+    try std.testing.expect(try store.isTaxFormProfileLockedByFiling(
+        profile_id,
+        2026,
+        form.code,
+        form.revision.?,
+        "filing-lock-profile-r1",
+        1,
+    ));
+
+    const eight_percent = [_]TaxFormProfileSetupValueWrite{.{
+        .semantic_key = .income_tax_rate_election,
+        .role = .filer,
+        .value = .{ .choice = "eight_percent" },
+    }};
+    const correction: TaxFormProfileRevisionWrite = .{
+        .id = "filing-lock-profile-r2",
+        .profile_id = profile_id,
+        .tax_year = 2026,
+        .form_code = form.code,
+        .form_revision = form.revision.?,
+        .sequence = 2,
+        .expected_current_sequence = 1,
+        .effective = testPeriod("2026-01-01", "2026-12-31"),
+        .spec_revision = form.tax_form_profile.spec_revision.?,
+        .spec_hash = form.tax_form_profile.spec_hash.?,
+        .review_state = .confirmed,
+        .confirmed_at_unix_seconds = 2,
+        .source = .manual_entry,
+        .values = &eight_percent,
+    };
+    try std.testing.expectError(
+        Error.TaxFormProfileLockedByFiling,
+        store.appendTaxFormProfileRevision(correction),
+    );
+
+    try store.transitionDraft("filing-lock-draft-q1", "queued", "cancelled");
+    try std.testing.expect(try store.isTaxFormProfileLockedByFiling(
+        profile_id,
+        2026,
+        form.code,
+        form.revision.?,
+        "filing-lock-profile-r1",
+        1,
+    ));
+    try std.testing.expectError(
+        Error.TaxFormProfileLockedByFiling,
+        store.appendTaxFormProfileRevision(correction),
+    );
+}
+
+test "reviewed scalar Tax Form Profile copies survive form revisions" {
     const allocator = std.testing.allocator;
     var store = try Store.openMemory(allocator);
     defer store.close();
@@ -27350,28 +29209,8 @@ test "v20 preserves reviewed prior-year copies across form revisions" {
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Cross Revision Copy", "2025-01-01"),
-        .{},
     );
-    const activity = [_]RegistrationActivityRevisionWrite{.{
-        .anchor_id = "cross-revision-activity",
-        .metadata = .{
-            .id = "cross-revision-activity-r1",
-            .expected_component_sequence = 0,
-            .effective = testPeriod("2025-01-01", null),
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 1,
-        },
-        .line_of_business = "Professional services",
-        .atc = "PT010",
-    }};
-    _ = try store.appendRegistrationCommit(.{
-        .profile_id = profile_id,
-        .expected_current_sequence = 0,
-        .activities = &activity,
-    });
-
-    const form = form_catalog.findForm("1601C").?;
+    const form = form_catalog.findForm("2551Q").?;
     const old_form_revision = "2017-OLD";
     try store.replaceFormSet(profile_id, 2025, &.{.{
         .form_code = form.code,
@@ -27391,7 +29230,7 @@ test "v20 preserves reviewed prior-year copies across form revisions" {
         \\    sequence, effective_from, spec_revision, spec_hash,
         \\    review_state, confirmed_at_unix_seconds, source_tag
         \\) VALUES (
-        \\    'tax-form-profile-cross-revision-copy', 2025, '1601C',
+        \\    'tax-form-profile-cross-revision-copy', 2025, '2551Q',
         \\    '2017-OLD', 'cross-revision-source-2025', 1,
         \\    '2025-01-01', 7, 'old-generated-spec-hash',
         \\    'confirmed', 1735689600, 'manual_entry'
@@ -27399,12 +29238,12 @@ test "v20 preserves reviewed prior-year copies across form revisions" {
         \\INSERT INTO tax_profile_form_profile_values (
         \\    profile_id, tax_year, form_code, form_revision,
         \\    revision_id, revision_sequence, semantic_key, role,
-        \\    value_type, anchor_value, source_tag
+        \\    value_type, choice_value, source_tag
         \\) VALUES (
-        \\    'tax-form-profile-cross-revision-copy', 2025, '1601C',
+        \\    'tax-form-profile-cross-revision-copy', 2025, '2551Q',
         \\    '2017-OLD', 'cross-revision-source-2025', 1,
-        \\    'business_activity_anchor_id', 'filer',
-        \\    'business_activity_anchor_id', 'cross-revision-activity',
+        \\    'income_tax_rate_election', 'filer',
+        \\    'choice', 'graduated',
         \\    'manual_confirmation'
         \\);
     );
@@ -27423,9 +29262,9 @@ test "v20 preserves reviewed prior-year copies across form revisions" {
     );
 
     const mapped_values = [_]TaxFormProfileSetupValueWrite{.{
-        .semantic_key = .business_activity_anchor_id,
+        .semantic_key = .income_tax_rate_election,
         .role = .filer,
-        .value = .{ .business_activity_anchor_id = "cross-revision-activity" },
+        .value = .{ .choice = "graduated" },
         .source = .{ .copied_from_revision = "cross-revision-source-2025" },
     }};
     try store.appendTaxFormProfileRevision(.{
@@ -27487,7 +29326,17 @@ test "v17 coarse and v19 exact provenance round trip frozen bindings snapshots a
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Draft Provenance", "2026-01-01"),
-        .{},
+    );
+    const spouse_profile_id = "draft-provenance-v17-spouse";
+    try store.createProfileWithRevision(
+        .{ .id = spouse_profile_id },
+        testRevisionWithTin(
+            spouse_profile_id,
+            0,
+            "Draft Provenance Spouse",
+            "2026-01-01",
+            "987654321000",
+        ),
     );
 
     const registered_form = [_]FormRegistrationWrite{.{
@@ -27504,38 +29353,6 @@ test "v17 coarse and v19 exact provenance round trip frozen bindings snapshots a
     );
     defer decisions.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 1), decisions.items.len);
-
-    const activity = [_]RegistrationActivityRevisionWrite{.{
-        .anchor_id = "primary-activity",
-        .metadata = .{
-            .id = "primary-activity-r1",
-            .expected_component_sequence = 0,
-            .effective = testPeriod("2026-01-01", null),
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 1,
-        },
-        .line_of_business = "Professional services",
-        .atc = "IT010",
-    }};
-    const obligation = [_]RegistrationObligationRevisionWrite{.{
-        .anchor_id = "income-tax-obligation",
-        .metadata = .{
-            .id = "income-tax-obligation-r1",
-            .expected_component_sequence = 0,
-            .effective = testPeriod("2026-01-01", null),
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 2,
-        },
-        .kind = .registered_income_tax,
-    }};
-    _ = try store.appendRegistrationCommit(.{
-        .profile_id = profile_id,
-        .expected_current_sequence = 0,
-        .activities = &activity,
-        .obligations = &obligation,
-    });
 
     const year_values = [_]TaxpayerYearSettingValueWrite{
         .{ .income_tax_rate_election = .graduated },
@@ -27556,9 +29373,9 @@ test "v17 coarse and v19 exact provenance round trip frozen bindings snapshots a
 
     const form_definition = form_catalog.findForm("1701Q").?;
     const form_values = [_]TaxFormProfileSetupValueWrite{.{
-        .semantic_key = .business_activity_anchor_id,
-        .role = .filer,
-        .value = .{ .business_activity_anchor_id = "primary-activity" },
+        .semantic_key = .spouse_profile_id,
+        .role = .spouse,
+        .value = .{ .profile_id = spouse_profile_id },
     }};
     try store.appendTaxFormProfileRevision(.{
         .id = "form-profile-r1",
@@ -27586,37 +29403,37 @@ test "v17 coarse and v19 exact provenance round trip frozen bindings snapshots a
             .profile_as_of = "2026-06-30".*,
             .mapping_revision = "tax-profile-snapshot-v1",
         },
-        &.{.{
-            .role = "filer",
-            .profile_id = profile_id,
-            .profile_revision_id = "revision-1",
-            .profile_revision_sequence = 1,
-        }},
+        &.{
+            .{
+                .role = "filer",
+                .profile_id = profile_id,
+                .profile_revision_id = "revision-1",
+                .profile_revision_sequence = 1,
+            },
+            .{
+                .role = "spouse",
+                .profile_id = spouse_profile_id,
+                .profile_revision_id = "revision-1",
+                .profile_revision_sequence = 1,
+            },
+        },
         &.{},
         &.{},
     );
 
-    const taxpayer_revisions = [_]DraftProvenanceTaxpayerRevisionWrite{.{
-        .role = .filer,
-        .profile_id = profile_id,
-        .revision_id = "revision-1",
-        .revision_sequence = 1,
-    }};
-    const components = [_]DraftProvenanceComponentWrite{
-        .{ .business_activity = .{
+    const taxpayer_revisions = [_]DraftProvenanceTaxpayerRevisionWrite{
+        .{
             .role = .filer,
             .profile_id = profile_id,
-            .anchor_id = "primary-activity",
-            .revision_id = "primary-activity-r1",
+            .revision_id = "revision-1",
             .revision_sequence = 1,
-        } },
-        .{ .registration_obligation = .{
-            .role = .filer,
-            .profile_id = profile_id,
-            .anchor_id = "income-tax-obligation",
-            .revision_id = "income-tax-obligation-r1",
+        },
+        .{
+            .role = .spouse,
+            .profile_id = spouse_profile_id,
+            .revision_id = "revision-1",
             .revision_sequence = 1,
-        } },
+        },
     };
     const binary_text = [_]u8{ 'A', 0, 'B', 0xff };
     const sources = [_]DraftProvenanceSourceSnapshotWrite{
@@ -27636,28 +29453,10 @@ test "v17 coarse and v19 exact provenance round trip frozen bindings snapshots a
         },
         .{
             .key = .{ .tax_form_profile_value = .{
-                .role = .filer,
-                .key = .business_activity_anchor_id,
+                .role = .spouse,
+                .key = .spouse_profile_id,
             } },
-            .copied_value = .{
-                .business_activity_anchor_id = "primary-activity",
-            },
-        },
-        .{
-            .key = .{ .business_activity_fact = .{
-                .role = .filer,
-                .anchor_id = "primary-activity",
-                .key = .line_of_business,
-            } },
-            .copied_value = .{ .text = "Professional services" },
-        },
-        .{
-            .key = .{ .registration_obligation_fact = .{
-                .role = .filer,
-                .anchor_id = "income-tax-obligation",
-                .key = .registration_kind,
-            } },
-            .copied_value = .{ .choice = "registered_income_tax" },
+            .copied_value = .{ .profile_id = spouse_profile_id },
         },
     };
     const seeds = [_]DraftProvenanceTransactionSeedWrite{
@@ -27665,7 +29464,7 @@ test "v17 coarse and v19 exact provenance round trip frozen bindings snapshots a
             .filing_field = "filing.seed.from-profile",
             .source_key = .{ .tax_form_profile_value = .{
                 .role = .filer,
-                .key = .special_rate_obligation_anchor_id,
+                .key = .special_rate_basis,
             } },
             .source = .{ .tax_form_profile_revision = "form-profile-r1" },
             .copied_seed_value = .{ .choice = "profile-seed" },
@@ -27718,7 +29517,6 @@ test "v17 coarse and v19 exact provenance round trip frozen bindings snapshots a
             .spec_revision = form_definition.tax_form_profile.spec_revision.?,
             .spec_hash = form_definition.tax_form_profile.spec_hash.?,
         },
-        .components = &components,
         .source_snapshots = &sources,
         .transaction_seeds = &seeds,
     };
@@ -27747,11 +29545,10 @@ test "v17 coarse and v19 exact provenance round trip frozen bindings snapshots a
         "2026-06-30",
         exact.forms_set_applicability_date,
     );
-    try std.testing.expectEqual(@as(usize, 1), exact.taxpayer_revisions.len);
+    try std.testing.expectEqual(@as(usize, 2), exact.taxpayer_revisions.len);
     try std.testing.expect(exact.taxpayer_year_revision != null);
     try std.testing.expect(exact.tax_form_profile_revision != null);
-    try std.testing.expectEqual(@as(usize, 2), exact.components.len);
-    try std.testing.expectEqual(@as(usize, 5), exact.source_snapshots.len);
+    try std.testing.expectEqual(@as(usize, 3), exact.source_snapshots.len);
     try std.testing.expectEqualSlices(
         u8,
         &binary_text,
@@ -27787,17 +29584,26 @@ test "v17 coarse and v19 exact provenance round trip frozen bindings snapshots a
         .profile_snapshot_digest = testSha256(201),
         .transaction_state_digest = testSha256(202),
     });
-    const exact_bindings = [_]ExactDraftRoleBindingWrite{.{
-        .role = "filer",
-        .instance_id = profile_id,
-        .profile_id = profile_id,
-        .profile_revision_id = "revision-1",
-        .profile_revision_sequence = 1,
-        // The v16 activity anchor lives only in the typed v19 component
-        // child, never in this legacy profile-revision FK.
-        .business_activity_id = null,
-        .provenance = "frozen exact profile revision",
-    }};
+    const exact_bindings = [_]ExactDraftRoleBindingWrite{
+        .{
+            .role = "filer",
+            .instance_id = profile_id,
+            .profile_id = profile_id,
+            .profile_revision_id = "revision-1",
+            .profile_revision_sequence = 1,
+            .business_activity_id = null,
+            .provenance = "frozen exact profile revision",
+        },
+        .{
+            .role = "spouse",
+            .instance_id = spouse_profile_id,
+            .profile_id = spouse_profile_id,
+            .profile_revision_id = "revision-1",
+            .profile_revision_sequence = 1,
+            .business_activity_id = null,
+            .provenance = "frozen exact spouse profile revision",
+        },
+    };
     const exact_provenance: ExactDraftProvenanceWrite = .{
         .owner_profile_id = write.owner_profile_id,
         .tax_year = write.tax_year,
@@ -27817,7 +29623,6 @@ test "v17 coarse and v19 exact provenance round trip frozen bindings snapshots a
         .taxpayer_revisions = write.taxpayer_revisions,
         .taxpayer_year_revision = write.taxpayer_year_revision,
         .tax_form_profile_revision = write.tax_form_profile_revision,
-        .components = write.components,
         .source_snapshots = write.source_snapshots,
         .transaction_seeds = write.transaction_seeds,
     };
@@ -27848,7 +29653,6 @@ test "v17 coarse and v19 exact provenance round trip frozen bindings snapshots a
         "taxpayer-year-r1",
         loaded_first.exact.taxpayer_year_revision.?.revision_id,
     );
-    try std.testing.expectEqual(@as(usize, 2), loaded_first.exact.components.len);
     try std.testing.expectEqual(
         TaxpayerYearIncomeTaxRateElection.graduated,
         loaded_first.exact.source_snapshots[1]
@@ -27972,7 +29776,6 @@ test "v17 migration leaves existing draft bytes and provenance explicitly legacy
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Legacy Draft", "2026-01-01"),
-        .{},
     );
     try store.createDraft(
         .{
@@ -28032,7 +29835,6 @@ test "atomic coarse draft provenance rolls back parent and remains single-shot" 
     try store.createProfileWithRevision(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Atomic Provenance", "2026-01-01"),
-        .{},
     );
     try store.createFormSet(profile_id, 2026, &.{.{
         .form_code = "2551Q",
@@ -28172,7 +29974,7 @@ test "v16 registration backfill preserves exact facts and ambiguous text for rev
             .ordinal = 2,
         },
     };
-    try store.createProfileWithRevision(
+    try store.createLegacyProfileWithRevisionForMigrationTest(
         .{ .id = profile_id },
         testRevision(profile_id, 0, "Registration Migration", "2026-01-01"),
         .{
@@ -28231,201 +30033,20 @@ test "v16 registration backfill preserves exact facts and ambiguous text for rev
         history.special_bases[0].value_text,
     );
 
-    var legacy = (try store.getCurrentRevision(allocator, profile_id)).?;
+    var legacy_revision = (try store.getCurrentRevision(allocator, profile_id)).?;
+    defer legacy_revision.deinit(allocator);
+    var legacy = (try legacy_registration_export.loadProfileRevisionComponents(
+        &store,
+        allocator,
+        profile_id,
+        legacy_revision.id,
+    )).?;
     defer legacy.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 1), legacy.business_activities.len);
     try std.testing.expectEqual(@as(usize, 3), legacy.registration_facts.len);
     try std.testing.expectEqualStrings(
         "VAT",
         legacy.registration_facts[0].value.tax_type,
-    );
-}
-
-test "registration stream rejects stale cross-owner and conflicting commits atomically" {
-    const allocator = std.testing.allocator;
-    var store = try Store.openMemory(allocator);
-    defer store.close();
-    const first_profile = "registration-owner-one";
-    const second_profile = "registration-owner-two";
-    try store.createProfileWithRevision(
-        .{ .id = first_profile },
-        testRevisionWithTin(
-            first_profile,
-            0,
-            "Registration Owner One",
-            "2026-01-01",
-            "123456789000",
-        ),
-        .{},
-    );
-    try store.createProfileWithRevision(
-        .{ .id = second_profile },
-        testRevisionWithTin(
-            second_profile,
-            0,
-            "Registration Owner Two",
-            "2026-01-01",
-            "987654321000",
-        ),
-        .{},
-    );
-    const activity = [_]RegistrationActivityRevisionWrite{.{
-        .anchor_id = "stable-primary",
-        .metadata = .{
-            .id = "owner-one-activity-v1",
-            .expected_component_sequence = 0,
-            .effective = testPeriod("2026-01-01", null),
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 1,
-        },
-        .line_of_business = "Consulting",
-    }};
-    const vat = [_]RegistrationObligationRevisionWrite{.{
-        .anchor_id = "vat",
-        .metadata = .{
-            .id = "owner-one-vat-v1",
-            .expected_component_sequence = 0,
-            .effective = testPeriod("2026-01-01", null),
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 2,
-        },
-        .kind = .vat,
-    }};
-    _ = try store.appendRegistrationCommit(.{
-        .profile_id = first_profile,
-        .expected_current_sequence = 0,
-        .activities = &activity,
-        .obligations = &vat,
-    });
-
-    const stale = [_]RegistrationActivityRevisionWrite{.{
-        .anchor_id = "second",
-        .metadata = .{
-            .id = "stale-registration-row",
-            .expected_component_sequence = 0,
-            .effective = testPeriod("2026-01-01", null),
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 3,
-        },
-        .line_of_business = "Stale",
-    }};
-    try std.testing.expectError(
-        Error.RegistrationStreamConflict,
-        store.appendRegistrationCommit(.{
-            .profile_id = first_profile,
-            .expected_current_sequence = 0,
-            .activities = &stale,
-        }),
-    );
-
-    const percentage = [_]RegistrationObligationRevisionWrite{.{
-        .anchor_id = "percentage",
-        .metadata = .{
-            .id = "owner-one-percentage-v1",
-            .expected_component_sequence = 0,
-            .effective = testPeriod("2026-03-01", null),
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 4,
-        },
-        .kind = .percentage_tax,
-    }};
-    try std.testing.expectError(
-        Error.RegistrationObligationConflict,
-        store.appendRegistrationCommit(.{
-            .profile_id = first_profile,
-            .expected_current_sequence = 1,
-            .obligations = &percentage,
-        }),
-    );
-    try std.testing.expectEqual(
-        @as(u32, 1),
-        try store.registrationStreamSequence(first_profile),
-    );
-    var after_conflict = try store.listRegistrationHistory(
-        allocator,
-        first_profile,
-    );
-    defer after_conflict.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 1), after_conflict.obligations.len);
-
-    const cross_owner = [_]RegistrationActivityRevisionWrite{.{
-        .anchor_id = "stable-primary",
-        .metadata = .{
-            .id = "owner-two-forged-v1",
-            .expected_component_sequence = 0,
-            .effective = testPeriod("2026-01-01", null),
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 5,
-            .supersedes_id = "owner-one-activity-v1",
-        },
-        .line_of_business = "Forged cross owner",
-    }};
-    try std.testing.expectError(
-        Error.RegistrationComponentConflict,
-        store.appendRegistrationCommit(.{
-            .profile_id = second_profile,
-            .expected_current_sequence = 0,
-            .activities = &cross_owner,
-        }),
-    );
-    try std.testing.expectEqual(
-        @as(u32, 0),
-        try store.registrationStreamSequence(second_profile),
-    );
-}
-
-test "classification revisions do not erase independent registration history" {
-    const allocator = std.testing.allocator;
-    var store = try Store.openMemory(allocator);
-    defer store.close();
-    const profile_id = "registration-classification";
-    try store.createProfileWithRevision(
-        .{ .id = profile_id },
-        testRevision(profile_id, 0, "Classification Test", "2026-01-01"),
-        .{},
-    );
-    const activity = [_]RegistrationActivityRevisionWrite{.{
-        .anchor_id = "preserved-activity",
-        .metadata = .{
-            .id = "preserved-activity-v1",
-            .expected_component_sequence = 0,
-            .effective = testPeriod("2026-01-01", null),
-            .source = .manual_entry,
-            .review_state = .confirmed,
-            .confirmed_at_unix_seconds = 1,
-        },
-        .line_of_business = "Preserved consulting",
-    }};
-    _ = try store.appendRegistrationCommit(.{
-        .profile_id = profile_id,
-        .expected_current_sequence = 0,
-        .activities = &activity,
-    });
-
-    var classification = testRevision(
-        profile_id,
-        1,
-        "Classification Test",
-        "2026-08-01",
-    );
-    classification.subject = .{ .individual = .{
-        .name = "Classification Test",
-        .classification = .pure_compensation,
-    } };
-    try store.appendRevision(classification, .{});
-
-    var history = try store.listRegistrationHistory(allocator, profile_id);
-    defer history.deinit(allocator);
-    try std.testing.expectEqual(@as(u32, 1), history.stream_sequence);
-    try std.testing.expectEqual(@as(usize, 1), history.activities.len);
-    try std.testing.expectEqualStrings(
-        "Preserved consulting",
-        history.activities[0].line_of_business,
     );
 }
 
@@ -28467,7 +30088,7 @@ fn v14PreservedRowidsForTest(store: *Store) ![8]i64 {
 }
 
 fn openLegacyStoreForTest(version: u32) !Store {
-    std.debug.assert(version >= 1 and version <= 17);
+    std.debug.assert(version >= 1 and version <= 25);
     var raw: ?*sqlite.sqlite3 = null;
     const flags = sqlite.SQLITE_OPEN_READWRITE |
         sqlite.SQLITE_OPEN_CREATE |
@@ -28512,13 +30133,24 @@ fn openLegacyStoreForTest(version: u32) !Store {
     if (version >= 15) try store.exec(schema_v15);
     if (version >= 16) try store.exec(schema_v16);
     if (version >= 17) try store.exec(schema_v17);
-    var set_version = try store.prepare(
-        \\INSERT INTO app_component_migrations(component, version)
-        \\VALUES ('tax_profile', ?);
-    );
-    defer set_version.deinit();
-    try set_version.bindInt64(1, version);
-    try set_version.expectDone();
+    const directly_created_version = @min(version, 17);
+    {
+        var set_version = try store.prepare(
+            \\INSERT INTO app_component_migrations(component, version)
+            \\VALUES ('tax_profile', ?);
+        );
+        defer set_version.deinit();
+        try set_version.bindInt64(1, directly_created_version);
+        try set_version.expectDone();
+    }
+    if (version >= 18) try store.migrateToV18();
+    if (version >= 19) try store.migrateToV19();
+    if (version >= 20) try store.migrateToV20();
+    if (version >= 21) try store.migrateToV21();
+    if (version >= 22) try store.migrateToV22();
+    if (version >= 23) try store.migrateToV23();
+    if (version >= 24) try store.migrateToV24();
+    if (version >= 25) try store.migrateToV25();
     return store;
 }
 
