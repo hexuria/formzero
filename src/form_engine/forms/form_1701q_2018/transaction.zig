@@ -173,6 +173,15 @@ pub const Slot = struct {
         );
     }
 
+    fn clearMissingValue(self: *Slot) void {
+        self.value = .missing;
+        // A union tag assignment may leave its inactive payload undefined on
+        // some target ABIs. `missing` is the zero-valued first tag, so wiping
+        // the complete representation preserves the semantic value while
+        // removing any displaced text bytes and padding.
+        sensitive_memory.wipeValue(Value, &self.value);
+    }
+
     /// Consumes and wipes both prepared inputs after installing their active
     /// semantic values. Callers must pass storage distinct from this slot.
     fn replaceText(
@@ -206,7 +215,7 @@ pub const Slot = struct {
 
     fn replaceMissing(self: *Slot) void {
         self.erasePayload();
-        self.value = .missing;
+        self.clearMissingValue();
         self.clearProfileProvenance();
     }
 };
