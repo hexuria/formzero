@@ -1,10 +1,16 @@
 # Tax-profile implementation plan
 
-> Superseding execution plan (2026-08-04):
+> TIN/branch scope update (2026-08-07): this file remains implementation
+> history for the shipped profile projection, Forms Set, and editor work. It is
+> not the execution authority for the proposed Taxpayer/Registration Unit and
+> Filing Planner migration; use the
+> [revised TIN/branch plan](TIN_BRANCH_IMPLEMENTATION_PLAN_2026-08-07.md).
+>
+> 2026-08-04 successor plan, now retained as historical execution evidence:
 > [Tax Profile and Tax Form Profile execution plan](TAX_PROFILE_AND_FORM_PROFILE_EXECUTION_PLAN_2026-08-04.md),
 > grounded by the [Tax Profile and Registration audit](TAX_PROFILE_AND_REGISTRATION_AUDIT_2026-08-04.md).
-> The older phases below are retained as implementation history; where they
-> conflict on typed year/form setup, the 2026-08-04 execution plan controls.
+> The older phases below are retained as implementation history. The current
+> precedence map is in this directory's [README](README.md).
 
 This plan is dependency-ordered. A later phase cannot weaken an earlier
 domain invariant merely to make UI wiring easier.

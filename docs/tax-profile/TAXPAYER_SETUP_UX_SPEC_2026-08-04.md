@@ -8,6 +8,14 @@ current runtime contract.
 Prompt: `docs/tax-profile/CLAUDE_FABLE_5_TAXPAYER_SETUP_UX_PROMPT_2026-08-04.md`
 Repository baseline: branch `gol/taxpayer-setup-ux-153451` at `2ff21cb`
 
+> Additional supersession (2026-08-07): do not implement this document's
+> separate-profile branch model, three-to-five-digit Branch Code rules, branch
+> auto-suggestion as durable identity, or branch-selected filing behavior. The
+> [multi-branch guide](TIN_BRANCH_PROFILE_AND_FILING_GUIDE_2026-08-07.md) and
+> [revised implementation plan](TIN_BRANCH_IMPLEMENTATION_PLAN_2026-08-07.md)
+> replace those sections with one Taxpayer, evidence-confirmed Registration
+> Units, and resolver-owned Filing Units and Return Coverage.
+
 Scope note: the two running-app screenshots referenced by the prompt were not
 readable from this environment (macOS per-app temp directories). Their content
 is treated exactly as the prompt's verified findings describe it: the Add flow

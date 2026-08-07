@@ -8,6 +8,12 @@
   Simplification implemented on 2026-08-05. Registration, activity, and tax-
   obligation setup below no longer governs the normal runtime workflow.
 
+> Status clarification (2026-08-07): the precedence table below records the
+> plan's 2026-08-04 execution context; it is not a current authority map. Use
+> the directory [README](README.md) and the
+> [revised TIN/branch plan](TIN_BRANCH_IMPLEMENTATION_PLAN_2026-08-07.md) for
+> current scope and precedence.
+
 ## Document status and precedence
 
 This document records the 2026-08-04 execution history. It is not current
@@ -16,11 +22,11 @@ four-layer ownership model.
 
 | Document | Status for this work |
 | --- | --- |
-| This plan | Current milestone order, product contract, acceptance gates, and stop conditions. |
+| This plan | Historical milestone order, product contract, acceptance gates, and stop conditions as proposed on 2026-08-04. |
 | [Companion audit](TAX_PROFILE_AND_REGISTRATION_AUDIT_2026-08-04.md) | Current defect/evidence baseline at `abd45c6`, including installed build-25 and later `/bir` evidence. |
 | [Taxpayer Setup UX Specification](TAXPAYER_SETUP_UX_SPEC_2026-08-04.md) | **Partially superseded.** The §13 verdict, decision D13, and later statements that reject a persistent year-scoped per-form setup layer do not govern this work. Its non-conflicting historical implementation evidence remains useful. |
 | [Tax-profile architecture](ARCHITECTURE.md) | Retained. Canonical taxpayer facts, named roles, owned projections, and immutable draft snapshots remain invariants. A Tax Form Profile selects/binds annual setup; it does not duplicate the taxpayer profile. |
-| [Earlier implementation plan](IMPLEMENTATION_PLAN.md) | Historical implementation baseline. This plan governs remaining/replacement slices, current gates, and completion claims where scope overlaps. |
+| [Earlier implementation plan](IMPLEMENTATION_PLAN.md) | Historical implementation baseline for the shipped profile/form-profile slices and their recorded gates. |
 | [Tax Form Library, Forms Set, and COR architecture](TAX_FORM_LIBRARY_AND_COR_ARCHITECTURE.md) and [interaction audit](TAX_FORM_LIBRARY_INTERACTION_AUDIT.md) | Retained as domain/history evidence. This plan governs the replacement Tax Profile view/edit, Registration browse/manage, and Tax Form Profile interactions. |
 
 No tax-profile docs index or README exists at the starting revision. These two

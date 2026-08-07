@@ -3,6 +3,14 @@
 Status: implemented yearly Forms Set baseline; COR workflow remains follow-up  
 Repository baseline reviewed: `main` at `895415d` on 2026-08-01
 
+> Filing-scope clarification (2026-08-07): Forms Set is the user's persisted
+> workspace preference for what the product surfaces. It is not registration
+> evidence and cannot create, hide, or prove a legal Filing Obligation. The
+> [multi-branch guide](TIN_BRANCH_PROFILE_AND_FILING_GUIDE_2026-08-07.md) and
+> [revised implementation plan](TIN_BRANCH_IMPLEMENTATION_PLAN_2026-08-07.md)
+> control where this document discusses taxpayer identity, Branch Codes,
+> Registration Units, or filing scope.
+
 The yearly Forms Set and profile-calendar consolidation described in the
 2026-08-04 implementation is now the UI contract: yearly sets are created
 once, edited from Profile Settings → Tax Forms, and filtered into the profile
@@ -13,9 +21,9 @@ Tax Form Library management entry point are superseded.
 ## Purpose
 
 This document defines how one user can maintain multiple taxpayer profiles,
-choose which BIR forms apply to each profile, browse and filter the Tax Form
-Library, and optionally populate profile facts and form registrations from an
-uploaded BIR Certificate of Registration (COR).
+choose which form workspaces to surface for each profile, browse and filter the
+Tax Form Library, and optionally populate profile facts and form registrations
+from an uploaded BIR Certificate of Registration (COR).
 
 The intended product flow is:
 
@@ -48,8 +56,10 @@ Application user/account
 ```
 
 The base tax profile answers, "Who is the taxpayer?" The Forms Set answers,
-"Which forms currently apply to this taxpayer?" A form workspace answers,
-"What is being prepared for this filing period?"
+"Which form workspaces should this user see?" A Resolved Filing Plan answers,
+"What is the evidenced obligation, filing unit, and return coverage for this
+period?" A form workspace answers, "What is being prepared for this filing
+period?"
 
 This separation avoids duplicated TIN, name, address, RDO, registration, and
 contact data drifting between form-specific copies of the same taxpayer.
