@@ -1,5 +1,14 @@
 # Tax-profile architecture
 
+> TIN/branch target notice (2026-08-07): the
+> [multi-branch guide](TIN_BRANCH_PROFILE_AND_FILING_GUIDE_2026-08-07.md) and
+> [revised implementation plan](TIN_BRANCH_IMPLEMENTATION_PLAN_2026-08-07.md)
+> supersede any profile-per-branch, generated Branch Code, or
+> Forms-Set-as-obligation assumption. This document remains the contract for
+> currently implemented reusable-field ownership, form-role projection, and
+> immutable draft snapshots. The proposed Taxpayer/Registration Unit model is
+> not implemented merely because it is documented.
+
 > Current execution contract (2026-08-05): the current sections of the
 > [Form-profile ownership matrix](FORM_PROFILE_OWNERSHIP_MATRIX_2026-08-04.md)
 > and this document define the simplified Base Tax Profile, exact Tax Form
