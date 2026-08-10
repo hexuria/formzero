@@ -22,6 +22,16 @@ const news_feed = @import("news/feed.zig");
 const news_store = @import("news/store.zig");
 const news_ui = @import("news/ui_state.zig");
 const profile_ui = @import("tax_profile/ui_state.zig");
+const registration_domain = @import("tax_profile/registration_domain.zig");
+const registration_editor = @import("tax_profile/registration_editor_ui.zig");
+const registration_evidence_store = @import("tax_profile/registration_evidence_store.zig");
+const registration_ledger = @import("tax_profile/registration_ledger.zig");
+const registration_migration_inventory = @import("tax_profile/registration_migration_inventory.zig");
+const registration_ui = @import("tax_profile/registration_ui.zig");
+const registration_workspace = @import(
+    "tax_profile/registration_workspace.zig",
+);
+const filing_projection = @import("filing/projection_context.zig");
 const rdo_reference = @import("tax_profile/rdo_reference.zig");
 const profile_store = @import("tax_profile/store.zig");
 const profile_persistence = @import("tax_profile/persistence_adapter.zig");
@@ -266,6 +276,7 @@ pub const DashboardSection = enum {
 
 pub const ProfileSetupSection = enum {
     tax_profile,
+    reg_filing,
     tax_forms,
     email,
 };
@@ -278,6 +289,10 @@ const PendingProfileNavigation = union(enum) {
     taxpayer_slot: usize,
     new_taxpayer,
     add_branch,
+    registration_taxpayer: usize,
+    registration_unit: usize,
+    registration_create_taxpayer,
+    registration_create_branch,
 };
 
 const PendingTaxFormProfileNavigation = union(enum) {
@@ -332,6 +347,7 @@ const ProfileCalendarExportStatus = enum {
     nothing_to_add,
     build_failed,
     writing,
+    saved,
     opening,
     opened,
     write_failed,
@@ -1495,6 +1511,48 @@ pub const ProfileRdoOptionRow = struct {
 /// The Tax Form Library's period picker is a display/opening context. It
 /// never changes the authoritative Forms Set; it only narrows the cadence
 /// cards shown for the selected taxpayer and tax year.
+pub const RegistrationMutationGateReason = registration_editor.MutationGateReason;
+pub const RegistrationMutationGateInputs = registration_editor.MutationGateInputs;
+pub const RegistrationMutationGate = registration_editor.MutationGate;
+
+fn registrationMutationGateForStore(
+    allocator: std.mem.Allocator,
+    store: *profile_store.Store,
+    fixture_preview_requested: bool,
+    data_directory_explicit: bool,
+    database_origin: profile_store.RegistrationFixtureDatabaseOrigin,
+) RegistrationMutationGate {
+    var inputs: RegistrationMutationGateInputs = .{
+        .fixture_preview_requested = fixture_preview_requested,
+        .data_directory_explicit = data_directory_explicit,
+    };
+    if (!fixture_preview_requested or !data_directory_explicit) {
+        return RegistrationMutationGate.evaluate(inputs);
+    }
+
+    var inventory = registration_migration_inventory.collect(
+        allocator,
+        store,
+    ) catch return RegistrationMutationGate.evaluate(inputs);
+    defer inventory.deinit(allocator);
+
+    inputs.inventory_collected = true;
+    inputs.inventory_verified_no_writes = inventory.read_only_proof.verifiedNoWrites();
+    inputs.no_legacy_profiles = inventory.profiles.len == 0;
+    if (!inputs.inventory_verified_no_writes or !inputs.no_legacy_profiles) {
+        return RegistrationMutationGate.evaluate(inputs);
+    }
+
+    switch (store.ensureRegistrationFixturePreviewOwnership(database_origin) catch
+        return RegistrationMutationGate.evaluate(inputs)) {
+        .claimed_empty_ledger, .already_claimed => inputs.fixture_ownership_verified = true,
+        .legacy_profiles_present => inputs.no_legacy_profiles = false,
+        .unowned_existing_database => inputs.unowned_existing_database = true,
+        .unowned_target_rows => inputs.unowned_target_rows = true,
+    }
+    return RegistrationMutationGate.evaluate(inputs);
+}
+
 pub const Model = struct {
     page: Page = .global_dashboard,
     profileEditorOrigin: Page = .global_dashboard,
@@ -1526,6 +1584,20 @@ pub const Model = struct {
     newsAllocator: ?std.mem.Allocator = null,
     newsNotices: ?news_domain.NoticeList = null,
     taxProfiles: profile_ui.State = .{},
+    registrationLedger: ?registration_ledger.TaxpayerRegistrationLedger = null,
+    registrationMutationGate: RegistrationMutationGate = .{},
+    registrationMutationBlocked: bool = false,
+    fixturePreviewSession: bool = false,
+    registrationIo: ?std.Io = null,
+    registrationEvidenceDataDir: []const u8 = "",
+    registrationEvidenceDataDirectory: ?std.Io.Dir = null,
+    registrationWorkspace: registration_workspace.State = .{},
+    resolved2550QPreview: ?registration_workspace.Resolved2550QPreviewSnapshot = null,
+    registrationPreviewReturnFocus: bool = false,
+    registrationPreviewOpenerIdentity: u64 = 0x5250_4f50_0000_0001,
+    profileSetupScrollOffset: f32 = 0,
+    registrationAsOf: ?registration_domain.Date = null,
+    registrationEditor: registration_editor.State = .{},
     formProfiles: form_ui.State = .{},
     taxFormProfilePage: tax_form_profile_ui.State = .{},
     taxpayerYearPage: taxpayer_year_ui.State = .{},
@@ -2141,7 +2213,12 @@ pub const Model = struct {
         return switch (self.page) {
             .global_dashboard => "Global Dashboard",
             .taxpayer_dashboard => "Taxpayer Dashboard",
-            .profile_setup => "Taxpayer Profile",
+            .profile_setup => switch (self.profileSetupSection) {
+                .tax_profile => "Taxpayer Profile",
+                .reg_filing => "Registration & Filing",
+                .tax_forms => "Forms Set",
+                .email => "Email Settings",
+            },
             .tax_form_profile => "Tax Form Profile",
             .import_data => "Import Data",
             .background_tasks => "Background Tasks",
@@ -2341,6 +2418,11 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
+        if (self.resolved2550QPreviewContext()) |context| {
+            const tin = context.filerTin() catch return "";
+            const output = arena.alloc(u8, 24) catch return "";
+            return tin.write(output) catch "";
+        }
         return self.renderedFormTin(.filer, arena);
     }
 
@@ -2348,6 +2430,14 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
+        if (self.resolved2550QPreviewContext()) |context| {
+            const quarter = ((context.civil_period.from.month - 1) / 3) + 1;
+            return std.fmt.allocPrint(
+                arena,
+                "Quarter {d} · {d}",
+                .{ quarter, context.civil_period.from.year },
+            ) catch "Resolved quarter";
+        }
         const period = self.formProfiles.filingPeriod() orelse
             form_period.FilingPeriod{ .quarterly = .{
                 .tax_year = self.formProfiles.taxYear(),
@@ -2362,6 +2452,13 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
+        if (self.resolved2550QPreviewContext()) |context| {
+            return std.fmt.allocPrint(
+                arena,
+                "{d}",
+                .{context.civil_period.from.year},
+            ) catch "";
+        }
         const period = self.formProfiles.filingPeriod() orelse return "";
         return std.fmt.allocPrint(arena, "{d}", .{period.taxYear()}) catch "";
     }
@@ -2385,6 +2482,14 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
+        if (self.resolved2550QPreviewContext()) |context| {
+            const date = context.civil_period.from;
+            return std.fmt.allocPrint(
+                arena,
+                "{d:0>2} / {d:0>2} / {d:0>4}",
+                .{ date.month, date.day, date.year },
+            ) catch "";
+        }
         if (self.formProfiles.formRevision()) |revision| {
             if (std.mem.eql(u8, revision.code.asSlice(), "2551Q")) {
                 const date = self.percentageTax.taxablePeriodStart() catch
@@ -2414,6 +2519,14 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
+        if (self.resolved2550QPreviewContext()) |context| {
+            const date = context.civil_period.until;
+            return std.fmt.allocPrint(
+                arena,
+                "{d:0>2} / {d:0>2} / {d:0>4}",
+                .{ date.month, date.day, date.year },
+            ) catch "";
+        }
         if (self.formProfiles.formRevision()) |revision| {
             if (std.mem.eql(u8, revision.code.asSlice(), "2551Q")) {
                 const date = self.percentageTax.taxablePeriodEnd() catch
@@ -2432,22 +2545,37 @@ pub const Model = struct {
     }
 
     pub fn formFilerRdo(self: *const Model) []const u8 {
+        if (self.resolved2550QPreviewContext()) |context| {
+            return context.rdoCode() orelse "";
+        }
         return self.formProfiles.filerText(.rdo_code);
     }
 
     pub fn formFilerTaxpayerName(self: *const Model) []const u8 {
+        if (self.resolved2550QPreviewActive()) {
+            return "Not captured in this preview-only slice";
+        }
         return self.formProfiles.filerText(.taxpayer_name);
     }
 
     pub fn formFilerRegisteredName(self: *const Model) []const u8 {
+        if (self.resolved2550QPreviewActive()) {
+            return "Not captured in this preview-only slice";
+        }
         return self.formProfiles.filerText(.registered_name);
     }
 
     pub fn formFilerRegisteredAddress(self: *const Model) []const u8 {
+        if (self.resolved2550QPreviewContext()) |context| {
+            return context.registeredAddress();
+        }
         return self.filerContactText(.registered_address);
     }
 
     pub fn formFilerZipCode(self: *const Model) []const u8 {
+        if (self.resolved2550QPreviewContext()) |context| {
+            return context.zipCode() orelse "";
+        }
         return self.filerContactText(.zip_code);
     }
 
@@ -2464,10 +2592,14 @@ pub const Model = struct {
     }
 
     pub fn formFilerContactNumber(self: *const Model) []const u8 {
+        if (self.resolved2550QPreviewContext()) |context| {
+            return context.contactNumber() orelse "";
+        }
         return self.filerContactText(.contact_number);
     }
 
     pub fn formFilingContactEditable(self: *const Model) bool {
+        if (self.resolved2550QPreviewActive()) return false;
         return self.percentageTax.editable;
     }
 
@@ -2493,6 +2625,9 @@ pub const Model = struct {
     }
 
     pub fn formFilerEmailAddress(self: *const Model) []const u8 {
+        if (self.resolved2550QPreviewContext()) |context| {
+            return context.emailAddress() orelse "";
+        }
         return self.filerContactText(.email_address);
     }
 
@@ -2527,6 +2662,9 @@ pub const Model = struct {
     }
 
     pub fn formFilerEoptTier(self: *const Model) []const u8 {
+        if (self.resolved2550QPreviewActive()) {
+            return "Not captured in this preview-only slice";
+        }
         return self.formProfiles.filerText(.eopt_tier);
     }
 
@@ -3142,6 +3280,9 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
+        if (self.resolved2550QPreviewActive()) {
+            return "Resolved Filing Unit preview · BIR Form 2550Q";
+        }
         const revision = self.formProfiles.formRevision() orelse
             return "Tax profile prefill";
         return std.fmt.allocPrint(
@@ -3155,6 +3296,9 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const u8 {
+        if (self.resolved2550QPreviewActive()) {
+            return "Read-only planner snapshot · no draft or filing artifact retained";
+        }
         if (self.formProfiles.draftStatus()) |status| {
             return std.fmt.allocPrint(
                 arena,
@@ -3181,10 +3325,14 @@ pub const Model = struct {
     }
 
     pub fn formProfileNotice(self: *const Model) []const u8 {
+        if (self.resolved2550QPreviewActive()) {
+            return "TIN, Branch Code, RDO, address, contact details, and period come only from the exact resolved Filing Unit projection. Save, validation, print, and filing remain disabled.";
+        }
         return self.formProfiles.noticeText();
     }
 
     pub fn formProfileCanSaveDraft(self: *const Model) bool {
+        if (self.resolved2550QPreviewActive()) return false;
         if (self.formProfiles.saveDisabled()) return false;
         const revision = self.formProfiles.formRevision() orelse return false;
         if (std.mem.eql(u8, revision.code.asSlice(), "2551Q")) {
@@ -3242,6 +3390,9 @@ pub const Model = struct {
     }
 
     pub fn profileEditorTitle(self: *const Model) []const u8 {
+        if (self.profileRegistrationFilingActive()) {
+            return "Taxpayer Registration Workspace";
+        }
         return switch (self.taxProfiles.profileMode()) {
             .creating => "Create Taxpayer Profile",
             .viewing => "Tax Profile",
@@ -3278,7 +3429,27 @@ pub const Model = struct {
     }
 
     pub fn profileSaveDisabled(self: *const Model) bool {
-        return self.taxProfiles.saveDisabled();
+        return self.profileLegacyIdentityReadOnly() or
+            self.taxProfiles.saveDisabled();
+    }
+
+    /// The canonical fixture is an explicit cutover rehearsal. While it is
+    /// requested, the legacy ProfileId-based identity editor must remain
+    /// write-frozen so one process cannot author two competing identity
+    /// models in the same database.
+    pub fn profileLegacyIdentityReadOnly(self: *const Model) bool {
+        return self.registrationMutationGate.enabled();
+    }
+
+    pub fn profileLegacyIdentityReadOnlyHelp(_: *const Model) []const u8 {
+        return "Legacy Taxpayer Profile identity writes are paused for this cutover fixture. Use Registration & Filing for canonical Taxpayer and Registration Unit records; Forms Set remains a separate workspace preference.";
+    }
+
+    pub fn profileNewTaxpayerActionLabel(self: *const Model) []const u8 {
+        return if (self.profileLegacyIdentityReadOnly())
+            "Open registration workspace"
+        else
+            "Add taxpayer profile";
     }
 
     pub fn profileCancelDisabled(self: *const Model) bool {
@@ -3295,7 +3466,9 @@ pub const Model = struct {
     }
 
     pub fn profileEditorActionsVisible(self: *const Model) bool {
-        return (self.profileTaxActive() and self.profileTaxEditorVisible()) or
+        return (self.profileTaxActive() and
+            !self.profileLegacyIdentityReadOnly() and
+            self.profileTaxEditorVisible()) or
             self.profileEmailActive();
     }
 
@@ -3305,6 +3478,12 @@ pub const Model = struct {
 
     pub fn profileDirtyNavigationTitle(self: *const Model) []const u8 {
         if (self.pendingProfileNavigation) |pending| switch (pending) {
+            .registration_taxpayer => return self.registrationEditor
+                .discardPrompt(.{ .taxpayer = 0 }).title,
+            .registration_unit => return self.registrationEditor
+                .discardPrompt(.{ .registration_unit = 0 }).title,
+            .registration_create_taxpayer => return "Discard this Registration workspace draft?",
+            .registration_create_branch => return "Discard this evidence draft?",
             .profile_view => return "Discard all changes?",
             else => {},
         };
@@ -3313,6 +3492,12 @@ pub const Model = struct {
 
     pub fn profileDirtyNavigationBody(self: *const Model) []const u8 {
         if (self.pendingProfileNavigation) |pending| switch (pending) {
+            .registration_taxpayer => return self.registrationEditor
+                .discardPrompt(.{ .taxpayer = 0 }).body,
+            .registration_unit => return self.registrationEditor
+                .discardPrompt(.{ .registration_unit = 0 }).body,
+            .registration_create_taxpayer => return "Creating a Taxpayer will select its pending-evidence head office. Discard the unfinished branch and evidence drafts first, or stay here to keep editing.",
+            .registration_create_branch => return "Creating the pending branch will select it. Discard the current Registration Unit evidence draft first, or stay here to keep editing.",
             .profile_view => return "Revert all unsaved Tax Profile changes and return to Tax Profile view mode.",
             else => {},
         };
@@ -3321,6 +3506,12 @@ pub const Model = struct {
 
     pub fn profileDiscardNavigationLabel(self: *const Model) []const u8 {
         if (self.pendingProfileNavigation) |pending| switch (pending) {
+            .registration_taxpayer => return self.registrationEditor
+                .discardPrompt(.{ .taxpayer = 0 }).action_label,
+            .registration_unit => return self.registrationEditor
+                .discardPrompt(.{ .registration_unit = 0 }).action_label,
+            .registration_create_taxpayer => return "Discard drafts and create Taxpayer",
+            .registration_create_branch => return "Discard evidence and create branch",
             .profile_view => return "Discard and return to Tax Profile",
             else => {},
         };
@@ -3329,6 +3520,95 @@ pub const Model = struct {
 
     pub fn profileReadColumns(self: *const Model) u8 {
         return if (self.isConstrainedViewport()) 1 else 2;
+    }
+
+    pub fn profileVersioningHelp(self: *const Model) []const u8 {
+        if (self.profileRegistrationFilingActive()) {
+            return "Review canonical Taxpayers, Registration Units, evidence, and resolved filing scope without changing legacy profile records.";
+        }
+        return "Reusable tax facts are versioned once and projected into each qualified form. Existing filing snapshots never change when a profile is revised.";
+    }
+
+    pub fn profileIdentityHelp(_: *const Model) []const u8 {
+        return "This legacy-compatible profile revision stores reusable taxpayer facts. In the canonical workspace, RDO belongs to the effective Registration Unit, not the Taxpayer.";
+    }
+
+    pub fn profileClassificationHelp(_: *const Model) []const u8 {
+        return "Individual is the Taxpayer Type. Classification records whether this person earns compensation, business or professional income, or both.";
+    }
+
+    pub fn profileOptionalFactsHelp(_: *const Model) []const u8 {
+        return "Leave fields empty when they do not truthfully apply. Forms requiring a missing capability will reject this profile.";
+    }
+
+    pub fn regCanonicalHelp(_: *const Model) []const u8 {
+        return "This canonical workspace owns Taxpayers, Registration Units, reviewed registration evidence, and filing-scope decisions. Legacy Taxpayer Profile context is shown separately and never changes these records implicitly.";
+    }
+
+    pub fn regCreateHelp(_: *const Model) []const u8 {
+        return "Creates one Taxpayer with pending head-office candidate 00000. Reviewed BIR registration evidence must confirm it.";
+    }
+
+    pub fn regBranchHelp(_: *const Model) []const u8 {
+        return "Confirm the actual code from reviewed BIR registration evidence. This suggestion is not a BIR assignment.";
+    }
+
+    pub fn regEvidenceHelp(self: *const Model) []const u8 {
+        if (self.regVatRegistrationRepairVisible()) {
+            return "Enter the taxpayer TIN exactly as shown on the reviewed evidence. It must match the selected Taxpayer; only the active VAT fact is recorded, and identity, Registration Unit, Branch Code, RDO, and contact facts remain unchanged.";
+        }
+        return "Facts reviewed on the selected evidence are saved together. Before anything is accepted, the app verifies the selected bytes and creates a protected local copy.";
+    }
+
+    pub fn regDateHelp(self: *const Model) []const u8 {
+        if (self.regVatRegistrationRepairVisible()) {
+            return "Use the exact VAT registration effective date shown by the evidence; it may equal the Registration Unit effective date.";
+        }
+        return "Use the exact effective date shown by the evidence. It may equal the selected revision date and is never shifted automatically.";
+    }
+
+    pub fn regReadinessHelp(_: *const Model) []const u8 {
+        return "The explicitly gated, session-only fixture can open the exact resolved Filing Unit in a read-only 2550Q preview. It creates no draft or filing artifact and never proves fileability, legal obligation, or release readiness. Forms Set remains only a workspace preference.";
+    }
+
+    pub fn regRepairHelp(_: *const Model) []const u8 {
+        return "Resolve each gap in its owning workflow. For missing VAT evidence, select the confirmed head office (00000); unsupported repairs remain Review Required.";
+    }
+
+    pub fn regLegacyHelp(_: *const Model) []const u8 {
+        return "This read-only legacy Taxpayer Profile context stays separate; no canonical Taxpayer or Registration Unit is inferred.";
+    }
+
+    pub fn profileFormsSetHelp(_: *const Model) []const u8 {
+        return "Choose which BIR forms are available in this workspace for each tax year. This preference does not prove registration or create a filing obligation.";
+    }
+
+    pub fn profileFormsUnsavedHelp(_: *const Model) []const u8 {
+        return "Yearly form preferences belong to a saved taxpayer workspace. Save this taxpayer, then return here to choose the available forms.";
+    }
+
+    pub fn profileFormsConflictHelp(_: *const Model) []const u8 {
+        return "Your choices are still here. Review the saved setup, then keep or change it.";
+    }
+
+    pub fn profileFormsDraftHelp(_: *const Model) []const u8 {
+        return "Start from scratch, or copy the forms already set up for another year.";
+    }
+
+    pub fn profileFormsInheritanceHelp(_: *const Model) []const u8 {
+        return "Filings, drafts, payments, deadlines, COR files, and email settings never copy between years.";
+    }
+
+    pub fn profileFormsChangeHelp(_: *const Model) []const u8 {
+        return "Records when this year's workspace preferences changed. The current calendar uses them for reference only; they do not prove an obligation.";
+    }
+
+    pub fn profileFormsReferenceHelp(_: *const Model) []const u8 {
+        return "Recorded only as a workspace preference. Calendar entries remain reference-only until Filing Planner resolves an obligation.";
+    }
+
+    pub fn profileEmailSecretHelp(_: *const Model) []const u8 {
+        return "Mailbox credentials are operational secrets, not reusable tax facts. They are not stored in tax-profile revision tables.";
     }
 
     pub fn profileNoticeVisible(self: *const Model) bool {
@@ -4460,7 +4740,8 @@ pub const Model = struct {
     }
 
     pub fn profileCanAddBranch(self: *const Model) bool {
-        return self.taxProfiles.canAddBranch();
+        return !self.profileLegacyIdentityReadOnly() and
+            self.taxProfiles.canAddBranch();
     }
 
     pub fn profileBranchBannerTitle(
@@ -4705,7 +4986,7 @@ pub const Model = struct {
 
     pub fn profileFormsModeDescription(self: *const Model) []const u8 {
         return if (self.formsManageMode())
-            "Choose which forms apply to this taxpayer. Changes stay staged until Save."
+            "Choose which forms are available in this workspace. This preference does not prove registration or create a filing obligation. Changes stay staged until Save."
         else
             "Choose a month, quarter, annual return, or on-demand filing to open that exact workspace.";
     }
@@ -5574,6 +5855,7 @@ pub const Model = struct {
             .forms => "Back to Tax Form Library",
             .profile_settings => switch (self.taxFormProfileReturnProfileSection) {
                 .tax_profile => "Back to Tax Profile",
+                .reg_filing => "Back to Registration & Filing",
                 .tax_forms => "Back to Forms Set",
                 .email => "Back to Email Settings",
             },
@@ -6498,8 +6780,906 @@ pub const Model = struct {
         return self.profileSetupSection == .tax_profile;
     }
 
+    pub fn profileRegistrationFilingActive(self: *const Model) bool {
+        return self.profileSetupSection == .reg_filing;
+    }
+
+    fn registrationFixturePreviewAccessEnabled(self: *const Model) bool {
+        return self.registrationMutationGate.enabled();
+    }
+
+    fn resolved2550QPreviewScope(
+        self: *const Model,
+    ) ?*const registration_workspace.Resolved2550QPreviewSnapshot {
+        if (!self.registrationFixturePreviewAccessEnabled()) return null;
+        if (self.page != .form_2550q) return null;
+        return if (self.resolved2550QPreview) |*snapshot| snapshot else null;
+    }
+
+    fn resolved2550QPreviewContext(
+        self: *const Model,
+    ) ?*const filing_projection.FilingProjectionContext {
+        const snapshot = self.resolved2550QPreviewScope() orelse return null;
+        return &snapshot.projection_context;
+    }
+
+    pub fn resolved2550QPreviewActive(self: *const Model) bool {
+        return self.resolved2550QPreviewContext() != null;
+    }
+
+    pub fn form2550QStateLabel(self: *const Model) []const u8 {
+        return if (self.resolved2550QPreviewActive()) "Preview only" else "Draft";
+    }
+
+    pub fn form2550QStateTone(self: *const Model) []const u8 {
+        return if (self.resolved2550QPreviewActive()) "outline" else "secondary";
+    }
+
+    pub fn preview2550QCoverage(
+        self: *const Model,
+    ) []const registration_workspace.CoverageRow {
+        const snapshot = self.resolved2550QPreviewScope() orelse return &.{};
+        return snapshot.coverageRows();
+    }
+
+    pub fn preview2550QSourceRecords(
+        self: *const Model,
+    ) []const registration_workspace.SourceRecordRow {
+        const snapshot = self.resolved2550QPreviewScope() orelse return &.{};
+        return snapshot.sourceRecordRows();
+    }
+
+    pub fn preview2550QSourceRecordsEmpty(self: *const Model) bool {
+        return self.preview2550QSourceRecords().len == 0;
+    }
+
+    pub fn preview2550QSourceReviewRequired(self: *const Model) bool {
+        const snapshot = self.resolved2550QPreviewScope() orelse return false;
+        return snapshot.source_review_required_count != 0;
+    }
+
+    pub fn preview2550QSourceSummary(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const snapshot = self.resolved2550QPreviewScope() orelse
+            return "No source-record filter was captured.";
+        const count = snapshot.source_row_count;
+        return std.fmt.allocPrint(
+            arena,
+            "{d} explicitly attributed source record{s} matched the selected Registration Unit and filing period. This index does not populate or filter the static monetary and schedule rows below.",
+            .{ count, if (count == 1) "" else "s" },
+        ) catch "Source-record filter captured.";
+    }
+
+    pub fn preview2550QSourceReviewLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const snapshot = self.resolved2550QPreviewScope() orelse return "";
+        const count = snapshot.source_review_required_count;
+        if (count == 0) return "";
+        return std.fmt.allocPrint(
+            arena,
+            "Review Required — {d} source record{s} remained legacy-unknown, invalid, or outside the loaded capacity and were not assigned from workspace selection.",
+            .{ count, if (count == 1) "" else "s" },
+        ) catch "Review Required — unresolved Source Attribution was excluded.";
+    }
+
+    pub fn preview2550QRegistrationEvidence(
+        self: *const Model,
+    ) []const registration_workspace.ReviewedEvidenceRow {
+        const snapshot = self.resolved2550QPreviewScope() orelse return &.{};
+        return snapshot.reviewedEvidenceRows();
+    }
+
+    pub fn preview2550QPolicyEvidence(
+        self: *const Model,
+    ) []const registration_workspace.PolicyEvidenceRow {
+        const snapshot = self.resolved2550QPreviewScope() orelse return &.{};
+        return snapshot.policyEvidenceRows();
+    }
+
+    pub fn preview2550QIdentity(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const snapshot = self.resolved2550QPreviewScope() orelse
+            return "Not captured";
+        const context = &snapshot.projection_context;
+        const digits = context.taxpayer_identity.tin_root.asDigits();
+        const unit = &snapshot.source_workspace_unit;
+        return std.fmt.allocPrint(
+            arena,
+            "Taxpayer TIN root ***-***-{s} · Selected source-record filter (view only): {s} {s}, {s}, RDO {s} · Resolved filer: Branch Code {s}, RDO {s}",
+            .{
+                digits[6..9],
+                unit.kindLabel(),
+                unit.codeLabel(),
+                unit.statusLabel(),
+                unit.rdoLabel(),
+                context.filing_branch_code.asDigits(),
+                context.rdoCode() orelse "Not recorded",
+            },
+        ) catch "Resolved preview identity unavailable";
+    }
+
+    pub fn preview2550QScope(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const snapshot = self.resolved2550QPreviewScope() orelse
+            return "Not resolved";
+        const scope = switch (snapshot.scope_category) {
+            .head_office_consolidated => "Head-office consolidated",
+        };
+        return std.fmt.allocPrint(
+            arena,
+            "{s} · {d} covered Registration Unit{s}",
+            .{
+                scope,
+                snapshot.coverage_count,
+                if (snapshot.coverage_count == 1) "" else "s",
+            },
+        ) catch scope;
+    }
+
+    pub fn preview2550QEvidence(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const snapshot = self.resolved2550QPreviewScope() orelse
+            return "Not captured";
+        return std.fmt.allocPrint(
+            arena,
+            "Policy revision {s} · {d} reviewed policy source{s} · {d} accepted registration evidence binding{s}",
+            .{
+                snapshot.policy_revision_id.asSlice(),
+                snapshot.policy_evidence_count,
+                if (snapshot.policy_evidence_count == 1) "" else "s",
+                snapshot.reviewed_evidence_binding_count,
+                if (snapshot.reviewed_evidence_binding_count == 1) "" else "s",
+            },
+        ) catch "Policy and evidence details unavailable";
+    }
+
+    pub fn preview2550QReadiness(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const snapshot = self.resolved2550QPreviewScope() orelse
+            return "Not resolved";
+        const editor = switch (snapshot.policy_capability) {
+            .editor_supported => "Editor supported",
+            .reference_only => "Reference only",
+            .unsupported => "Editor unsupported",
+        };
+        const filing = switch (snapshot.filing_capability) {
+            .not_fileable => "Not fileable",
+            .fileable => "Fileable",
+        };
+        const venue = switch (snapshot.filing_venue_resolution) {
+            .not_resolved_by_scope => "filing venue not resolved by scope",
+            .review_required => "filing venue Review Required",
+        };
+        return std.fmt.allocPrint(
+            arena,
+            "{s} · {s} · {s} · validated decision {s}. Preview snapshot only; no immutable draft scope was retained.",
+            .{ editor, filing, venue, &snapshot.decision_hash_text },
+        ) catch filing;
+    }
+
+    pub fn regResolved2550QPreviewDisabled(self: *const Model) bool {
+        if (!self.registrationFixturePreviewAccessEnabled()) return true;
+        return self.registrationWorkspace.resolvedProjectionContext() == null;
+    }
+
+    pub fn regResolved2550QPreviewOpenerAutofocus(self: *const Model) bool {
+        return self.registrationPreviewReturnFocus or
+            (self.page == .profile_setup and
+                self.profileRegistrationFilingActive() and
+                self.regConfirmationActionVisible() and
+                self.registrationActionSucceeded() and
+                !self.regResolved2550QPreviewDisabled());
+    }
+
     pub fn profileTaxFormsActive(self: *const Model) bool {
         return self.profileSetupSection == .tax_forms;
+    }
+
+    pub fn profileTaxTabLabel(self: *const Model) []const u8 {
+        return if (self.constrainedLayout()) "Profile" else "Taxpayer Profile";
+    }
+
+    pub fn profileRegistrationTabLabel(self: *const Model) []const u8 {
+        return if (self.constrainedLayout())
+            "Scope"
+        else
+            "Registration & Filing";
+    }
+
+    pub fn profileTaxFormsTabLabel(self: *const Model) []const u8 {
+        return if (self.constrainedLayout()) "Forms" else "Forms Set";
+    }
+
+    pub fn profileEmailTabLabel(self: *const Model) []const u8 {
+        return if (self.constrainedLayout()) "Email" else "Email Settings";
+    }
+
+    pub fn regCanonicalMutationsDisabled(self: *const Model) bool {
+        return !self.registrationMutationGate.enabled();
+    }
+
+    pub fn regCanonicalMutationsEnabled(self: *const Model) bool {
+        return self.registrationMutationGate.enabled();
+    }
+
+    pub fn regRegistrationEvidenceAuthoringVisible(self: *const Model) bool {
+        return self.regCanonicalMutationsEnabled() and
+            self.regRegistrationEvidenceActionVisible();
+    }
+
+    pub fn regCreateTaxpayerDisabled(self: *const Model) bool {
+        return self.regCanonicalMutationsDisabled() or
+            self.registrationWorkspace.taxpayerCreationAtCapacity();
+    }
+
+    pub fn regCreateBranchDisabled(self: *const Model) bool {
+        return self.regCanonicalMutationsDisabled() or
+            self.registrationWorkspace.branchCreationAtCapacity();
+    }
+
+    pub fn regCanonicalMutationGateTitle(self: *const Model) []const u8 {
+        return if (self.registrationMutationGate.enabled())
+            "Ephemeral fixture writes enabled"
+        else
+            "Read-only registration preview";
+    }
+
+    pub fn regCanonicalMutationGateHelp(self: *const Model) []const u8 {
+        return switch (self.registrationMutationGate.reason) {
+            .enabled => "Canonical registration changes are session-only in memory. Reviewed evidence copies remain inside this marked fixture-preview directory.",
+            .fixture_preview_disabled => "Taxpayer and Registration Unit records are read-only. Set the explicit fixture-preview environment only in an isolated test data directory.",
+            .data_directory_not_explicit => "Fixture writes require an explicit BUWIZ_DATA_DIR; the automatic app data location stays read-only.",
+            .inventory_unavailable => "Fixture writes are blocked because the read-only migration inventory could not be completed.",
+            .inventory_wrote_data => "Fixture writes are blocked because the inventory did not prove a zero-write read.",
+            .legacy_profiles_present => "Fixture writes are blocked because legacy Taxpayer Profiles require migration review.",
+            .ownership_unavailable => "Fixture writes are blocked because this database does not have a valid fixture-ownership marker.",
+            .unowned_existing_database => "Fixture writes are blocked because the marked fixture directory contains an unowned app database. Start with a new explicit data root or restore the previously claimed database.",
+            .unowned_target_rows => "Fixture writes are blocked because unowned canonical registration rows already exist in this database.",
+        };
+    }
+
+    pub fn regTaxpayerRows(
+        self: *const Model,
+    ) []const registration_workspace.TaxpayerRow {
+        return self.registrationWorkspace.taxpayerRows();
+    }
+
+    pub fn regUnitRows(
+        self: *const Model,
+    ) []const registration_workspace.UnitRow {
+        return self.registrationWorkspace.unitRows();
+    }
+
+    pub fn regSourceRecordRows(
+        self: *const Model,
+    ) []const registration_workspace.SourceRecordRow {
+        return self.registrationWorkspace.sourceRecordRows();
+    }
+
+    pub fn regSourceRowsEmpty(self: *const Model) bool {
+        return self.registrationWorkspace.sourceRecordRows().len == 0;
+    }
+
+    pub fn regSourceWorkspaceReviewRequired(self: *const Model) bool {
+        return self.registrationWorkspace.sourceWorkspaceReviewRequired();
+    }
+
+    pub fn regSourceWorkspaceSummary(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const unit = self.registrationWorkspace.selectedRegistrationUnit() orelse
+            return "Select a Registration Unit to filter already-attributed source records.";
+        if (!self.registrationWorkspace.sourceRecordsConnected()) {
+            return "No source-attributed records are connected to this preview yet.";
+        }
+        const count = self.registrationWorkspace.sourceRecordRows().len;
+        return std.fmt.allocPrint(
+            arena,
+            "{d} explicitly attributed source record{s} match {s} {s} for Q{d} {d}.",
+            .{
+                count,
+                if (count == 1) "" else "s",
+                unit.kindLabel(),
+                unit.codeLabel(),
+                self.registrationWorkspace.period_quarter,
+                self.registrationWorkspace.period_year,
+            },
+        ) catch "Source-record workspace filter applied.";
+    }
+
+    pub fn regSourceWorkspaceReviewLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const count = self.registrationWorkspace.sourceWorkspaceUnresolvedCount();
+        if (count == 0) return "";
+        return std.fmt.allocPrint(
+            arena,
+            "Review Required — {d} record{s} remained legacy-unknown, invalid, or outside the loaded capacity. Selection never assigns their Source Unit.",
+            .{ count, if (count == 1) "" else "s" },
+        ) catch "Review Required — unresolved Source Attribution was excluded.";
+    }
+
+    pub fn regSourcePreviewHelp(self: *const Model) []const u8 {
+        if (self.registrationFixturePreviewAccessEnabled()) {
+            return "Fixture source-index metadata only — no persisted transaction amounts or schedule payloads are loaded, and the static 2550Q controls are not populated or filtered from these records.";
+        }
+        return "Source-record preview only — the current static 2550Q monetary and schedule controls are not populated or filtered from these records.";
+    }
+
+    pub fn regReviewReasonRows(
+        self: *const Model,
+    ) []const registration_workspace.ReviewIssueRow {
+        return self.registrationWorkspace.reviewReasonRows();
+    }
+
+    pub fn regCoverageRows(
+        self: *const Model,
+    ) []const registration_workspace.CoverageRow {
+        return self.registrationWorkspace.coverageRows();
+    }
+
+    pub fn regPolicyEvidenceRows(
+        self: *const Model,
+    ) []const registration_workspace.PolicyEvidenceRow {
+        return self.registrationWorkspace.policyEvidenceRows();
+    }
+
+    pub fn regCoverageVisible(self: *const Model) bool {
+        return self.registrationWorkspace.coverageRows().len != 0;
+    }
+
+    pub fn regPolicyEvidenceVisible(self: *const Model) bool {
+        return self.registrationWorkspace.policyEvidenceRows().len != 0;
+    }
+
+    pub fn regTaxpayerListStatusLabel(self: *const Model) []const u8 {
+        return self.registrationWorkspace.taxpayerListStatusLabel();
+    }
+
+    pub fn regUnitListStatusLabel(self: *const Model) []const u8 {
+        return self.registrationWorkspace.unitListStatusLabel();
+    }
+
+    pub fn regCanonicalEmpty(self: *const Model) bool {
+        return self.registrationWorkspace.taxpayerRows().len == 0;
+    }
+
+    pub fn registrationCanonicalReady(self: *const Model) bool {
+        return !self.regCanonicalEmpty();
+    }
+
+    pub fn regUnitRowsEmpty(self: *const Model) bool {
+        return self.registrationWorkspace.unitRows().len == 0;
+    }
+
+    pub fn regWorkspaceStatusLabel(self: *const Model) []const u8 {
+        return registration_workspace.workspaceStatusLabel(
+            self.registrationWorkspace.workspace_status,
+        );
+    }
+
+    pub fn regWorkspaceReviewRequired(self: *const Model) bool {
+        return switch (self.registrationWorkspace.workspace_status) {
+            .review_required, .legacy_unresolved => true,
+            else => false,
+        };
+    }
+
+    pub fn regSelectedTaxpayerMaskedTin(self: *const Model) []const u8 {
+        const taxpayer = self.registrationWorkspace.selectedTaxpayer() orelse
+            return "Not selected";
+        return taxpayer.maskedTin();
+    }
+
+    pub fn regSelectedRegistrationUnitLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const unit = self.registrationWorkspace.selectedRegistrationUnit() orelse
+            return "No Registration Unit selected";
+        return std.fmt.allocPrint(
+            arena,
+            "{s} · {s} · {s}",
+            .{ unit.kindLabel(), unit.codeLabel(), unit.statusLabel() },
+        ) catch unit.kindLabel();
+    }
+
+    pub fn regSelectedRegistrationUnitRdoLabel(self: *const Model) []const u8 {
+        const unit = self.registrationWorkspace.selectedRegistrationUnit() orelse
+            return "Not recorded";
+        return unit.rdoLabel();
+    }
+
+    pub fn regSelectedRegistrationUnitVatLabel(self: *const Model) []const u8 {
+        const unit = self.registrationWorkspace.selectedRegistrationUnit() orelse
+            return "VAT not recorded";
+        return unit.vatRegistrationLabel();
+    }
+
+    pub fn regSelectedRegistrationUnitReviewable(self: *const Model) bool {
+        const unit = self.registrationWorkspace.selectedRegistrationUnit() orelse
+            return false;
+        return registration_ui.evidenceReviewPresentation(
+            unit.revision.status,
+        ).recordable;
+    }
+
+    pub fn regVatRegistrationRepairVisible(self: *const Model) bool {
+        return self.registrationWorkspace
+            .selectedHeadOfficeVatRegistrationRepairable();
+    }
+
+    pub fn regRegistrationEvidenceActionVisible(self: *const Model) bool {
+        return self.regSelectedRegistrationUnitReviewable() or
+            self.regVatRegistrationRepairVisible();
+    }
+
+    pub fn regVatRegistrationChoiceVisible(self: *const Model) bool {
+        const unit = self.registrationWorkspace.selectedRegistrationUnit() orelse
+            return false;
+        return unit.revision.kind == .head_office;
+    }
+
+    pub fn regVatRegistrationConfirmed(self: *const Model) bool {
+        return self.registrationEditor.vat_registration_confirmed;
+    }
+
+    pub fn regRegistrationUnitReviewBadge(self: *const Model) []const u8 {
+        if (self.regVatRegistrationRepairVisible()) return "VAT Review Required";
+        const unit = self.registrationWorkspace.selectedRegistrationUnit() orelse
+            return "Review Required";
+        return registration_ui.evidenceReviewPresentation(
+            unit.revision.status,
+        ).badge;
+    }
+
+    pub fn regRegistrationUnitReviewTitle(self: *const Model) []const u8 {
+        if (self.regVatRegistrationRepairVisible()) {
+            return "Record VAT fact from reviewed evidence";
+        }
+        const unit = self.registrationWorkspace.selectedRegistrationUnit() orelse
+            return "Review the selected Registration Unit";
+        return registration_ui.evidenceReviewPresentation(
+            unit.revision.status,
+        ).title;
+    }
+
+    pub fn regConfirmActionLabel(self: *const Model) []const u8 {
+        if (self.regVatRegistrationRepairVisible()) {
+            return "Record reviewed VAT registration";
+        }
+        const unit = self.registrationWorkspace.selectedRegistrationUnit() orelse
+            return "Record reviewed evidence";
+        return registration_ui.evidenceReviewPresentation(
+            unit.revision.status,
+        ).action_label;
+    }
+
+    pub fn regSuggestedBranchLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (self.registrationWorkspace.branchSuggestionActionEnabled()) {
+            return std.fmt.allocPrint(
+                arena,
+                "Suggested: {s}",
+                .{self.registrationWorkspace.branchSuggestionLabel()},
+            ) catch "Suggested Branch Code available";
+        }
+        return self.registrationWorkspace.branchSuggestionStatusLabel();
+    }
+
+    pub fn regBranchSuggestionUnavailable(self: *const Model) bool {
+        return !self.registrationWorkspace.branchSuggestionActionEnabled();
+    }
+
+    pub fn registrationPlanningReviewRequired(self: *const Model) bool {
+        return switch (self.registrationWorkspace.planning_status) {
+            .review_required, .integration_error => true,
+            else => false,
+        };
+    }
+
+    pub fn regRepairActionsVisible(self: *const Model) bool {
+        return self.registrationPlanningReviewRequired() and
+            self.registrationWorkspace.reviewReasonRows().len != 0;
+    }
+
+    pub fn regPlanningStatusLabel(self: *const Model) []const u8 {
+        return self.registrationWorkspace.planningStatusLabel();
+    }
+
+    pub fn regPlanningPeriodLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "Readiness check · {s}",
+            .{self.registrationWorkspace.requestedPreviewLabel(arena)},
+        ) catch "2550Q filing-scope readiness check";
+    }
+
+    pub fn regResolvedFormRevisionLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return self.registrationWorkspace.formRevisionLabel(arena);
+    }
+
+    pub fn regPolicyCatalogLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (!self.registrationWorkspace.effectivePolicyResolved()) {
+            if (!self.registrationWorkspace.policy_catalog_missing) {
+                return "No effective reviewed policy revision resolved";
+            }
+            return self.registrationWorkspace.policyCatalogLabel();
+        }
+        return std.fmt.allocPrint(
+            arena,
+            "{s} · venue {s}",
+            .{
+                self.registrationWorkspace.policyRevisionLabel(),
+                self.registrationWorkspace.venueLabel(),
+            },
+        ) catch self.registrationWorkspace.policyRevisionLabel();
+    }
+
+    pub fn regPolicyCatalogMissing(self: *const Model) bool {
+        return self.registrationWorkspace.policy_catalog_missing;
+    }
+
+    pub fn regPolicyEvidenceLabel(self: *const Model) []const u8 {
+        return self.registrationWorkspace.policyEvidenceLabel();
+    }
+
+    pub fn regResolvedFilingCodeLabel(self: *const Model) []const u8 {
+        return self.registrationWorkspace.resolvedFilingCodeLabel();
+    }
+
+    pub fn regResolvedFilingRdoLabel(self: *const Model) []const u8 {
+        return self.registrationWorkspace.resolvedFilingRdoLabel();
+    }
+
+    pub fn regProjectedFilerTinLabel(self: *const Model) []const u8 {
+        return self.registrationWorkspace.projectionFilerTinLabel();
+    }
+
+    pub fn registrationCoverageLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (self.registrationWorkspace.resolved_coverage_count == 0) {
+            return "Not resolved";
+        }
+        return std.fmt.allocPrint(
+            arena,
+            "{s} · {d} Registration Unit{s}",
+            .{
+                self.registrationWorkspace.scopeCategoryLabel(),
+                self.registrationWorkspace.resolved_coverage_count,
+                if (self.registrationWorkspace.resolved_coverage_count == 1) "" else "s",
+            },
+        ) catch "Resolved coverage";
+    }
+
+    pub fn regProvenanceLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (!self.registrationWorkspace.provenance_validated) {
+            return "Not available until a filing obligation resolves";
+        }
+        return std.fmt.allocPrint(
+            arena,
+            "{s} · decision {s}",
+            .{
+                self.registrationWorkspace.provenanceLabel(),
+                self.registrationWorkspace.decisionHashLabel(),
+            },
+        ) catch self.registrationWorkspace.provenanceLabel();
+    }
+
+    pub fn regFileabilityLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "{s} · {s}",
+            .{
+                self.registrationWorkspace.policyCapabilityLabel(),
+                self.registrationWorkspace.fileabilityLabel(),
+            },
+        ) catch self.registrationWorkspace.fileabilityLabel();
+    }
+
+    pub fn regActionVisible(self: *const Model) bool {
+        return self.registrationMutationBlocked or
+            self.registrationWorkspace.action_status != .none;
+    }
+
+    pub fn regGlobalActionVisible(self: *const Model) bool {
+        return self.regActionVisible() and
+            self.registrationWorkspace.action_context == .none;
+    }
+
+    pub fn regTaxpayerActionVisible(self: *const Model) bool {
+        return self.regActionVisible() and
+            self.registrationWorkspace.action_context == .taxpayer;
+    }
+
+    pub fn regBranchActionVisible(self: *const Model) bool {
+        return self.regActionVisible() and
+            self.registrationWorkspace.action_context == .branch;
+    }
+
+    pub fn regConfirmationActionVisible(self: *const Model) bool {
+        return self.regActionVisible() and
+            switch (self.registrationWorkspace.action_context) {
+                .unit_confirmation, .vat_registration => true,
+                else => false,
+            };
+    }
+
+    pub fn registrationActionSucceeded(self: *const Model) bool {
+        if (self.registrationMutationBlocked) return false;
+        return switch (self.registrationWorkspace.action_status) {
+            .taxpayer_created,
+            .branch_created,
+            .unit_confirmed,
+            .vat_registration_recorded,
+            => true,
+            else => false,
+        };
+    }
+
+    pub fn registrationActionFailed(self: *const Model) bool {
+        return self.regActionVisible() and
+            !self.registrationActionSucceeded();
+    }
+
+    pub fn regActionLabel(self: *const Model) []const u8 {
+        if (self.registrationMutationBlocked) {
+            return self.regCanonicalMutationGateHelp();
+        }
+        return self.registrationWorkspace.action_status.label();
+    }
+
+    pub fn regActionHeading(self: *const Model) []const u8 {
+        if (self.registrationMutationBlocked) return "Read-only";
+        return if (self.registrationActionSucceeded()) "Saved" else "Review input";
+    }
+
+    pub fn regTinRootInputValue(self: *const Model) []const u8 {
+        return self.registrationEditor.value(.taxpayer_tin_root);
+    }
+
+    pub fn regCreateEffectiveInputValue(self: *const Model) []const u8 {
+        return self.registrationEditor.value(.taxpayer_effective_from);
+    }
+
+    pub fn regBranchCodeInputValue(self: *const Model) []const u8 {
+        return self.registrationEditor.value(.branch_code);
+    }
+
+    pub fn regBranchEffectiveInputValue(self: *const Model) []const u8 {
+        return self.registrationEditor.value(.branch_effective_from);
+    }
+
+    pub fn regConfirmEffectiveInputValue(self: *const Model) []const u8 {
+        return self.registrationEditor.value(.confirmation_effective_from);
+    }
+
+    pub fn regConfirmTinInputValue(self: *const Model) []const u8 {
+        return self.registrationEditor.value(.confirmation_tin_root);
+    }
+
+    pub fn regConfirmCodeInputValue(self: *const Model) []const u8 {
+        return self.registrationEditor.value(.confirmation_branch_code);
+    }
+
+    pub fn regConfirmRdoInputValue(self: *const Model) []const u8 {
+        return self.registrationEditor.value(.confirmation_rdo_code);
+    }
+
+    pub fn regAddressValue(self: *const Model) []const u8 {
+        return self.registrationEditor.value(.registered_address);
+    }
+
+    pub fn regZipValue(self: *const Model) []const u8 {
+        return self.registrationEditor.value(.zip_code);
+    }
+
+    pub fn regContactValue(self: *const Model) []const u8 {
+        return self.registrationEditor.value(.contact_number);
+    }
+
+    pub fn regEmailValue(self: *const Model) []const u8 {
+        return self.registrationEditor.value(.email_address);
+    }
+
+    pub fn registrationEvidenceNameInputValue(self: *const Model) []const u8 {
+        return self.registrationEditor.evidenceDisplayName();
+    }
+
+    pub fn registrationEvidenceDigestInputValue(self: *const Model) []const u8 {
+        return self.registrationEditor.evidenceDigest();
+    }
+
+    pub fn registrationEvidenceSizeInputValue(self: *const Model) []const u8 {
+        return self.registrationEditor.evidenceSize();
+    }
+
+    pub fn regEvidenceFileLabel(self: *const Model) []const u8 {
+        return self.registrationEditor.evidenceFileLabel();
+    }
+
+    pub fn regEvidenceSourceCorSelected(self: *const Model) bool {
+        return self.registrationEditor.evidenceSourceSelected(.cor);
+    }
+
+    pub fn regEvidenceSourceEcorSelected(self: *const Model) bool {
+        return self.registrationEditor.evidenceSourceSelected(.ecor);
+    }
+
+    pub fn regEvidenceSourceBirRecordSelected(self: *const Model) bool {
+        return self.registrationEditor.evidenceSourceSelected(
+            .bir_registration_record,
+        );
+    }
+
+    fn regEvidenceActionHelp(self: *const Model) ?[]const u8 {
+        if (self.regVatRegistrationRepairVisible()) {
+            return self.registrationEditor.vatRegistrationActionHelp(true);
+        }
+        return self.registrationEditor.confirmationActionHelp(
+            self.regSelectedRegistrationUnitReviewable(),
+        );
+    }
+
+    pub fn regEvidenceFileHelp(self: *const Model) []const u8 {
+        return self.registrationEditor.evidenceFileHelp();
+    }
+
+    pub fn regEvidenceFileProblemVisible(self: *const Model) bool {
+        return self.registrationEditor.evidenceFileProblemVisible();
+    }
+
+    pub fn regEvidenceFormHelp(self: *const Model) []const u8 {
+        if (!self.regEvidenceFormProblemVisible()) return "";
+        return self.regEvidenceActionHelp().?;
+    }
+
+    pub fn regEvidenceFormProblemVisible(self: *const Model) bool {
+        return !self.registrationEditor.evidenceFileProblemVisible() and
+            self.regEvidenceActionHelp() != null;
+    }
+
+    pub fn regConfirmDisabled(self: *const Model) bool {
+        if (self.regVatRegistrationRepairVisible()) {
+            return self.registrationEditor.vatRegistrationDisabled(true);
+        }
+        return self.registrationEditor.confirmationDisabled(
+            self.regSelectedRegistrationUnitReviewable(),
+        );
+    }
+
+    pub fn regEvidenceCapturedInputValue(self: *const Model) []const u8 {
+        return self.registrationEditor.value(.evidence_captured_on);
+    }
+
+    pub fn regLegacyReviewVisible(self: *const Model) bool {
+        return self.taxProfiles.selectedProfileId() != null;
+    }
+
+    pub fn profileRegistrationWorkspaceSelected(self: *const Model) bool {
+        return self.taxProfiles.selectedProfileId() != null;
+    }
+
+    pub fn profileRegistrationNoWorkspace(self: *const Model) bool {
+        return !self.profileRegistrationWorkspaceSelected();
+    }
+
+    pub fn profileRegistrationStatusLabel(self: *const Model) []const u8 {
+        if (!self.profileRegistrationWorkspaceSelected()) {
+            return "No saved workspace";
+        }
+        return registration_ui.statusLabel(.legacy_unresolved);
+    }
+
+    pub fn profileRegistrationReviewRequired(self: *const Model) bool {
+        return self.profileRegistrationWorkspaceSelected() and
+            registration_ui.reviewRequired(.legacy_unresolved);
+    }
+
+    pub fn profileRegistrationMaskedTinRoot(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (!self.profileRegistrationWorkspaceSelected()) return "Not recorded";
+        const output = arena.alloc(u8, 11) catch return "Review Required";
+        return registration_ui.writeMaskedTinRoot(
+            self.profileTinValue(),
+            output,
+        ) catch "Review Required - invalid legacy TIN";
+    }
+
+    pub fn profileRegistrationMaskedTinRootLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "Masked TIN root {s}",
+            .{self.profileRegistrationMaskedTinRoot(arena)},
+        ) catch "Masked TIN root";
+    }
+
+    pub fn profileRegistrationTinRootNote(self: *const Model) []const u8 {
+        if (!self.profileRegistrationWorkspaceSelected()) {
+            return "Select a saved Taxpayer Profile to review its legacy identity.";
+        }
+        return "Masked taxpayer root from the selected legacy workspace; its suffix is not accepted as a BIR Branch Code.";
+    }
+
+    pub fn profileRegistrationLegacyWorkspaceLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (!self.profileRegistrationWorkspaceSelected()) {
+            return "No saved Taxpayer Profile selected";
+        }
+        const name = self.selectedTaxpayerName();
+        if (name.len == 0) return "Selected legacy Taxpayer Profile";
+        return std.fmt.allocPrint(
+            arena,
+            "{s} (legacy Taxpayer Profile)",
+            .{name},
+        ) catch name;
+    }
+
+    pub fn profileRegistrationBranchCodeLabel(self: *const Model) []const u8 {
+        _ = self;
+        return "Unresolved - legacy suffix not accepted as a BIR Branch Code";
+    }
+
+    pub fn profileRegistrationSourceUnitLabel(self: *const Model) []const u8 {
+        _ = self;
+        return "Unresolved — no evidence-backed Source Attribution identifies a Source Unit";
+    }
+
+    pub fn profileRegistrationFilingUnitLabel(self: *const Model) []const u8 {
+        _ = self;
+        return "Unresolved - no immutable Resolved Filing Plan";
+    }
+
+    pub fn profileRegistrationFormsSetLabel(self: *const Model) []const u8 {
+        _ = self;
+        return "Workspace preference only - not proof of filing obligation";
+    }
+
+    pub fn profileRegistrationCapabilityLabel(self: *const Model) []const u8 {
+        if (!self.profileRegistrationWorkspaceSelected()) {
+            return "Blocked - select and review a saved workspace first";
+        }
+        return registration_ui.plannerCapabilityLabel(.legacy_unresolved);
     }
 
     /// What the COR card says about the referenced document.
@@ -6547,12 +7727,14 @@ pub const Model = struct {
 
     pub fn profileCorUploadDisabled(self: *const Model) bool {
         // A document belongs to a saved taxpayer.
-        return self.taxProfiles.editing_new or
+        return self.profileLegacyIdentityReadOnly() or
+            self.taxProfiles.editing_new or
             self.taxProfiles.selectedProfileId() == null;
     }
 
     pub fn profileCorReviewAvailable(self: *const Model) bool {
-        return !self.taxProfiles.corReviewOpen() and
+        return !self.profileLegacyIdentityReadOnly() and
+            !self.taxProfiles.corReviewOpen() and
             self.taxProfiles.corEvidenceState() != .none;
     }
 
@@ -6717,7 +7899,8 @@ pub const Model = struct {
     }
 
     pub fn profileCorApplyDisabled(self: *const Model) bool {
-        return self.taxProfiles.corReviewApplyBlocked();
+        return self.profileLegacyIdentityReadOnly() or
+            self.taxProfiles.corReviewApplyBlocked();
     }
 
     pub fn profileCorApplyLabel(
@@ -6913,12 +8096,14 @@ pub const Model = struct {
     }
 
     pub fn profileCalendarExportBusy(self: *const Model) bool {
-        return self.profileCalendarExportStatus == .writing or
+        return self.fixturePreviewSession or
+            self.profileCalendarExportStatus == .writing or
             self.profileCalendarExportStatus == .opening;
     }
 
     pub fn profileCalendarExportNoticeSuccess(self: *const Model) bool {
-        return self.profileCalendarExportStatus == .opened;
+        return self.profileCalendarExportStatus == .saved or
+            self.profileCalendarExportStatus == .opened;
     }
 
     pub fn profileCalendarExportNoticeFailure(self: *const Model) bool {
@@ -6955,6 +8140,7 @@ pub const Model = struct {
             .nothing_to_add => "Nothing to add. This profile's Forms Set has no calendar deadline for this tax year.",
             .build_failed => "Could not prepare this profile's calendar handoff.",
             .writing => "Preparing this profile's calendar handoff file…",
+            .saved => "Calendar handoff saved inside the owned fixture workspace. Automatic opening stays disabled for fixture isolation.",
             .opening => "Calendar file created. Opening the default calendar app…",
             .opened => "Opened this profile's calendar handoff. Choose the calendar account that should receive it.",
             .write_failed => "Could not write this profile's calendar handoff file.",
@@ -8520,9 +9706,310 @@ fn attachCorDocument(model: *Model, fx: ?*Effects) void {
     _ = model.taxProfiles.attachCorDocument(chosen);
 }
 
+/// Selects and fingerprints reviewed registration evidence. The file remains
+/// in place; confirmation persists only its protected local reference and the
+/// measured metadata needed to detect later replacement.
+fn evidenceFileProblem(
+    err: registration_evidence_store.InspectError,
+) registration_editor.EvidenceFileProblem {
+    return switch (err) {
+        error.SourceMissing, error.SourceUnreadable => .unreadable,
+        error.Empty => .empty,
+        error.TooLarge => .too_large,
+        error.Unsupported => .unsupported,
+    };
+}
+
+fn verifyProtectedRegistrationEvidence(
+    context: *anyopaque,
+    input: registration_ledger.ProtectedEvidenceVerificationInput,
+) ?registration_ledger.EvidenceIntegrityReviewRequired {
+    const model: *Model = @ptrCast(@alignCast(context));
+    const io = model.registrationIo orelse return .storage_backend_unverifiable;
+
+    const verification = if (model.registrationEvidenceDataDirectory) |directory|
+        registration_evidence_store.verifyProtectedInDirectory(
+            io,
+            directory,
+            input.protected_path,
+            input.sha256,
+            input.byte_size,
+        )
+    else
+        registration_evidence_store.verify(
+            io,
+            input.protected_path,
+            input.sha256,
+            input.byte_size,
+        );
+    verification catch |err| return switch (err) {
+        error.SourceMissing => .protected_bytes_missing,
+        error.SourceUnreadable => .protected_bytes_unreadable,
+        error.Empty, error.TooLarge, error.SizeChanged => .protected_bytes_size_mismatch,
+        error.Unsupported, error.DigestChanged => .protected_bytes_digest_mismatch,
+        error.InvalidExpectedDigest,
+        error.InvalidProtectedReference,
+        => .stored_metadata_invalid,
+    };
+    return null;
+}
+
+fn registrationEvidenceIntegrityVerifier(
+    model: *Model,
+) registration_ledger.EvidenceIntegrityVerifier {
+    return .{
+        .context = model,
+        .verify_fn = verifyProtectedRegistrationEvidence,
+    };
+}
+
+test "registration evidence verifier distinguishes missing size and digest changes" {
+    var model = Model{};
+    model.registrationIo = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const protected_path = try std.fmt.bufPrint(
+        &path_buffer,
+        ".zig-cache/tmp/{s}/protected-registration.pdf",
+        .{tmp.sub_path},
+    );
+    const original = "%PDF-1.4 protected registration evidence";
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "protected-registration.pdf",
+        .data = original,
+    });
+    const fingerprint = try registration_evidence_store.inspect(
+        std.testing.io,
+        protected_path,
+    );
+    const input: registration_ledger.ProtectedEvidenceVerificationInput = .{
+        .evidence_id = try registration_domain.RegistrationEvidenceId.parse(
+            "integrity-adapter-evidence",
+        ),
+        .protected_path = protected_path,
+        .sha256 = &fingerprint.sha256,
+        .byte_size = fingerprint.byte_size,
+    };
+
+    try std.testing.expect(verifyProtectedRegistrationEvidence(&model, input) == null);
+
+    try tmp.dir.deleteFile(std.testing.io, "protected-registration.pdf");
+    try std.testing.expectEqual(
+        registration_ledger.EvidenceIntegrityReviewRequired.protected_bytes_missing,
+        verifyProtectedRegistrationEvidence(&model, input).?,
+    );
+
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "protected-registration.pdf",
+        .data = "%PDF-short",
+    });
+    try std.testing.expectEqual(
+        registration_ledger.EvidenceIntegrityReviewRequired.protected_bytes_size_mismatch,
+        verifyProtectedRegistrationEvidence(&model, input).?,
+    );
+
+    var changed: [original.len]u8 = original.*;
+    changed[changed.len - 1] = 'X';
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "protected-registration.pdf",
+        .data = &changed,
+    });
+    try std.testing.expectEqual(
+        registration_ledger.EvidenceIntegrityReviewRequired.protected_bytes_digest_mismatch,
+        verifyProtectedRegistrationEvidence(&model, input).?,
+    );
+}
+
+/// Selects and fingerprints reviewed registration evidence. The file remains
+/// in place; confirmation persists only its protected local reference and the
+/// measured metadata needed to detect later replacement.
+fn chooseRegistrationEvidenceFile(model: *Model, fx: ?*Effects) void {
+    const effects = fx orelse return;
+    const services = effects.services orelse {
+        model.registrationEditor.reportEvidenceAttemptProblem(.picker_unavailable);
+        return;
+    };
+    var paths: [native_sdk.platform.max_dialog_paths_bytes]u8 = undefined;
+    const result = services.showOpenDialog(.{
+        .title = "Choose reviewed registration evidence",
+        .filters = &.{.{
+            .name = "Reviewed registration evidence",
+            .extensions = &.{ "pdf", "png", "jpg", "jpeg" },
+        }},
+    }, &paths) catch {
+        model.registrationEditor.reportEvidenceAttemptProblem(.picker_failed);
+        return;
+    };
+    if (result.count == 0) return;
+    const chosen = std.mem.sliceTo(result.paths, '\n');
+    if (chosen.len == 0) return;
+
+    const io = model.registrationIo orelse {
+        model.registrationEditor.reportEvidenceAttemptProblem(.unreadable);
+        return;
+    };
+    const fingerprint = registration_evidence_store.inspect(io, chosen) catch |err| {
+        model.registrationEditor.reportEvidenceAttemptProblem(
+            evidenceFileProblem(err),
+        );
+        return;
+    };
+    model.registrationEditor.attachEvidence(.{
+        .path = chosen,
+        .display_name = profile_ui.evidenceFileName(chosen),
+        .sha256 = &fingerprint.sha256,
+        .byte_size = fingerprint.byte_size,
+    }) catch {
+        model.registrationEditor.reportEvidenceAttemptProblem(.path_too_long);
+        return;
+    };
+    model.registrationWorkspace.action_status = .none;
+}
+
+/// Verifies the exact metadata captured by the picker, then atomically creates
+/// or reuses the protected digest-addressed copy. It never refreshes a changed
+/// source into the reviewed selection.
+fn protectRegistrationEvidence(
+    model: *Model,
+    protected_path_buffer: []u8,
+) ?[]const u8 {
+    const path = model.registrationEditor.selectedEvidencePath();
+    if (path.len == 0) {
+        model.registrationWorkspace.action_status = .invalid_evidence_path;
+        return null;
+    }
+    const digest = model.registrationEditor.evidenceDigest();
+    if (digest.len != 64) {
+        model.registrationWorkspace.action_status = .invalid_evidence_digest;
+        return null;
+    }
+    const byte_size = model.registrationEditor.selectedEvidenceByteSize() orelse {
+        model.registrationWorkspace.action_status = .invalid_evidence_size;
+        return null;
+    };
+    const io = model.registrationIo orelse {
+        model.registrationEditor.reportEvidenceProtectionFailure();
+        model.registrationWorkspace.action_status = .write_failed;
+        return null;
+    };
+    const protection = if (model.registrationEvidenceDataDirectory) |directory|
+        registration_evidence_store.protectInDirectory(
+            io,
+            directory,
+            path,
+            digest,
+            byte_size,
+            protected_path_buffer,
+        )
+    else
+        registration_evidence_store.protect(
+            io,
+            model.registrationEvidenceDataDir,
+            path,
+            digest,
+            byte_size,
+            protected_path_buffer,
+        );
+    return protection catch |err| {
+        switch (err) {
+            error.SourceMissing => {
+                model.registrationEditor.invalidateSelectedEvidence(.source_missing);
+                model.registrationWorkspace.action_status = .invalid_evidence_path;
+            },
+            error.SourceUnreadable,
+            error.Empty,
+            error.TooLarge,
+            error.Unsupported,
+            error.SizeChanged,
+            error.DigestChanged,
+            error.InvalidExpectedDigest,
+            error.InvalidProtectedReference,
+            => {
+                model.registrationEditor.invalidateSelectedEvidence(.source_changed);
+                model.registrationWorkspace.action_status = .invalid_evidence_digest;
+            },
+            error.DataDirectoryRequired,
+            error.PathTooLong,
+            error.StorageUnavailable,
+            error.InvalidDestination,
+            => {
+                model.registrationEditor.reportEvidenceProtectionFailure();
+                model.registrationWorkspace.action_status = .write_failed;
+            },
+        }
+        return null;
+    };
+}
+
 /// Groups registrations by their shared nine-digit TIN, head office before its
 /// branches, then by branch code. Rows without a parsable TIN keep a stable
 /// position at the end rather than interleaving unpredictably.
+fn revokeRegistrationFixturePolicy(
+    model: *Model,
+    reason: RegistrationMutationGateReason,
+) void {
+    model.registrationMutationGate.reason = reason;
+    model.registrationMutationBlocked = true;
+    model.registrationWorkspace.action_status = .none;
+    model.registrationWorkspace.invalidateResolvedPreview();
+    model.resolved2550QPreview = null;
+}
+
+fn guardRegistrationFixtureAccess(model: *Model) bool {
+    if (!model.registrationMutationGate.enabled()) {
+        revokeRegistrationFixturePolicy(
+            model,
+            model.registrationMutationGate.reason,
+        );
+        return false;
+    }
+
+    // The initial target-row check proves that the fixture began from an
+    // empty canonical ledger. Canonical rows created by this session are
+    // expected after its first mutation, so ongoing checks intentionally do
+    // not re-apply that one-time condition. They do re-run the read-only
+    // legacy inventory before every gated write or preview open: a legacy
+    // ProfileId appearing later would otherwise reopen the exact dual-write
+    // state this gate prevents or expose a stale resolved scope.
+    const allocator = model.taxProfiles.allocator orelse {
+        revokeRegistrationFixturePolicy(model, .inventory_unavailable);
+        return false;
+    };
+    const store = model.taxProfiles.store orelse {
+        revokeRegistrationFixturePolicy(model, .inventory_unavailable);
+        return false;
+    };
+    const fixture_owned = store.registrationFixturePreviewOwnershipPresent() catch {
+        revokeRegistrationFixturePolicy(model, .ownership_unavailable);
+        return false;
+    };
+    if (!fixture_owned) {
+        revokeRegistrationFixturePolicy(model, .ownership_unavailable);
+        return false;
+    }
+    var inventory = registration_migration_inventory.collect(
+        allocator,
+        store,
+    ) catch {
+        revokeRegistrationFixturePolicy(model, .inventory_unavailable);
+        return false;
+    };
+    defer inventory.deinit(allocator);
+    if (!inventory.read_only_proof.verifiedNoWrites()) {
+        revokeRegistrationFixturePolicy(model, .inventory_wrote_data);
+        return false;
+    }
+    if (inventory.profiles.len != 0) {
+        revokeRegistrationFixturePolicy(model, .legacy_profiles_present);
+        return false;
+    }
+
+    model.registrationMutationBlocked = false;
+    return true;
+}
+
 fn profileRowPrecedes(
     _: void,
     left: profile_ui.ProfileRow,
@@ -9333,6 +10820,34 @@ pub const Msg = union(enum) {
     show_dashboard_forms,
     show_dashboard_profile_settings,
     show_profile_tax,
+    show_profile_reg_filing,
+    profile_setup_scrolled: canvas.ScrollState,
+    reg_tin_root_input: canvas.TextInputEvent,
+    reg_create_effective_input: canvas.TextInputEvent,
+    reg_create_taxpayer,
+    reg_select_taxpayer: usize,
+    reg_select_registration_unit: usize,
+    reg_branch_code_input: canvas.TextInputEvent,
+    reg_branch_effective_input: canvas.TextInputEvent,
+    reg_use_branch_suggestion,
+    reg_create_branch,
+    reg_confirm_effective_input: canvas.TextInputEvent,
+    reg_confirm_tin_input: canvas.TextInputEvent,
+    reg_confirm_code_input: canvas.TextInputEvent,
+    reg_confirm_rdo_input: canvas.TextInputEvent,
+    reg_address_input: canvas.TextInputEvent,
+    reg_zip_input: canvas.TextInputEvent,
+    reg_contact_input: canvas.TextInputEvent,
+    reg_email_input: canvas.TextInputEvent,
+    reg_evidence_source_cor,
+    reg_evidence_source_ecor,
+    reg_evidence_source_bir_record,
+    reg_choose_evidence_file,
+    reg_evidence_captured_input: canvas.TextInputEvent,
+    reg_toggle_vat_registration,
+    reg_confirm_selected_unit,
+    reg_open_resolved_2550q_preview,
+    reg_close_resolved_2550q_preview,
     edit_tax_profile,
     show_profile_tax_forms,
     profile_cor_upload,
@@ -9696,6 +11211,286 @@ fn updateWithEffects(model: *Model, msg: Msg, fx: *Effects) void {
     }
 }
 
+fn refreshRegistrationWorkspace(model: *Model) void {
+    const ledger = if (model.registrationLedger) |*value| value else return;
+    const as_of = model.registrationAsOf orelse return;
+    model.registrationWorkspace.refresh(
+        ledger.allocator,
+        ledger,
+        registrationEvidenceIntegrityVerifier(model),
+        as_of,
+        registration_workspace.policyCatalog(
+            if (model.registrationFixturePreviewAccessEnabled())
+                .isolated_fixture_preview
+            else
+                .production_fail_closed,
+        ),
+        model.registrationWorkspace.period_year,
+        model.registrationWorkspace.period_quarter,
+    ) catch {
+        model.registrationWorkspace.reportLoadFailure();
+        return;
+    };
+    connectRegistrationFixtureSourceRecords(model);
+}
+
+/// The explicitly owned preview fixture carries only deterministic source-index
+/// metadata. It demonstrates that Registration Unit selection filters records
+/// whose Source Attribution already exists, without creating or persisting a
+/// transaction amount, schedule payload, Filing Unit, or Return Coverage.
+fn fixtureSourceRecordDate(
+    period_year: u16,
+    period_quarter: u8,
+    unit_effective: registration_domain.EffectivePeriod,
+) ?registration_domain.Date {
+    if (period_quarter < 1 or period_quarter > 4) return null;
+
+    const quarter_start = registration_domain.Date.init(
+        period_year,
+        ((period_quarter - 1) * 3) + 1,
+        1,
+    ) catch return null;
+    const quarter_end = registration_domain.Date.init(
+        period_year,
+        period_quarter * 3,
+        switch (period_quarter) {
+            1, 4 => 31,
+            2, 3 => 30,
+            else => unreachable,
+        },
+    ) catch return null;
+
+    const intersection_start = if (unit_effective.from.isAfter(quarter_start))
+        unit_effective.from
+    else
+        quarter_start;
+    if (intersection_start.isAfter(quarter_end) or
+        !unit_effective.contains(intersection_start))
+    {
+        return null;
+    }
+    return intersection_start;
+}
+
+fn connectRegistrationFixtureSourceRecords(model: *Model) void {
+    if (!model.registrationFixturePreviewAccessEnabled()) return;
+
+    const taxpayer = model.registrationWorkspace.selectedTaxpayer() orelse {
+        model.registrationWorkspace.replaceSourceRecords(&.{});
+        return;
+    };
+    const period_quarter = model.registrationWorkspace.period_quarter;
+    if (period_quarter < 1 or period_quarter > 4) {
+        model.registrationWorkspace.replaceSourceRecords(&.{});
+        return;
+    }
+
+    var records: [registration_workspace.max_source_records]registration_workspace.SourceRecord =
+        undefined;
+    var record_count: usize = 0;
+    for (model.registrationWorkspace.unitRows()) |unit| {
+        if (record_count == records.len) break;
+        const occurred_on = fixtureSourceRecordDate(
+            model.registrationWorkspace.period_year,
+            period_quarter,
+            unit.revision.effective,
+        ) orelse continue;
+        const unit_id = unit.revision.registration_unit_id.asSlice();
+        var record_id_buffer: [64]u8 = undefined;
+        const record_id_text = std.fmt.bufPrint(
+            &record_id_buffer,
+            "fixture-source:{s}",
+            .{unit_id},
+        ) catch continue;
+        var evidence_reference_buffer: [64]u8 = undefined;
+        const evidence_reference_text = std.fmt.bufPrint(
+            &evidence_reference_buffer,
+            "fixture-source-index:{s}",
+            .{unit_id},
+        ) catch continue;
+        records[record_count] = .{
+            .id = registration_workspace.SourceRecordId.parse(record_id_text) catch
+                continue,
+            .taxpayer_id = taxpayer.taxpayer_id,
+            .occurred_on = occurred_on,
+            .kind = .attachment,
+            .attribution = .{ .entered = .{
+                .source_unit = .{
+                    .registration_unit_id = unit.revision.registration_unit_id,
+                    .registration_unit_revision_id = unit.revision.id,
+                },
+                .evidence_reference = registration_workspace.SourceEvidenceReference.parse(
+                    evidence_reference_text,
+                ) catch continue,
+            } },
+        };
+        record_count += 1;
+    }
+    model.registrationWorkspace.replaceSourceRecords(records[0..record_count]);
+}
+
+test "fixture source index uses mid-quarter branch revision intersection" {
+    const taxpayer_id = try registration_domain.TaxpayerId.parse(
+        "taxpayer-source-date",
+    );
+    const mid_quarter_unit_id = try registration_domain.RegistrationUnitId.parse(
+        "branch-mid-quarter",
+    );
+    const branch_code = try registration_domain.BranchCode5.parse("00001");
+
+    var model = Model{
+        .registrationMutationGate = .{ .reason = .enabled },
+    };
+    model.registrationWorkspace.period_year = 2026;
+    model.registrationWorkspace.period_quarter = 3;
+    model.registrationWorkspace.taxpayer_count = 1;
+    model.registrationWorkspace.selected_taxpayer_index = 0;
+    model.registrationWorkspace.taxpayers[0] = .{
+        .id = 0,
+        .taxpayer_id = taxpayer_id,
+        .selected = true,
+    };
+    model.registrationWorkspace.unit_count = 3;
+    model.registrationWorkspace.selected_registration_unit_index = 0;
+    model.registrationWorkspace.units[0] = .{
+        .id = 0,
+        .revision = .{
+            .taxpayer_id = taxpayer_id,
+            .registration_unit_id = mid_quarter_unit_id,
+            .id = try registration_domain.RegistrationUnitRevisionId.parse(
+                "branch-mid-quarter-r1",
+            ),
+            .sequence = 1,
+            .effective = try registration_domain.EffectivePeriod.init(
+                try registration_domain.Date.parseIso("2026-08-15"),
+                try registration_domain.Date.parseIso("2026-09-15"),
+            ),
+            .kind = .branch,
+            .branch_code_evidence = .{ .unconfirmed = branch_code },
+            .status = .pending_evidence,
+        },
+        .selected = true,
+    };
+    model.registrationWorkspace.units[1] = .{
+        .id = 1,
+        .revision = .{
+            .taxpayer_id = taxpayer_id,
+            .registration_unit_id = try registration_domain.RegistrationUnitId.parse(
+                "branch-before-quarter",
+            ),
+            .id = try registration_domain.RegistrationUnitRevisionId.parse(
+                "branch-before-quarter-r1",
+            ),
+            .sequence = 1,
+            .effective = try registration_domain.EffectivePeriod.init(
+                try registration_domain.Date.parseIso("2026-01-01"),
+                try registration_domain.Date.parseIso("2026-06-30"),
+            ),
+            .kind = .branch,
+            .branch_code_evidence = .{
+                .unconfirmed = try registration_domain.BranchCode5.parse("00002"),
+            },
+            .status = .pending_evidence,
+        },
+    };
+    model.registrationWorkspace.units[2] = .{
+        .id = 2,
+        .revision = .{
+            .taxpayer_id = taxpayer_id,
+            .registration_unit_id = try registration_domain.RegistrationUnitId.parse(
+                "branch-after-quarter",
+            ),
+            .id = try registration_domain.RegistrationUnitRevisionId.parse(
+                "branch-after-quarter-r1",
+            ),
+            .sequence = 1,
+            .effective = try registration_domain.EffectivePeriod.init(
+                try registration_domain.Date.parseIso("2026-10-01"),
+                null,
+            ),
+            .kind = .branch,
+            .branch_code_evidence = .{
+                .unconfirmed = try registration_domain.BranchCode5.parse("00003"),
+            },
+            .status = .pending_evidence,
+        },
+    };
+
+    connectRegistrationFixtureSourceRecords(&model);
+
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        model.registrationWorkspace.source_record_count,
+    );
+    try std.testing.expect(
+        model.registrationWorkspace.source_records[0].occurred_on.eql(
+            try registration_domain.Date.parseIso("2026-08-15"),
+        ),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        model.registrationWorkspace.sourceRecordRows().len,
+    );
+    try std.testing.expectEqualStrings(
+        "fixture-source:branch-mid-quarter",
+        model.registrationWorkspace.sourceRecordRows()[0].stableKey(),
+    );
+}
+
+fn selectRegistrationTaxpayer(
+    model: *Model,
+    index: usize,
+    clear_action: bool,
+) void {
+    const ledger = if (model.registrationLedger) |*value| value else return;
+    const as_of = model.registrationAsOf orelse return;
+    model.registrationEditor.discardForSwitch(.{ .taxpayer = index });
+    if (clear_action) {
+        model.registrationMutationBlocked = false;
+        model.registrationWorkspace.clearAction();
+    }
+    model.registrationWorkspace.selectTaxpayer(
+        ledger.allocator,
+        ledger,
+        registrationEvidenceIntegrityVerifier(model),
+        index,
+        as_of,
+        registration_workspace.policyCatalog(
+            if (model.registrationFixturePreviewAccessEnabled())
+                .isolated_fixture_preview
+            else
+                .production_fail_closed,
+        ),
+    ) catch {
+        model.registrationWorkspace.reportLoadFailure();
+        return;
+    };
+    connectRegistrationFixtureSourceRecords(model);
+    model.registrationEditor.syncConfirmation(
+        model.registrationAsOf,
+        model.registrationWorkspace.selectedRegistrationUnit(),
+    );
+}
+
+fn selectRegistrationUnit(
+    model: *Model,
+    index: usize,
+    clear_action: bool,
+) void {
+    model.registrationEditor.discardForSwitch(.{ .registration_unit = index });
+    if (clear_action) {
+        model.registrationMutationBlocked = false;
+        model.registrationWorkspace.clearAction();
+    }
+    model.registrationWorkspace.selectRegistrationUnit(index);
+    // Workspace selection changes presentation focus only. It neither filters
+    // transaction data nor recomputes or mutates the resolved Filing Plan.
+    model.registrationEditor.syncConfirmation(
+        model.registrationAsOf,
+        model.registrationWorkspace.selectedRegistrationUnit(),
+    );
+}
+
 fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
     switch (msg) {
         .show_global_dashboard => navigate(model, .global_dashboard),
@@ -9715,6 +11510,17 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             openProfileEditor(model);
         },
         .new_taxpayer_profile => {
+            if (model.profileLegacyIdentityReadOnly()) {
+                model.profileSetupSection = .reg_filing;
+                model.profileCompletionTarget = null;
+                model.profileCompletionFormIndex = null;
+                model.pendingProfileFormLaunch = null;
+                model.taxProfiles.cancelEdit();
+                syncProfileIdentityControls(model);
+                refreshRegistrationWorkspace(model);
+                openProfileEditor(model);
+                return;
+            }
             if (rejectExact1701QContextChange(model)) {
                 reconcileExact1701QTaxpayerSelection(model);
                 navigate(model, .form_1701q);
@@ -9762,7 +11568,10 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .show_form_1701q => openGalleryOrProfileBoundForm(model, .form_1701q, "1701Q"),
         .show_form_1702_rt => openGalleryOrProfileBoundForm(model, .form_1702_rt, "1702RT"),
         .show_form_1702_mx => openGalleryOrProfileBoundForm(model, .form_1702_mx, "1702MX"),
-        .show_form_2550q => openGalleryOrProfileBoundForm(model, .form_2550q, "2550Q"),
+        .show_form_2550q => {
+            model.resolved2550QPreview = null;
+            openGalleryOrProfileBoundForm(model, .form_2550q, "2550Q");
+        },
         .show_form_2551q => openGalleryOrProfileBoundForm(model, .form_2551q, "2551Q"),
         .select_form_spouse => |slot| {
             if (rejectExact1701QContextChange(model)) return;
@@ -10015,7 +11824,13 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .show_aux_profile_auth_overlay => openTransient(model, .aux_profile_auth),
         .show_aux_admin_auth_overlay => openTransient(model, .aux_admin_auth),
         .show_aux_command_palette => openTransient(model, .aux_command_palette),
-        .show_aux_html_print_preview => openTransient(model, .aux_html_preview),
+        .show_aux_html_print_preview => {
+            // The resolved 2550Q slice is intentionally read-only and has no
+            // filing artifact. Markup disables this action, and the handler
+            // repeats the gate so direct/stale dispatch cannot bypass it.
+            if (model.resolved2550QPreviewActive()) return;
+            openTransient(model, .aux_html_preview);
+        },
         .show_aux_email_confirmation => openTransient(model, .aux_email_confirmation),
         .show_aux_background_task_debug_log => openTransient(model, .aux_debug_log),
         .select_taxpayer => |slot| {
@@ -10099,7 +11914,326 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
                 )) return;
             model.profileSetupSection = .tax_profile;
         },
+        .show_profile_reg_filing => {
+            if (model.profileSetupSection != .reg_filing and
+                deferProfileNavigation(
+                    model,
+                    .{ .profile_section = .reg_filing },
+                )) return;
+            if (model.taxProfiles.profileEditing()) {
+                model.taxProfiles.cancelEdit();
+                syncProfileIdentityControls(model);
+            }
+            model.profileSubjectPickerVisible = false;
+            model.profileClassificationPickerVisible = false;
+            model.profileEoptPickerVisible = false;
+            model.profileSetupSection = .reg_filing;
+            model.profileSetupScrollOffset = 0;
+            model.registrationPreviewReturnFocus = false;
+            // Action feedback belongs to the operation that produced it. A
+            // fresh visit starts clean; a load failure below will publish its
+            // own current result instead of reviving an older action.
+            model.registrationMutationBlocked = false;
+            model.registrationWorkspace.clearAction();
+            refreshRegistrationWorkspace(model);
+            model.registrationEditor.syncConfirmation(
+                model.registrationAsOf,
+                model.registrationWorkspace.selectedRegistrationUnit(),
+            );
+        },
+        .profile_setup_scrolled => |scroll| {
+            model.profileSetupScrollOffset = scroll.offset_y;
+        },
+        .reg_tin_root_input => |edit| {
+            if (!model.registrationMutationGate.enabled()) return;
+            model.registrationEditor.applyEdit(.taxpayer_tin_root, edit);
+        },
+        .reg_create_effective_input => |edit| {
+            if (!model.registrationMutationGate.enabled()) return;
+            model.registrationEditor.applyEdit(.taxpayer_effective_from, edit);
+        },
+        .reg_create_taxpayer => {
+            model.registrationWorkspace.beginAction(.taxpayer);
+            if (!guardRegistrationFixtureAccess(model)) return;
+            const pending_target: registration_editor.SwitchTarget = .{
+                .taxpayer = std.math.maxInt(usize),
+            };
+            if (model.registrationEditor.switchDecision(
+                pending_target,
+                model.registrationWorkspace.selected_taxpayer_index,
+                model.registrationWorkspace.selected_registration_unit_index,
+            ) == .deferred) {
+                model.pendingProfileNavigation = .registration_create_taxpayer;
+                return;
+            }
+            const ledger = if (model.registrationLedger) |*value| value else {
+                model.registrationWorkspace.action_status = .write_failed;
+                return;
+            };
+            const created_taxpayer_id = model.registrationWorkspace.createPendingTaxpayer(
+                ledger,
+                model.registrationEditor.value(.taxpayer_tin_root),
+                model.registrationEditor.value(.taxpayer_effective_from),
+            ) orelse return;
+            model.registrationEditor.setValue(.taxpayer_tin_root, "");
+            model.registrationEditor.setValue(.taxpayer_effective_from, "");
+            refreshRegistrationWorkspace(model);
+            const target_index = model.registrationWorkspace.taxpayerIndex(
+                created_taxpayer_id,
+            ) orelse return;
+            selectRegistrationTaxpayer(model, target_index, false);
+        },
+        .reg_select_taxpayer => |index| {
+            const target: registration_editor.SwitchTarget = .{ .taxpayer = index };
+            switch (model.registrationEditor.switchDecision(
+                target,
+                model.registrationWorkspace.selected_taxpayer_index,
+                model.registrationWorkspace.selected_registration_unit_index,
+            )) {
+                .unchanged => return,
+                .deferred => {
+                    model.pendingProfileNavigation = .{
+                        .registration_taxpayer = index,
+                    };
+                    return;
+                },
+                .apply => selectRegistrationTaxpayer(model, index, true),
+            }
+        },
+        .reg_select_registration_unit => |index| {
+            const target: registration_editor.SwitchTarget = .{
+                .registration_unit = index,
+            };
+            switch (model.registrationEditor.switchDecision(
+                target,
+                model.registrationWorkspace.selected_taxpayer_index,
+                model.registrationWorkspace.selected_registration_unit_index,
+            )) {
+                .unchanged => return,
+                .deferred => {
+                    model.pendingProfileNavigation = .{
+                        .registration_unit = index,
+                    };
+                    return;
+                },
+                .apply => selectRegistrationUnit(model, index, true),
+            }
+        },
+        .reg_branch_code_input => |edit| {
+            if (!model.registrationMutationGate.enabled()) return;
+            model.registrationEditor.applyEdit(.branch_code, edit);
+        },
+        .reg_branch_effective_input => |edit| {
+            if (!model.registrationMutationGate.enabled()) return;
+            model.registrationEditor.applyEdit(.branch_effective_from, edit);
+        },
+        .reg_use_branch_suggestion => {
+            if (!model.registrationMutationGate.enabled()) return;
+            if (model.registrationWorkspace.suggested_branch_code) |code| {
+                model.registrationEditor.useBranchSuggestion(code.asDigits());
+            }
+        },
+        .reg_create_branch => {
+            model.registrationWorkspace.beginAction(.branch);
+            if (!guardRegistrationFixtureAccess(model)) return;
+            const pending_target: registration_editor.SwitchTarget = .{
+                .registration_unit = std.math.maxInt(usize),
+            };
+            if (model.registrationEditor.switchDecision(
+                pending_target,
+                model.registrationWorkspace.selected_taxpayer_index,
+                model.registrationWorkspace.selected_registration_unit_index,
+            ) == .deferred) {
+                model.pendingProfileNavigation = .registration_create_branch;
+                return;
+            }
+            const ledger = if (model.registrationLedger) |*value| value else {
+                model.registrationWorkspace.action_status = .write_failed;
+                return;
+            };
+            const created_unit_id = model.registrationWorkspace.createPendingBranch(
+                ledger,
+                model.registrationEditor.value(.branch_code),
+                model.registrationEditor.value(.branch_effective_from),
+            ) orelse return;
+            model.registrationEditor.clearBranchDraft();
+            refreshRegistrationWorkspace(model);
+            const target_index = model.registrationWorkspace.registrationUnitIndex(
+                created_unit_id,
+            ) orelse return;
+            selectRegistrationUnit(model, target_index, false);
+        },
+        .reg_confirm_effective_input => |edit| {
+            if (!model.registrationMutationGate.enabled()) return;
+            model.registrationEditor.applyEdit(
+                .confirmation_effective_from,
+                edit,
+            );
+        },
+        .reg_confirm_tin_input => |edit| {
+            if (!model.registrationMutationGate.enabled()) return;
+            model.registrationEditor.applyEdit(.confirmation_tin_root, edit);
+        },
+        .reg_confirm_code_input => |edit| {
+            if (!model.registrationMutationGate.enabled()) return;
+            model.registrationEditor.applyEdit(
+                .confirmation_branch_code,
+                edit,
+            );
+        },
+        .reg_confirm_rdo_input => |edit| {
+            if (!model.registrationMutationGate.enabled()) return;
+            model.registrationEditor.applyEdit(
+                .confirmation_rdo_code,
+                edit,
+            );
+        },
+        .reg_address_input => |edit| {
+            if (!model.registrationMutationGate.enabled()) return;
+            model.registrationEditor.applyEdit(.registered_address, edit);
+        },
+        .reg_zip_input => |edit| {
+            if (!model.registrationMutationGate.enabled()) return;
+            model.registrationEditor.applyEdit(.zip_code, edit);
+        },
+        .reg_contact_input => |edit| {
+            if (!model.registrationMutationGate.enabled()) return;
+            model.registrationEditor.applyEdit(.contact_number, edit);
+        },
+        .reg_email_input => |edit| {
+            if (!model.registrationMutationGate.enabled()) return;
+            model.registrationEditor.applyEdit(.email_address, edit);
+        },
+        .reg_evidence_source_cor => {
+            if (!model.registrationMutationGate.enabled() or
+                !model.regRegistrationEvidenceActionVisible()) return;
+            model.registrationEditor.selectEvidenceSource(.cor);
+        },
+        .reg_evidence_source_ecor => {
+            if (!model.registrationMutationGate.enabled() or
+                !model.regRegistrationEvidenceActionVisible()) return;
+            model.registrationEditor.selectEvidenceSource(.ecor);
+        },
+        .reg_evidence_source_bir_record => {
+            if (!model.registrationMutationGate.enabled() or
+                !model.regRegistrationEvidenceActionVisible()) return;
+            model.registrationEditor.selectEvidenceSource(
+                .bir_registration_record,
+            );
+        },
+        .reg_choose_evidence_file => {
+            if (!model.registrationMutationGate.enabled()) return;
+            chooseRegistrationEvidenceFile(model, fx);
+        },
+        .reg_evidence_captured_input => |edit| {
+            if (!model.registrationMutationGate.enabled()) return;
+            model.registrationEditor.applyEdit(.evidence_captured_on, edit);
+        },
+        .reg_toggle_vat_registration => {
+            if (!model.registrationMutationGate.enabled()) return;
+            const unit = model.registrationWorkspace.selectedRegistrationUnit() orelse
+                return;
+            if (unit.revision.kind != .head_office) return;
+            if (!model.regSelectedRegistrationUnitReviewable() and
+                !model.regVatRegistrationRepairVisible()) return;
+            model.registrationEditor.toggleVatRegistrationConfirmed();
+        },
+        .reg_confirm_selected_unit => {
+            const vat_repair = model.regVatRegistrationRepairVisible();
+            model.registrationWorkspace.beginAction(if (vat_repair)
+                .vat_registration
+            else
+                .unit_confirmation);
+            if (!guardRegistrationFixtureAccess(model)) return;
+            if (!vat_repair and !model.regSelectedRegistrationUnitReviewable()) {
+                model.registrationWorkspace.action_status =
+                    .registration_unit_not_reviewable;
+                return;
+            }
+            const ledger = if (model.registrationLedger) |*value| value else {
+                model.registrationWorkspace.action_status = .write_failed;
+                return;
+            };
+            const now = c_time.time(null);
+            if (now < 0) {
+                model.registrationWorkspace.action_status =
+                    .review_time_unavailable;
+                return;
+            }
+            if (model.regConfirmDisabled()) {
+                model.registrationWorkspace.action_status = if (!model.registrationEditor.hasEvidenceSource())
+                    .evidence_source_required
+                else if (vat_repair and !model.regVatRegistrationConfirmed())
+                    .vat_registration_assertion_required
+                else
+                    .invalid_evidence_path;
+                return;
+            }
+            var protected_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+            const protected_path = protectRegistrationEvidence(
+                model,
+                &protected_path_buffer,
+            ) orelse return;
+            if (vat_repair) {
+                const input = model.registrationEditor.vatRegistrationInput(
+                    protected_path,
+                    @intCast(now),
+                ) orelse {
+                    model.registrationWorkspace.action_status =
+                        .evidence_source_required;
+                    return;
+                };
+                if (!model.registrationWorkspace.recordSelectedHeadOfficeVatRegistration(
+                    ledger,
+                    input,
+                )) return;
+            } else {
+                const input = model.registrationEditor.confirmationInput(
+                    protected_path,
+                    @intCast(now),
+                ) orelse {
+                    model.registrationWorkspace.action_status =
+                        .evidence_source_required;
+                    return;
+                };
+                if (!model.registrationWorkspace.confirmSelectedUnit(
+                    ledger,
+                    input,
+                )) return;
+            }
+            model.registrationEditor.clearEvidenceDraft();
+            refreshRegistrationWorkspace(model);
+            model.registrationEditor.syncConfirmation(
+                model.registrationAsOf,
+                model.registrationWorkspace.selectedRegistrationUnit(),
+            );
+        },
+        .reg_open_resolved_2550q_preview => {
+            if (!guardRegistrationFixtureAccess(model)) return;
+            const snapshot = model.registrationWorkspace
+                .resolvedPreviewSnapshotForOpen() orelse return;
+            // Copy the validated scope presentation before navigation. Later
+            // workspace selection or refresh cannot silently change the open
+            // preview's source filter, coverage, evidence basis, or filer.
+            model.resolved2550QPreview = snapshot;
+            model.registrationPreviewReturnFocus = false;
+            model.percentageTax = .{};
+            model.incomeTax = .{};
+            navigate(model, .form_2550q);
+        },
+        .reg_close_resolved_2550q_preview => {
+            if (model.resolved2550QPreview != null) {
+                model.resolved2550QPreview = null;
+                model.profileSetupSection = .reg_filing;
+                model.registrationPreviewReturnFocus = true;
+                model.registrationPreviewOpenerIdentity +%= 1;
+                navigate(model, .profile_setup);
+            } else {
+                updateCore(model, .show_taxpayer_dashboard, fx);
+            }
+        },
         .edit_tax_profile => {
+            if (model.profileLegacyIdentityReadOnly()) return;
             beginCompleteProfileEdit(model);
         },
         .show_profile_tax_forms => {
@@ -10120,8 +12254,14 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.profileSetupYearQuery.clear();
             ensureYearWorkspaceOpen(model);
         },
-        .profile_cor_upload => attachCorDocument(model, fx),
-        .profile_cor_begin_review => _ = model.taxProfiles.beginCorReview(),
+        .profile_cor_upload => {
+            if (model.profileLegacyIdentityReadOnly()) return;
+            attachCorDocument(model, fx);
+        },
+        .profile_cor_begin_review => {
+            if (model.profileLegacyIdentityReadOnly()) return;
+            _ = model.taxProfiles.beginCorReview();
+        },
         .profile_cor_cancel_review => model.taxProfiles.cancelCorReview(),
         .profile_cor_tin_input => |edit| {
             model.taxProfiles.cor_review_tin.apply(edit);
@@ -10155,6 +12295,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.percentageTax.useProfileContactValues();
         },
         .profile_cor_apply => {
+            if (model.profileLegacyIdentityReadOnly()) return;
             if (model.taxProfiles.applyCorReview()) {
                 resetProfileFormsPage(model);
                 refreshSelectedProfileFormSet(model);
@@ -10353,6 +12494,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.profileSetupChangesExpanded = !model.profileSetupChangesExpanded;
         },
         .add_branch_profile => {
+            if (model.profileLegacyIdentityReadOnly()) return;
             if (rejectExact1701QContextChange(model)) {
                 reconcileExact1701QTaxpayerSelection(model);
                 navigate(model, .form_1701q);
@@ -10371,8 +12513,14 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             syncProfileIdentityControls(model);
             openProfileEditor(model);
         },
-        .profile_record_change => model.taxProfiles.beginRecordChange(),
-        .profile_fix_mistake => model.taxProfiles.beginFixMistake(),
+        .profile_record_change => {
+            if (model.profileLegacyIdentityReadOnly()) return;
+            model.taxProfiles.beginRecordChange();
+        },
+        .profile_fix_mistake => {
+            if (model.profileLegacyIdentityReadOnly()) return;
+            model.taxProfiles.beginFixMistake();
+        },
         .profile_toggle_advanced => {
             model.profileAdvancedExpanded = !model.profileAdvancedExpanded;
         },
@@ -10716,6 +12864,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             resolveTaxpayerYearConflict(model, false);
         },
         .tax_form_profile_edit_tax_profile => {
+            if (model.profileLegacyIdentityReadOnly()) return;
             model.taxFormProfileSection = .details;
             model.taxFormProfilePage.reset();
             model.taxpayerYearPage.reset();
@@ -10922,6 +13071,11 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
                 },
                 .profile_section => |section| switch (section) {
                     .tax_profile => updateCore(model, .show_profile_tax, fx),
+                    .reg_filing => updateCore(
+                        model,
+                        .show_profile_reg_filing,
+                        fx,
+                    ),
                     .tax_forms => updateCore(model, .show_profile_tax_forms, fx),
                     .email => updateCore(model, .show_profile_email, fx),
                 },
@@ -10933,6 +13087,24 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
                         .show_dashboard_profile_settings,
                         fx,
                     ),
+                },
+                .registration_taxpayer => |index| {
+                    selectRegistrationTaxpayer(model, index, true);
+                },
+                .registration_unit => |index| {
+                    selectRegistrationUnit(model, index, true);
+                },
+                .registration_create_taxpayer => {
+                    model.registrationEditor.discardForSwitch(.{
+                        .taxpayer = std.math.maxInt(usize),
+                    });
+                    updateCore(model, .reg_create_taxpayer, fx);
+                },
+                .registration_create_branch => {
+                    model.registrationEditor.discardForSwitch(.{
+                        .registration_unit = std.math.maxInt(usize),
+                    });
+                    updateCore(model, .reg_create_branch, fx);
                 },
                 .taxpayer_slot => |slot| updateCore(
                     model,
@@ -15069,6 +17241,9 @@ fn navigate(model: *Model, page: Page) void {
     if (model.page == .taxpayer_dashboard and page != .taxpayer_dashboard) {
         model.taxProfiles.resetFormFilters();
     }
+    if (page != .form_2550q) {
+        model.resolved2550QPreview = null;
+    }
     model.page = page;
     model.sidebarOverlayOpen = false;
     model.profileSubjectPickerVisible = false;
@@ -15535,7 +17710,40 @@ fn registerBootImages(model: *Model, fx: *Effects) void {
 }
 
 const BuwizApp = native_sdk.UiApp(Model, Msg);
-pub const app_markup = @embedFile("app.native");
+const app_markup_root = @embedFile("app.native");
+const app_markup_shared = @embedFile("app-shared.generated.native");
+const app_markup_pages = @embedFile("app-pages.generated.native");
+const app_markup_forms = @embedFile("app-forms.generated.native");
+const app_markup_auxiliary = @embedFile("app-auxiliary.generated.native");
+const app_markup_sources = [_]canvas.ui_markup.SourceFile{
+    .{ .path = "app-shared.generated.native", .source = app_markup_shared },
+    .{ .path = "app-pages.generated.native", .source = app_markup_pages },
+    .{ .path = "app-forms.generated.native", .source = app_markup_forms },
+    .{ .path = "app-auxiliary.generated.native", .source = app_markup_auxiliary },
+};
+
+// Raw source-search tests still use the resolved template order. Runtime and
+// tree-building tests resolve the imports from app_markup_root instead.
+pub const app_markup = app_markup_shared ++
+    app_markup_pages ++
+    app_markup_forms ++
+    app_markup_auxiliary ++
+    app_markup_root;
+
+fn initAppMarkupView(arena: std.mem.Allocator) !canvas.MarkupView(Model, Msg) {
+    var loader = canvas.ui_markup.SourceSetLoader{ .set = &app_markup_sources };
+    var diagnostic: canvas.ui_markup.MarkupErrorInfo = .{};
+    const document = try canvas.ui_markup.resolveImports(
+        arena,
+        "",
+        app_markup_root,
+        loader.loader(),
+        &diagnostic,
+    );
+    return canvas.MarkupView(Model, Msg).fromDocument(
+        try canvas.ui_markup.canonicalize(arena, document),
+    );
+}
 const multi_select_component_markup = @embedFile("components/multi-select-combobox.native");
 const multi_select_component_fixture = multi_select_component_markup ++
     \\
@@ -15756,6 +17964,24 @@ test "macOS bundle resources path rejects truncation" {
     );
 }
 
+fn requireRegistrationFixtureDataBoundary(
+    fixture_preview_requested: bool,
+    data_directory_explicit: bool,
+) !void {
+    if (fixture_preview_requested and !data_directory_explicit) {
+        return error.RegistrationFixtureDataDirectoryRequired;
+    }
+}
+
+test "fixture preview requires an explicit data root before storage resolution" {
+    try std.testing.expectError(
+        error.RegistrationFixtureDataDirectoryRequired,
+        requireRegistrationFixtureDataBoundary(true, false),
+    );
+    try requireRegistrationFixtureDataBoundary(true, true);
+    try requireRegistrationFixtureDataBoundary(false, false);
+}
+
 pub fn main(init: std.process.Init) !void {
     // This source-selected bootstrap must precede environment inspection,
     // repository path resolution, directory creation, and every storage I/O.
@@ -15793,8 +18019,20 @@ pub fn main(init: std.process.Init) !void {
         );
         return error.LegacyDataDirectoryForbiddenForBranchBuild;
     }
-    const configured_data_dir = buwiz_data_dir orelse
-        (if (app_identity.is_main) legacy_data_dir else null) orelse
+    const explicit_data_dir = buwiz_data_dir orelse
+        (if (app_identity.is_main) legacy_data_dir else null);
+    const data_dir_was_explicit = explicit_data_dir != null;
+    const fixture_preview_requested = if (init.environ_map.get(
+        "EBIRFORMS_TIN_BRANCH_FIXTURE_PREVIEW",
+    )) |value| std.mem.eql(u8, value, "1") else false;
+    // Fail before default-path resolution, directory creation, or any SQLite
+    // open. Fixture mode is authority to mutate only its explicitly supplied,
+    // lease-owned child; it must never fall through to normal app storage.
+    try requireRegistrationFixtureDataBoundary(
+        fixture_preview_requested,
+        data_dir_was_explicit,
+    );
+    const configured_data_dir = explicit_data_dir orelse
         try app_dirs.resolveOne(
             .{ .name = app_identity.app_name },
             platform,
@@ -15806,7 +18044,7 @@ pub fn main(init: std.process.Init) !void {
     var data_directory = try std.Io.Dir.cwd().openDir(
         init.io,
         configured_data_dir,
-        .{},
+        .{ .iterate = true },
     );
     defer data_directory.close(init.io);
     var absolute_data_dir_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
@@ -15816,42 +18054,87 @@ pub fn main(init: std.process.Init) !void {
     );
     const data_dir = absolute_data_dir_buffer[0..absolute_data_dir_len];
 
+    var fixture_directory: ?profile_store.RegistrationFixtureDirectory = null;
+    defer if (fixture_directory) |*directory| directory.close(init.io);
+    var fixture_data_dir_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var storage_data_dir = data_dir;
+    var registration_fixture_database_origin: profile_store.RegistrationFixtureDatabaseOrigin =
+        .preexisting_or_unknown;
+    if (fixture_preview_requested and data_dir_was_explicit) {
+        fixture_directory = try profile_store
+            .openRegistrationFixturePreviewDirectory(
+            data_directory,
+            init.io,
+        );
+        const fixture_data_dir_len = try fixture_directory.?.realPath(
+            init.io,
+            &fixture_data_dir_buffer,
+        );
+        storage_data_dir = fixture_data_dir_buffer[0..fixture_data_dir_len];
+        registration_fixture_database_origin =
+            fixture_directory.?.databaseOrigin();
+    }
+
     var database_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const database_path = try app_dirs.join(
         platform,
         &database_path_buffer,
-        &.{ data_dir, "calendar.sqlite3" },
+        &.{ storage_data_dir, "calendar.sqlite3" },
     );
     var news_database_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const news_database_path = try app_dirs.join(
         platform,
         &news_database_path_buffer,
-        &.{ data_dir, news_store.default_filename },
+        &.{ storage_data_dir, news_store.default_filename },
     );
     var export_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const export_path = try app_dirs.join(
         platform,
         &export_path_buffer,
-        &.{ data_dir, "buwiz-tax-calendar.ics" },
+        &.{ storage_data_dir, "buwiz-tax-calendar.ics" },
     );
 
-    var calendar_store =
+    var tax_profile_store = if (fixture_directory) |*directory| fixture: {
+        try directory.verifyMounted(init.io);
+        var fixture_store = try profile_store.Store.openRegistrationFixturePreviewMemory(
+            development_plaintext,
+            init.gpa,
+            directory.identity,
+        );
+        errdefer fixture_store.close();
+        try directory.publishReady(init.io);
+        registration_fixture_database_origin = directory.databaseOrigin();
+        try directory.verifyMounted(init.io);
+        break :fixture fixture_store;
+    } else try profile_store.Store.openDevelopmentPlaintext(
+        development_plaintext,
+        init.gpa,
+        database_path,
+    );
+    defer tax_profile_store.close();
+    var calendar_store = if (fixture_directory != null)
+        try calendar_ui.persistence.Store.openMemory(init.gpa)
+    else
         try calendar_ui.persistence.Store.openDevelopmentPlaintext(
             development_plaintext,
             init.gpa,
             database_path,
         );
     defer calendar_store.close();
-    var tax_profile_store = try profile_store.Store.openDevelopmentPlaintext(
-        development_plaintext,
+    const registration_mutation_gate = registrationMutationGateForStore(
         init.gpa,
-        database_path,
+        &tax_profile_store,
+        fixture_preview_requested,
+        data_dir_was_explicit,
+        registration_fixture_database_origin,
     );
-    defer tax_profile_store.close();
-    var important_news_store = try news_store.Store.openRecoverableCache(
-        init.gpa,
-        news_database_path,
-    );
+    var important_news_store = if (fixture_directory != null)
+        try news_store.Store.openMemory(init.gpa)
+    else
+        try news_store.Store.openRecoverableCache(
+            init.gpa,
+            news_database_path,
+        );
     defer important_news_store.close();
     const boot_time = bootCalendarTime(init.io);
     var boot_date: [10]u8 = undefined;
@@ -15876,10 +18159,21 @@ pub fn main(init: std.process.Init) !void {
         .on_appearance = appearanceMessage,
         .on_frame = frameMessage,
         .tokens_fn = appTokens,
-        .markup = .{ .source = app_markup, .watch_path = "src/app.native", .io = init.io },
+        .markup = .{
+            .source = app_markup_root,
+            .sources = &app_markup_sources,
+            .watch_path = "src/app.native",
+            .io = init.io,
+        },
     });
     defer app_state.destroy();
     app_state.model = .{};
+    app_state.model.registrationMutationGate = registration_mutation_gate;
+    app_state.model.registrationIo = init.io;
+    app_state.model.registrationEvidenceDataDir = storage_data_dir;
+    app_state.model.registrationEvidenceDataDirectory =
+        if (fixture_directory) |*directory| directory.dir else data_directory;
+    app_state.model.fixturePreviewSession = fixture_preview_requested;
     app_state.model.calendarToday = try calendar_domain.Date.init(
         boot_time.year,
         boot_time.month,
@@ -15921,6 +18215,28 @@ pub fn main(init: std.process.Init) !void {
         &boot_date,
         boot_time.year,
     );
+    app_state.model.registrationLedger = registration_ledger
+        .TaxpayerRegistrationLedger.init(init.gpa, &tax_profile_store);
+    app_state.model.registrationAsOf = try registration_domain.Date.parseIso(
+        &boot_date,
+    );
+    app_state.model.registrationWorkspace.period_year = @intCast(boot_time.year);
+    app_state.model.registrationWorkspace.period_quarter = @intCast(
+        ((boot_time.month - 1) / 3) + 1,
+    );
+    app_state.model.registrationEditor.setValue(
+        .taxpayer_effective_from,
+        &boot_date,
+    );
+    app_state.model.registrationEditor.setValue(
+        .branch_effective_from,
+        &boot_date,
+    );
+    app_state.model.registrationEditor.setValue(
+        .evidence_captured_on,
+        &boot_date,
+    );
+    refreshRegistrationWorkspace(&app_state.model);
     app_state.model.formProfiles.attach(
         init.gpa,
         &tax_profile_store,
@@ -16325,6 +18641,27 @@ test "app calendar and filing action icons register for markup" {
     try std.testing.expect(canvas.icons.resolve("app:mail-check") != null);
     try std.testing.expect(canvas.icons.resolve("app:printer") != null);
     try std.testing.expect(canvas.icons.resolve("app:upload-receipt") != null);
+}
+
+test "2550Q markup teaches the canonical five-digit Branch Code" {
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup_forms,
+        "label=\"TIN\" v=\"{formFilerTin}\" ph=\"000-000-000-00000\"",
+    ) != null);
+}
+
+test "2550Q resolved preview identifies fixture-only source metadata" {
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup_forms,
+        "Fixture metadata only",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup_forms,
+        "not imported business data",
+    ) != null);
 }
 
 test "tax-profile domain modules remain in the repository test root" {
@@ -16754,7 +19091,7 @@ test "tax form library information uses a dismissible dialog at every width" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var view = try initAppMarkupView(arena);
     var ui = canvas.Ui(Msg).init(arena);
     const tree = try ui.finalize(try view.build(&ui, &model));
     const dialog = findWidgetByKind(tree.root, .dialog).?;
@@ -19889,7 +22226,13 @@ test "calendar export toast is safe while busy and dismisses when terminal" {
         model.profileCalendarExportStatus,
     );
 
-    model.profileCalendarExportStatus = .opened;
+    model.profileCalendarExportStatus = .saved;
+    try std.testing.expect(model.profileCalendarExportNoticeSuccess());
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        model.profileCalendarExportNotice(),
+        "owned fixture workspace",
+    ) != null);
     model.profileCalendarExportNoticeEpoch +%= 1;
     syncProfileCalendarExportNoticeTimer(&model, fx);
     try std.testing.expectEqual(@as(usize, 1), fx.pendingTimerCount());
@@ -20566,6 +22909,22 @@ fn findWidgetBySemanticsLabel(
     return null;
 }
 
+fn findWidgetByKindAndSemanticsLabel(
+    widget: canvas.Widget,
+    kind: canvas.WidgetKind,
+    label: []const u8,
+) ?canvas.Widget {
+    if (widget.kind == kind and std.mem.eql(u8, widget.semantics.label, label)) {
+        return widget;
+    }
+    for (widget.children) |child| {
+        if (findWidgetByKindAndSemanticsLabel(child, kind, label)) |found| {
+            return found;
+        }
+    }
+    return null;
+}
+
 fn findWidgetBySemanticsPrefix(
     widget: canvas.Widget,
     prefix: []const u8,
@@ -20573,6 +22932,17 @@ fn findWidgetBySemanticsPrefix(
     if (std.mem.startsWith(u8, widget.semantics.label, prefix)) return widget;
     for (widget.children) |child| {
         if (findWidgetBySemanticsPrefix(child, prefix)) |found| return found;
+    }
+    return null;
+}
+
+fn findWidgetBySemanticsContains(
+    widget: canvas.Widget,
+    needle: []const u8,
+) ?canvas.Widget {
+    if (std.mem.indexOf(u8, widget.semantics.label, needle) != null) return widget;
+    for (widget.children) |child| {
+        if (findWidgetBySemanticsContains(child, needle)) |found| return found;
     }
     return null;
 }
@@ -20593,7 +22963,7 @@ fn writeReferenceProofShot(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var view = try initAppMarkupView(arena);
     var ui = canvas.Ui(Msg).init(arena);
     const tree = try ui.finalize(try view.build(&ui, model));
     const tokens = canvas.DesignTokens.theme(.{ .color_scheme = .light });
@@ -20775,7 +23145,7 @@ fn expectSetupWorkspaceLayoutClean(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var view = try initAppMarkupView(arena);
     var ui = canvas.Ui(Msg).init(arena);
     const tree = try ui.finalize(try view.build(&ui, model));
     const tokens = canvas.DesignTokens.theme(.{ .color_scheme = .light });
@@ -21247,7 +23617,7 @@ test "render opened form workspace proof shots when requested" {
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var view = try initAppMarkupView(arena);
     var library_ui = canvas.Ui(Msg).init(arena);
     const library_tree = try library_ui.finalize(
         try view.build(&library_ui, &model),
@@ -21288,10 +23658,7 @@ test "render opened form workspace proof shots when requested" {
     var monthly_arena_state = std.heap.ArenaAllocator.init(allocator);
     defer monthly_arena_state.deinit();
     const monthly_arena = monthly_arena_state.allocator();
-    var monthly_view = try canvas.MarkupView(Model, Msg).init(
-        monthly_arena,
-        app_markup,
-    );
+    var monthly_view = try initAppMarkupView(monthly_arena);
     var monthly_ui = canvas.Ui(Msg).init(monthly_arena);
     const monthly_tree = try monthly_ui.finalize(
         try monthly_view.build(&monthly_ui, &model),
@@ -21365,7 +23732,7 @@ test "render form activation flow proof shots when requested" {
         var arena_state = std.heap.ArenaAllocator.init(allocator);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
-        var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+        var view = try initAppMarkupView(arena);
         var ui = canvas.Ui(Msg).init(arena);
         const tree = try ui.finalize(try view.build(&ui, &model));
         const form_checkbox = findWidgetBySemanticsLabel(
@@ -21382,7 +23749,7 @@ test "render form activation flow proof shots when requested" {
         var arena_state = std.heap.ArenaAllocator.init(allocator);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
-        var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+        var view = try initAppMarkupView(arena);
         var ui = canvas.Ui(Msg).init(arena);
         const tree = try ui.finalize(try view.build(&ui, &model));
         const save = findWidgetByText(tree.root, .button, "Save").?;
@@ -21397,7 +23764,7 @@ test "render form activation flow proof shots when requested" {
         var arena_state = std.heap.ArenaAllocator.init(allocator);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
-        var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+        var view = try initAppMarkupView(arena);
         var ui = canvas.Ui(Msg).init(arena);
         const tree = try ui.finalize(try view.build(&ui, &model));
         const manage = findWidgetByText(tree.root, .button, "Manage Forms").?;
@@ -21409,7 +23776,7 @@ test "render form activation flow proof shots when requested" {
         var arena_state = std.heap.ArenaAllocator.init(allocator);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
-        var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+        var view = try initAppMarkupView(arena);
         var ui = canvas.Ui(Msg).init(arena);
         const tree = try ui.finalize(try view.build(&ui, &model));
         const form_checkbox = findWidgetBySemanticsLabel(
@@ -21425,7 +23792,7 @@ test "render form activation flow proof shots when requested" {
         var arena_state = std.heap.ArenaAllocator.init(allocator);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
-        var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+        var view = try initAppMarkupView(arena);
         var ui = canvas.Ui(Msg).init(arena);
         const tree = try ui.finalize(try view.build(&ui, &model));
         const save = findWidgetByText(tree.root, .button, "Save").?;
@@ -21454,7 +23821,7 @@ test "tax form library filter dispatches through compiled markup" {
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var view = try initAppMarkupView(arena);
 
     var closed_ui = canvas.Ui(Msg).init(arena);
     const closed_root = view.build(&closed_ui, &model) catch |err| {
@@ -21582,7 +23949,7 @@ test "tax form library keeps browse and manage trees within widget budget" {
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var view = try initAppMarkupView(arena);
 
     var browse_ui = canvas.Ui(Msg).init(arena);
     const browse_tree = try browse_ui.finalize(try view.build(&browse_ui, &model));
@@ -22025,7 +24392,7 @@ test "global calendar day widget toggles exact-date rows and heading" {
         break;
     }
     const action_label = day_label orelse return error.TestUnexpectedResult;
-    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var view = try initAppMarkupView(arena);
     var initial_ui = canvas.Ui(Msg).init(arena);
     const initial_tree = try initial_ui.finalize(
         try view.build(&initial_ui, &model),
@@ -23373,7 +25740,7 @@ test "profile dashboard markup builds with the three calendar lanes" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var view = try initAppMarkupView(arena);
     var ui = canvas.Ui(Msg).init(arena);
     const tree = try ui.finalize(try view.build(&ui, &model));
     try std.testing.expect(
@@ -23502,7 +25869,7 @@ fn expectAppMarkupBuilds(model: *const Model) !void {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var view = try initAppMarkupView(arena);
     var ui = canvas.Ui(Msg).init(arena);
     const root = view.build(&ui, model) catch |err| {
         if (err == error.MarkupBuild) {
@@ -23529,10 +25896,25 @@ fn appMarkupHasSemanticsPrefix(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var view = try initAppMarkupView(arena);
     var ui = canvas.Ui(Msg).init(arena);
     const tree = try ui.finalize(try view.build(&ui, model));
     return findWidgetBySemanticsPrefix(tree.root, prefix) != null;
+}
+
+fn appMarkupHasWidgetKindAndSemanticsLabel(
+    model: *const Model,
+    kind: canvas.WidgetKind,
+    label: []const u8,
+) !bool {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var view = try initAppMarkupView(arena);
+    var ui = canvas.Ui(Msg).init(arena);
+    const tree = try ui.finalize(try view.build(&ui, model));
+    return findWidgetByKindAndSemanticsLabel(tree.root, kind, label) != null;
 }
 
 fn appMarkupHasWidgetText(
@@ -23544,10 +25926,130 @@ fn appMarkupHasWidgetText(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var view = try initAppMarkupView(arena);
     var ui = canvas.Ui(Msg).init(arena);
     const tree = try ui.finalize(try view.build(&ui, model));
     return findWidgetByText(tree.root, kind, text) != null;
+}
+
+fn appMarkupWidgetSelectedByText(
+    model: *const Model,
+    kind: canvas.WidgetKind,
+    text: []const u8,
+) !?bool {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var view = try initAppMarkupView(arena);
+    var ui = canvas.Ui(Msg).init(arena);
+    const tree = try ui.finalize(try view.build(&ui, model));
+    const widget = findWidgetByText(tree.root, kind, text) orelse return null;
+    return widget.state.selected;
+}
+
+fn appMarkupWidgetWrapsByText(
+    model: *const Model,
+    text: []const u8,
+) !?bool {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var view = try initAppMarkupView(arena);
+    var ui = canvas.Ui(Msg).init(arena);
+    const tree = try ui.finalize(try view.build(&ui, model));
+    const widget = findWidgetByText(tree.root, .text, text) orelse return null;
+    return widget.spans.len > 0;
+}
+
+fn appMarkupWidgetAutofocusByText(
+    model: *const Model,
+    kind: canvas.WidgetKind,
+    text: []const u8,
+) !?bool {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var view = try initAppMarkupView(arena);
+    var ui = canvas.Ui(Msg).init(arena);
+    const tree = try ui.finalize(try view.build(&ui, model));
+    const widget = findWidgetByText(tree.root, kind, text) orelse return null;
+    return widget.autofocus;
+}
+
+fn appMarkupWidgetIdByText(
+    model: *const Model,
+    kind: canvas.WidgetKind,
+    text: []const u8,
+) !?u64 {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var view = try initAppMarkupView(arena);
+    var ui = canvas.Ui(Msg).init(arena);
+    const tree = try ui.finalize(try view.build(&ui, model));
+    const widget = findWidgetByText(tree.root, kind, text) orelse return null;
+    return widget.id;
+}
+
+fn dispatchAppWidgetToggleByText(
+    model: *Model,
+    kind: canvas.WidgetKind,
+    text: []const u8,
+) !bool {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var view = try initAppMarkupView(arena);
+    var ui = canvas.Ui(Msg).init(arena);
+    const tree = try ui.finalize(try view.build(&ui, model));
+    const widget = findWidgetByText(tree.root, kind, text) orelse return false;
+    const message = tree.msgFor(widget.id, .toggle) orelse return false;
+    update(model, message);
+    return true;
+}
+
+fn appMarkupWidgetDisabledBySemanticsLabel(
+    model: *const Model,
+    label: []const u8,
+) !?bool {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var view = try initAppMarkupView(arena);
+    var ui = canvas.Ui(Msg).init(arena);
+    const tree = try ui.finalize(try view.build(&ui, model));
+    const widget = findWidgetByKindAndSemanticsLabel(
+        tree.root,
+        .input,
+        label,
+    ) orelse findWidgetByKindAndSemanticsLabel(
+        tree.root,
+        .button,
+        label,
+    ) orelse return null;
+    return widget.state.disabled;
+}
+
+fn appMarkupWidgetDisabledByText(
+    model: *const Model,
+    kind: canvas.WidgetKind,
+    text: []const u8,
+) !?bool {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var view = try initAppMarkupView(arena);
+    var ui = canvas.Ui(Msg).init(arena);
+    const tree = try ui.finalize(try view.build(&ui, model));
+    const widget = findWidgetByText(tree.root, kind, text) orelse return null;
+    return widget.state.disabled;
 }
 
 fn dispatchAppWidgetBySemanticsPrefix(
@@ -23558,7 +26060,7 @@ fn dispatchAppWidgetBySemanticsPrefix(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var view = try canvas.MarkupView(Model, Msg).init(arena, app_markup);
+    var view = try initAppMarkupView(arena);
     var ui = canvas.Ui(Msg).init(arena);
     const tree = try ui.finalize(try view.build(&ui, model));
     const widget = findWidgetBySemanticsPrefix(tree.root, prefix) orelse
@@ -23589,4 +26091,1528 @@ test "segmented TIN rejects composition letters and caps the branch at five digi
     } });
     try std.testing.expectEqualStrings("12345", model.profileTinSegments[3].text());
     try std.testing.expectEqualStrings("12345678912345", model.taxProfiles.tin.text());
+}
+
+test "registration filing tab keeps legacy workspace fail closed" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addTestProfile(
+        &store,
+        "registration-ui-legacy-profile",
+        "Legacy Branch Workspace",
+        "123-456-789-000",
+        .individual,
+    );
+
+    var model = Model{ .page = .profile_setup };
+    try model.taxProfiles.attach(allocator, &store, "2026-08-08", 2026);
+    const selected_before = model.taxProfiles.selectedProfileId().?;
+
+    update(&model, .show_profile_reg_filing);
+    try std.testing.expect(model.profileRegistrationFilingActive());
+    try std.testing.expect(model.regCanonicalEmpty());
+    try std.testing.expect(model.profileRegistrationReviewRequired());
+    try std.testing.expectEqualStrings(
+        selected_before,
+        model.taxProfiles.selectedProfileId().?,
+    );
+    try std.testing.expectEqualStrings(
+        "Legacy unresolved",
+        model.profileRegistrationStatusLabel(),
+    );
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    try std.testing.expectEqualStrings(
+        "***-***-789",
+        model.profileRegistrationMaskedTinRoot(arena_state.allocator()),
+    );
+    try std.testing.expectEqualStrings(
+        "Masked TIN root ***-***-789",
+        model.profileRegistrationMaskedTinRootLabel(arena_state.allocator()),
+    );
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        model.profileRegistrationFilingUnitLabel(),
+        "Unresolved",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        model.profileRegistrationCapabilityLabel(),
+        "Blocked",
+    ) != null);
+
+    try expectAppMarkupBuilds(&model);
+    try std.testing.expect(try appMarkupHasSemanticsPrefix(
+        &model,
+        "Masked TIN root ***-***-789",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .badge,
+        "Review Required",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        "No canonical registration records",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .badge,
+        "Legacy Taxpayer Profile context · separate",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        "This read-only legacy Taxpayer Profile context stays separate; no canonical Taxpayer or Registration Unit is inferred.",
+    ));
+
+    try std.testing.expectEqualStrings(
+        "Taxpayer Profile",
+        model.profileTaxTabLabel(),
+    );
+    model.viewportClass = .phone;
+    model.viewportWidth = 390;
+    try std.testing.expectEqualStrings("Profile", model.profileTaxTabLabel());
+    try std.testing.expectEqualStrings("Scope", model.profileRegistrationTabLabel());
+    try std.testing.expectEqualStrings("Forms", model.profileTaxFormsTabLabel());
+    try std.testing.expectEqualStrings("Email", model.profileEmailTabLabel());
+}
+
+test "registration mutation gate requires every fixture prerequisite" {
+    const enabled_inputs: RegistrationMutationGateInputs = .{
+        .fixture_preview_requested = true,
+        .data_directory_explicit = true,
+        .inventory_collected = true,
+        .inventory_verified_no_writes = true,
+        .no_legacy_profiles = true,
+        .fixture_ownership_verified = true,
+    };
+    try std.testing.expect(RegistrationMutationGate.evaluate(enabled_inputs).enabled());
+
+    var missing = enabled_inputs;
+    missing.fixture_preview_requested = false;
+    try std.testing.expectEqual(
+        RegistrationMutationGateReason.fixture_preview_disabled,
+        RegistrationMutationGate.evaluate(missing).reason,
+    );
+    missing = enabled_inputs;
+    missing.data_directory_explicit = false;
+    try std.testing.expectEqual(
+        RegistrationMutationGateReason.data_directory_not_explicit,
+        RegistrationMutationGate.evaluate(missing).reason,
+    );
+    missing = enabled_inputs;
+    missing.inventory_collected = false;
+    try std.testing.expectEqual(
+        RegistrationMutationGateReason.inventory_unavailable,
+        RegistrationMutationGate.evaluate(missing).reason,
+    );
+    missing = enabled_inputs;
+    missing.inventory_verified_no_writes = false;
+    try std.testing.expectEqual(
+        RegistrationMutationGateReason.inventory_wrote_data,
+        RegistrationMutationGate.evaluate(missing).reason,
+    );
+    missing = enabled_inputs;
+    missing.no_legacy_profiles = false;
+    try std.testing.expectEqual(
+        RegistrationMutationGateReason.legacy_profiles_present,
+        RegistrationMutationGate.evaluate(missing).reason,
+    );
+
+    missing = enabled_inputs;
+    missing.fixture_ownership_verified = false;
+    try std.testing.expectEqual(
+        RegistrationMutationGateReason.ownership_unavailable,
+        RegistrationMutationGate.evaluate(missing).reason,
+    );
+
+    missing = enabled_inputs;
+    missing.unowned_existing_database = true;
+    try std.testing.expectEqual(
+        RegistrationMutationGateReason.unowned_existing_database,
+        RegistrationMutationGate.evaluate(missing).reason,
+    );
+
+    missing = enabled_inputs;
+    missing.unowned_target_rows = true;
+    try std.testing.expectEqual(
+        RegistrationMutationGateReason.unowned_target_rows,
+        RegistrationMutationGate.evaluate(missing).reason,
+    );
+    missing = enabled_inputs;
+
+    const default_model: Model = .{};
+    try std.testing.expect(default_model.regCanonicalMutationsDisabled());
+    try std.testing.expectEqualStrings(
+        "Read-only registration preview",
+        default_model.regCanonicalMutationGateTitle(),
+    );
+
+    var preview_model = Model{
+        .page = .profile_setup,
+        .profileSetupSection = .reg_filing,
+    };
+    try expectAppMarkupBuilds(&preview_model);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup_pages,
+        "wrap=\"true\" foreground=\"warning\">Review Required — no effective Registration Unit is available.",
+    ) != null);
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &preview_model,
+        .text,
+        "No canonical registration records",
+    ));
+    try std.testing.expect((try appMarkupWidgetDisabledBySemanticsLabel(
+        &preview_model,
+        "Nine-digit TIN root",
+    )) == null);
+    try std.testing.expect((try appMarkupWidgetDisabledBySemanticsLabel(
+        &preview_model,
+        "Create Taxpayer",
+    )) == null);
+
+    // Hidden presentation is not the authority boundary: stale automation,
+    // accessibility, or replayed messages must be unable to create hidden
+    // unsavable drafts or open the evidence picker in read-only mode.
+    update(&preview_model, .{
+        .reg_tin_root_input = .{ .insert_text = "123456789" },
+    });
+    update(&preview_model, .{
+        .reg_branch_code_input = .{ .insert_text = "00001" },
+    });
+    update(&preview_model, .{
+        .reg_address_input = .{ .insert_text = "Hidden draft" },
+    });
+    preview_model.registrationWorkspace.suggested_branch_code =
+        try registration_domain.BranchCode5.parse("00001");
+    update(&preview_model, .reg_use_branch_suggestion);
+    update(&preview_model, .reg_choose_evidence_file);
+    try std.testing.expectEqualStrings("", preview_model.regTinRootInputValue());
+    try std.testing.expectEqualStrings("", preview_model.regBranchCodeInputValue());
+    try std.testing.expectEqualStrings("", preview_model.regAddressValue());
+    try std.testing.expect(
+        !preview_model.registrationEditor.isDirty(.branch_candidate),
+    );
+    try std.testing.expect(
+        !preview_model.registrationEditor.isDirty(.registration_unit_evidence),
+    );
+    try std.testing.expectEqual(
+        registration_workspace.ActionStatus.none,
+        preview_model.registrationWorkspace.action_status,
+    );
+}
+
+test "policy availability stays separate from planner resolution" {
+    var model: Model = .{};
+    model.registrationWorkspace.policy_catalog_missing = false;
+    model.registrationWorkspace.effective_policy_resolved = false;
+
+    try std.testing.expect(!model.regPolicyCatalogMissing());
+    try std.testing.expectEqualStrings(
+        "No effective reviewed policy revision resolved",
+        model.regPolicyCatalogLabel(std.testing.allocator),
+    );
+}
+
+test "registration mutation gate claims and resumes only fixture-owned ledgers" {
+    const allocator = std.testing.allocator;
+
+    var owned_store = try profile_store.Store.openMemory(allocator);
+    defer owned_store.close();
+
+    const claimed = registrationMutationGateForStore(
+        allocator,
+        &owned_store,
+        true,
+        true,
+        profile_store.testing.fixtureDatabaseOrigin(.claiming),
+    );
+    try std.testing.expect(claimed.enabled());
+    try std.testing.expect(
+        try owned_store.registrationFixturePreviewOwnershipPresent(),
+    );
+
+    try profile_store.testing.execConstraintFixture(
+        &owned_store,
+        "INSERT INTO taxpayer_registration_taxpayers(id) VALUES ('owned-canonical-taxpayer');",
+    );
+    const resumed = registrationMutationGateForStore(
+        allocator,
+        &owned_store,
+        true,
+        true,
+        profile_store.testing.fixtureDatabaseOrigin(.ready),
+    );
+    try std.testing.expect(resumed.enabled());
+
+    var resumed_model: Model = .{};
+    try resumed_model.taxProfiles.attachForGlobalDashboard(
+        allocator,
+        &owned_store,
+        "2026-08-09",
+        2026,
+    );
+    resumed_model.registrationMutationGate = resumed;
+    try profile_store.testing.deleteRegistrationFixtureOwnershipMarker(
+        &owned_store,
+    );
+    try std.testing.expect(!guardRegistrationFixtureAccess(&resumed_model));
+    try std.testing.expectEqual(
+        RegistrationMutationGateReason.ownership_unavailable,
+        resumed_model.registrationMutationGate.reason,
+    );
+    try std.testing.expect(
+        !resumed_model.registrationFixturePreviewAccessEnabled(),
+    );
+
+    var unowned_store = try profile_store.Store.openMemory(allocator);
+    defer unowned_store.close();
+    try profile_store.testing.execConstraintFixture(
+        &unowned_store,
+        "INSERT INTO taxpayer_registration_taxpayers(id) VALUES ('unowned-canonical-taxpayer');",
+    );
+    const unowned = registrationMutationGateForStore(
+        allocator,
+        &unowned_store,
+        true,
+        true,
+        profile_store.testing.fixtureDatabaseOrigin(.claiming),
+    );
+    try std.testing.expectEqual(
+        RegistrationMutationGateReason.unowned_target_rows,
+        unowned.reason,
+    );
+    try std.testing.expect(!unowned.enabled());
+    try std.testing.expect(
+        !try unowned_store.registrationFixturePreviewOwnershipPresent(),
+    );
+
+    var invalid_marker_store = try profile_store.Store.openMemory(allocator);
+    defer invalid_marker_store.close();
+    try profile_store.testing.execConstraintFixture(
+        &invalid_marker_store,
+        "INSERT INTO app_component_migrations(component, version) VALUES ('tin-branch-fixture-preview', 2);",
+    );
+    const invalid_marker = registrationMutationGateForStore(
+        allocator,
+        &invalid_marker_store,
+        true,
+        true,
+        profile_store.testing.fixtureDatabaseOrigin(.claiming),
+    );
+    try std.testing.expectEqual(
+        RegistrationMutationGateReason.unowned_existing_database,
+        invalid_marker.reason,
+    );
+    try std.testing.expect(!invalid_marker.enabled());
+}
+
+test "registration mutation gate rejects a preexisting calendar-only database" {
+    const allocator = std.testing.allocator;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+
+    var directory_path: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const directory_length = try temporary.dir.realPath(
+        std.testing.io,
+        &directory_path,
+    );
+    var database_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const database_path = try std.fmt.bufPrint(
+        &database_path_buffer,
+        "{s}/calendar-only.sqlite3",
+        .{directory_path[0..directory_length]},
+    );
+    const capability =
+        key_custody.bootstrapCurrentArtifactStorage().development_plaintext;
+
+    try std.testing.expectError(
+        error.FileNotFound,
+        std.Io.Dir.cwd().statFile(
+            std.testing.io,
+            database_path,
+            .{ .follow_symlinks = false },
+        ),
+    );
+    {
+        var calendar_store =
+            try calendar_ui.persistence.Store.openDevelopmentPlaintext(
+                capability,
+                allocator,
+                database_path,
+            );
+        defer calendar_store.close();
+        _ = try calendar_store.putConnection(.{
+            .provider = "google",
+            .profile_key = "calendar-only-profile",
+            .external_calendar_id = "calendar-only-id",
+        });
+    }
+
+    const database_origin: profile_store.RegistrationFixtureDatabaseOrigin =
+        .preexisting_or_unknown;
+    {
+        var store = try profile_store.Store.testingOpenLatestDevelopmentPlaintext(
+            capability,
+            allocator,
+            database_path,
+        );
+        defer store.close();
+
+        const gate = registrationMutationGateForStore(
+            allocator,
+            &store,
+            true,
+            true,
+            database_origin,
+        );
+        try std.testing.expectEqual(
+            RegistrationMutationGateReason.unowned_existing_database,
+            gate.reason,
+        );
+        try std.testing.expect(
+            !try store.registrationFixturePreviewOwnershipPresent(),
+        );
+    }
+
+    var reopened_calendar =
+        try calendar_ui.persistence.Store.openDevelopmentPlaintext(
+            capability,
+            allocator,
+            database_path,
+        );
+    defer reopened_calendar.close();
+    var connection = (try reopened_calendar.getConnection(
+        allocator,
+        "google",
+        "calendar-only-profile",
+    )).?;
+    defer connection.deinit(allocator);
+    try std.testing.expectEqualStrings(
+        "calendar-only-id",
+        connection.external_calendar_id,
+    );
+}
+
+test "registration mutation gate revalidates legacy cutover boundary" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+
+    var model: Model = .{};
+    try model.taxProfiles.attachForGlobalDashboard(
+        allocator,
+        &store,
+        "2026-08-09",
+        2026,
+    );
+    model.registrationMutationGate = registrationMutationGateForStore(
+        allocator,
+        &store,
+        true,
+        true,
+        profile_store.testing.fixtureDatabaseOrigin(.claiming),
+    );
+    try std.testing.expect(guardRegistrationFixtureAccess(&model));
+
+    // Simulate a stale or second legacy writer after the empty-directory
+    // startup proof. The next canonical mutation must fail closed instead of
+    // continuing with two writable identity models.
+    try addTestProfile(
+        &store,
+        "late-legacy-profile",
+        "Late Legacy Profile",
+        "123-456-789-00000",
+        .individual,
+    );
+    const page_before_revoked_preview_open = model.page;
+    update(&model, .reg_open_resolved_2550q_preview);
+    try std.testing.expectEqual(page_before_revoked_preview_open, model.page);
+    try std.testing.expectEqual(
+        RegistrationMutationGateReason.legacy_profiles_present,
+        model.registrationMutationGate.reason,
+    );
+    try std.testing.expect(model.registrationMutationBlocked);
+    try std.testing.expect(model.registrationWorkspace.policy_catalog_missing);
+    try std.testing.expectEqual(
+        registration_workspace.PlanningStatus.review_required,
+        model.registrationWorkspace.planning_status,
+    );
+}
+
+test "fixture cutover routes to canonical workspace and freezes legacy identity UI" {
+    var model = Model{
+        .page = .global_dashboard,
+        .registrationMutationGate = .{ .reason = .enabled },
+    };
+
+    try std.testing.expect(model.profileLegacyIdentityReadOnly());
+    try std.testing.expect(model.profileSaveDisabled());
+    try std.testing.expect(!model.profileCanAddBranch());
+    try std.testing.expectEqualStrings(
+        "Open registration workspace",
+        model.profileNewTaxpayerActionLabel(),
+    );
+
+    update(&model, .new_taxpayer_profile);
+    try std.testing.expectEqual(Page.profile_setup, model.page);
+    try std.testing.expect(model.profileRegistrationFilingActive());
+    try std.testing.expect(!model.profileEditorActionsVisible());
+
+    model.profileSetupSection = .tax_profile;
+    try expectAppMarkupBuilds(&model);
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .alert,
+        "Legacy Taxpayer Profile is read-only",
+    ));
+}
+
+test "registration taxpayer rows keep Native widget identity across reordering" {
+    var model = Model{
+        .page = .profile_setup,
+        .profileSetupSection = .reg_filing,
+    };
+    const taxpayer_b = try registration_domain.TaxpayerId.parse("taxpayer-b");
+    model.registrationWorkspace.taxpayers[0] = .{
+        .id = 0,
+        .taxpayer_id = taxpayer_b,
+        .masked_tin = "***-***-222".*,
+        .status = .pending_evidence,
+        .selected = true,
+    };
+    model.registrationWorkspace.taxpayer_count = 1;
+    model.registrationWorkspace.selected_taxpayer_index = 0;
+    model.registrationWorkspace.workspace_status = .pending_evidence;
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var before_view = try initAppMarkupView(arena);
+    var before_ui = canvas.Ui(Msg).init(arena);
+    const before_tree = try before_ui.finalize(try before_view.build(
+        &before_ui,
+        &model,
+    ));
+    const before_id = findWidgetBySemanticsContains(
+        before_tree.root,
+        "***-***-222",
+    ).?.id;
+
+    model.registrationWorkspace.taxpayers[1] = model.registrationWorkspace.taxpayers[0];
+    model.registrationWorkspace.taxpayers[1].id = 1;
+    model.registrationWorkspace.taxpayers[1].selected = false;
+    model.registrationWorkspace.taxpayers[0] = .{
+        .id = 0,
+        .taxpayer_id = try registration_domain.TaxpayerId.parse("taxpayer-a"),
+        .masked_tin = "***-***-111".*,
+        .status = .pending_evidence,
+        .selected = true,
+    };
+    model.registrationWorkspace.taxpayer_count = 2;
+    model.registrationWorkspace.selected_taxpayer_index = 0;
+
+    var after_view = try initAppMarkupView(arena);
+    var after_ui = canvas.Ui(Msg).init(arena);
+    const after_tree = try after_ui.finalize(try after_view.build(
+        &after_ui,
+        &model,
+    ));
+    const after_id = findWidgetBySemanticsContains(
+        after_tree.root,
+        "***-***-222",
+    ).?.id;
+    try std.testing.expectEqual(before_id, after_id);
+}
+
+test "default Model rejects every canonical registration write before ledger access" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+
+    var model: Model = .{};
+    model.registrationLedger = registration_ledger.TaxpayerRegistrationLedger.init(
+        allocator,
+        &store,
+    );
+    model.registrationEditor.setValue(.taxpayer_tin_root, "123456789");
+    model.registrationEditor.setValue(.taxpayer_effective_from, "2026-01-01");
+
+    update(&model, .reg_create_taxpayer);
+    try std.testing.expect(model.registrationActionFailed());
+    update(&model, .reg_create_branch);
+    try std.testing.expect(model.registrationActionFailed());
+    update(&model, .reg_confirm_selected_unit);
+    try std.testing.expect(model.registrationActionFailed());
+
+    var verifying_ledger = registration_ledger.TaxpayerRegistrationLedger.init(
+        allocator,
+        &store,
+    );
+    var taxpayer_ids = try verifying_ledger.listTaxpayerIds();
+    defer taxpayer_ids.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), taxpayer_ids.items.len);
+}
+
+test "populated registration workspace is read-only when fixture authority is revoked" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+
+    var model = Model{
+        .page = .profile_setup,
+        .profileSetupSection = .reg_filing,
+    };
+    try model.taxProfiles.attachForGlobalDashboard(
+        allocator,
+        &store,
+        "2026-08-08",
+        2026,
+    );
+    model.registrationLedger = registration_ledger.TaxpayerRegistrationLedger.init(
+        allocator,
+        &store,
+    );
+    model.registrationMutationGate = registrationMutationGateForStore(
+        allocator,
+        &store,
+        true,
+        true,
+        profile_store.testing.fixtureDatabaseOrigin(.claiming),
+    );
+    model.registrationIo = std.testing.io;
+    model.registrationAsOf = try registration_domain.Date.parseIso("2026-08-08");
+    model.registrationEditor.setValue(.taxpayer_tin_root, "123456789");
+    model.registrationEditor.setValue(.taxpayer_effective_from, "2026-01-01");
+    update(&model, .reg_create_taxpayer);
+    try std.testing.expect(!model.regCanonicalEmpty());
+
+    model.registrationMutationGate = .{};
+    model.registrationMutationBlocked = false;
+    model.registrationWorkspace.clearAction();
+
+    try expectAppMarkupBuilds(&model);
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .badge,
+        "Read-only",
+    ));
+    try std.testing.expect((try appMarkupWidgetDisabledBySemanticsLabel(
+        &model,
+        "Nine-digit TIN root",
+    )) == null);
+    try std.testing.expect((try appMarkupWidgetDisabledBySemanticsLabel(
+        &model,
+        "Candidate Branch Code",
+    )) == null);
+    try std.testing.expect((try appMarkupWidgetDisabledBySemanticsLabel(
+        &model,
+        "Taxpayer TIN shown on reviewed evidence",
+    )) == null);
+}
+
+test "registration workspace creates canonical taxpayer and persists reviewed RDO" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+
+    var model = Model{ .page = .profile_setup };
+    try model.taxProfiles.attachForGlobalDashboard(
+        allocator,
+        &store,
+        "2026-08-08",
+        2026,
+    );
+    model.registrationLedger = registration_ledger.TaxpayerRegistrationLedger.init(
+        allocator,
+        &store,
+    );
+    model.registrationMutationGate = registrationMutationGateForStore(
+        allocator,
+        &store,
+        true,
+        true,
+        profile_store.testing.fixtureDatabaseOrigin(.claiming),
+    );
+    model.registrationIo = std.testing.io;
+    model.registrationAsOf = try registration_domain.Date.parseIso("2026-08-08");
+    model.registrationWorkspace.period_year = 2026;
+    model.registrationWorkspace.period_quarter = 3;
+    model.registrationEditor.setValue(
+        .taxpayer_effective_from,
+        "2026-01-01",
+    );
+    model.registrationEditor.setValue(.evidence_captured_on, "2026-01-02");
+
+    update(&model, .show_profile_reg_filing);
+    try std.testing.expect(model.regCanonicalEmpty());
+    try std.testing.expectEqualStrings(
+        "Taxpayer Registration Workspace",
+        model.profileEditorTitle(),
+    );
+    try std.testing.expectEqualStrings(
+        "Registration & Filing",
+        model.currentPageTitle(),
+    );
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        model.profileVersioningHelp(),
+        "canonical Taxpayers, Registration Units",
+    ) != null);
+
+    model.registrationEditor.setValue(.taxpayer_tin_root, "123456789");
+    update(&model, .reg_create_taxpayer);
+    try std.testing.expect(model.registrationCanonicalReady());
+    try std.testing.expectEqualStrings(
+        "",
+        model.registrationEditor.value(.taxpayer_tin_root),
+    );
+    try std.testing.expectEqualStrings(
+        "",
+        model.registrationEditor.value(.taxpayer_effective_from),
+    );
+    try std.testing.expectEqual(@as(usize, 1), model.regTaxpayerRows().len);
+    try std.testing.expectEqual(@as(usize, 1), model.regUnitRows().len);
+    try std.testing.expect(model.regSelectedRegistrationUnitReviewable());
+    try std.testing.expectEqualStrings(
+        "***-***-789",
+        model.regSelectedTaxpayerMaskedTin(),
+    );
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    try std.testing.expectEqualStrings(
+        "Suggested: 00001",
+        model.regSuggestedBranchLabel(arena_state.allocator()),
+    );
+    try std.testing.expect((try appMarkupWidgetWrapsByText(
+        &model,
+        model.regSuggestedBranchLabel(arena_state.allocator()),
+    )).?);
+
+    // Selection seeds known unit facts, but never substitutes the selected
+    // Taxpayer's TIN for what the human actually observes on the record.
+    try std.testing.expectEqualStrings("", model.regConfirmTinInputValue());
+    model.registrationEditor.setValue(.confirmation_tin_root, "123456789");
+    model.registrationEditor.setValue(
+        .confirmation_effective_from,
+        "2026-01-02",
+    );
+    model.registrationEditor.setValue(.confirmation_branch_code, "00000");
+    model.registrationEditor.setValue(.confirmation_rdo_code, "123");
+    model.registrationEditor.setValue(
+        .registered_address,
+        "123 Rizal Avenue, Manila",
+    );
+    model.registrationEditor.setValue(.zip_code, "1000");
+    model.registrationEditor.setValue(.contact_number, "+639171234567");
+    model.registrationEditor.setValue(
+        .email_address,
+        "registration@example.com",
+    );
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDir(std.testing.io, "fixture-data", .default_dir);
+    var data_dir_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    model.registrationEvidenceDataDir = try std.fmt.bufPrint(
+        &data_dir_buffer,
+        ".zig-cache/tmp/{s}/fixture-data",
+        .{tmp.sub_path},
+    );
+    var evidence_path_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const evidence_path = try std.fmt.bufPrint(
+        &evidence_path_buffer,
+        ".zig-cache/tmp/{s}/registration.pdf",
+        .{tmp.sub_path},
+    );
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "registration.pdf",
+        .data = "%PDF-1.4 selected registration evidence",
+    });
+    const selected_fingerprint = try registration_evidence_store.inspect(
+        std.testing.io,
+        evidence_path,
+    );
+    const cor_label = "Certificate of Registration (COR)";
+    const ecor_label = "Electronic Certificate of Registration (eCOR)";
+    const bir_record_label = "Other BIR registration record";
+    const cor_text = "COR";
+    const ecor_text = "eCOR";
+    const bir_record_text = "Other BIR record";
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .toggle_button,
+        cor_text,
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .toggle_button,
+        ecor_text,
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .toggle_button,
+        bir_record_text,
+    ));
+    try std.testing.expect(try appMarkupHasSemanticsPrefix(&model, cor_label));
+    try std.testing.expect(try appMarkupHasSemanticsPrefix(&model, ecor_label));
+    try std.testing.expect(try appMarkupHasSemanticsPrefix(
+        &model,
+        bir_record_label,
+    ));
+    try std.testing.expect(try appMarkupHasWidgetKindAndSemanticsLabel(
+        &model,
+        .toggle_group,
+        "Evidence source choices",
+    ));
+
+    // Exercise the semantic toggle action used by accessibility automation,
+    // not just direct Msg dispatch. The source-backed selection is exclusive.
+    try std.testing.expect(try dispatchAppWidgetToggleByText(
+        &model,
+        .toggle_button,
+        bir_record_text,
+    ));
+    try std.testing.expect((try appMarkupWidgetSelectedByText(
+        &model,
+        .toggle_button,
+        bir_record_text,
+    )).?);
+    try std.testing.expect(!(try appMarkupWidgetSelectedByText(
+        &model,
+        .toggle_button,
+        cor_text,
+    )).?);
+    try std.testing.expect(!(try appMarkupWidgetSelectedByText(
+        &model,
+        .toggle_button,
+        ecor_text,
+    )).?);
+    try std.testing.expect(try dispatchAppWidgetToggleByText(
+        &model,
+        .toggle_button,
+        ecor_text,
+    ));
+    try std.testing.expectEqualStrings(
+        ecor_label,
+        model.registrationEditor.evidenceSourceLabel(),
+    );
+    try std.testing.expect(!(try appMarkupWidgetSelectedByText(
+        &model,
+        .toggle_button,
+        cor_text,
+    )).?);
+    try std.testing.expect((try appMarkupWidgetSelectedByText(
+        &model,
+        .toggle_button,
+        ecor_text,
+    )).?);
+    try std.testing.expect(!(try appMarkupWidgetSelectedByText(
+        &model,
+        .toggle_button,
+        bir_record_text,
+    )).?);
+    try model.registrationEditor.attachEvidence(.{
+        .path = evidence_path,
+        .display_name = "BIR Certificate of Registration.pdf",
+        .sha256 = &selected_fingerprint.sha256,
+        .byte_size = selected_fingerprint.byte_size,
+    });
+    model.registrationEditor.setValue(.contact_number, "not-a-phone");
+    try std.testing.expect(!model.regEvidenceFileProblemVisible());
+    try std.testing.expect(model.regEvidenceFormProblemVisible());
+    try std.testing.expectEqualStrings(
+        registration_workspace.ActionStatus.invalid_contact_number.label(),
+        model.regEvidenceFormHelp(),
+    );
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        registration_workspace.ActionStatus.invalid_contact_number.label(),
+    ));
+    model.registrationEditor.setValue(.contact_number, "+639171234567");
+    try std.testing.expect(!model.regEvidenceFormProblemVisible());
+
+    // A missing selected evidence file invalidates that review. Recreating a file at
+    // the same path cannot bypass the explicit re-selection requirement.
+    try tmp.dir.deleteFile(std.testing.io, "registration.pdf");
+    update(&model, .reg_confirm_selected_unit);
+    try std.testing.expect(model.registrationActionFailed());
+    try std.testing.expect(model.regSelectedRegistrationUnitReviewable());
+    try std.testing.expect(model.regEvidenceFileProblemVisible());
+
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "registration.pdf",
+        .data = "%PDF-1.4 replacement registration evidence",
+    });
+    update(&model, .reg_confirm_selected_unit);
+    try std.testing.expect(model.registrationActionFailed());
+    try std.testing.expect(model.regSelectedRegistrationUnitReviewable());
+
+    const replacement_fingerprint = try registration_evidence_store.inspect(
+        std.testing.io,
+        evidence_path,
+    );
+    try model.registrationEditor.attachEvidence(.{
+        .path = evidence_path,
+        .display_name = "BIR Certificate of Registration.pdf",
+        .sha256 = &replacement_fingerprint.sha256,
+        .byte_size = replacement_fingerprint.byte_size,
+    });
+    update(&model, .reg_confirm_selected_unit);
+
+    try std.testing.expectEqual(
+        registration_workspace.ActionStatus.unit_confirmed,
+        model.registrationWorkspace.action_status,
+    );
+    try std.testing.expect(!model.regSelectedRegistrationUnitReviewable());
+    try std.testing.expect(model.regVatRegistrationRepairVisible());
+    try std.testing.expect(model.regRegistrationEvidenceActionVisible());
+    try std.testing.expect(model.registrationPlanningReviewRequired());
+    try std.testing.expect(model.regResolved2550QPreviewDisabled());
+    try std.testing.expectEqualStrings(
+        "Record reviewed VAT registration",
+        model.regConfirmActionLabel(),
+    );
+    try std.testing.expectEqualStrings(
+        // The accepted evidence created the current unit revision on Jan 2;
+        // the follow-up VAT evidence workflow seeds that current effective
+        // date while remaining editable for the exact VAT registration date.
+        "2026-01-02",
+        model.regConfirmEffectiveInputValue(),
+    );
+    try std.testing.expect(!try appMarkupHasSemanticsPrefix(
+        &model,
+        "Exact BIR Branch Code",
+    ));
+    try std.testing.expect(try appMarkupHasSemanticsPrefix(
+        &model,
+        "Taxpayer TIN shown on reviewed evidence",
+    ));
+    try std.testing.expectEqualStrings("", model.regConfirmTinInputValue());
+    try std.testing.expect(try dispatchAppWidgetToggleByText(
+        &model,
+        .toggle_button,
+        cor_text,
+    ));
+    try std.testing.expect((try appMarkupWidgetSelectedByText(
+        &model,
+        .toggle_button,
+        cor_text,
+    )).?);
+    try std.testing.expect(!(try appMarkupWidgetSelectedByText(
+        &model,
+        .toggle_button,
+        ecor_text,
+    )).?);
+    try std.testing.expect(!(try appMarkupWidgetSelectedByText(
+        &model,
+        .toggle_button,
+        bir_record_text,
+    )).?);
+    try model.registrationEditor.attachEvidence(.{
+        .path = evidence_path,
+        .display_name = "BIR VAT Registration.pdf",
+        .sha256 = &replacement_fingerprint.sha256,
+        .byte_size = replacement_fingerprint.byte_size,
+    });
+    try std.testing.expect(model.regConfirmDisabled());
+    model.registrationEditor.setValue(.confirmation_tin_root, "123456789");
+    try std.testing.expect(model.regConfirmDisabled());
+    update(&model, .reg_toggle_vat_registration);
+    try std.testing.expect(model.regVatRegistrationConfirmed());
+    try std.testing.expect(!model.regConfirmDisabled());
+    update(&model, .reg_confirm_selected_unit);
+    try std.testing.expect(model.registrationActionSucceeded());
+    try std.testing.expect(!model.regVatRegistrationRepairVisible());
+    try std.testing.expect(!model.regRegistrationEvidenceActionVisible());
+    try std.testing.expect(model.regConfirmationActionVisible());
+    try std.testing.expect(try appMarkupHasWidgetText(&model, .alert, "Saved"));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        model.regActionLabel(),
+    ));
+    try std.testing.expectEqualStrings(
+        "VAT confirmed active",
+        model.regSelectedRegistrationUnitVatLabel(),
+    );
+    try std.testing.expectEqualStrings(
+        "Confirmed active",
+        model.regWorkspaceStatusLabel(),
+    );
+    try std.testing.expectEqualStrings(
+        "123",
+        model.regSelectedRegistrationUnitRdoLabel(),
+    );
+    const confirmed_contact = model.registrationWorkspace
+        .selectedRegistrationUnit().?.contact_revision.?.contact;
+    try std.testing.expectEqualStrings(
+        "123 Rizal Avenue, Manila",
+        confirmed_contact.registered_address.asSlice(),
+    );
+    try std.testing.expectEqualStrings(
+        "1000",
+        confirmed_contact.zip_code.?.asSlice(),
+    );
+    try std.testing.expectEqualStrings(
+        "+639171234567",
+        confirmed_contact.contact_number.?.asSlice(),
+    );
+    try std.testing.expectEqualStrings(
+        "registration@example.com",
+        confirmed_contact.email_address.?.asSlice(),
+    );
+    try std.testing.expect(
+        model.registrationWorkspace.sourceRecordsConnected(),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        model.regSourceRecordRows().len,
+    );
+    try std.testing.expect(std.mem.startsWith(
+        u8,
+        model.regSourceRecordRows()[0].stableKey(),
+        "fixture-source:",
+    ));
+    try std.testing.expectEqualStrings(
+        "Attachment",
+        model.regSourceRecordRows()[0].visibleLabel(),
+    );
+    try std.testing.expect(std.mem.startsWith(
+        u8,
+        model.regSourcePreviewHelp(),
+        "Fixture source-index metadata only",
+    ));
+    const source_taxpayer = model.registrationWorkspace.selectedTaxpayer().?;
+    const source_unit = model.registrationWorkspace.selectedRegistrationUnit().?;
+    model.registrationWorkspace.replaceSourceRecords(&.{});
+    try std.testing.expect(!model.regSourceWorkspaceReviewRequired());
+    try std.testing.expect(std.mem.startsWith(
+        u8,
+        model.regSourceWorkspaceSummary(arena_state.allocator()),
+        "0 explicitly attributed source records match",
+    ));
+    const source_records = [_]registration_workspace.SourceRecord{
+        .{
+            .id = try registration_workspace.SourceRecordId.parse(
+                "fixture-source-row",
+            ),
+            .taxpayer_id = source_taxpayer.taxpayer_id,
+            .occurred_on = try registration_domain.Date.parseIso("2026-08-01"),
+            .kind = .transaction,
+            .attribution = .{ .entered = .{
+                .source_unit = .{
+                    .registration_unit_id = source_unit.revision.registration_unit_id,
+                    .registration_unit_revision_id = source_unit.revision.id,
+                },
+                .evidence_reference = try registration_workspace.SourceEvidenceReference.parse(
+                    "fixture-import-row-42",
+                ),
+            } },
+        },
+        .{
+            .id = try registration_workspace.SourceRecordId.parse(
+                "fixture-legacy-source-row",
+            ),
+            .taxpayer_id = source_taxpayer.taxpayer_id,
+            .occurred_on = try registration_domain.Date.parseIso("2026-08-02"),
+            .kind = .attachment,
+            .attribution = .{
+                .legacy_unknown = .historical_format_without_source_unit,
+            },
+        },
+    };
+    model.registrationWorkspace.replaceSourceRecords(&source_records);
+    try std.testing.expectEqual(@as(usize, 1), model.regSourceRecordRows().len);
+    try std.testing.expect(model.regSourceWorkspaceReviewRequired());
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        "Source records for this Registration Unit",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        "Entered · reference fixture-import-row-42",
+    ));
+    try std.testing.expect(!model.regPolicyCatalogMissing());
+    try std.testing.expect(!model.registrationPlanningReviewRequired());
+    try std.testing.expect(!model.regResolved2550QPreviewDisabled());
+    try std.testing.expect(model.regResolved2550QPreviewOpenerAutofocus());
+    try std.testing.expect((try appMarkupWidgetAutofocusByText(
+        &model,
+        .button,
+        "Open resolved 2550Q preview",
+    )).?);
+    try std.testing.expect(model.regPolicyEvidenceVisible());
+    try std.testing.expectEqualStrings(
+        "BIR Form 2550Q April 2024 instructions",
+        model.regPolicyEvidenceRows()[0].displayName(),
+    );
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        "BIR Form 2550Q April 2024 instructions",
+    ));
+
+    model.registrationWorkspace.policy_catalog_missing = true;
+    update(&model, .reg_open_resolved_2550q_preview);
+    try std.testing.expectEqual(Page.profile_setup, model.page);
+    model.registrationWorkspace.policy_catalog_missing = false;
+
+    const resolved_form = model.registrationWorkspace
+        .resolved_preview_snapshot.?.projection_context.form_revision;
+    model.registrationWorkspace.resolved_preview_snapshot.?.projection_context.form_revision =
+        form_ids.FormRevision.initComptime(
+            "2551Q",
+            "2018-01-ENCS",
+        );
+    update(&model, .reg_open_resolved_2550q_preview);
+    try std.testing.expectEqual(Page.profile_setup, model.page);
+    model.registrationWorkspace.resolved_preview_snapshot.?.projection_context.form_revision =
+        resolved_form;
+
+    update(&model, .reg_open_resolved_2550q_preview);
+    try std.testing.expectEqual(Page.form_2550q, model.page);
+    try std.testing.expect(model.resolved2550QPreviewActive());
+    try std.testing.expect((try appMarkupWidgetAutofocusByText(
+        &model,
+        .button,
+        "Back",
+    )).?);
+    try std.testing.expect(!model.regResolved2550QPreviewOpenerAutofocus());
+    try std.testing.expectEqualStrings(
+        "123-456-789-00000",
+        model.formFilerTin(arena_state.allocator()),
+    );
+    try std.testing.expectEqualStrings("123", model.formFilerRdo());
+    try std.testing.expectEqualStrings(
+        "123 Rizal Avenue, Manila",
+        model.formFilerRegisteredAddress(),
+    );
+    try std.testing.expectEqualStrings("1000", model.formFilerZipCode());
+    try std.testing.expectEqualStrings(
+        "+639171234567",
+        model.formFilerContactNumber(),
+    );
+    try std.testing.expectEqualStrings(
+        "registration@example.com",
+        model.formFilerEmailAddress(),
+    );
+    try std.testing.expectEqualStrings(
+        "Quarter 3 · 2026",
+        model.formFilingPeriodLabel(arena_state.allocator()),
+    );
+    try std.testing.expectEqualStrings(
+        "07 / 01 / 2026",
+        model.formFilingPeriodStart(arena_state.allocator()),
+    );
+    try std.testing.expectEqualStrings(
+        "09 / 30 / 2026",
+        model.formFilingPeriodEnd(arena_state.allocator()),
+    );
+    try std.testing.expectEqualStrings(
+        "Not captured in this preview-only slice",
+        model.formFilerTaxpayerName(),
+    );
+    try std.testing.expectEqualStrings(
+        "Not captured in this preview-only slice",
+        model.formFilerRegisteredName(),
+    );
+    try std.testing.expectEqualStrings(
+        "Not captured in this preview-only slice",
+        model.formFilerEoptTier(),
+    );
+    try std.testing.expectEqualStrings(
+        "Taxpayer TIN root ***-***-789 · Selected source-record filter (view only): Head office 00000, Confirmed active, RDO 123 · Resolved filer: Branch Code 00000, RDO 123",
+        model.preview2550QIdentity(arena_state.allocator()),
+    );
+    try std.testing.expectEqualStrings(
+        "Head-office consolidated · 1 covered Registration Unit",
+        model.preview2550QScope(arena_state.allocator()),
+    );
+    try std.testing.expect((try appMarkupWidgetWrapsByText(
+        &model,
+        model.preview2550QScope(arena_state.allocator()),
+    )).?);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        model.preview2550QCoverage().len,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        model.preview2550QSourceRecords().len,
+    );
+    try std.testing.expectEqualStrings(
+        "fixture-source-row",
+        model.preview2550QSourceRecords()[0].stableKey(),
+    );
+    try std.testing.expect(model.preview2550QSourceReviewRequired());
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        model.preview2550QSourceReviewLabel(arena_state.allocator()),
+        "Review Required",
+    ) != null);
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        "Captured source-record filter",
+    ));
+    try std.testing.expectEqualStrings(
+        "Entered · reference fixture-import-row-42",
+        model.preview2550QSourceRecords()[0].attributionLabel(
+            arena_state.allocator(),
+        ),
+    );
+    try std.testing.expect(try appMarkupHasWidgetKindAndSemanticsLabel(
+        &model,
+        .text,
+        model.preview2550QSourceRecords()[0].accessibleLabel(
+            arena_state.allocator(),
+        ),
+    ));
+    try std.testing.expectEqualStrings(
+        "00000",
+        model.preview2550QCoverage()[0].branchCodeLabel(),
+    );
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        model.preview2550QCoverage()[0].accessibleLabel(
+            arena_state.allocator(),
+        ),
+        model.preview2550QCoverage()[0].branchCodeEvidenceId(),
+    ) != null);
+    const registration_evidence = model.preview2550QRegistrationEvidence();
+    try std.testing.expectEqual(
+        model.resolved2550QPreview.?.reviewed_evidence_binding_count,
+        registration_evidence.len,
+    );
+    try std.testing.expect(registration_evidence.len > 0);
+    const registration_evidence_id_label = try std.fmt.allocPrint(
+        arena_state.allocator(),
+        "Evidence ID: {s}",
+        .{registration_evidence[0].evidenceId()},
+    );
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        registration_evidence_id_label,
+    ));
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        model.preview2550QEvidence(arena_state.allocator()),
+        "Policy revision policy-2550q-2024-04",
+    ) != null);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        model.preview2550QPolicyEvidence().len,
+    );
+    try std.testing.expectEqualStrings(
+        "BIR Form 2550Q April 2024 instructions",
+        model.preview2550QPolicyEvidence()[0].displayName(),
+    );
+    try std.testing.expectEqualStrings(
+        "Branches file one consolidated return at the principal place or head office covering all branches.",
+        model.preview2550QPolicyEvidence()[0].reviewBasis(),
+    );
+    try std.testing.expectEqualStrings(
+        "bir-2550q-2024-04-instructions",
+        model.regPolicyEvidenceLabel(),
+    );
+    try std.testing.expect(std.mem.startsWith(
+        u8,
+        model.preview2550QReadiness(arena_state.allocator()),
+        "Editor supported · Not fileable · filing venue not resolved by scope",
+    ));
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        model.preview2550QReadiness(arena_state.allocator()),
+        "no immutable draft scope was retained",
+    ) != null);
+    try expectAppMarkupBuilds(&model);
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .badge,
+        "Preview only",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .badge,
+        "Not fileable",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        "BIR Form 2550Q April 2024 instructions",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        "Branches file one consolidated return at the principal place or head office covering all branches.",
+    ));
+    try std.testing.expectEqual(
+        @as(?bool, true),
+        try appMarkupWidgetDisabledByText(&model, .button, "Print Preview"),
+    );
+    update(&model, .show_aux_html_print_preview);
+    try std.testing.expectEqual(Page.form_2550q, model.page);
+    try std.testing.expect(model.resolved2550QPreviewActive());
+    const validated_preview_snapshot = model.resolved2550QPreview.?;
+    try std.testing.expectEqual(
+        @as(?bool, true),
+        try appMarkupWidgetDisabledBySemanticsLabel(&model, "Year-end month"),
+    );
+    var ordinary_2550q = Model{ .page = .form_2550q };
+    try std.testing.expectEqual(
+        @as(?bool, false),
+        try appMarkupWidgetDisabledBySemanticsLabel(
+            &ordinary_2550q,
+            "Year-end month",
+        ),
+    );
+    // The resolved 2550Q projection is page-scoped even before navigation has
+    // a chance to clear it, so no other form can inherit this filer identity.
+    model.page = .form_0605;
+    try std.testing.expect(!model.resolved2550QPreviewActive());
+    try std.testing.expect(model.resolved2550QPreviewContext() == null);
+    model.page = .form_2550q;
+
+    update(&model, .show_screen_gallery);
+    try std.testing.expectEqual(Page.screen_gallery, model.page);
+    try std.testing.expect(model.resolved2550QPreview == null);
+    update(&model, .show_profile_setup);
+    model.profileSetupSection = .reg_filing;
+    update(&model, .{ .profile_setup_scrolled = .{ .offset_y = 805.5 } });
+    try std.testing.expectEqual(@as(f32, 805.5), model.profileSetupScrollOffset);
+    const opener_id_before_preview = (try appMarkupWidgetIdByText(
+        &model,
+        .button,
+        "Open resolved 2550Q preview",
+    )).?;
+    update(&model, .reg_open_resolved_2550q_preview);
+    try std.testing.expectEqual(Page.form_2550q, model.page);
+    try std.testing.expect(model.resolved2550QPreviewActive());
+
+    update(&model, .reg_close_resolved_2550q_preview);
+    try std.testing.expectEqual(Page.profile_setup, model.page);
+    try std.testing.expect(model.profileRegistrationFilingActive());
+    try std.testing.expectEqual(@as(f32, 805.5), model.profileSetupScrollOffset);
+    const opener_id_after_preview = (try appMarkupWidgetIdByText(
+        &model,
+        .button,
+        "Open resolved 2550Q preview",
+    )).?;
+    try std.testing.expect(opener_id_before_preview != opener_id_after_preview);
+    try std.testing.expect(model.regResolved2550QPreviewOpenerAutofocus());
+    try std.testing.expect((try appMarkupWidgetAutofocusByText(
+        &model,
+        .button,
+        "Open resolved 2550Q preview",
+    )).?);
+    update(&model, .set_theme_light);
+    try std.testing.expect(model.regResolved2550QPreviewOpenerAutofocus());
+
+    model.registrationEditor.setValue(.branch_code, "00001");
+    model.registrationEditor.setValue(.branch_effective_from, "2026-02-01");
+    update(&model, .reg_create_branch);
+    try std.testing.expectEqual(@as(usize, 2), model.regUnitRows().len);
+    const created_branch_index = model.registrationWorkspace
+        .selected_registration_unit_index.?;
+    try std.testing.expectEqualStrings(
+        "00001 candidate",
+        model.registrationWorkspace.selectedRegistrationUnit().?.codeLabel(),
+    );
+    update(&model, .{ .reg_select_registration_unit = 0 });
+    try model.registrationEditor.attachEvidence(.{
+        .path = "/draft/must-not-cross-unit.pdf",
+        .display_name = "must-not-cross-unit.pdf",
+        .sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        .byte_size = 4096,
+    });
+    update(&model, .{ .reg_select_registration_unit = created_branch_index });
+    try std.testing.expect(model.profileDirtyNavigationVisible());
+    try std.testing.expectEqual(@as(?usize, 0), model.registrationWorkspace.selected_registration_unit_index);
+    try std.testing.expectEqualStrings(
+        "must-not-cross-unit.pdf",
+        model.registrationEvidenceNameInputValue(),
+    );
+    update(&model, .profile_discard_navigation);
+    try std.testing.expect(model.regSelectedRegistrationUnitReviewable());
+    try std.testing.expectEqualStrings("", model.registrationEvidenceNameInputValue());
+    try std.testing.expectEqualStrings("", model.registrationEvidenceDigestInputValue());
+    try std.testing.expectEqualStrings("", model.registrationEvidenceSizeInputValue());
+    try std.testing.expectEqualStrings(
+        "2026-08-08",
+        model.regEvidenceCapturedInputValue(),
+    );
+    try std.testing.expectEqualStrings(
+        "00001",
+        model.regConfirmCodeInputValue(),
+    );
+    try std.testing.expectEqualStrings(
+        "2026-02-01",
+        model.regConfirmEffectiveInputValue(),
+    );
+
+    try expectAppMarkupBuilds(&model);
+    try std.testing.expect(try appMarkupHasSemanticsPrefix(
+        &model,
+        "Registration Unit, Head office, code 00000, Confirmed active, RDO 123",
+    ));
+    try std.testing.expect(!try appMarkupHasSemanticsPrefix(
+        &model,
+        "Selected Source Unit",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .badge,
+        "Reviewed fixture policy",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .button,
+        "Add Taxpayer",
+    ));
+
+    // A Taxpayer switch owns both draft classes: the first request defers
+    // without mutating selection or buffers, Stay preserves them, and the
+    // explicit discard clears them before applying the pending target.
+    model.registrationEditor.setValue(.taxpayer_tin_root, "987654321");
+    model.registrationEditor.setValue(
+        .taxpayer_effective_from,
+        "2026-01-01",
+    );
+    update(&model, .reg_create_taxpayer);
+    try std.testing.expectEqual(@as(usize, 2), model.regTaxpayerRows().len);
+    try std.testing.expectEqualStrings(
+        "***-***-321",
+        model.regSelectedTaxpayerMaskedTin(),
+    );
+    const selected_taxpayer = model.registrationWorkspace.selected_taxpayer_index.?;
+    const other_taxpayer: usize = if (selected_taxpayer == 0) 1 else 0;
+    model.registrationEditor.setValue(.branch_code, "00002");
+    model.registrationEditor.setValue(.branch_effective_from, "2026-03-01");
+    model.registrationEditor.markDirty(.branch_candidate);
+    try model.registrationEditor.attachEvidence(.{
+        .path = "/draft/taxpayer-owned-draft.pdf",
+        .display_name = "taxpayer-owned-draft.pdf",
+        .sha256 = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        .byte_size = 512,
+    });
+
+    update(&model, .{ .reg_select_taxpayer = other_taxpayer });
+    try std.testing.expectEqual(
+        @as(?usize, selected_taxpayer),
+        model.registrationWorkspace.selected_taxpayer_index,
+    );
+    try std.testing.expectEqualStrings(
+        "00002",
+        model.regBranchCodeInputValue(),
+    );
+    try std.testing.expectEqualStrings(
+        "taxpayer-owned-draft.pdf",
+        model.registrationEvidenceNameInputValue(),
+    );
+
+    update(&model, .profile_keep_editing);
+    try std.testing.expect(!model.profileDirtyNavigationVisible());
+    try std.testing.expectEqualStrings(
+        "taxpayer-owned-draft.pdf",
+        model.registrationEvidenceNameInputValue(),
+    );
+
+    update(&model, .{ .reg_select_taxpayer = other_taxpayer });
+    update(&model, .profile_discard_navigation);
+    try std.testing.expectEqual(
+        @as(?usize, other_taxpayer),
+        model.registrationWorkspace.selected_taxpayer_index,
+    );
+    try std.testing.expectEqualStrings("", model.regBranchCodeInputValue());
+    try std.testing.expectEqualStrings("", model.regBranchEffectiveInputValue());
+    try std.testing.expectEqualStrings("", model.registrationEvidenceNameInputValue());
+    try std.testing.expect(
+        !model.registrationEditor.isDirty(.branch_candidate),
+    );
+    try std.testing.expect(
+        !model.registrationEditor.isDirty(.registration_unit_evidence),
+    );
+
+    // Return to the pending-evidence Taxpayer so the write-gate assertions
+    // exercise visible controls; confirmed units intentionally hide them.
+    update(&model, .{ .reg_select_taxpayer = selected_taxpayer });
+    try std.testing.expect(model.regSelectedRegistrationUnitReviewable());
+
+    // Simulate a validated preview surviving until a stale legacy writer
+    // appears. Revalidating the mutation boundary must revoke both the
+    // workspace payload and any copied page snapshot before another action.
+    model.registrationWorkspace.resolved_preview_snapshot =
+        validated_preview_snapshot;
+    model.registrationWorkspace.policy_catalog_missing = false;
+    model.registrationWorkspace.effective_policy_resolved = true;
+    model.registrationWorkspace.provenance_validated = true;
+    model.registrationWorkspace.planning_status = .resolved_not_fileable;
+    model.registrationWorkspace.resolved_policy_capability = .editor_supported;
+    model.resolved2550QPreview = validated_preview_snapshot;
+    try std.testing.expect(
+        model.registrationWorkspace.resolvedPreviewSnapshot() != null,
+    );
+    try addTestProfile(
+        &store,
+        "late-legacy-preview-revocation",
+        "Late Legacy Preview Revocation",
+        "987-654-320-00000",
+        .individual,
+    );
+    try std.testing.expect(!guardRegistrationFixtureAccess(&model));
+    try std.testing.expectEqual(
+        RegistrationMutationGateReason.legacy_profiles_present,
+        model.registrationMutationGate.reason,
+    );
+    try std.testing.expect(model.registrationWorkspace.policy_catalog_missing);
+    try std.testing.expectEqual(
+        registration_workspace.PlanningStatus.review_required,
+        model.registrationWorkspace.planning_status,
+    );
+    try std.testing.expect(
+        model.registrationWorkspace.resolvedPreviewSnapshot() == null,
+    );
+    try std.testing.expect(model.resolved2550QPreview == null);
+
+    model.registrationMutationGate = .{};
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .badge,
+        "Read-only",
+    ));
+    try std.testing.expect((try appMarkupWidgetDisabledBySemanticsLabel(
+        &model,
+        "Candidate Branch Code",
+    )) == null);
+    try std.testing.expect((try appMarkupWidgetDisabledByText(
+        &model,
+        .button,
+        "Use suggestion",
+    )) == null);
+    try std.testing.expect((try appMarkupWidgetDisabledBySemanticsLabel(
+        &model,
+        "Reviewed evidence effective from",
+    )) == null);
+    try std.testing.expect((try appMarkupWidgetDisabledBySemanticsLabel(
+        &model,
+        "Taxpayer effective from",
+    )) == null);
+    try std.testing.expect((try appMarkupWidgetDisabledBySemanticsLabel(
+        &model,
+        "Branch candidate effective from",
+    )) == null);
+    try std.testing.expect((try appMarkupWidgetDisabledBySemanticsLabel(
+        &model,
+        "Choose reviewed registration evidence file",
+    )) == null);
 }

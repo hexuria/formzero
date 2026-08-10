@@ -1,7 +1,7 @@
-<template name="form-field" args="label ph">
+<template name="form-field" args="label ph disabled=false">
   <column gap="4">
     <text foreground="text_muted">{label}</text>
-    <input placeholder="{ph}" />
+    <input placeholder="{ph}" label="{label}" disabled="{disabled}" />
   </column>
 </template>
 
@@ -37,7 +37,7 @@
 <template name="form-field-bound" args="label v ph">
   <column gap="4">
     <text foreground="text_muted">{label}</text>
-    <input text="{v}" placeholder="{ph}" disabled="true" />
+    <input text="{v}" placeholder="{ph}" label="{label}" disabled="true" />
   </column>
 </template>
 
@@ -295,7 +295,7 @@
           variant="ghost"
           radius="xl"
           icon="plus"
-          label="Add taxpayer profile"
+          label="{profileNewTaxpayerActionLabel}"
           on-press="new_taxpayer_profile">
         </button>
       </row>
@@ -433,7 +433,7 @@
           radius="xl"
           icon="plus"
           selected="{page == 'profile_setup'}"
-          label="Add taxpayer profile"
+          label="{profileNewTaxpayerActionLabel}"
           on-press="new_taxpayer_profile">
         </button>
       </row>
@@ -570,15 +570,27 @@
       </column>
 
       <if test="{formProfileNotice}">
-        <row
-          padding="10"
-          gap="8"
-          cross="center"
-          background="surface_subtle"
-          radius="md">
-          <icon name="info" width="18" height="18" foreground="info"/>
-          <text grow="1" wrap="true">{formProfileNotice}</text>
-        </row>
+        <if test="{phoneLayout}">
+          <column
+            padding="10"
+            gap="8"
+            background="surface_subtle"
+            radius="md">
+            <icon name="info" width="18" height="18" foreground="info"/>
+            <text wrap="true">{formProfileNotice}</text>
+          </column>
+        </if>
+        <else>
+          <row
+            padding="10"
+            gap="8"
+            cross="start"
+            background="surface_subtle"
+            radius="md">
+            <icon name="info" width="18" height="18" foreground="info"/>
+            <text grow="1" wrap="true">{formProfileNotice}</text>
+          </row>
+        </else>
       </if>
 
       <separator/>

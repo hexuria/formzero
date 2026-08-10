@@ -250,9 +250,10 @@ pub const Store = struct {
         defer allocator.free(path_z);
 
         var raw: ?*sqlite.sqlite3 = null;
-        const flags = sqlite.SQLITE_OPEN_READWRITE |
+        var flags: c_int = sqlite.SQLITE_OPEN_READWRITE |
             sqlite.SQLITE_OPEN_CREATE |
             sqlite.SQLITE_OPEN_FULLMUTEX;
+        if (file_backed) flags |= sqlite.SQLITE_OPEN_NOFOLLOW;
         const rc = sqlite.sqlite3_open_v2(path_z.ptr, &raw, flags, null);
         if (rc != sqlite.SQLITE_OK or raw == null) {
             if (raw) |db| _ = sqlite.sqlite3_close_v2(db);

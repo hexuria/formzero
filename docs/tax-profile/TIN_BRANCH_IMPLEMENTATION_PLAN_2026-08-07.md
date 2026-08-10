@@ -1,9 +1,24 @@
 # TIN Root, Registration Units, and Filing Scope — Revised Implementation Plan
 
-**Status:** proposed architecture and dependency-ordered execution plan, revision 2\
-**As of:** 2026-08-07\
-**Implementation state:** documentation only; no application code or schema has been changed\
-**Repository baseline:** `main` at `8b2cd914e5ae3cd8009f0a6a3e2fff81f28d9d83`\
+**Status:** active architecture and dependency-ordered execution plan, revision 2\
+**As of:** 2026-08-09\
+**Implementation state:** the first isolated, session-only fixture-preview vertical slice is
+implemented on additive schema v28: canonical identity and Registration Units,
+evidence-gated confirmation, read-only filtering of explicitly attributed source
+records without monetary or schedule-row integration, fail-closed 2550Q
+planning, transient scope-provenance validation, and a value-owned read-only
+preview snapshot. Immutable draft/artifact provenance remains deferred.
+Reviewed legacy cutover and rollback, production policy, filing-draft
+migration, fileability, and submission are also not implemented.\
+**Implementation branch baseline:** documentation commit
+`3f530befb88d564e1cb3c48dc84253af8359057a`\
+**Fixture storage boundary:** an explicit data root must yield the atomically
+claimed and exactly marked `tin-branch-fixture-preview-v1/` child before the
+session-only preview is enabled. Fixture mode uses fresh in-memory tax-profile,
+calendar, and news SQLite stores and never opens SQLite through a pathname
+derived from that child; reviewed evidence storage remains descriptor-relative.
+An existing unmarked child fails closed without modifying it or unrelated
+sibling artifacts.\
 **Research companion:** [TIN, Branch Code, and Multi-Branch Filing Guide](TIN_BRANCH_PROFILE_AND_FILING_GUIDE_2026-08-07.md)\
 **Canonical vocabulary:** [BIR Taxpayer, Registration, and Filing Context](../../CONTEXT.md)
 

@@ -8,8 +8,9 @@ This is the operational guide for contributors. The
 
 ## Non-negotiable boundaries
 
-- `src/app.native` is generated. Edit fragments and run
-  `npm run generate`.
+- `src/app.native` and the four `src/app-*.generated.native` import shards are
+  generated. Edit fragments and run `npm run generate`; commit all five
+  outputs together.
 - Filing, payment, authentication, profile saving, import, and production print
   are not implemented. Keep those actions disabled until their domain and
   safety gates exist.
@@ -27,6 +28,9 @@ This is the operational guide for contributors. The
 | Shared UI or selection behavior | `src/components/` |
 | Page or form layout | `src/pages/` |
 | Final markup composition | `src/app-root.fragment` |
+| Generated markup root and shards | `scripts/flatten-native.mjs` |
+| Canonical registration domain, ledger, and workspace | `src/tax_profile/registration_*.zig` |
+| Filing policy, planner, provenance, and projection | `src/filing/` |
 | Deadline rules | `src/calendar/domain.zig` |
 | Calendar persistence | `src/calendar/store.zig` |
 | Calendar export | `src/calendar/ics.zig` |

@@ -11,6 +11,9 @@ test "core logic modules remain in the headless test root" {
     _ = @import("domain/money.zig");
     _ = @import("tax_profile/field.zig");
     _ = @import("tax_profile/model.zig");
+    _ = @import("tax_profile/registration_domain.zig");
+    _ = @import("tax_profile/source_attribution.zig");
+    _ = @import("tax_profile/registration_ui.zig");
     _ = @import("tax_profile/capability.zig");
     _ = @import("tax_profile/projection.zig");
     _ = @import("tax_profile/editor.zig");
@@ -22,6 +25,10 @@ test "core logic modules remain in the headless test root" {
     _ = @import("forms/lifecycle.zig");
     _ = @import("forms/form_1701q.zig");
     _ = @import("forms/form_1701q_exact_ui_state.zig");
+    _ = @import("filing/policy.zig");
+    _ = @import("filing/planner.zig");
+    _ = @import("filing/scope_provenance.zig");
+    _ = @import("filing/projection_context.zig");
     _ = @import("form_engine/root.zig");
     _ = @import("container_codec/legacy.zig");
     _ = @import("artifact_lab/session.zig");

@@ -6,16 +6,19 @@ import { fileURLToPath } from "node:url";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDirectory, "..");
-const outputPath = "src/app.native";
+const rootOutputPath = "src/app.native";
+const rootSourcePath = "src/app-root.fragment";
 const maxRuntimeWatchedMarkupBytes = 256 * 1024;
 
 // Native markup templates must be defined before their first use. Keep this
 // order explicit and stable: shared components, seven main pages plus the
-// reviewer gallery, ten form pages, seven auxiliary surfaces, then the
-// editable root.
+// reviewer gallery, ten form pages, and seven auxiliary surfaces. Each group
+// becomes one bounded Native import; the editable root stays in app.native.
 const sourceGroups = [
   {
     name: "shared components",
+    outputPath: "src/app-shared.generated.native",
+    imports: [],
     files: [
       "src/components/shell.native",
       "src/components/multi-select-combobox.native",
@@ -23,6 +26,8 @@ const sourceGroups = [
   },
   {
     name: "main pages",
+    outputPath: "src/app-pages.generated.native",
+    imports: ["src/app-shared.generated.native"],
     files: [
       "src/pages/global-dashboard.fragment",
       "src/pages/taxpayer-dashboard.native",
@@ -38,6 +43,8 @@ const sourceGroups = [
   },
   {
     name: "forms",
+    outputPath: "src/app-forms.generated.native",
+    imports: ["src/app-shared.generated.native"],
     files: [
       "src/pages/forms/0605.native",
       "src/pages/forms/0619-e.native",
@@ -53,6 +60,8 @@ const sourceGroups = [
   },
   {
     name: "auxiliary surfaces",
+    outputPath: "src/app-auxiliary.generated.native",
+    imports: [],
     files: [
       "src/pages/auxiliary/lock-screen.native",
       "src/pages/auxiliary/profile-auth-overlay.native",
@@ -63,13 +72,12 @@ const sourceGroups = [
       "src/pages/auxiliary/background-task-debug-log.native",
     ],
   },
-  {
-    name: "root",
-    files: ["src/app-root.fragment"],
-  },
 ];
 
-const sourceFiles = sourceGroups.flatMap((group) => group.files);
+const sourceFiles = [
+  ...sourceGroups.flatMap((group) => group.files),
+  rootSourcePath,
+];
 const generatedTemplateIncludes = new Set([
   "d-s",
   "multi-select-combobox",
@@ -89,8 +97,8 @@ function normalizeFragment(source) {
 // Native SDK's runtime markup watcher reads at most 256 KiB. Keep editable
 // fragments readable, but remove generated-only indentation and blank lines so
 // a hot reload never truncates an otherwise valid document.
-function compactGeneratedMarkup(source) {
-  return minifyTemplateNames(source)
+function compactGeneratedMarkup(source, templateAliases) {
+  return applyTemplateAliases(source, templateAliases)
     .split("\n")
     .map((line) => line.trimStart())
     .filter((line) => line.length > 0)
@@ -114,18 +122,21 @@ function compactGeneratedMarkup(source) {
     });
 }
 
-function minifyTemplateNames(source) {
-  const names = [];
+function collectTemplateAliases(sources) {
+  const aliases = new Map();
   const seen = new Set();
-  for (const match of source.matchAll(/<template\s+name="([^"]+)"/gu)) {
-    const name = match[1];
-    if (seen.has(name)) continue;
-    seen.add(name);
-    names.push(name);
+  for (const source of sources) {
+    for (const match of source.matchAll(/<template\s+name="([^"]+)"/gu)) {
+      const name = match[1];
+      if (seen.has(name)) continue;
+      seen.add(name);
+      aliases.set(name, compactTemplateAlias(aliases.size));
+    }
   }
-  const aliases = new Map(
-    names.map((name, index) => [name, compactTemplateAlias(index)]),
-  );
+  return aliases;
+}
+
+function applyTemplateAliases(source, aliases) {
   return source
     .replace(
       /<template(\s+)name\s*=\s*"([^"]+)"/gu,
@@ -281,48 +292,115 @@ function generatedHeader() {
   return "<!-- GENERATED; edit fragments and run npm run generate. -->";
 }
 
+function relativeImportPath(outputPath, importedOutputPath) {
+  const relativePath = path.posix.relative(
+    path.posix.dirname(outputPath),
+    importedOutputPath,
+  );
+  return relativePath.length > 0 ? relativePath : path.posix.basename(outputPath);
+}
+
+function generatedOutput(outputPath, imports, body) {
+  const importLines = imports.map(
+    (importedOutputPath) =>
+      `<import src="${relativeImportPath(outputPath, importedOutputPath)}"/>`,
+  );
+  return `${[generatedHeader(), ...importLines, body].join("\n")}\n`;
+}
+
+function firstMismatch(left, right) {
+  const sharedLength = Math.min(left.length, right.length);
+  for (let index = 0; index < sharedLength; index += 1) {
+    if (left[index] !== right[index]) return index;
+  }
+  return sharedLength;
+}
+
 async function main() {
-  const fragments = [];
+  const sources = new Map();
   for (const relativePath of sourceFiles) {
-    fragments.push(await readRequiredFile(relativePath));
+    sources.set(relativePath, await readRequiredFile(relativePath));
   }
 
-  const generated = `${compactGeneratedMarkup(
-    `${generatedHeader()}\n${fragments.join("\n")}`,
-  )}\n`;
-  const generatedBytes = Buffer.byteLength(generated, "utf8");
-  if (generatedBytes >= maxRuntimeWatchedMarkupBytes) {
+  // Alias collection follows the historical monolith's exact source order.
+  // Applying this one map to every shard keeps template definitions and uses
+  // byte-for-byte identical once Native resolves the imports.
+  const aliases = collectTemplateAliases(
+    sourceFiles.map((relativePath) => sources.get(relativePath)),
+  );
+  const compactFiles = (files) =>
+    compactGeneratedMarkup(
+      files.map((relativePath) => sources.get(relativePath)).join("\n"),
+      aliases,
+    );
+
+  const groupBodies = sourceGroups.map((group) => compactFiles(group.files));
+  const rootBody = compactFiles([rootSourcePath]);
+  const legacyBody = compactFiles(sourceFiles);
+  const modularBody = [...groupBodies, rootBody].join("");
+  if (modularBody !== legacyBody) {
+    const mismatch = firstMismatch(modularBody, legacyBody);
     throw new Error(
-      `${outputPath} is ${generatedBytes} bytes; Native runtime hot reload ` +
-        `requires less than ${maxRuntimeWatchedMarkupBytes} bytes`,
+      `generated shards diverge from the legacy monolith at byte ${mismatch}`,
     );
   }
-  const absoluteOutputPath = path.join(projectRoot, outputPath);
 
-  let current = null;
-  try {
-    current = await readFile(absoluteOutputPath, "utf8");
-  } catch (error) {
-    if (error?.code !== "ENOENT") {
-      throw error;
+  const outputs = sourceGroups.map((group, index) => ({
+    path: group.outputPath,
+    source: generatedOutput(group.outputPath, group.imports, groupBodies[index]),
+    sourceCount: group.files.length,
+  }));
+  outputs.push({
+    path: rootOutputPath,
+    source: generatedOutput(
+      rootOutputPath,
+      sourceGroups.map((group) => group.outputPath),
+      rootBody,
+    ),
+    sourceCount: 1,
+  });
+
+  // The watcher enforces the cap per file. Validate the complete output set
+  // before touching any file so a failed generation cannot leave a mixed
+  // monolithic/modular state behind.
+  for (const output of outputs) {
+    output.bytes = Buffer.byteLength(output.source, "utf8");
+    output.headroom = maxRuntimeWatchedMarkupBytes - output.bytes;
+    if (output.headroom <= 0) {
+      throw new Error(
+        `${output.path} is ${output.bytes} bytes; Native runtime hot reload ` +
+          `requires less than ${maxRuntimeWatchedMarkupBytes} bytes`,
+      );
     }
   }
 
-  // Report the remaining budget on every run. The ceiling is enforced above,
-  // but a number only seen when the build breaks arrives too late to plan
-  // around.
-  const headroom = maxRuntimeWatchedMarkupBytes - generatedBytes;
-  const budget = `${generatedBytes} bytes, ${headroom} free`;
+  for (const output of outputs) {
+    const absoluteOutputPath = path.join(projectRoot, output.path);
+    let current = null;
+    try {
+      current = await readFile(absoluteOutputPath, "utf8");
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
 
-  if (current === generated) {
-    process.stdout.write(`${outputPath} is already up to date (${budget}).\n`);
-    return;
+    if (current === output.source) {
+      process.stdout.write(
+        `${output.path} is already up to date ` +
+          `(${output.bytes} bytes, ${output.headroom} free).\n`,
+      );
+      continue;
+    }
+
+    await writeFile(absoluteOutputPath, output.source, "utf8");
+    process.stdout.write(
+      `Generated ${output.path} from ${output.sourceCount} ordered sources ` +
+        `(${output.bytes} bytes, ${output.headroom} free).\n`,
+    );
   }
 
-  await writeFile(absoluteOutputPath, generated, "utf8");
+  const minimumHeadroom = Math.min(...outputs.map((output) => output.headroom));
   process.stdout.write(
-    `Generated ${outputPath} from ${sourceFiles.length} ordered sources ` +
-      `(${budget}).\n`,
+    `Minimum Native markup watcher headroom: ${minimumHeadroom} bytes.\n`,
   );
 }
 
