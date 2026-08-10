@@ -2337,7 +2337,7 @@ test "inventory uses one snapshot while an external WAL writer commits" {
     const capability =
         key_custody.bootstrapCurrentArtifactStorage().development_plaintext;
 
-    var reader = try store.Store.openDevelopmentPlaintext(
+    var reader = try store.Store.testingOpenLatestDevelopmentPlaintext(
         capability,
         allocator,
         database_path,
@@ -2345,7 +2345,7 @@ test "inventory uses one snapshot while an external WAL writer commits" {
     defer reader.close();
     try reader.createProfile(.{ .id = "snapshot-before" });
 
-    var writer = try store.Store.openDevelopmentPlaintext(
+    var writer = try store.Store.testingOpenLatestDevelopmentPlaintext(
         capability,
         allocator,
         database_path,

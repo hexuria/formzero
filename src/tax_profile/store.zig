@@ -86,6 +86,7 @@ const sqlite = @cImport({
 });
 
 pub const latest_schema_version: u32 = 28;
+pub const normal_file_schema_version: u32 = 27;
 const migration_component = "tax_profile";
 pub const storage_classification =
     repository_opening.legacy_plaintext_repository_classification;
@@ -3169,11 +3170,18 @@ const OpenInternalOptions = struct {
     create: bool,
     read_only: bool = false,
     migrate_schema: bool = true,
+    migration_ceiling: MigrationCeiling = .latest_ephemeral,
     fixture_identity: ?RegistrationFixtureDirectoryIdentity = null,
+};
+
+const MigrationCeiling = enum(u32) {
+    normal_file = normal_file_schema_version,
+    latest_ephemeral = latest_schema_version,
 };
 
 pub const Store = struct {
     db: ?*sqlite.sqlite3,
+    migration_ceiling: MigrationCeiling = .latest_ephemeral,
     /// File-backed stores and stores that enter the explicit fixture-preview
     /// ownership flow must authorize every canonical registration mutation
     /// from inside that mutation's SQLite write transaction.
@@ -3193,6 +3201,30 @@ pub const Store = struct {
         return openInternal(allocator, path, .{
             .file_backed = true,
             .create = true,
+            // Schema v28 belongs to the explicit session-only fixture slice.
+            // Ordinary persistent development data keeps the supported v27
+            // schema until the reviewed production migration exists.
+            .migration_ceiling = .normal_file,
+        });
+    }
+
+    /// Test-only file-backed access to the newest synthetic schema. This is
+    /// used for WAL and reopen tests that exercise fixture-only tables without
+    /// widening ordinary application startup beyond schema v27.
+    pub fn testingOpenLatestDevelopmentPlaintext(
+        capability: *const key_custody.DevelopmentPlaintextStorageCapability,
+        allocator: std.mem.Allocator,
+        path: []const u8,
+    ) !Store {
+        if (!@import("builtin").is_test) {
+            @compileError("latest file-backed plaintext schema is test-only");
+        }
+        try key_custody.requireDevelopmentPlaintextStorage(capability);
+        if (path.len == 0) return Error.InvalidValue;
+        return openInternal(allocator, path, .{
+            .file_backed = true,
+            .create = true,
+            .migration_ceiling = .latest_ephemeral,
         });
     }
 
@@ -3527,6 +3559,7 @@ pub const Store = struct {
 
         var store = Store{
             .db = raw.?,
+            .migration_ceiling = options.migration_ceiling,
             .registration_fixture_preview_write_guard_required = options.file_backed,
         };
         errdefer store.close();
@@ -3597,7 +3630,12 @@ pub const Store = struct {
         );
         const observed = try self.schemaVersion();
         if (observed > latest_schema_version) return Error.SchemaTooNew;
-        if (observed == latest_schema_version) return;
+        const migration_ceiling: u32 = @intFromEnum(self.migration_ceiling);
+        // A normal file store may encounter a v28 database produced by an
+        // earlier preview build. Opening it must not downgrade or rewrite it,
+        // while a v27-or-earlier store must never be advanced into the
+        // fixture-only schema through this path.
+        if (observed >= migration_ceiling) return;
 
         try self.beginImmediate();
         var committed = false;
@@ -3849,7 +3887,9 @@ pub const Store = struct {
         if (try self.schemaVersion() < 25) try self.migrateToV25();
         if (try self.schemaVersion() < 26) try self.migrateToV26();
         if (try self.schemaVersion() < 27) try self.migrateToV27();
-        if (try self.schemaVersion() < 28) try self.migrateToV28();
+        if (migration_ceiling >= 28 and try self.schemaVersion() < 28) {
+            try self.migrateToV28();
+        }
     }
 
     fn migrateToV18(self: *Store) !void {
@@ -24150,6 +24190,172 @@ test "tax profile migration is namespaced idempotent and preserves user_version"
     );
 }
 
+test "normal file-backed startup leaves the fixture-only v28 schema unavailable" {
+    const allocator = std.testing.allocator;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+
+    var directory_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const directory_len = try temporary.dir.realPath(
+        std.testing.io,
+        &directory_buffer,
+    );
+    var database_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const database_path = try std.fmt.bufPrint(
+        &database_path_buffer,
+        "{s}/normal-startup.sqlite3",
+        .{directory_buffer[0..directory_len]},
+    );
+    const profile_id = "normal-startup-legacy-profile";
+
+    {
+        var store = try Store.openDevelopmentPlaintext(
+            developmentPlaintextStorageCapability(),
+            allocator,
+            database_path,
+        );
+        defer store.close();
+
+        try std.testing.expectEqual(@as(u32, 27), try store.schemaVersion());
+        try std.testing.expect(
+            !try store.registrationFixturePreviewOwnershipPresent(),
+        );
+        var registration_objects = try store.prepare(
+            \\SELECT COUNT(*)
+            \\FROM sqlite_schema
+            \\WHERE name GLOB 'taxpayer_registration_*';
+        );
+        defer registration_objects.deinit();
+        try std.testing.expectEqual(
+            StepResult.row,
+            try registration_objects.step(),
+        );
+        try std.testing.expectEqual(
+            @as(i64, 0),
+            sqlite.sqlite3_column_int64(registration_objects.raw, 0),
+        );
+
+        try store.createProfileWithRevision(
+            .{ .id = profile_id },
+            testRevision(profile_id, 0, "Preserved Legacy Profile", "2026-01-01"),
+        );
+    }
+
+    var reopened = try Store.openDevelopmentPlaintext(
+        developmentPlaintextStorageCapability(),
+        allocator,
+        database_path,
+    );
+    defer reopened.close();
+    try std.testing.expectEqual(@as(u32, 27), try reopened.schemaVersion());
+    try std.testing.expect(
+        !try reopened.registrationFixturePreviewOwnershipPresent(),
+    );
+    var registration_objects = try reopened.prepare(
+        \\SELECT COUNT(*)
+        \\FROM sqlite_schema
+        \\WHERE name GLOB 'taxpayer_registration_*';
+    );
+    defer registration_objects.deinit();
+    try std.testing.expectEqual(StepResult.row, try registration_objects.step());
+    try std.testing.expectEqual(
+        @as(i64, 0),
+        sqlite.sqlite3_column_int64(registration_objects.raw, 0),
+    );
+    var revision = (try reopened.getCurrentRevision(allocator, profile_id)).?;
+    defer revision.deinit(allocator);
+    try std.testing.expectEqualStrings(
+        "Preserved Legacy Profile",
+        revision.subject.individual.name,
+    );
+}
+
+test "normal startup opens a preexisting v28 file without downgrade" {
+    const allocator = std.testing.allocator;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+
+    var directory_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const directory_len = try temporary.dir.realPath(
+        std.testing.io,
+        &directory_buffer,
+    );
+    var database_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const database_path = try std.fmt.bufPrint(
+        &database_path_buffer,
+        "{s}/preexisting-v28.sqlite3",
+        .{directory_buffer[0..directory_len]},
+    );
+
+    var registration_object_count: i64 = 0;
+    {
+        var preview = try Store.testingOpenLatestDevelopmentPlaintext(
+            developmentPlaintextStorageCapability(),
+            allocator,
+            database_path,
+        );
+        defer preview.close();
+        try std.testing.expectEqual(latest_schema_version, try preview.schemaVersion());
+        try preview.exec(
+            \\INSERT INTO app_component_migrations (
+            \\  component, version, updated_at
+            \\) VALUES ('preexisting-v28-sentinel', 7, 123);
+        );
+        var registration_objects = try preview.prepare(
+            \\SELECT COUNT(*)
+            \\FROM sqlite_schema
+            \\WHERE name GLOB 'taxpayer_registration_*';
+        );
+        defer registration_objects.deinit();
+        try std.testing.expectEqual(
+            StepResult.row,
+            try registration_objects.step(),
+        );
+        registration_object_count = sqlite.sqlite3_column_int64(
+            registration_objects.raw,
+            0,
+        );
+        try std.testing.expect(registration_object_count > 0);
+    }
+
+    var reopened = try Store.openDevelopmentPlaintext(
+        developmentPlaintextStorageCapability(),
+        allocator,
+        database_path,
+    );
+    defer reopened.close();
+    try std.testing.expectEqual(latest_schema_version, try reopened.schemaVersion());
+    try std.testing.expect(
+        !try reopened.registrationFixturePreviewOwnershipPresent(),
+    );
+    var sentinel = try reopened.prepare(
+        \\SELECT version, updated_at
+        \\FROM app_component_migrations
+        \\WHERE component = 'preexisting-v28-sentinel';
+    );
+    defer sentinel.deinit();
+    try std.testing.expectEqual(StepResult.row, try sentinel.step());
+    try std.testing.expectEqual(
+        @as(i64, 7),
+        sqlite.sqlite3_column_int64(sentinel.raw, 0),
+    );
+    try std.testing.expectEqual(
+        @as(i64, 123),
+        sqlite.sqlite3_column_int64(sentinel.raw, 1),
+    );
+    var registration_objects = try reopened.prepare(
+        \\SELECT COUNT(*)
+        \\FROM sqlite_schema
+        \\WHERE name GLOB 'taxpayer_registration_*';
+    );
+    defer registration_objects.deinit();
+    try std.testing.expectEqual(StepResult.row, try registration_objects.step());
+    try std.testing.expectEqual(
+        registration_object_count,
+        sqlite.sqlite3_column_int64(registration_objects.raw, 0),
+    );
+}
+
 test "registration fixture directory atomically claims an isolated child and resumes" {
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
@@ -24458,6 +24664,7 @@ test "session-only fixture memory binds a previously ready directory nonce" {
     );
     defer store.close();
 
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
     try std.testing.expect(try store.registrationFixturePreviewOwnershipPresent());
     try std.testing.expectEqual(
         RegistrationFixtureOwnershipResult.already_claimed,
@@ -28009,7 +28216,7 @@ test "file store reopens with revisions Forms Set and drafts intact" {
         );
         defer reopened.close();
         try std.testing.expectEqual(
-            latest_schema_version,
+            normal_file_schema_version,
             try reopened.schemaVersion(),
         );
         const owner_after = try reopened.localOwnerId();

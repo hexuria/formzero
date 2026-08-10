@@ -26457,7 +26457,7 @@ test "registration mutation gate rejects a preexisting calendar-only database" {
     const database_origin: profile_store.RegistrationFixtureDatabaseOrigin =
         .preexisting_or_unknown;
     {
-        var store = try profile_store.Store.openDevelopmentPlaintext(
+        var store = try profile_store.Store.testingOpenLatestDevelopmentPlaintext(
             capability,
             allocator,
             database_path,
