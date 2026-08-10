@@ -12,6 +12,33 @@
   </column>
 </template>
 
+<template name="registration-action-feedback" args="visible">
+  <column>
+    <if test="{visible}">
+      <alert text="{regActionHeading}">
+        <text wrap="true">{regActionLabel}</text>
+      </alert>
+    </if>
+  </column>
+</template>
+
+<template name="registration-create-taxpayer" args="action">
+  <column gap="12">
+    <grid columns="{profileReadColumns}" gap="12">
+      <column gap="6">
+        <text>Nine-digit TIN root</text>
+        <input height="44" text="{regTinRootInputValue}" placeholder="e.g. 123456789" label="Nine-digit TIN root" disabled="{regCanonicalMutationsDisabled}" on-input="reg_tin_root_input"/>
+      </column>
+      <column gap="6">
+        <text>Taxpayer effective from</text>
+        <input height="44" text="{regCreateEffectiveInputValue}" placeholder="YYYY-MM-DD" label="Taxpayer effective from" disabled="{regCanonicalMutationsDisabled}" on-input="reg_create_effective_input"/>
+      </column>
+    </grid>
+    <button height="44" variant="primary" label="{action}" disabled="{regCreateTaxpayerDisabled}" on-press="reg_create_taxpayer">{action}</button>
+    <use template="registration-action-feedback" visible="{regTaxpayerActionVisible}"/>
+  </column>
+</template>
+
 <template name="profile-tin-editor">
   <row gap="6" cross="center">
     <input grow="1" height="44" text="{profileTinSegmentOneValue}" placeholder="3 digits" label="TIN first three digits" disabled="{profileBranchMode}" autofocus="{profileTinSegmentOneAutofocus}" on-input="profile_tin_segment_one_input"/>
@@ -51,11 +78,6 @@
       label="Tax year for forms setup"
       on-press="profile_setup_toggle_year_picker">{profileSetupYearLabel}</select>
     <if test="{profileSetupYearPickerOpen}">
-      <!--
-        Wider than the compact trigger: a row states the year and what that
-        year's setup is, and a truncated status would leave the user guessing
-        which years still need setting up.
-      -->
       <dropdown-menu
         anchor="below"
         anchor-alignment="end"
@@ -91,11 +113,6 @@
 </template>
 
 <template name="profile-setup-year-combobox">
-  <!--
-    A four-digit year needs little room, so the control stays compact where
-    there is space and fills the width only when the header has stacked and a
-    narrow control would sit oddly alone on its own row.
-  -->
   <column>
     <if test="{profileFormsHeaderStacked}">
       <stack>
@@ -250,10 +267,7 @@
         </button>
         <column grow="1" gap="6">
           <text size="heading">{profileEditorTitle}</text>
-          <text wrap="true" foreground="text_muted">
-            Reusable tax facts are versioned once and projected into each qualified
-            form. Existing filing snapshots never change when a profile is revised.
-          </text>
+          <text wrap="true" foreground="text_muted">{profileVersioningHelp}</text>
         </column>
       </row>
     </if>
@@ -263,33 +277,38 @@
         height="44"
         selected="{profileTaxActive}"
         on-press="show_profile_tax">
-        Tax Profile
+        {profileTaxTabLabel}
+      </button>
+      <button
+        height="44"
+        selected="{profileRegistrationFilingActive}"
+        on-press="show_profile_reg_filing">
+        {profileRegistrationTabLabel}
       </button>
       <button
         height="44"
         selected="{profileTaxFormsActive}"
         on-press="show_profile_tax_forms">
-        Forms Set
+        {profileTaxFormsTabLabel}
       </button>
       <button
         height="44"
         selected="{profileEmailActive}"
         on-press="show_profile_email">
-        Email Settings
+        {profileEmailTabLabel}
       </button>
     </tabs>
 
     <if test="{profileDirtyNavigationVisible}">
-      <card padding="0">
+      <dialog text="{profileDirtyNavigationTitle}" on-dismiss="profile_keep_editing">
         <column padding="16" gap="10">
-          <text><span weight="bold">{profileDirtyNavigationTitle}</span></text>
           <text wrap="true" foreground="text_muted">{profileDirtyNavigationBody}</text>
-          <row gap="8">
-            <button height="44" variant="primary" autofocus="true" on-press="profile_keep_editing">Stay and keep editing</button>
+          <grid columns="{profileReadColumns}" gap="8">
+            <button height="44" variant="primary" autofocus="true" on-press="profile_keep_editing">Keep editing</button>
             <button height="44" variant="outline" on-press="profile_discard_navigation">{profileDiscardNavigationLabel}</button>
-          </row>
+          </grid>
         </column>
-      </card>
+      </dialog>
     </if>
 
     <if test="{profileCompletionVisible}">
@@ -302,25 +321,36 @@
     </if>
 
     <if test="{profileTaxActive}">
+      <if test="{profileLegacyIdentityReadOnly}">
+        <alert text="Legacy Taxpayer Profile is read-only">
+          <column gap="10">
+            <text wrap="true">{profileLegacyIdentityReadOnlyHelp}</text>
+            <row>
+              <button height="44" variant="primary" on-press="show_profile_reg_filing">Open Registration & Filing</button>
+            </row>
+          </column>
+        </alert>
+      </if>
+      <else>
       <column gap="24">
         <if test="{profileTaxViewing}">
           <column gap="20">
             <if test="{constrainedLayout}">
               <column gap="10">
                 <column gap="4">
-                  <text><span weight="bold">Saved tax profile</span></text>
+                  <text><span weight="bold">Saved Taxpayer Profile</span></text>
                   <text wrap="true" foreground="text_muted">These are the reusable taxpayer details currently on file.</text>
                 </column>
-                <button height="44" variant="primary" on-press="edit_tax_profile">Edit Tax Profile</button>
+                <button height="44" variant="primary" on-press="edit_tax_profile">Edit Taxpayer Profile</button>
               </column>
             </if>
             <else>
               <row gap="12" cross="center">
                 <column grow="1" gap="4">
-                  <text><span weight="bold">Saved tax profile</span></text>
+                  <text><span weight="bold">Saved Taxpayer Profile</span></text>
                   <text wrap="true" foreground="text_muted">These are the reusable taxpayer details currently on file.</text>
                 </column>
-                <button height="44" variant="primary" on-press="edit_tax_profile">Edit Tax Profile</button>
+                <button height="44" variant="primary" on-press="edit_tax_profile">Edit Taxpayer Profile</button>
               </row>
             </else>
 
@@ -433,10 +463,7 @@
         <column gap="16">
             <column gap="4">
               <text><span weight="bold">Identity and contact</span></text>
-              <text wrap="true" foreground="text_muted">
-                TIN, RDO, registered name, and Taxpayer Type identify this immutable
-                profile revision.
-              </text>
+              <text wrap="true" foreground="text_muted">{profileIdentityHelp}</text>
             </column>
 
             <grid columns="{profileReadColumns}" gap="12">
@@ -475,11 +502,7 @@
             <if test="{profileNaturalPersonClassificationVisible}">
               <column gap="8">
                 <text>Tax Classification</text>
-                <text wrap="true" foreground="text_muted">
-                  Individual is the Taxpayer Type. Classification records
-                  whether this person earns compensation, business/professional
-                  income, or both.
-                </text>
+                <text wrap="true" foreground="text_muted">{profileClassificationHelp}</text>
                 <if test="{profileClassificationUnknownSelected}">
                   <text wrap="true" foreground="warning">Choose a Tax Classification before saving this profile.</text>
                 </if>
@@ -567,7 +590,7 @@
             <column gap="4">
               <text><span weight="bold">Business details</span></text>
               <text wrap="true" foreground="text_muted">
-                These reusable fields are saved in this Tax Profile revision.
+                These reusable fields are saved in this Taxpayer Profile revision.
               </text>
             </column>
             <column gap="8">
@@ -605,10 +628,7 @@
           <column gap="16">
             <column gap="4">
               <text><span weight="bold">Individual capabilities</span></text>
-              <text wrap="true" foreground="text_muted">
-                Leave fields empty when they do not truthfully apply. Forms
-                requiring a missing capability will reject this profile.
-              </text>
+              <text wrap="true" foreground="text_muted">{profileOptionalFactsHelp}</text>
             </column>
             <grid columns="{profileReadColumns}" gap="12">
               <use template="profile-field" label="Birth date"><input height="44" text="{profileBirthDateValue}" placeholder="YYYY-MM-DD" label="Birth date" disabled="{profilePersonalFieldsDisabled}" autofocus="{profileBirthDateAutofocus}" on-input="profile_birth_date_input"/></use>
@@ -657,6 +677,355 @@
         </column>
         </else>
       </column>
+      </else>
+    </if>
+
+    <if test="{profileRegistrationFilingActive}">
+      <column gap="20">
+        <column gap="4">
+          <text size="heading"><span weight="bold">Registration & Filing</span></text>
+          <text wrap="true" foreground="text_muted">{regCanonicalHelp}</text>
+        </column>
+
+        <alert text="{regCanonicalMutationGateTitle}">
+          <text wrap="true">{regCanonicalMutationGateHelp}</text>
+        </alert>
+
+        <if test="{regGlobalActionVisible}">
+          <alert text="{regActionHeading}">
+            <text wrap="true">{regActionLabel}</text>
+          </alert>
+        </if>
+
+        <if test="{regCanonicalEmpty}">
+          <if test="{regCanonicalMutationsEnabled}">
+            <card padding="0">
+              <column padding="20" gap="10">
+                <text><span weight="bold">Create the first Taxpayer</span></text>
+                <row><badge variant="outline">{regWorkspaceStatusLabel}</badge></row>
+                <text wrap="true" foreground="text_muted">{regCreateHelp}</text>
+                <use template="registration-create-taxpayer" action="Create Taxpayer"/>
+              </column>
+            </card>
+          </if>
+          <else>
+            <card padding="0">
+              <column padding="20" gap="8">
+                <text><span weight="bold">No canonical registration records</span></text>
+                <row><badge variant="outline">Read-only</badge></row>
+                <text wrap="true" foreground="text_muted">No Taxpayer or Registration Unit records exist in this data store. Creation controls are hidden because this is not an explicitly owned fixture workspace.</text>
+              </column>
+            </card>
+          </else>
+        </if>
+        <else>
+          <column gap="16">
+            <column gap="10">
+              <grid columns="{profileReadColumns}" gap="8">
+                <text grow="1"><span weight="bold">Taxpayers</span></text>
+                <row gap="6" cross="center">
+                  <badge variant="outline">{regWorkspaceStatusLabel}</badge>
+                  <if test="{regCanonicalMutationsDisabled}"><badge variant="outline">Read-only</badge></if>
+                  <if test="{regWorkspaceReviewRequired}"><badge variant="destructive">Review Required</badge></if>
+                </row>
+              </grid>
+              <column gap="6">
+                <for each="regTaxpayerRows" key="stableKey" as="taxpayer">
+                  <list-item height="64" padding="10" selected="{taxpayer.selected}" label="{taxpayer.accessibleLabel}" on-press="reg_select_taxpayer:{taxpayer.id}">
+                    <column grow="1" gap="3">
+                      <text><span weight="bold">{taxpayer.visibleLabel}</span></text>
+                      <text size="sm" foreground="text_muted">{taxpayer.statusLabel}</text>
+                    </column>
+                  </list-item>
+                </for>
+              </column>
+              <if test="{regCanonicalMutationsEnabled}">
+                <separator/>
+                <use template="registration-create-taxpayer" action="Add Taxpayer"/>
+              </if>
+            </column>
+
+            <separator/>
+
+            <grid columns="{profileReadColumns}" gap="16">
+              <column gap="10">
+                <column gap="3">
+                  <text><span weight="bold">Registration Units</span></text>
+                  <text wrap="true" foreground="text_muted">{regUnitListStatusLabel}</text>
+                </column>
+                <if test="{regUnitRowsEmpty}">
+                  <text wrap="true" foreground="warning">Review Required — no effective Registration Unit is available.</text>
+                </if>
+                <else>
+                  <column gap="6">
+                    <for each="regUnitRows" key="stableKey" as="unit">
+                      <list-item height="84" padding="10" selected="{unit.selected}" label="{unit.accessibleLabel}" on-press="reg_select_registration_unit:{unit.id}">
+                        <column grow="1" gap="3">
+                          <text><span weight="bold">{unit.kindLabel}</span> · {unit.codeLabel}</text>
+                          <text size="sm" wrap="true" foreground="text_muted">{unit.statusLabel} · RDO {unit.rdoLabel}</text>
+                          <row><badge variant="{unit.vatRegistrationTone}">{unit.vatRegistrationLabel}</badge></row>
+                        </column>
+                      </list-item>
+                    </for>
+                  </column>
+                </else>
+              </column>
+
+              <column gap="10">
+                <use template="profile-read-value" label="Taxpayer TIN root" value="{regSelectedTaxpayerMaskedTin}"/>
+                <use template="profile-read-value" label="Workspace focus" value="{regSelectedRegistrationUnitLabel}"/>
+                <use template="profile-read-value" label="Workspace-focus RDO" value="{regSelectedRegistrationUnitRdoLabel}"/>
+                <text wrap="true" foreground="text_muted">This Registration Unit selection is for workspace review only; it is neither Source Attribution nor the resolved Filing Unit.</text>
+              </column>
+            </grid>
+
+            <separator/>
+
+            <column gap="10">
+              <if test="{phoneLayout}">
+                <column gap="6">
+                  <text><span weight="bold">Source records for this Registration Unit</span></text>
+                  <text wrap="true" foreground="text_muted">{regSourceWorkspaceSummary}</text>
+                  <row>
+                    <if test="{regSourceWorkspaceReviewRequired}">
+                      <badge variant="destructive">Review Required</badge>
+                    </if>
+                    <else>
+                      <badge variant="outline">Read-only filter</badge>
+                    </else>
+                  </row>
+                </column>
+              </if>
+              <else>
+                <row gap="8" cross="center">
+                  <column grow="1" gap="3">
+                    <text><span weight="bold">Source records for this Registration Unit</span></text>
+                    <text wrap="true" foreground="text_muted">{regSourceWorkspaceSummary}</text>
+                  </column>
+                  <if test="{regSourceWorkspaceReviewRequired}">
+                    <badge variant="destructive">Review Required</badge>
+                  </if>
+                  <else>
+                    <badge variant="outline">Read-only filter</badge>
+                  </else>
+                </row>
+              </else>
+
+              <text wrap="true" foreground="text_muted">Only records with Source Attribution entered or derived before this selection can appear. Changing this workspace filter never assigns a Source Unit, changes Return Coverage, or chooses the Filing Unit.</text>
+
+              <if test="{regSourceRowsEmpty}">
+                <text wrap="true" foreground="text_muted">No explicitly attributed records match this taxpayer, Registration Unit, and quarter.</text>
+              </if>
+              <else>
+                <column gap="4">
+                  <for each="regSourceRecordRows" key="stableKey" as="record">
+                    <list-item label="{record.accessibleLabel}">
+                      <row padding="10" gap="12" cross="center">
+                        <column grow="1" gap="3">
+                          <text><span weight="bold">{record.visibleLabel}</span> · {record.occurredOnLabel}</text>
+                          <text size="sm" wrap="true" foreground="text_muted">{record.attributionLabel}</text>
+                        </column>
+                        <badge variant="outline">Attributed</badge>
+                      </row>
+                    </list-item>
+                  </for>
+                </column>
+              </else>
+
+              <if test="{regSourceWorkspaceReviewRequired}">
+                <alert text="Unresolved Source Attribution excluded">
+                  <text wrap="true">{regSourceWorkspaceReviewLabel}</text>
+                </alert>
+              </if>
+              <text size="sm" wrap="true" foreground="text_muted">{regSourcePreviewHelp}</text>
+            </column>
+
+            <if test="{regCanonicalMutationsEnabled}">
+              <separator/>
+
+              <column gap="12">
+                <column gap="4">
+                  <text><span weight="bold">Add a branch candidate</span></text>
+                  <text foreground="warning"><span weight="bold">{regSuggestedBranchLabel}</span></text>
+                  <text wrap="true" foreground="text_muted">{regBranchHelp}</text>
+                </column>
+                <grid columns="{profileReadColumns}" gap="12">
+                  <use template="profile-field" label="Candidate Branch Code">
+                    <input height="44" text="{regBranchCodeInputValue}" placeholder="e.g. 00001" label="Candidate Branch Code" on-input="reg_branch_code_input"/>
+                  </use>
+                  <use template="profile-field" label="Branch candidate effective from">
+                    <input height="44" text="{regBranchEffectiveInputValue}" placeholder="YYYY-MM-DD" label="Branch candidate effective from" on-input="reg_branch_effective_input"/>
+                  </use>
+                </grid>
+                <grid columns="{profileReadColumns}" gap="8">
+                  <button height="44" variant="outline" disabled="{regBranchSuggestionUnavailable}" on-press="reg_use_branch_suggestion">Use suggestion</button>
+                  <button height="44" variant="primary" disabled="{regCreateBranchDisabled}" on-press="reg_create_branch">Create pending branch</button>
+                </grid>
+                <use template="registration-action-feedback" visible="{regBranchActionVisible}"/>
+              </column>
+
+              <separator/>
+            </if>
+
+            <if test="{regRegistrationEvidenceAuthoringVisible}">
+              <column gap="14">
+                <column gap="4">
+                  <grid columns="{profileReadColumns}" gap="8">
+                    <text><span weight="bold">{regRegistrationUnitReviewTitle}</span></text>
+                    <row><badge variant="outline">{regRegistrationUnitReviewBadge}</badge></row>
+                  </grid>
+                  <text wrap="true" foreground="text_muted">{regEvidenceHelp}</text>
+                </column>
+                <use template="profile-field" label="Taxpayer TIN shown on reviewed evidence">
+                  <input height="44" text="{regConfirmTinInputValue}" placeholder="9 digits" label="Taxpayer TIN shown on reviewed evidence" disabled="{regCanonicalMutationsDisabled}" on-input="reg_confirm_tin_input"/>
+                </use>
+                <if test="{regSelectedRegistrationUnitReviewable}">
+                  <grid columns="{profileReadColumns}" gap="12">
+                  <use template="profile-field" label="Exact BIR Branch Code">
+                    <input height="44" text="{regConfirmCodeInputValue}" placeholder="e.g. 00000" label="Exact BIR Branch Code" disabled="{regCanonicalMutationsDisabled}" on-input="reg_confirm_code_input"/>
+                  </use>
+                  <use template="profile-field" label="RDO code (optional)">
+                    <input height="44" text="{regConfirmRdoInputValue}" label="RDO code (optional)" disabled="{regCanonicalMutationsDisabled}" on-input="reg_confirm_rdo_input"/>
+                  </use>
+                  <use template="profile-field" label="Registered address (required)">
+                    <input height="44" text="{regAddressValue}" placeholder="Address shown on reviewed evidence" label="Registered address (required)" disabled="{regCanonicalMutationsDisabled}" on-input="reg_address_input"/>
+                  </use>
+                  <use template="profile-field" label="ZIP code (optional)">
+                    <input height="44" text="{regZipValue}" placeholder="4 digits" label="ZIP code (optional)" disabled="{regCanonicalMutationsDisabled}" on-input="reg_zip_input"/>
+                  </use>
+                  <use template="profile-field" label="Phone / contact number (optional)">
+                    <input height="44" text="{regContactValue}" placeholder="+63 900 000 0000" label="Phone / contact number (optional)" disabled="{regCanonicalMutationsDisabled}" on-input="reg_contact_input"/>
+                  </use>
+                  <use template="profile-field" label="Email address (optional)">
+                    <input height="44" text="{regEmailValue}" placeholder="name@example.com" label="Email address (optional)" disabled="{regCanonicalMutationsDisabled}" on-input="reg_email_input"/>
+                  </use>
+                  </grid>
+                </if>
+                <grid columns="{profileReadColumns}" gap="12">
+                  <use template="profile-field" label="Reviewed evidence effective from">
+                    <input height="44" text="{regConfirmEffectiveInputValue}" placeholder="YYYY-MM-DD" label="Reviewed evidence effective from" disabled="{regCanonicalMutationsDisabled}" on-input="reg_confirm_effective_input"/>
+                  </use>
+                  <use template="profile-field" label="Evidence capture date (required)">
+                    <input height="44" text="{regEvidenceCapturedInputValue}" placeholder="YYYY-MM-DD" label="Evidence capture date (required)" disabled="{regCanonicalMutationsDisabled}" on-input="reg_evidence_captured_input"/>
+                  </use>
+                </grid>
+                <if test="{regVatRegistrationChoiceVisible}">
+                  <toggle checked="{regVatRegistrationConfirmed}" disabled="{regCanonicalMutationsDisabled}" on-toggle="reg_toggle_vat_registration">Reviewed evidence confirms active VAT registration</toggle>
+                </if>
+                <column gap="6">
+                  <text>Evidence source</text>
+                  <text wrap="true" size="sm" foreground="text_muted">Choose the single reviewed BIR source used for this confirmation.</text>
+                  <toggle-group gap="2" label="Evidence source choices">
+                    <toggle-button height="44" variant="outline" label="Certificate of Registration (COR)" selected="{regEvidenceSourceCorSelected}" disabled="{regCanonicalMutationsDisabled}" on-toggle="reg_evidence_source_cor">COR</toggle-button>
+                    <toggle-button height="44" variant="outline" label="Electronic Certificate of Registration (eCOR)" selected="{regEvidenceSourceEcorSelected}" disabled="{regCanonicalMutationsDisabled}" on-toggle="reg_evidence_source_ecor">eCOR</toggle-button>
+                    <toggle-button height="44" variant="outline" label="Other BIR registration record" selected="{regEvidenceSourceBirRecordSelected}" disabled="{regCanonicalMutationsDisabled}" on-toggle="reg_evidence_source_bir_record">Other BIR record</toggle-button>
+                  </toggle-group>
+                </column>
+                <column gap="6">
+                  <text>Reviewed evidence file</text>
+                  <grid columns="{profileReadColumns}" gap="8">
+                    <button height="44" variant="outline" label="Choose reviewed registration evidence file" disabled="{regCanonicalMutationsDisabled}" on-press="reg_choose_evidence_file">Choose evidence file</button>
+                    <text wrap="true">{regEvidenceFileLabel}</text>
+                  </grid>
+                  <if test="{regEvidenceFileProblemVisible}">
+                    <text wrap="true" foreground="warning">{regEvidenceFileHelp}</text>
+                  </if>
+                  <else>
+                    <text wrap="true" foreground="text_muted">{regEvidenceFileHelp}</text>
+                  </else>
+                </column>
+                <text wrap="true" foreground="text_muted">{regDateHelp}</text>
+                <if test="{regEvidenceFormProblemVisible}">
+                  <alert text="Check reviewed evidence details">
+                    <text wrap="true">{regEvidenceFormHelp}</text>
+                  </alert>
+                </if>
+                <row>
+                  <button height="44" variant="primary" label="{regConfirmActionLabel}" disabled="{regConfirmDisabled or regCanonicalMutationsDisabled}" on-press="reg_confirm_selected_unit">{regConfirmActionLabel}</button>
+                </row>
+              </column>
+              <separator/>
+            </if>
+
+            <use template="registration-action-feedback" visible="{regConfirmationActionVisible}"/>
+
+            <column gap="12">
+                <grid columns="{profileReadColumns}" gap="8">
+                  <column grow="1" gap="3">
+                    <text><span weight="bold">2550Q filing-scope check</span></text>
+                    <text wrap="true" foreground="text_muted">{regPlanningPeriodLabel}</text>
+                  </column>
+                  <if test="{regPolicyCatalogMissing}">
+                    <row><badge variant="destructive">Policy Review Required</badge></row>
+                  </if>
+                  <else>
+                    <row><badge variant="outline">Reviewed fixture policy</badge></row>
+                  </else>
+                </grid>
+                <text wrap="true">{regPlanningStatusLabel}</text>
+                <grid columns="{profileReadColumns}" gap="12">
+                  <use template="profile-read-value" label="Workspace focus (view only)" value="{regSelectedRegistrationUnitLabel}"/>
+                  <use template="profile-read-value" label="Resolved Filing Unit branch code" value="{regResolvedFilingCodeLabel}"/>
+                  <use template="profile-read-value" label="Resolved Filing Unit RDO" value="{regResolvedFilingRdoLabel}"/>
+                  <use template="profile-read-value" label="Projected filer identity" value="{regProjectedFilerTinLabel}"/>
+                  <use template="profile-read-value" label="Resolved form revision" value="{regResolvedFormRevisionLabel}"/>
+                  <use template="profile-read-value" label="Policy revision" value="{regPolicyCatalogLabel}"/>
+                </grid>
+                <column gap="4">
+                  <text size="sm" foreground="text_muted">Return Coverage</text>
+                  <if test="{regCoverageVisible}">
+                    <for each="regCoverageRows" key="id" as="coverage">
+                      <text wrap="true">{coverage.accessibleLabel}</text>
+                    </for>
+                  </if>
+                  <else><text>Not resolved</text></else>
+                </column>
+                <column gap="4">
+                  <text size="sm" foreground="text_muted">Policy evidence</text>
+                  <if test="{regPolicyEvidenceVisible}">
+                    <for each="regPolicyEvidenceRows" key="id" as="evidence">
+                      <column gap="3">
+                        <text><span weight="bold">{evidence.displayName}</span></text>
+                        <text wrap="true">{evidence.reviewBasis}</text>
+                        <text size="sm" wrap="true" foreground="text_muted">Evidence ID: {evidence.evidenceId}</text>
+                      </column>
+                    </for>
+                  </if>
+                  <else><text wrap="true">{regPolicyEvidenceLabel}</text></else>
+                </column>
+                <use template="profile-read-value" label="Preview scope validation" value="{regProvenanceLabel}"/>
+                <use template="profile-read-value" label="Editor and filing capability" value="{regFileabilityLabel}"/>
+                <if test="{regRepairActionsVisible}">
+                  <column gap="6">
+                    <text><span weight="bold">Why review is required</span></text>
+                    <for each="regReviewReasonRows" key="id" as="reason">
+                      <text wrap="true" foreground="warning">• {reason.label}</text>
+                    </for>
+                    <text wrap="true" foreground="text_muted">{regRepairHelp}</text>
+                  </column>
+                </if>
+                <text wrap="true" foreground="text_muted">{regReadinessHelp}</text>
+              <row><button height="44" variant="primary" global-key="{registrationPreviewOpenerIdentity}" autofocus="{regResolved2550QPreviewOpenerAutofocus}" disabled="{regResolved2550QPreviewDisabled}" on-press="reg_open_resolved_2550q_preview">Open resolved 2550Q preview</button></row>
+            </column>
+
+          </column>
+        </else>
+
+        <if test="{regLegacyReviewVisible}">
+          <card padding="0">
+            <column padding="16" gap="8">
+              <grid columns="{profileReadColumns}" gap="8">
+                <row><badge variant="outline">Legacy Taxpayer Profile context · separate</badge></row>
+                <row><badge variant="destructive">Review Required</badge></row>
+              </grid>
+              <text><span weight="bold">{profileRegistrationLegacyWorkspaceLabel}</span></text>
+              <text label="{profileRegistrationMaskedTinRootLabel}"><span mono="true">{profileRegistrationMaskedTinRoot}</span></text>
+              <text wrap="true" foreground="text_muted">{profileRegistrationBranchCodeLabel}</text>
+              <text wrap="true" foreground="text_muted">{regLegacyHelp}</text>
+            </column>
+          </card>
+        </if>
+      </column>
     </if>
 
     <if test="{profileTaxFormsActive}">
@@ -665,9 +1034,7 @@
           <column gap="10">
             <column gap="4">
               <text><span weight="bold">Forms Set</span></text>
-              <text wrap="true" foreground="text_muted">
-                Choose which BIR forms apply to this taxpayer in each tax year.
-              </text>
+              <text wrap="true" foreground="text_muted">{profileFormsSetHelp}</text>
             </column>
             <use template="profile-setup-year-combobox"/>
           </column>
@@ -676,9 +1043,7 @@
           <row gap="12" cross="center">
             <column grow="1" gap="4">
               <text><span weight="bold">Forms Set</span></text>
-              <text wrap="true" foreground="text_muted">
-                Choose which BIR forms apply to this taxpayer in each tax year.
-              </text>
+              <text wrap="true" foreground="text_muted">{profileFormsSetHelp}</text>
             </column>
             <use template="profile-setup-year-combobox"/>
           </row>
@@ -688,10 +1053,7 @@
           <card padding="0">
             <column padding="20" gap="6">
               <text><span weight="bold">Save this taxpayer first</span></text>
-              <text wrap="true" foreground="text_muted">
-                Yearly forms belong to a saved taxpayer. Save this taxpayer,
-                then return here to choose its forms.
-              </text>
+              <text wrap="true" foreground="text_muted">{profileFormsUnsavedHelp}</text>
             </column>
           </card>
         </if>
@@ -742,10 +1104,7 @@
             <card padding="0">
               <column padding="16" gap="10">
                 <text><span weight="bold">{profileSetupConflictTitle}</span></text>
-                <text wrap="true" foreground="text_muted">
-                  Your choices are still here. Review the saved setup, then keep
-                  or change it.
-                </text>
+                <text wrap="true" foreground="text_muted">{profileFormsConflictHelp}</text>
                 <row gap="8">
                   <button
                     height="44"
@@ -766,10 +1125,7 @@
                 <text><span weight="bold">{profileSetupDraftTitle}</span></text>
                 <if test="{profileSetupDraftChoiceVisible}">
                   <column gap="8">
-                    <text wrap="true" foreground="text_muted">
-                      Start from scratch, or copy the forms you already set up
-                      for another year.
-                    </text>
+                    <text wrap="true" foreground="text_muted">{profileFormsDraftHelp}</text>
                     <if test="{profileFormsHeaderStacked}">
                       <column gap="8">
                         <button
@@ -808,10 +1164,7 @@
                   </column>
                 </if>
                 <text wrap="true" foreground="text_muted">{profileSetupInheritanceNote}</text>
-                <text wrap="true" foreground="text_muted">
-                  Filings, drafts, payments, deadlines, COR files, and email
-                  settings never copy between years.
-                </text>
+                <text wrap="true" foreground="text_muted">{profileFormsInheritanceHelp}</text>
               </column>
             </card>
           </if>
@@ -829,11 +1182,6 @@
             </column>
           </if>
 
-          <!--
-            The actions sit above the catalog, not after it. Fifty-one form
-            cards do not paginate while managing, so a footer button would be
-            a long scroll away from the choices it commits.
-          -->
           <if test="{profileSetupManagerVisible}">
             <if test="{profileSetupScopeVisible}">
               <column gap="10">
@@ -859,7 +1207,7 @@
                       label="Change takes effect"
                       on-input="profile_setup_change_date_input"/>
                   </use>
-                  <text wrap="true" foreground="text_muted">Records that this year's forms changed on that date. Deadlines and the tax calendar still follow the year's saved setup.</text>
+                  <text wrap="true" foreground="text_muted">{profileFormsChangeHelp}</text>
                 </if>
               </column>
             </if>
@@ -923,7 +1271,7 @@
                         </row>
                       </card>
                     </for>
-                    <text wrap="true" foreground="text_muted">Recorded for reference. Deadlines and the calendar keep following the year's saved setup.</text>
+                    <text wrap="true" foreground="text_muted">{profileFormsReferenceHelp}</text>
                   </column>
                 </if>
               </column>
@@ -969,10 +1317,7 @@
     <if test="{profileEmailActive}">
       <column gap="12">
           <text><span weight="bold">Email monitoring credentials</span></text>
-          <text wrap="true" foreground="text_muted">
-            Mailbox credentials are operational secrets, not reusable tax
-            facts. They are not stored in the tax-profile revision tables.
-          </text>
+          <text wrap="true" foreground="text_muted">{profileEmailSecretHelp}</text>
           <button height="44" variant="outline" icon="send" disabled="true">Configure secure mailbox connection</button>
       </column>
     </if>
@@ -994,7 +1339,7 @@
 </template>
 
 <template name="profile-setup-page">
-  <scroll grow="1" global-key="page-profile-setup" label="Taxpayer profile setup content">
+  <scroll grow="1" global-key="page-profile-setup" label="Taxpayer profile setup content" value="{profileSetupScrollOffset}" on-scroll="profile_setup_scrolled">
     <if test="{phoneLayout}">
       <column padding="16">
         <use template="profile-setup-content"/>

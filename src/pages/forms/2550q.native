@@ -1,12 +1,12 @@
 <template name="form-2550q-grid-1" args="columns">
   <grid columns="{columns}" gap="12">
-    <!-- @include-template form-field label="Year-end month" ph="Month" -->
+    <!-- @include-template form-field label="Year-end month" ph="Month" disabled="{resolved2550QPreviewActive}" -->
     <!-- @include-template form-field-bound label="Taxable year (raw)" v="{formFilingYear}" ph="YYYY" -->
     <!-- @include-template form-field-bound label="Return Period From" v="{formFilingPeriodStart}" ph="MM / DD / YYYY" -->
     <!-- @include-template form-field-bound label="Return Period To" v="{formFilingPeriodEnd}" ph="MM / DD / YYYY" -->
-    <!-- @include-template form-field label="Amended Return?" ph="No" -->
-    <!-- @include-template form-field label="Tax Relief?" ph="No / Specify" -->
-    <!-- @include-template form-field-bound label="TIN" v="{formFilerTin}" ph="000-000-000-000" -->
+    <!-- @include-template form-field label="Amended Return?" ph="No" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="Tax Relief?" ph="No / Specify" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field-bound label="TIN" v="{formFilerTin}" ph="000-000-000-00000" -->
     <!-- @include-template form-field-bound label="RDO Code" v="{formFilerRdo}" ph="RDO" -->
     <!-- @include-template form-field-bound label="Taxpayer Name" v="{formFilerTaxpayerName}" ph="Registered taxpayer name" -->
     <!-- @include-template form-field-bound label="Registered Address" v="{formFilerRegisteredAddress}" ph="-" -->
@@ -19,50 +19,50 @@
 
 <template name="form-2550q-grid-2" args="columns">
   <grid columns="{columns}" gap="12">
-    <!-- @include-template form-field label="31A Vatable Sales / Receipts" ph="Enter amount" -->
-    <!-- @include-template form-field label="31B Output Tax Due" ph="Enter amount" -->
-    <!-- @include-template form-field label="32A Zero-Rated Sales / Receipts" ph="Enter amount" -->
-    <!-- @include-template form-field label="33A Exempt Sales / Receipts" ph="Enter amount" -->
-    <!-- @include-template form-field label="Output VAT Adjustments" ph="Enter amount" -->
-    <!-- @include-template form-field label="Total Output Tax Due" ph="Enter amount" -->
+    <!-- @include-template form-field label="31A Vatable Sales / Receipts" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="31B Output Tax Due" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="32A Zero-Rated Sales / Receipts" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="33A Exempt Sales / Receipts" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="Output VAT Adjustments" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="Total Output Tax Due" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
   </grid>
 </template>
 
 <template name="form-2550q-grid-3" args="columns">
   <grid columns="{columns}" gap="12">
-    <!-- @include-template form-field label="44 Domestic Purchases / Input Tax" ph="Enter amount" -->
-    <!-- @include-template form-field label="45 Services Rendered by Non-Residents" ph="Enter amount" -->
-    <!-- @include-template form-field label="46 Importation of Goods" ph="Enter amount" -->
-    <!-- @include-template form-field label="47 Other Purchases" ph="Enter amount" -->
-    <!-- @include-template form-field label="48 Domestic Purchases Without Input Tax" ph="Enter amount" -->
-    <!-- @include-template form-field label="49 Exempt Importations" ph="Enter amount" -->
+    <!-- @include-template form-field label="44 Domestic Purchases / Input Tax" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="45 Services Rendered by Non-Residents" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="46 Importation of Goods" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="47 Other Purchases" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="48 Domestic Purchases Without Input Tax" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="49 Exempt Importations" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
   </grid>
 </template>
 
 <template name="form-2550q-grid-4" args="columns">
   <grid columns="{columns}" gap="12">
-    <!-- @include-template form-field label="Input Tax Directly Attributable to Exempt Sales" ph="Enter amount" -->
-    <!-- @include-template form-field label="Input Tax Not Directly Attributable" ph="Enter amount" -->
-    <!-- @include-template form-field label="Ratable Input Tax to Exempt Sales" ph="Enter amount" -->
+    <!-- @include-template form-field label="Input Tax Directly Attributable to Exempt Sales" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="Input Tax Not Directly Attributable" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="Ratable Input Tax to Exempt Sales" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
   </grid>
 </template>
 
 <template name="form-2550q-grid-5" args="columns">
   <grid columns="{columns}" gap="12">
-    <!-- @include-template form-field label="Prior Return Payment" ph="Enter amount" -->
-    <!-- @include-template form-field label="Other Tax Credit / Payment" ph="Enter amount" -->
-    <!-- @include-template form-field label="Net VAT Payable / (Overpayment)" ph="Enter amount" -->
-    <!-- @include-template form-field label="Surcharge" ph="Enter amount" -->
-    <!-- @include-template form-field label="Interest" ph="Enter amount" -->
-    <!-- @include-template form-field label="Compromise" ph="Enter amount" -->
+    <!-- @include-template form-field label="Prior Return Payment" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="Other Tax Credit / Payment" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="Net VAT Payable / (Overpayment)" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="Surcharge" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="Interest" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="Compromise" ph="Enter amount" disabled="{resolved2550QPreviewActive}" -->
   </grid>
 </template>
 
 <template name="form-2550q-grid-6" args="columns">
   <grid columns="{columns}" gap="12">
-    <!-- @include-template form-field label="Taxpayer / Authorized Representative" ph="Name and capacity" -->
-    <!-- @include-template form-field label="Payment Method" ph="Cash / Check / Tax Debit Memo" -->
-    <!-- @include-template form-field label="Payment Reference" ph="Reference number" -->
+    <!-- @include-template form-field label="Taxpayer / Authorized Representative" ph="Name and capacity" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="Payment Method" ph="Cash / Check / Tax Debit Memo" disabled="{resolved2550QPreviewActive}" -->
+    <!-- @include-template form-field label="Payment Reference" ph="Reference number" disabled="{resolved2550QPreviewActive}" -->
   </grid>
 </template>
 
@@ -289,18 +289,16 @@
         <text size="heading">BIR Form No. 2550Q</text>
         <text>Quarterly Value-Added Tax Return</text>
         <row gap="8" cross="center">
-          <text foreground="text_muted" grow="1">April 2024 (ENCS)</text>
-          <badge>Draft</badge>
+          <row gap="4" cross="center" grow="1">
+            <text foreground="text_muted">Form revision:</text>
+            <text foreground="text_muted">April 2024 (ENCS)</text>
+          </row>
+          <badge variant="{form2550QStateTone}">{form2550QStateLabel}</badge>
         </row>
       </column>
         <column gap="8">
-        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
-        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
-        <button variant="secondary" disabled="true">Validate</button>
-        <separator/>
-        <button variant="secondary" disabled="true">Save Draft</button>
-        <button variant="secondary" disabled="true">Revert to Draft</button>
-        <button variant="primary" disabled="true">Manual / External Filing</button>
+          <button height="44" variant="ghost" global-key="resolved-2550q-preview-back" autofocus="true" on-press="reg_close_resolved_2550q_preview">Back</button>
+        <button variant="secondary" disabled="{resolved2550QPreviewActive}" on-press="show_aux_html_print_preview">Print Preview</button>
         </column>
       </column>
     </if>
@@ -310,18 +308,16 @@
           <column gap="4" grow="1">
             <text size="heading">BIR Form No. 2550Q</text>
             <text>Quarterly Value-Added Tax Return</text>
-            <text foreground="text_muted">April 2024 (ENCS)</text>
+            <row gap="4" cross="center">
+              <text foreground="text_muted">Form revision:</text>
+              <text foreground="text_muted">April 2024 (ENCS)</text>
+            </row>
           </column>
-          <badge>Draft</badge>
+          <badge variant="{form2550QStateTone}">{form2550QStateLabel}</badge>
         </row>
         <row gap="8">
-        <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
-        <button variant="secondary" on-press="show_aux_html_print_preview">Print Preview</button>
-        <button variant="secondary" disabled="true">Validate</button>
-        <spacer/>
-        <button variant="secondary" disabled="true">Save Draft</button>
-        <button variant="secondary" disabled="true">Revert to Draft</button>
-        <button variant="primary" disabled="true">Manual / External Filing</button>
+        <button height="44" variant="ghost" global-key="resolved-2550q-preview-back" autofocus="true" on-press="reg_close_resolved_2550q_preview">Back</button>
+        <button variant="secondary" disabled="{resolved2550QPreviewActive}" on-press="show_aux_html_print_preview">Print Preview</button>
         </row>
       </column>
     </else>
@@ -368,7 +364,60 @@
 
       <!-- @include-template tax-profile-form-context -->
 
-      <use template="form-2550q-filing-status"/>
+      <if test="{resolved2550QPreviewActive}">
+      <alert text="Resolved filing scope">
+        <column gap="8">
+          <row><badge variant="destructive">Not fileable</badge></row>
+            <text wrap="true">{preview2550QIdentity}</text>
+            <text>Filing period: {formFilingPeriodLabel}</text>
+            <text wrap="true">{preview2550QScope}</text>
+            <for each="preview2550QCoverage" key="id" as="coverage"><text wrap="true">• {coverage.accessibleLabel}</text></for>
+            <separator/>
+            <column gap="6">
+              <text><span weight="bold">Captured source-record filter</span></text>
+              <row><badge variant="outline">Fixture metadata only</badge></row>
+              <text size="sm" wrap="true" foreground="text_muted">These deterministic source-index rows are not imported business data. They contain no transaction amounts or schedule payloads and do not populate the 2550Q fields below.</text>
+              <text wrap="true" foreground="text_muted">{preview2550QSourceSummary}</text>
+              <if test="{preview2550QSourceRecordsEmpty}">
+                <text wrap="true" foreground="text_muted">No explicitly attributed source records matched this filter.</text>
+              </if>
+              <else>
+                <for each="preview2550QSourceRecords" key="stableKey" as="record">
+                  <text wrap="true" label="{record.accessibleLabel}">• {record.visibleLabel} · {record.occurredOnLabel} · {record.attributionLabel}</text>
+                </for>
+              </else>
+              <if test="{preview2550QSourceReviewRequired}">
+                <text wrap="true" foreground="warning">{preview2550QSourceReviewLabel}</text>
+              </if>
+            </column>
+            <text wrap="true" foreground="text_muted">{preview2550QEvidence}</text>
+            <separator/>
+            <column gap="6">
+              <text><span weight="bold">Registration evidence</span></text>
+              <for each="preview2550QRegistrationEvidence" key="id" as="evidence">
+                <column gap="3" label="{evidence.accessibleLabel}">
+                  <text><span weight="bold">{evidence.subjectLabel}</span> · {evidence.subjectId}</text>
+                  <text size="sm" wrap="true" foreground="text_muted">Evidence ID: {evidence.evidenceId}</text>
+                  <text size="sm" wrap="true" foreground="text_muted">Review decision: {evidence.reviewDecisionId} · sequence {evidence.reviewDecisionSequence}</text>
+                  <text size="sm" wrap="true" foreground="text_muted">Assertion ID: {evidence.assertionId}</text>
+                </column>
+              </for>
+            </column>
+            <separator/>
+            <column gap="6">
+              <text><span weight="bold">Policy evidence</span></text>
+              <for each="preview2550QPolicyEvidence" key="id" as="evidence">
+                <column gap="3">
+                  <text><span weight="bold">{evidence.displayName}</span></text>
+                  <text wrap="true">{evidence.reviewBasis}</text>
+                  <text size="sm" wrap="true" foreground="text_muted">Evidence ID: {evidence.evidenceId}</text>
+                </column>
+              </for>
+            </column>
+            <text wrap="true" foreground="text_muted">{preview2550QReadiness}</text>
+          </column>
+        </alert>
+      </if><else><use template="form-2550q-filing-status"/></else>
 
       <card>
         <column padding="20" gap="12">

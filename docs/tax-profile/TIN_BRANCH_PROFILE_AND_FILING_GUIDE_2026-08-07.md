@@ -4,7 +4,14 @@
 
 **Status:** official-source product guidance with explicit evidence gaps
 
-**Implementation state:** research only; no application code or database schema changed
+**Implementation state (2026-08-09):** an isolated, session-only fixture-preview vertical
+slice now implements canonical TIN Root and Registration Unit records, reviewed
+evidence confirmation, read-only filtering of explicitly attributed source
+records without monetary or schedule-row integration,
+fail-closed 2550Q scope planning, transient scope-provenance validation, and a
+value-owned read-only preview snapshot on additive schema v28. Immutable
+draft/artifact provenance, production policy, reviewed legacy cutover and
+rollback, fileability, and submission remain deferred.
 
 **Execution companion:** [TIN Root, Registration Units, and Filing Scope — Implementation Plan](TIN_BRANCH_IMPLEMENTATION_PLAN_2026-08-07.md)
 **Canonical vocabulary:** [BIR Taxpayer, Registration, and Filing Context](../../CONTEXT.md)

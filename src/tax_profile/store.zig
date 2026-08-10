@@ -57,7 +57,9 @@
 //! preserves supported scalar history and parent revisions while retiring the
 //! obsolete registration-anchor column and its runtime triggers. Schema v27
 //! isolates obsolete provenance sidecars and records the first queued filing
-//! boundary as a permanent Tax Form Profile revision lock.
+//! boundary as a permanent Tax Form Profile revision lock. Schema v28 adds the
+//! canonical Taxpayer and Registration Unit ledger without inferring or
+//! backfilling identities from legacy profile streams.
 
 const std = @import("std");
 const profile_field = @import("field.zig");
@@ -76,12 +78,14 @@ const exact_validation = form_1701q_2018.validation;
 const exact_form_occurrences = form_1701q_2018.occurrences;
 const exact_transaction = form_1701q_2018.transaction;
 const form_catalog = @import("../forms/generated/catalog.zig");
+const registration_storage_contract =
+    @import("registration_storage_contract.zig");
 
 const sqlite = @cImport({
     @cInclude("sqlite3.h");
 });
 
-pub const latest_schema_version: u32 = 27;
+pub const latest_schema_version: u32 = 28;
 const migration_component = "tax_profile";
 pub const storage_classification =
     repository_opening.legacy_plaintext_repository_classification;
@@ -149,6 +153,7 @@ pub const Error = error{
     RegistrationComponentConflict,
     RegistrationNoChanges,
     RegistrationObligationConflict,
+    RegistrationFixtureDirectoryUnowned,
     RegistrationStreamConflict,
     RevisionConflict,
     SchemaTooNew,
@@ -2663,6 +2668,441 @@ pub const ExactDraftAlternate = struct {
     created_at_unix_seconds: i64,
 };
 
+/// Result of binding the canonical TIN/branch preview ledger to the explicit
+/// fixture capability. The marker lives in this database's component registry
+/// so it cannot be confused with a different database copied into the same
+/// data directory.
+pub const RegistrationFixtureOwnershipResult = enum {
+    claimed_empty_ledger,
+    already_claimed,
+    legacy_profiles_present,
+    unowned_existing_database,
+    unowned_target_rows,
+};
+
+pub const RegistrationFixtureDirectoryState = enum {
+    claiming,
+    ready,
+};
+
+pub const RegistrationFixtureClaimId = [32]u8;
+
+pub const RegistrationFixtureDirectoryIdentity = struct {
+    state: RegistrationFixtureDirectoryState,
+    claim_id: RegistrationFixtureClaimId,
+};
+
+/// Proof carried from the filesystem boundary into the database claim. The
+/// random claim identifier binds this exact child directory to its database;
+/// a copied or swapped database cannot satisfy a different directory marker.
+pub const RegistrationFixtureDatabaseOrigin = union(enum) {
+    fixture_directory: RegistrationFixtureDirectoryIdentity,
+    preexisting_or_unknown,
+};
+
+pub const registration_fixture_directory_name =
+    "tin-branch-fixture-preview-v1";
+const registration_fixture_directory_lock_name =
+    ".ebirforms-fixture-lock";
+const registration_fixture_directory_marker_name =
+    ".ebirforms-fixture-owner";
+
+/// One typed contract binds the filesystem marker, nonce-qualified database
+/// component, and every store that opens the fixture-owned database. Keeping
+/// the version here prevents a marker/parser/calendar drift from silently
+/// granting authority to a different fixture schema.
+pub const RegistrationFixtureBinding = struct {
+    component: []const u8,
+    version: u32,
+};
+
+const registration_fixture_component = "tin-branch-fixture-preview";
+
+pub const registration_fixture_binding: RegistrationFixtureBinding = .{
+    .component = registration_fixture_component,
+    .version = 2,
+};
+
+const registration_fixture_component_prefix =
+    registration_fixture_component ++ ":";
+const registration_fixture_component_glob =
+    registration_fixture_component_prefix ++ "*";
+const registration_fixture_marker_contract_prefix =
+    "component=" ++ registration_fixture_component ++
+    "\nversion=" ++ std.fmt.comptimePrint(
+        "{d}",
+        .{registration_fixture_binding.version},
+    );
+const registration_fixture_marker_claiming_prefix =
+    registration_fixture_marker_contract_prefix ++
+    "\nstate=claiming\nclaim_nonce=";
+const registration_fixture_marker_ready_prefix =
+    registration_fixture_marker_contract_prefix ++
+    "\nstate=ready\nclaim_nonce=";
+const registration_fixture_marker_max_bytes = @max(
+    registration_fixture_marker_claiming_prefix.len,
+    registration_fixture_marker_ready_prefix.len,
+) + @sizeOf(RegistrationFixtureClaimId) + 1;
+
+/// Open the dedicated fixture-preview child directory without ever opening or
+/// creating SQLite state in an unowned directory. A successful `createDir` is
+/// the atomic first-claim boundary; an existing directory must carry the exact
+/// v2 state marker and stable lock file written by that claim before callers
+/// may open any store.
+pub const RegistrationFixtureDirectory = struct {
+    parent: std.Io.Dir,
+    dir: std.Io.Dir,
+    lock_file: std.Io.File,
+    identity: RegistrationFixtureDirectoryIdentity,
+    directory_inode: std.Io.File.INode,
+
+    pub fn databaseOrigin(
+        self: *const RegistrationFixtureDirectory,
+    ) RegistrationFixtureDatabaseOrigin {
+        return .{ .fixture_directory = self.identity };
+    }
+
+    /// Revalidates that the retained directory capability is still mounted at
+    /// the one parent/name pair whose marker minted it. The lifetime lock
+    /// serializes cooperating app instances; the inode check also rejects an
+    /// ordinary-directory or symlink replacement before path-based SQLite I/O.
+    pub fn verifyMounted(
+        self: *const RegistrationFixtureDirectory,
+        io: std.Io,
+    ) !void {
+        const retained = try self.dir.stat(io);
+        const mounted = self.parent.statFile(
+            io,
+            registration_fixture_directory_name,
+            .{ .follow_symlinks = false },
+        ) catch return Error.RegistrationFixtureDirectoryUnowned;
+        if (retained.kind != .directory or
+            mounted.kind != .directory or
+            retained.inode != self.directory_inode or
+            mounted.inode != self.directory_inode)
+        {
+            return Error.RegistrationFixtureDirectoryUnowned;
+        }
+    }
+
+    pub fn realPath(
+        self: *const RegistrationFixtureDirectory,
+        io: std.Io,
+        output: []u8,
+    ) !usize {
+        try self.verifyMounted(io);
+        return self.dir.realPath(io, output);
+    }
+
+    /// Publishes the filesystem half only after the nonce-bound database
+    /// marker committed. Atomic replacement plus file and directory sync makes
+    /// a crash leave either exact `claiming` or exact `ready`, never a partial
+    /// state that could be mistaken for authority.
+    pub fn publishReady(
+        self: *RegistrationFixtureDirectory,
+        io: std.Io,
+    ) !void {
+        try self.verifyMounted(io);
+        if (self.identity.state == .ready) return;
+
+        const observed = try readRegistrationFixtureOwnerMarker(self.dir, io);
+        if (observed.state != .claiming or
+            !std.mem.eql(u8, &observed.claim_id, &self.identity.claim_id))
+        {
+            return Error.RegistrationFixtureDirectoryUnowned;
+        }
+
+        try writeRegistrationFixtureOwnerMarkerAtomic(
+            self.dir,
+            io,
+            .ready,
+            self.identity.claim_id,
+            true,
+        );
+        const ready = try readRegistrationFixtureOwnerMarker(self.dir, io);
+        if (ready.state != .ready or
+            !std.mem.eql(u8, &ready.claim_id, &self.identity.claim_id))
+        {
+            return Error.RegistrationFixtureDirectoryUnowned;
+        }
+        self.identity.state = .ready;
+    }
+
+    pub fn close(self: *RegistrationFixtureDirectory, io: std.Io) void {
+        self.lock_file.unlock(io);
+        self.lock_file.close(io);
+        self.dir.close(io);
+        self.* = undefined;
+    }
+};
+
+fn syncRegistrationFixtureDirectory(dir: std.Io.Dir, io: std.Io) !void {
+    if (@import("builtin").os.tag == .windows) return;
+    const directory_file: std.Io.File = .{
+        .handle = dir.handle,
+        .flags = .{ .nonblocking = false },
+    };
+    try directory_file.sync(io);
+}
+
+fn isLowerHex(bytes: []const u8) bool {
+    for (bytes) |byte| {
+        if (!((byte >= '0' and byte <= '9') or
+            (byte >= 'a' and byte <= 'f')))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+fn registrationFixtureOwnerMarkerBytes(
+    state: RegistrationFixtureDirectoryState,
+    claim_id: RegistrationFixtureClaimId,
+    buffer: *[registration_fixture_marker_max_bytes]u8,
+) []const u8 {
+    const prefix = switch (state) {
+        .claiming => registration_fixture_marker_claiming_prefix,
+        .ready => registration_fixture_marker_ready_prefix,
+    };
+    const marker = std.fmt.bufPrint(
+        buffer,
+        "{s}{s}\n",
+        .{ prefix, claim_id[0..] },
+    ) catch unreachable;
+    return marker;
+}
+
+fn parseRegistrationFixtureOwnerMarker(
+    marker: []const u8,
+) !RegistrationFixtureDirectoryIdentity {
+    const state: RegistrationFixtureDirectoryState, const prefix: []const u8 =
+        if (std.mem.startsWith(
+            u8,
+            marker,
+            registration_fixture_marker_claiming_prefix,
+        ))
+            .{ .claiming, registration_fixture_marker_claiming_prefix }
+        else if (std.mem.startsWith(
+            u8,
+            marker,
+            registration_fixture_marker_ready_prefix,
+        ))
+            .{ .ready, registration_fixture_marker_ready_prefix }
+        else
+            return Error.RegistrationFixtureDirectoryUnowned;
+    if (marker.len != prefix.len + @sizeOf(RegistrationFixtureClaimId) + 1 or
+        marker[marker.len - 1] != '\n')
+    {
+        return Error.RegistrationFixtureDirectoryUnowned;
+    }
+    const claim = marker[prefix.len .. marker.len - 1];
+    if (!isLowerHex(claim)) return Error.RegistrationFixtureDirectoryUnowned;
+    var claim_id: RegistrationFixtureClaimId = undefined;
+    @memcpy(&claim_id, claim);
+    return .{ .state = state, .claim_id = claim_id };
+}
+
+fn validateRegistrationFixtureRegularFile(
+    stat: std.Io.File.Stat,
+    expected_size: u64,
+) !void {
+    if (stat.kind != .file or stat.size != expected_size or stat.nlink != 1) {
+        return Error.RegistrationFixtureDirectoryUnowned;
+    }
+}
+
+fn createRegistrationFixtureLockFile(
+    directory: std.Io.Dir,
+    io: std.Io,
+) !void {
+    var atomic = try directory.createFileAtomic(
+        io,
+        registration_fixture_directory_lock_name,
+        .{},
+    );
+    defer atomic.deinit(io);
+    try atomic.file.sync(io);
+    try atomic.link(io);
+    try syncRegistrationFixtureDirectory(directory, io);
+}
+
+fn openRegistrationFixtureLockFile(
+    directory: std.Io.Dir,
+    io: std.Io,
+) !std.Io.File {
+    const before = directory.statFile(
+        io,
+        registration_fixture_directory_lock_name,
+        .{ .follow_symlinks = false },
+    ) catch return Error.RegistrationFixtureDirectoryUnowned;
+    try validateRegistrationFixtureRegularFile(before, 0);
+
+    var file = directory.openFile(
+        io,
+        registration_fixture_directory_lock_name,
+        .{
+            .allow_directory = false,
+            .follow_symlinks = false,
+            .resolve_beneath = true,
+            .lock = .exclusive,
+            .lock_nonblocking = true,
+        },
+    ) catch return Error.RegistrationFixtureDirectoryUnowned;
+    errdefer file.close(io);
+    const after = try file.stat(io);
+    try validateRegistrationFixtureRegularFile(after, 0);
+    if (after.inode != before.inode) {
+        return Error.RegistrationFixtureDirectoryUnowned;
+    }
+    return file;
+}
+
+fn writeRegistrationFixtureOwnerMarkerAtomic(
+    directory: std.Io.Dir,
+    io: std.Io,
+    state: RegistrationFixtureDirectoryState,
+    claim_id: RegistrationFixtureClaimId,
+    replace: bool,
+) !void {
+    var marker_buffer: [registration_fixture_marker_max_bytes]u8 = undefined;
+    const marker = registrationFixtureOwnerMarkerBytes(
+        state,
+        claim_id,
+        &marker_buffer,
+    );
+    var atomic = try directory.createFileAtomic(
+        io,
+        registration_fixture_directory_marker_name,
+        .{ .replace = replace },
+    );
+    defer atomic.deinit(io);
+    try atomic.file.writeStreamingAll(io, marker);
+    try atomic.file.sync(io);
+    if (replace) {
+        try atomic.replace(io);
+    } else {
+        try atomic.link(io);
+    }
+    try syncRegistrationFixtureDirectory(directory, io);
+}
+
+fn readRegistrationFixtureOwnerMarker(
+    directory: std.Io.Dir,
+    io: std.Io,
+) !RegistrationFixtureDirectoryIdentity {
+    const before = directory.statFile(
+        io,
+        registration_fixture_directory_marker_name,
+        .{ .follow_symlinks = false },
+    ) catch return Error.RegistrationFixtureDirectoryUnowned;
+    if (before.kind != .file or
+        before.size == 0 or
+        before.size > registration_fixture_marker_max_bytes or
+        before.nlink != 1)
+    {
+        return Error.RegistrationFixtureDirectoryUnowned;
+    }
+
+    var marker = directory.openFile(
+        io,
+        registration_fixture_directory_marker_name,
+        .{
+            .allow_directory = false,
+            .follow_symlinks = false,
+            .resolve_beneath = true,
+        },
+    ) catch return Error.RegistrationFixtureDirectoryUnowned;
+    defer marker.close(io);
+    const after = try marker.stat(io);
+    if (after.inode != before.inode or
+        after.kind != .file or
+        after.size != before.size or
+        after.nlink != 1)
+    {
+        return Error.RegistrationFixtureDirectoryUnowned;
+    }
+
+    var marker_buffer: [registration_fixture_marker_max_bytes + 1]u8 = undefined;
+    const marker_length = try marker.readPositionalAll(io, &marker_buffer, 0);
+    if (marker_length != after.size) {
+        return Error.RegistrationFixtureDirectoryUnowned;
+    }
+    return parseRegistrationFixtureOwnerMarker(marker_buffer[0..marker_length]);
+}
+
+pub fn openRegistrationFixturePreviewDirectory(
+    parent: std.Io.Dir,
+    io: std.Io,
+) !RegistrationFixtureDirectory {
+    var created = true;
+    parent.createDir(
+        io,
+        registration_fixture_directory_name,
+        .default_dir,
+    ) catch |err| switch (err) {
+        error.PathAlreadyExists => created = false,
+        else => return err,
+    };
+
+    var directory = parent.openDir(
+        io,
+        registration_fixture_directory_name,
+        .{
+            .iterate = true,
+            .follow_symlinks = false,
+        },
+    ) catch |err| switch (err) {
+        error.FileNotFound, error.NotDir, error.SymLinkLoop => return Error.RegistrationFixtureDirectoryUnowned,
+        else => return err,
+    };
+    errdefer directory.close(io);
+
+    if (created) {
+        var entropy: [16]u8 = undefined;
+        try io.randomSecure(&entropy);
+        const claim_id: RegistrationFixtureClaimId =
+            std.fmt.bytesToHex(entropy, .lower);
+        try createRegistrationFixtureLockFile(directory, io);
+        var lock_file = try openRegistrationFixtureLockFile(directory, io);
+        errdefer {
+            lock_file.unlock(io);
+            lock_file.close(io);
+        }
+        try writeRegistrationFixtureOwnerMarkerAtomic(
+            directory,
+            io,
+            .claiming,
+            claim_id,
+            false,
+        );
+        try syncRegistrationFixtureDirectory(parent, io);
+        const directory_stat = try directory.stat(io);
+        return .{
+            .parent = parent,
+            .dir = directory,
+            .lock_file = lock_file,
+            .identity = .{ .state = .claiming, .claim_id = claim_id },
+            .directory_inode = directory_stat.inode,
+        };
+    }
+
+    var lock_file = try openRegistrationFixtureLockFile(directory, io);
+    errdefer {
+        lock_file.unlock(io);
+        lock_file.close(io);
+    }
+    const identity = try readRegistrationFixtureOwnerMarker(directory, io);
+    const directory_stat = try directory.stat(io);
+    return .{
+        .parent = parent,
+        .dir = directory,
+        .lock_file = lock_file,
+        .identity = identity,
+        .directory_inode = directory_stat.inode,
+    };
+}
+
 pub const ExactDraftAlternateList = struct {
     items: []ExactDraftAlternate,
 
@@ -2680,8 +3120,60 @@ const ExactDraftHistoryPreflight = struct {
     retained_value_bytes: usize,
 };
 
+const registration_fixture_component_table_sql =
+    \\CREATE TABLE IF NOT EXISTS app_component_migrations (
+    \\    component TEXT PRIMARY KEY,
+    \\    version INTEGER NOT NULL CHECK (version >= 0),
+    \\    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    \\);
+;
+
+const RegistrationFixtureTableProbe = struct {
+    name: []const u8,
+    has_rows_sql: []const u8,
+};
+
+const registration_fixture_legacy_probe: RegistrationFixtureTableProbe = .{
+    .name = "tax_profiles",
+    .has_rows_sql = "SELECT EXISTS(SELECT 1 FROM tax_profiles LIMIT 1);",
+};
+
+const registration_fixture_target_probes = [_]RegistrationFixtureTableProbe{
+    .{ .name = "taxpayer_registration_taxpayers", .has_rows_sql = "SELECT EXISTS(SELECT 1 FROM taxpayer_registration_taxpayers LIMIT 1);" },
+    .{ .name = "taxpayer_registration_taxpayer_revisions", .has_rows_sql = "SELECT EXISTS(SELECT 1 FROM taxpayer_registration_taxpayer_revisions LIMIT 1);" },
+    .{ .name = "taxpayer_registration_evidence", .has_rows_sql = "SELECT EXISTS(SELECT 1 FROM taxpayer_registration_evidence LIMIT 1);" },
+    .{ .name = "taxpayer_registration_evidence_review_decisions", .has_rows_sql = "SELECT EXISTS(SELECT 1 FROM taxpayer_registration_evidence_review_decisions LIMIT 1);" },
+    .{ .name = "taxpayer_registration_evidence_assertions", .has_rows_sql = "SELECT EXISTS(SELECT 1 FROM taxpayer_registration_evidence_assertions LIMIT 1);" },
+    .{ .name = "taxpayer_registration_units", .has_rows_sql = "SELECT EXISTS(SELECT 1 FROM taxpayer_registration_units LIMIT 1);" },
+    .{ .name = "taxpayer_registration_unit_revisions", .has_rows_sql = "SELECT EXISTS(SELECT 1 FROM taxpayer_registration_unit_revisions LIMIT 1);" },
+    .{ .name = "taxpayer_registration_unit_contact_revisions", .has_rows_sql = "SELECT EXISTS(SELECT 1 FROM taxpayer_registration_unit_contact_revisions LIMIT 1);" },
+    .{ .name = "taxpayer_registration_tax_type_registrations", .has_rows_sql = "SELECT EXISTS(SELECT 1 FROM taxpayer_registration_tax_type_registrations LIMIT 1);" },
+    .{ .name = "taxpayer_registration_tax_type_registration_revisions", .has_rows_sql = "SELECT EXISTS(SELECT 1 FROM taxpayer_registration_tax_type_registration_revisions LIMIT 1);" },
+    .{ .name = "taxpayer_registration_branch_code_lineage", .has_rows_sql = "SELECT EXISTS(SELECT 1 FROM taxpayer_registration_branch_code_lineage LIMIT 1);" },
+    .{ .name = "taxpayer_registration_migration_decisions", .has_rows_sql = "SELECT EXISTS(SELECT 1 FROM taxpayer_registration_migration_decisions LIMIT 1);" },
+};
+
+const RegistrationFixtureDatabaseMarkerStatus = enum {
+    absent,
+    exact,
+    foreign_or_invalid,
+};
+
+const OpenInternalOptions = struct {
+    file_backed: bool,
+    create: bool,
+    read_only: bool = false,
+    migrate_schema: bool = true,
+    fixture_identity: ?RegistrationFixtureDirectoryIdentity = null,
+};
+
 pub const Store = struct {
     db: ?*sqlite.sqlite3,
+    /// File-backed stores and stores that enter the explicit fixture-preview
+    /// ownership flow must authorize every canonical registration mutation
+    /// from inside that mutation's SQLite write transaction.
+    registration_fixture_preview_write_guard_required: bool = false,
+    registration_fixture_preview_claim_id: ?RegistrationFixtureClaimId = null,
 
     /// Opens the legacy file-backed plaintext repository only after validating
     /// authority minted by the source-selected development-artifact bootstrap.
@@ -2693,41 +3185,366 @@ pub const Store = struct {
     ) !Store {
         try key_custody.requireDevelopmentPlaintextStorage(capability);
         if (path.len == 0) return Error.InvalidValue;
-        return openInternal(allocator, path, true);
+        return openInternal(allocator, path, .{
+            .file_backed = true,
+            .create = true,
+        });
+    }
+
+    /// Establishes the nonce-bound database half before calendar or tax
+    /// migrations are allowed to write. `claiming` may create and claim only
+    /// an empty/new/calendar-only database; `ready` is strictly resume-only and
+    /// never creates a missing main database.
+    pub fn testingEstablishRegistrationFixturePreviewDatabaseOwnership(
+        capability: *const key_custody.DevelopmentPlaintextStorageCapability,
+        allocator: std.mem.Allocator,
+        path: []const u8,
+        origin: RegistrationFixtureDatabaseOrigin,
+    ) !RegistrationFixtureOwnershipResult {
+        if (!@import("builtin").is_test) {
+            @compileError("path-based fixture ownership is test-only");
+        }
+        try key_custody.requireDevelopmentPlaintextStorage(capability);
+        if (path.len == 0) return Error.InvalidValue;
+        const identity = switch (origin) {
+            .fixture_directory => |value| value,
+            .preexisting_or_unknown => return .unowned_existing_database,
+        };
+        var store = try openInternal(allocator, path, .{
+            .file_backed = true,
+            .create = identity.state == .claiming,
+            .read_only = identity.state == .ready,
+            .migrate_schema = false,
+        });
+        defer store.close();
+        return store.ensureRegistrationFixturePreviewOwnershipBeforeMigration(
+            origin,
+        );
+    }
+
+    /// Opens a database that has already committed the exact filesystem
+    /// lease nonce. The ready binding is rechecked before WAL mode or any tax
+    /// migration, and `CREATE` is deliberately absent.
+    pub fn testingOpenFixturePreviewDevelopmentPlaintext(
+        capability: *const key_custody.DevelopmentPlaintextStorageCapability,
+        allocator: std.mem.Allocator,
+        path: []const u8,
+        identity: RegistrationFixtureDirectoryIdentity,
+    ) !Store {
+        if (!@import("builtin").is_test) {
+            @compileError("path-based fixture reopen is test-only");
+        }
+        try key_custody.requireDevelopmentPlaintextStorage(capability);
+        if (path.len == 0 or identity.state != .ready) {
+            return Error.RegistrationFixtureDirectoryUnowned;
+        }
+        return openInternal(allocator, path, .{
+            .file_backed = true,
+            .create = false,
+            .fixture_identity = identity,
+        });
+    }
+
+    /// Opens a fresh, session-only fixture-preview repository and binds it to
+    /// the retained fixture-directory nonce. Because the database is created
+    /// in memory here, a previously published `ready` directory may safely
+    /// seed a new empty repository without treating any pathname as storage
+    /// authority. The caller must verify the retained directory before and
+    /// after this call and publish a still-claiming directory before writes
+    /// are exposed to the UI.
+    pub fn openRegistrationFixturePreviewMemory(
+        capability: *const key_custody.DevelopmentPlaintextStorageCapability,
+        allocator: std.mem.Allocator,
+        identity: RegistrationFixtureDirectoryIdentity,
+    ) !Store {
+        try key_custody.requireDevelopmentPlaintextStorage(capability);
+        if (!isLowerHex(&identity.claim_id)) return Error.InvalidValue;
+
+        var store = try openMemory(allocator);
+        errdefer store.close();
+
+        const ownership = try store.ensureRegistrationFixturePreviewOwnership(
+            .{ .fixture_directory = .{
+                .state = .claiming,
+                .claim_id = identity.claim_id,
+            } },
+        );
+        if (ownership != .claimed_empty_ledger) {
+            return Error.RegistrationFixtureDirectoryUnowned;
+        }
+        return store;
     }
 
     /// Explicit ephemeral in-memory constructor.
     pub fn openMemory(allocator: std.mem.Allocator) !Store {
-        return openInternal(allocator, ":memory:", false);
+        return openInternal(allocator, ":memory:", .{
+            .file_backed = false,
+            .create = true,
+        });
+    }
+
+    pub fn registrationFixtureDatabaseComponentName(
+        identity: RegistrationFixtureDirectoryIdentity,
+        buffer: []u8,
+    ) ![]const u8 {
+        if (!isLowerHex(&identity.claim_id)) return Error.InvalidValue;
+        return std.fmt.bufPrint(
+            buffer,
+            "{s}{s}",
+            .{ registration_fixture_component_prefix, identity.claim_id[0..] },
+        ) catch unreachable;
+    }
+
+    /// Returns true only for the exact marker minted by
+    /// `ensureRegistrationFixturePreviewOwnership`. An unknown marker version
+    /// fails closed instead of being treated as this preview's authority.
+    pub fn registrationFixturePreviewOwnershipPresent(
+        self: *Store,
+    ) !bool {
+        const claim_id = self.registration_fixture_preview_claim_id orelse
+            return false;
+        const identity: RegistrationFixtureDirectoryIdentity = .{
+            .state = .ready,
+            .claim_id = claim_id,
+        };
+        if (!try self.tableExists("app_component_migrations")) return false;
+        return (try self.registrationFixtureDatabaseMarkerStatus(identity)) ==
+            .exact;
+    }
+
+    /// Claims fixture ownership only while both identity models are empty.
+    /// The check and marker insert share one immediate transaction, so a
+    /// concurrent legacy or canonical writer cannot race the claim. Once the
+    /// marker exists, later launches may resume only that marked fixture.
+    pub fn ensureRegistrationFixturePreviewOwnership(
+        self: *Store,
+        database_origin: RegistrationFixtureDatabaseOrigin,
+    ) !RegistrationFixtureOwnershipResult {
+        return self.ensureRegistrationFixturePreviewOwnershipBeforeMigration(
+            database_origin,
+        );
+    }
+
+    /// Requires the exact fixture marker and a completely empty legacy
+    /// ProfileId identity model. Callers must invoke this only after acquiring
+    /// their canonical registration `BEGIN IMMEDIATE` transaction so the
+    /// authorization remains true through commit.
+    pub fn requireRegistrationFixturePreviewWriteAuthorizationInTransaction(
+        self: *Store,
+    ) !void {
+        if (!self.registration_fixture_preview_write_guard_required) return;
+        if (!try self.registrationFixturePreviewOwnershipPresent()) {
+            return Error.InvalidValue;
+        }
+
+        var legacy = try self.prepare(
+            \\SELECT EXISTS(SELECT 1 FROM tax_profiles LIMIT 1);
+        );
+        defer legacy.deinit();
+        if (try legacy.step() != .row) return Error.SqliteFailure;
+        if (sqlite.sqlite3_column_int(legacy.raw, 0) == 1) {
+            return Error.InvalidValue;
+        }
+    }
+
+    fn tableExists(self: *Store, name: []const u8) !bool {
+        var statement = try self.prepare(
+            \\SELECT EXISTS(
+            \\    SELECT 1
+            \\    FROM main.sqlite_schema
+            \\    WHERE type = 'table' AND name = ?
+            \\);
+        );
+        defer statement.deinit();
+        try statement.bindText(1, name);
+        if (try statement.step() != .row) return Error.SqliteFailure;
+        return sqlite.sqlite3_column_int(statement.raw, 0) == 1;
+    }
+
+    fn registrationFixtureTableHasRows(
+        self: *Store,
+        probe: RegistrationFixtureTableProbe,
+    ) !bool {
+        if (!try self.tableExists(probe.name)) return false;
+        var statement = try self.prepare(probe.has_rows_sql);
+        defer statement.deinit();
+        if (try statement.step() != .row) return Error.SqliteFailure;
+        return sqlite.sqlite3_column_int(statement.raw, 0) == 1;
+    }
+
+    fn registrationFixtureTargetRowsPresent(self: *Store) !bool {
+        for (registration_fixture_target_probes) |probe| {
+            if (try self.registrationFixtureTableHasRows(probe)) return true;
+        }
+        return false;
+    }
+
+    fn registrationFixtureDatabaseMarkerStatus(
+        self: *Store,
+        identity: RegistrationFixtureDirectoryIdentity,
+    ) !RegistrationFixtureDatabaseMarkerStatus {
+        var expected_buffer: [registration_fixture_component_prefix.len + @sizeOf(RegistrationFixtureClaimId)]u8 = undefined;
+        const expected = try registrationFixtureDatabaseComponentName(
+            identity,
+            &expected_buffer,
+        );
+        var statement = try self.prepare(
+            \\SELECT component, version
+            \\FROM app_component_migrations
+            \\WHERE component = ?
+            \\   OR component GLOB ?
+            \\ORDER BY component;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, registration_fixture_binding.component);
+        try statement.bindText(2, registration_fixture_component_glob);
+
+        var matching_rows: usize = 0;
+        var exact = false;
+        while (try statement.step() == .row) {
+            matching_rows += 1;
+            const component = columnText(statement.raw, 0) orelse
+                return Error.SqliteFailure;
+            const version = sqlite.sqlite3_column_int64(statement.raw, 1);
+            if (std.mem.eql(u8, component, expected) and
+                version == registration_fixture_binding.version)
+            {
+                exact = true;
+            }
+        }
+        if (matching_rows == 0) return .absent;
+        if (matching_rows == 1 and exact) return .exact;
+        return .foreign_or_invalid;
+    }
+
+    fn ensureRegistrationFixturePreviewOwnershipBeforeMigration(
+        self: *Store,
+        database_origin: RegistrationFixtureDatabaseOrigin,
+    ) !RegistrationFixtureOwnershipResult {
+        self.registration_fixture_preview_write_guard_required = true;
+        const identity = switch (database_origin) {
+            .fixture_directory => |value| value,
+            .preexisting_or_unknown => return .unowned_existing_database,
+        };
+
+        if (identity.state == .claiming) {
+            try self.beginImmediate();
+        } else {
+            try self.exec("BEGIN;");
+        }
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        if (try self.registrationFixtureTableHasRows(
+            registration_fixture_legacy_probe,
+        )) {
+            try self.commit();
+            committed = true;
+            return .legacy_profiles_present;
+        }
+
+        const component_table_exists =
+            try self.tableExists("app_component_migrations");
+        const marker_status = if (component_table_exists)
+            try self.registrationFixtureDatabaseMarkerStatus(identity)
+        else
+            RegistrationFixtureDatabaseMarkerStatus.absent;
+        switch (marker_status) {
+            .exact => {
+                try self.commit();
+                committed = true;
+                self.registration_fixture_preview_claim_id = identity.claim_id;
+                return .already_claimed;
+            },
+            .foreign_or_invalid => {
+                try self.commit();
+                committed = true;
+                return .unowned_existing_database;
+            },
+            .absent => {},
+        }
+
+        if (identity.state == .ready) {
+            try self.commit();
+            committed = true;
+            return .unowned_existing_database;
+        }
+        if (try self.registrationFixtureTargetRowsPresent()) {
+            try self.commit();
+            committed = true;
+            return .unowned_target_rows;
+        }
+        if (!component_table_exists) {
+            try self.exec(registration_fixture_component_table_sql);
+        }
+
+        var component_buffer: [registration_fixture_component_prefix.len + @sizeOf(RegistrationFixtureClaimId)]u8 = undefined;
+        const component = try registrationFixtureDatabaseComponentName(
+            identity,
+            &component_buffer,
+        );
+        var insert = try self.prepare(
+            \\INSERT INTO app_component_migrations(component, version)
+            \\VALUES (?, ?);
+        );
+        defer insert.deinit();
+        try insert.bindText(1, component);
+        try insert.bindInt64(2, registration_fixture_binding.version);
+        try insert.expectDone();
+
+        try self.commit();
+        committed = true;
+        self.registration_fixture_preview_claim_id = identity.claim_id;
+        return .claimed_empty_ledger;
     }
 
     fn openInternal(
         allocator: std.mem.Allocator,
         path: []const u8,
-        file_backed: bool,
+        options: OpenInternalOptions,
     ) !Store {
         const path_z = try allocator.dupeZ(u8, path);
         defer allocator.free(path_z);
 
         var raw: ?*sqlite.sqlite3 = null;
-        const flags = sqlite.SQLITE_OPEN_READWRITE |
-            sqlite.SQLITE_OPEN_CREATE |
-            sqlite.SQLITE_OPEN_FULLMUTEX;
+        var flags: c_int = sqlite.SQLITE_OPEN_FULLMUTEX;
+        flags |= if (options.read_only)
+            sqlite.SQLITE_OPEN_READONLY
+        else
+            sqlite.SQLITE_OPEN_READWRITE;
+        if (options.create) flags |= sqlite.SQLITE_OPEN_CREATE;
+        if (options.file_backed) flags |= sqlite.SQLITE_OPEN_NOFOLLOW;
         const rc = sqlite.sqlite3_open_v2(path_z.ptr, &raw, flags, null);
         if (rc != sqlite.SQLITE_OK or raw == null) {
             if (raw) |db| _ = sqlite.sqlite3_close_v2(db);
             return mapResult(rc);
         }
 
-        var store = Store{ .db = raw.? };
+        var store = Store{
+            .db = raw.?,
+            .registration_fixture_preview_write_guard_required = options.file_backed,
+        };
         errdefer store.close();
         _ = sqlite.sqlite3_extended_result_codes(store.db.?, 1);
         if (sqlite.sqlite3_busy_timeout(store.db.?, 5_000) != sqlite.SQLITE_OK) {
             return Error.SqliteFailure;
         }
         try store.exec("PRAGMA foreign_keys = ON;");
-        if (file_backed) try store.exec("PRAGMA journal_mode = WAL;");
-        try store.migrate();
+        if (options.fixture_identity) |identity| {
+            const result = try store
+                .ensureRegistrationFixturePreviewOwnershipBeforeMigration(
+                .{ .fixture_directory = identity },
+            );
+            if (result != .already_claimed) {
+                return Error.RegistrationFixtureDirectoryUnowned;
+            }
+        }
+        if (options.migrate_schema) {
+            if (options.file_backed) {
+                try store.exec("PRAGMA journal_mode = WAL;");
+            }
+            try store.migrate();
+        }
         return store;
     }
 
@@ -3027,6 +3844,7 @@ pub const Store = struct {
         if (try self.schemaVersion() < 25) try self.migrateToV25();
         if (try self.schemaVersion() < 26) try self.migrateToV26();
         if (try self.schemaVersion() < 27) try self.migrateToV27();
+        if (try self.schemaVersion() < 28) try self.migrateToV28();
     }
 
     fn migrateToV18(self: *Store) !void {
@@ -3343,6 +4161,37 @@ pub const Store = struct {
             \\UPDATE app_component_migrations
             \\SET version = 27, updated_at = unixepoch()
             \\WHERE component = ? AND version = 26;
+        );
+        defer version.deinit();
+        try version.bindText(1, migration_component);
+        try version.expectDone();
+        if (sqlite.sqlite3_changes(try self.handle()) != 1) {
+            return Error.SqliteFailure;
+        }
+
+        try self.commit();
+        committed = true;
+    }
+
+    fn migrateToV28(self: *Store) !void {
+        try self.migrateToV28WithSchema(schema_v28);
+    }
+
+    fn migrateToV28WithSchema(self: *Store, schema_sql: [*:0]const u8) !void {
+        if (try self.schemaVersion() != 27) return Error.SqliteFailure;
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        // The ledger is additive. It deliberately performs no inference or
+        // backfill from legacy profile rows: any such mapping needs a reviewed
+        // migration decision during a separately write-frozen cutover.
+        try self.exec(schema_sql);
+        var version = try self.prepare(
+            \\UPDATE app_component_migrations
+            \\SET version = 28, updated_at = unixepoch()
+            \\WHERE component = ? AND version = 27;
         );
         defer version.deinit();
         try version.bindText(1, migration_component);
@@ -12419,15 +13268,47 @@ pub const legacy_registration_export = struct {
     }
 };
 
-/// Narrow test-only access for upgrade fixtures that must represent rows
-/// written by an older generated catalog. Production builds expose an empty
-/// namespace and cannot bypass the current catalog write guard.
+/// Narrow test-only access for direct SQL constraint fixtures. Production
+/// builds expose an empty namespace and cannot bypass the store API.
 pub const testing = if (@import("builtin").is_test) struct {
-    pub fn execHistoricalFixture(
+    pub fn fixtureDatabaseOrigin(
+        state: RegistrationFixtureDirectoryState,
+    ) RegistrationFixtureDatabaseOrigin {
+        return .{ .fixture_directory = .{
+            .state = state,
+            .claim_id = @splat('0'),
+        } };
+    }
+
+    pub fn execConstraintFixture(
         store: *Store,
         sql_text: [*:0]const u8,
     ) !void {
         try store.exec(sql_text);
+    }
+
+    pub fn deleteRegistrationFixtureOwnershipMarker(store: *Store) !void {
+        var statement = try store.prepare(
+            \\DELETE FROM app_component_migrations
+            \\WHERE component = ?
+            \\   OR component GLOB ?;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, registration_fixture_binding.component);
+        try statement.bindText(2, registration_fixture_component_glob);
+        try statement.expectDone();
+    }
+
+    pub fn scalarIntConstraintFixture(
+        store: *Store,
+        sql_text: [*:0]const u8,
+    ) !i64 {
+        var statement = try store.prepare(std.mem.span(sql_text));
+        defer statement.deinit();
+        if (try statement.step() != .row) return Error.SqliteFailure;
+        const result = sqlite.sqlite3_column_int64(statement.raw, 0);
+        if (try statement.step() != .done) return Error.SqliteFailure;
+        return result;
     }
 
     /// Seeds component rows exactly as an older release did. Current public
@@ -22189,6 +23070,1062 @@ const schema_v27 =
     \\END;
 ;
 
+// v28 ledger schema follows immediately before the existing migration tests.
+// This is deliberately additive: no migration code reads, maps, or writes a
+// legacy profile/draft stream.  A reviewed decision plus a write-freeze is the
+// only future authority to create a legacy-to-ledger mapping.
+const schema_v28 =
+    \\CREATE TABLE taxpayer_registration_taxpayers (
+    \\    id TEXT PRIMARY KEY CHECK (length(trim(id)) BETWEEN 1 AND 64),
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    \\);
+    \\CREATE TRIGGER taxpayer_registration_taxpayers_update_guard
+    \\BEFORE UPDATE ON taxpayer_registration_taxpayers
+    \\BEGIN SELECT RAISE(ABORT, 'taxpayer identity shell is immutable'); END;
+    \\CREATE TRIGGER taxpayer_registration_taxpayers_delete_guard
+    \\BEFORE DELETE ON taxpayer_registration_taxpayers
+    \\BEGIN SELECT RAISE(ABORT, 'taxpayer identity shell is permanent'); END;
+    \\CREATE TABLE taxpayer_registration_taxpayer_revisions (
+    \\    id TEXT PRIMARY KEY CHECK (length(trim(id)) BETWEEN 1 AND 64),
+    \\    taxpayer_id TEXT NOT NULL REFERENCES taxpayer_registration_taxpayers(id)
+    \\        ON DELETE RESTRICT,
+    \\    sequence INTEGER NOT NULL CHECK (sequence BETWEEN 1 AND 4294967295),
+    \\    effective_from TEXT NOT NULL CHECK (
+    \\        length(effective_from) = 10 AND
+    \\        substr(effective_from, 1, 4) <> '0000' AND
+    \\        date(effective_from) = effective_from
+    \\    ),
+    \\    effective_until TEXT CHECK (
+    \\        effective_until IS NULL OR (
+    \\            length(effective_until) = 10 AND
+    \\            substr(effective_until, 1, 4) <> '0000' AND
+    \\            date(effective_until) = effective_until AND
+    \\            effective_until >= effective_from
+    \\        )
+    \\    ),
+    \\    tin9 TEXT NOT NULL CHECK (
+    \\        length(tin9) = 9 AND tin9 NOT GLOB '*[^0-9]*'
+    \\    ),
+    \\    evidence_id TEXT REFERENCES taxpayer_registration_evidence(id)
+    \\        ON DELETE RESTRICT,
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    UNIQUE (taxpayer_id, sequence),
+    \\    CHECK (
+    \\        (sequence = 1 AND evidence_id IS NULL) OR
+    \\        (sequence > 1 AND evidence_id IS NOT NULL)
+    \\    )
+    \\);
+    \\CREATE TRIGGER taxpayer_registration_taxpayer_revisions_sequence_guard
+    \\BEFORE INSERT ON taxpayer_registration_taxpayer_revisions
+    \\WHEN NEW.sequence <> COALESCE((
+    \\  SELECT MAX(existing.sequence) + 1
+    \\  FROM taxpayer_registration_taxpayer_revisions AS existing
+    \\  WHERE existing.taxpayer_id = NEW.taxpayer_id
+    \\), 1)
+    \\BEGIN
+    \\  SELECT RAISE(ABORT, 'stale taxpayer revision sequence');
+    \\END;
+    \\CREATE TRIGGER taxpayer_registration_taxpayer_revisions_tin_guard
+    \\BEFORE INSERT ON taxpayer_registration_taxpayer_revisions
+    \\WHEN EXISTS (
+    \\    SELECT 1
+    \\    FROM taxpayer_registration_taxpayer_revisions AS existing
+    \\    WHERE existing.taxpayer_id <> NEW.taxpayer_id
+    \\      AND existing.tin9 = NEW.tin9
+    \\      AND NOT EXISTS (
+    \\          SELECT 1
+    \\          FROM taxpayer_registration_taxpayer_revisions AS same_day_later
+    \\          WHERE same_day_later.taxpayer_id = existing.taxpayer_id
+    \\            AND same_day_later.effective_from = existing.effective_from
+    \\            AND same_day_later.sequence > existing.sequence
+    \\      )
+    \\      AND existing.effective_from <= MIN(
+    \\          COALESCE(NEW.effective_until, '9999-12-31'),
+    \\          COALESCE((
+    \\              SELECT date(MIN(next_new.effective_from), '-1 day')
+    \\              FROM taxpayer_registration_taxpayer_revisions AS next_new
+    \\              WHERE next_new.taxpayer_id = NEW.taxpayer_id
+    \\                AND next_new.effective_from > NEW.effective_from
+    \\          ), '9999-12-31')
+    \\      )
+    \\      AND NEW.effective_from <= MIN(
+    \\          COALESCE(existing.effective_until, '9999-12-31'),
+    \\          COALESCE((
+    \\              SELECT date(MIN(next_existing.effective_from), '-1 day')
+    \\              FROM taxpayer_registration_taxpayer_revisions AS next_existing
+    \\              WHERE next_existing.taxpayer_id = existing.taxpayer_id
+    \\                AND next_existing.effective_from > existing.effective_from
+    \\          ), '9999-12-31')
+    \\      )
+    \\)
+    \\BEGIN SELECT RAISE(ABORT, 'duplicate effective TIN root'); END;
+    \\CREATE TRIGGER taxpayer_registration_taxpayer_revisions_update_guard
+    \\BEFORE UPDATE ON taxpayer_registration_taxpayer_revisions
+    \\BEGIN SELECT RAISE(ABORT, 'taxpayer revision is immutable'); END;
+    \\CREATE TRIGGER taxpayer_registration_taxpayer_revisions_delete_guard
+    \\BEFORE DELETE ON taxpayer_registration_taxpayer_revisions
+    \\BEGIN SELECT RAISE(ABORT, 'taxpayer revision is permanent'); END;
+    \\CREATE TABLE taxpayer_registration_evidence (
+    \\    id TEXT PRIMARY KEY CHECK (length(trim(id)) BETWEEN 1 AND 64),
+    \\    source_kind TEXT NOT NULL CHECK (source_kind IN (
+    \\        'cor', 'ecor', 'bir_registration_record', 'migration_record',
+    \\        'other_reviewed'
+    \\    )),
+    \\    sha256 TEXT NOT NULL CHECK (
+    \\        length(sha256) = 64 AND sha256 NOT GLOB '*[^0-9a-f]*'
+    \\    ),
+    \\    display_name TEXT NOT NULL CHECK (length(trim(display_name)) BETWEEN 1 AND 255),
+    \\    byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+    \\    captured_on TEXT NOT NULL CHECK (
+    \\        length(captured_on) = 10 AND
+    \\        substr(captured_on, 1, 4) <> '0000' AND
+    \\        date(captured_on) = captured_on
+    \\    ),
+    \\    storage_reference_kind TEXT NOT NULL CHECK (
+    \\        storage_reference_kind IN (
+    \\            'metadata_only_non_authoritative',
+    \\            'protected_local_path',
+    \\            'encrypted_blob_reference'
+    \\        )
+    \\    ),
+    \\    storage_reference TEXT,
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    CHECK (
+    \\        (
+    \\            storage_reference_kind = 'metadata_only_non_authoritative'
+    \\            AND storage_reference IS NULL
+    \\        ) OR (
+    \\            storage_reference_kind IN (
+    \\                'protected_local_path', 'encrypted_blob_reference'
+    \\            )
+    \\            AND length(trim(storage_reference)) BETWEEN 1 AND
+++ " " ++ std.fmt.comptimePrint(
+    "{d}",
+    .{registration_storage_contract.max_evidence_storage_reference_bytes},
+) ++ "\n" ++
+    \\        )
+    \\    )
+    \\);
+    \\CREATE TRIGGER taxpayer_registration_evidence_update_guard
+    \\BEFORE UPDATE ON taxpayer_registration_evidence
+    \\BEGIN SELECT RAISE(ABORT, 'registration evidence is immutable'); END;
+    \\CREATE TRIGGER taxpayer_registration_evidence_delete_guard
+    \\BEFORE DELETE ON taxpayer_registration_evidence
+    \\BEGIN SELECT RAISE(ABORT, 'registration evidence is permanent'); END;
+    \\CREATE TABLE taxpayer_registration_evidence_review_decisions (
+    \\    id TEXT PRIMARY KEY CHECK (length(trim(id)) BETWEEN 1 AND 64),
+    \\    evidence_id TEXT NOT NULL REFERENCES taxpayer_registration_evidence(id)
+    \\        ON DELETE RESTRICT,
+    \\    sequence INTEGER NOT NULL CHECK (sequence BETWEEN 1 AND 4294967295),
+    \\    review_state TEXT NOT NULL CHECK (review_state IN (
+    \\        'accepted', 'rejected', 'superseded'
+    \\    )),
+    \\    reviewer_kind TEXT NOT NULL CHECK (
+    \\        reviewer_kind IN ('local_owner', 'service')
+    \\    ),
+    \\    reviewer_local_owner_id TEXT
+    \\        REFERENCES tax_profile_local_owner(id) ON DELETE RESTRICT,
+    \\    reviewer_service_actor_id TEXT CHECK (
+    \\        reviewer_service_actor_id IS NULL OR
+    \\        length(trim(reviewer_service_actor_id)) BETWEEN 1 AND 64
+    \\    ),
+    \\    reviewed_at INTEGER NOT NULL CHECK (reviewed_at >= 0),
+    \\    review_reason TEXT NOT NULL CHECK (
+    \\        length(trim(review_reason)) BETWEEN 1 AND 1024
+    \\    ),
+    \\    supersedes_decision_id TEXT
+    \\        REFERENCES taxpayer_registration_evidence_review_decisions(id)
+    \\        ON DELETE RESTRICT,
+    \\    contradicts_decision_id TEXT
+    \\        REFERENCES taxpayer_registration_evidence_review_decisions(id)
+    \\        ON DELETE RESTRICT,
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    UNIQUE (evidence_id, sequence),
+    \\    CHECK (
+    \\        (
+    \\            reviewer_kind = 'local_owner' AND
+    \\            reviewer_local_owner_id IS NOT NULL AND
+    \\            reviewer_service_actor_id IS NULL
+    \\        ) OR (
+    \\            reviewer_kind = 'service' AND
+    \\            reviewer_local_owner_id IS NULL AND
+    \\            reviewer_service_actor_id IS NOT NULL
+    \\        )
+    \\    ),
+    \\    CHECK (
+    \\        supersedes_decision_id IS NULL OR
+    \\        supersedes_decision_id <> id
+    \\    ),
+    \\    CHECK (
+    \\        contradicts_decision_id IS NULL OR
+    \\        contradicts_decision_id <> id
+    \\    ),
+    \\    CHECK (
+    \\        supersedes_decision_id IS NULL OR
+    \\        contradicts_decision_id IS NULL OR
+    \\        supersedes_decision_id <> contradicts_decision_id
+    \\    ),
+    \\    CHECK (
+    \\        sequence = 1 OR supersedes_decision_id IS NOT NULL OR
+    \\        contradicts_decision_id IS NOT NULL
+    \\    ),
+    \\    CHECK (
+    \\        review_state <> 'rejected' OR sequence = 1 OR
+    \\        contradicts_decision_id IS NOT NULL
+    \\    ),
+    \\    CHECK (
+    \\        review_state <> 'superseded' OR
+    \\        supersedes_decision_id IS NOT NULL
+    \\    )
+    \\);
+    \\CREATE TRIGGER taxpayer_registration_evidence_review_sequence_guard
+    \\BEFORE INSERT ON taxpayer_registration_evidence_review_decisions
+    \\WHEN NEW.sequence <> COALESCE((
+    \\    SELECT MAX(existing.sequence) + 1
+    \\    FROM taxpayer_registration_evidence_review_decisions AS existing
+    \\    WHERE existing.evidence_id = NEW.evidence_id
+    \\), 1)
+    \\BEGIN SELECT RAISE(ABORT, 'stale evidence review sequence'); END;
+    \\CREATE TRIGGER taxpayer_registration_evidence_review_authoritative_storage_guard
+    \\BEFORE INSERT ON taxpayer_registration_evidence_review_decisions
+    \\WHEN NEW.review_state = 'accepted' AND NOT EXISTS (
+    \\  SELECT 1
+    \\  FROM taxpayer_registration_evidence AS evidence
+    \\  WHERE evidence.id = NEW.evidence_id
+    \\    AND evidence.storage_reference_kind IN (
+    \\      'protected_local_path', 'encrypted_blob_reference'
+    \\    )
+    \\)
+    \\BEGIN
+    \\  SELECT RAISE(ABORT, 'accepted evidence requires authoritative storage');
+    \\END;
+    \\CREATE TRIGGER taxpayer_registration_evidence_review_link_guard
+    \\BEFORE INSERT ON taxpayer_registration_evidence_review_decisions
+    \\WHEN (
+    \\    NEW.supersedes_decision_id IS NOT NULL AND NOT EXISTS (
+    \\        SELECT 1
+    \\        FROM taxpayer_registration_evidence_review_decisions AS linked
+    \\        WHERE linked.id = NEW.supersedes_decision_id
+    \\          AND linked.evidence_id = NEW.evidence_id
+    \\          AND linked.sequence < NEW.sequence
+    \\    )
+    \\) OR (
+    \\    NEW.contradicts_decision_id IS NOT NULL AND NOT EXISTS (
+    \\        SELECT 1
+    \\        FROM taxpayer_registration_evidence_review_decisions AS linked
+    \\        WHERE linked.id = NEW.contradicts_decision_id
+    \\          AND linked.evidence_id = NEW.evidence_id
+    \\          AND linked.sequence < NEW.sequence
+    \\    )
+    \\)
+    \\BEGIN
+    \\    SELECT RAISE(ABORT, 'evidence review link must cite a prior decision in the same stream');
+    \\END;
+    \\CREATE TRIGGER taxpayer_registration_evidence_review_update_guard
+    \\BEFORE UPDATE ON taxpayer_registration_evidence_review_decisions
+    \\BEGIN SELECT RAISE(ABORT, 'evidence review decision immutable'); END;
+    \\CREATE TRIGGER taxpayer_registration_evidence_review_delete_guard
+    \\BEFORE DELETE ON taxpayer_registration_evidence_review_decisions
+    \\BEGIN SELECT RAISE(ABORT, 'evidence review decision permanent'); END;
+    \\CREATE VIEW taxpayer_registration_current_evidence_reviews AS
+    \\SELECT decision.id AS decision_id, decision.evidence_id,
+    \\       decision.sequence, decision.review_state,
+    \\       decision.reviewer_kind, decision.reviewer_local_owner_id,
+    \\       decision.reviewer_service_actor_id, decision.reviewed_at,
+    \\       decision.review_reason, decision.supersedes_decision_id,
+    \\       decision.contradicts_decision_id, decision.created_at
+    \\FROM taxpayer_registration_evidence_review_decisions AS decision
+    \\WHERE NOT EXISTS (
+    \\    SELECT 1
+    \\    FROM taxpayer_registration_evidence_review_decisions AS later
+    \\    WHERE later.evidence_id = decision.evidence_id
+    \\      AND later.sequence > decision.sequence
+    \\);
+    \\CREATE TABLE taxpayer_registration_evidence_assertions (
+    \\    id TEXT PRIMARY KEY CHECK (length(trim(id)) BETWEEN 1 AND 64),
+    \\    evidence_id TEXT NOT NULL REFERENCES taxpayer_registration_evidence(id)
+    \\        ON DELETE RESTRICT,
+    \\    taxpayer_id TEXT NOT NULL REFERENCES taxpayer_registration_taxpayers(id)
+    \\        ON DELETE RESTRICT,
+    \\    registration_unit_id TEXT,
+    \\    effective_from TEXT NOT NULL CHECK (
+    \\        length(effective_from) = 10 AND
+    \\        substr(effective_from, 1, 4) <> '0000' AND
+    \\        date(effective_from) = effective_from
+    \\    ),
+    \\    fact_kind TEXT NOT NULL CHECK (fact_kind IN (
+    \\        'taxpayer_tin_root', 'registration_unit',
+    \\        'tax_type_registration', 'registration_unit_contact'
+    \\    )),
+    \\    tin9 TEXT CHECK (
+    \\        tin9 IS NULL OR (length(tin9) = 9 AND tin9 NOT GLOB '*[^0-9]*')
+    \\    ),
+    \\    branch_code TEXT CHECK (
+    \\        branch_code IS NULL OR
+    \\        (length(branch_code) = 5 AND branch_code NOT GLOB '*[^0-9]*')
+    \\    ),
+    \\    registration_unit_status TEXT CHECK (registration_unit_status IN (
+    \\        'confirmed_active', 'confirmed_closed'
+    \\    )),
+    \\    rdo_code TEXT CHECK (
+    \\        rdo_code IS NULL OR
+    \\        (length(rdo_code) = 3 AND rdo_code NOT GLOB '*[^0-9]*')
+    \\    ),
+    \\    tax_type TEXT CHECK (tax_type IN (
+    \\        'vat', 'percentage_tax', 'income_tax', 'withholding', 'other'
+    \\    )),
+    \\    tax_type_status TEXT CHECK (tax_type_status IN (
+    \\        'confirmed_active', 'confirmed_closed'
+    \\    )),
+    \\    registered_address TEXT CHECK (
+    \\        registered_address IS NULL OR (
+    \\            length(CAST(registered_address AS BLOB)) BETWEEN 1 AND 255 AND
+    \\            registered_address = trim(
+    \\                registered_address, char(9) || char(10) || char(13) || ' '
+    \\            ) AND
+    \\            instr(registered_address, char(0)) = 0 AND
+    \\            registered_address NOT GLOB (
+    \\                '*[' || char(1) || '-' || char(31) || char(127) || ']*'
+    \\            )
+    \\        )
+    \\    ),
+    \\    zip_code TEXT CHECK (
+    \\        zip_code IS NULL OR (
+    \\            length(zip_code) = 4 AND zip_code NOT GLOB '*[^0-9]*'
+    \\        )
+    \\    ),
+    \\    contact_number TEXT CHECK (
+    \\        contact_number IS NULL OR (
+    \\            (length(contact_number) BETWEEN 7 AND 15 AND
+    \\                contact_number NOT GLOB '*[^0-9]*') OR
+    \\            (length(contact_number) BETWEEN 8 AND 16 AND
+    \\                substr(contact_number, 1, 1) = '+' AND
+    \\                substr(contact_number, 2) NOT GLOB '*[^0-9]*')
+    \\        )
+    \\    ),
+    \\    email_address TEXT CHECK (
+    \\        email_address IS NULL OR (
+    \\            length(CAST(email_address AS BLOB)) BETWEEN 3 AND 254 AND
+    \\            email_address = trim(
+    \\                email_address, char(9) || char(10) || char(13) || ' '
+    \\            ) AND
+    \\            instr(email_address, char(0)) = 0 AND
+    \\            email_address NOT GLOB (
+    \\                '*[' || char(1) || '-' || char(31) || char(127) || ']*'
+    \\            ) AND
+    \\            instr(email_address, '@') > 1 AND
+    \\            instr(substr(email_address, instr(email_address, '@') + 1), '@') = 0 AND
+    \\            instr(substr(email_address, instr(email_address, '@') + 1), '.') > 0
+    \\        )
+    \\    ),
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    FOREIGN KEY (registration_unit_id, taxpayer_id)
+    \\      REFERENCES taxpayer_registration_units(id, taxpayer_id) ON DELETE RESTRICT,
+    \\    CHECK (
+    \\      (fact_kind = 'taxpayer_tin_root' AND registration_unit_id IS NULL AND
+    \\       tin9 IS NOT NULL AND branch_code IS NULL AND
+    \\       registration_unit_status IS NULL AND rdo_code IS NULL AND
+    \\       tax_type IS NULL AND tax_type_status IS NULL AND
+    \\       registered_address IS NULL AND zip_code IS NULL AND
+    \\       contact_number IS NULL AND email_address IS NULL) OR
+    \\      (fact_kind = 'registration_unit' AND registration_unit_id IS NOT NULL AND
+    \\       tin9 IS NULL AND branch_code IS NOT NULL AND
+    \\       registration_unit_status IS NOT NULL AND tax_type IS NULL AND
+    \\       tax_type_status IS NULL AND registered_address IS NULL AND
+    \\       zip_code IS NULL AND contact_number IS NULL AND
+    \\       email_address IS NULL) OR
+    \\      (fact_kind = 'tax_type_registration' AND
+    \\       registration_unit_id IS NOT NULL AND tin9 IS NULL AND
+    \\       branch_code IS NULL AND registration_unit_status IS NULL AND
+    \\       rdo_code IS NULL AND tax_type IS NOT NULL AND
+    \\       tax_type_status IS NOT NULL AND registered_address IS NULL AND
+    \\       zip_code IS NULL AND contact_number IS NULL AND
+    \\       email_address IS NULL) OR
+    \\     (fact_kind = 'registration_unit_contact' AND
+    \\       registration_unit_id IS NOT NULL AND tin9 IS NULL AND
+    \\       branch_code IS NULL AND registration_unit_status IS NULL AND
+    \\       rdo_code IS NULL AND tax_type IS NULL AND
+    \\       tax_type_status IS NULL AND registered_address IS NOT NULL)
+    \\    )
+    \\);
+    \\CREATE TRIGGER taxpayer_registration_evidence_assertions_review_freeze_guard
+    \\BEFORE INSERT ON taxpayer_registration_evidence_assertions
+    \\WHEN EXISTS (
+    \\  SELECT 1
+    \\  FROM taxpayer_registration_evidence_review_decisions AS review
+    \\  WHERE review.evidence_id = NEW.evidence_id
+    \\)
+    \\BEGIN
+    \\  SELECT RAISE(ABORT, 'registration evidence assertion set frozen at first review');
+    \\END;
+    \\CREATE TRIGGER taxpayer_registration_evidence_assertions_update_guard
+    \\BEFORE UPDATE ON taxpayer_registration_evidence_assertions
+    \\BEGIN SELECT RAISE(ABORT, 'registration evidence assertion is immutable'); END;
+    \\CREATE TRIGGER taxpayer_registration_evidence_assertions_delete_guard
+    \\BEFORE DELETE ON taxpayer_registration_evidence_assertions
+    \\BEGIN SELECT RAISE(ABORT, 'registration evidence assertion is permanent'); END;
+    \\CREATE TRIGGER taxpayer_registration_taxpayer_revisions_evidence_guard
+    \\BEFORE INSERT ON taxpayer_registration_taxpayer_revisions
+    \\WHEN NEW.sequence > 1 AND NOT EXISTS (
+    \\    SELECT 1
+    \\    FROM taxpayer_registration_evidence_assertions AS assertion
+    \\    JOIN taxpayer_registration_current_evidence_reviews AS review
+    \\      ON review.evidence_id = assertion.evidence_id
+    \\    WHERE assertion.evidence_id = NEW.evidence_id
+    \\      AND assertion.taxpayer_id = NEW.taxpayer_id
+    \\      AND assertion.registration_unit_id IS NULL
+    \\      AND assertion.effective_from = NEW.effective_from
+    \\      AND assertion.fact_kind = 'taxpayer_tin_root'
+    \\      AND assertion.tin9 = NEW.tin9
+    \\      AND review.review_state = 'accepted'
+    \\)
+    \\BEGIN SELECT RAISE(ABORT, 'TIN root correction requires current accepted evidence assertion'); END;
+    \\CREATE TABLE taxpayer_registration_units (
+    \\    id TEXT PRIMARY KEY CHECK (length(trim(id)) BETWEEN 1 AND 64),
+    \\    taxpayer_id TEXT NOT NULL REFERENCES taxpayer_registration_taxpayers(id)
+    \\        ON DELETE RESTRICT,
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    UNIQUE (id, taxpayer_id)
+    \\);
+    \\CREATE TRIGGER taxpayer_registration_units_update_guard
+    \\BEFORE UPDATE ON taxpayer_registration_units
+    \\BEGIN SELECT RAISE(ABORT, 'registration unit shell is immutable'); END;
+    \\CREATE TRIGGER taxpayer_registration_units_delete_guard
+    \\BEFORE DELETE ON taxpayer_registration_units
+    \\BEGIN SELECT RAISE(ABORT, 'registration unit shell is permanent'); END;
+    \\CREATE TABLE taxpayer_registration_unit_revisions (
+    \\    id TEXT PRIMARY KEY CHECK (length(trim(id)) BETWEEN 1 AND 64),
+    \\    taxpayer_id TEXT NOT NULL REFERENCES taxpayer_registration_taxpayers(id)
+    \\        ON DELETE RESTRICT,
+    \\    registration_unit_id TEXT NOT NULL,
+    \\    sequence INTEGER NOT NULL CHECK (sequence BETWEEN 1 AND 4294967295),
+    \\    effective_from TEXT NOT NULL CHECK (
+    \\        length(effective_from) = 10 AND
+    \\        substr(effective_from, 1, 4) <> '0000' AND
+    \\        date(effective_from) = effective_from
+    \\    ),
+    \\    effective_until TEXT CHECK (
+    \\        effective_until IS NULL OR (
+    \\            length(effective_until) = 10 AND
+    \\            substr(effective_until, 1, 4) <> '0000' AND
+    \\            date(effective_until) = effective_until AND
+    \\            effective_until >= effective_from
+    \\        )
+    \\    ),
+    \\    kind TEXT NOT NULL CHECK (kind IN ('head_office', 'branch')),
+    \\    branch_code_state TEXT NOT NULL CHECK (branch_code_state IN (
+    \\        'unconfirmed', 'confirmed', 'legacy_unresolved'
+    \\    )),
+    \\    branch_code TEXT CHECK (
+    \\        branch_code IS NULL OR (
+    \\            length(branch_code) = 5 AND branch_code NOT GLOB '*[^0-9]*'
+    \\        )
+    \\    ),
+    \\    legacy_suffix TEXT CHECK (
+    \\        legacy_suffix IS NULL OR (
+    \\            length(legacy_suffix) IN (3, 4) AND
+    \\            legacy_suffix NOT GLOB '*[^0-9]*'
+    \\        )
+    \\    ),
+    \\    status TEXT NOT NULL CHECK (status IN (
+    \\        'pending_evidence', 'confirmed_active', 'confirmed_closed',
+    \\        'legacy_unresolved'
+    \\    )),
+    \\    rdo_code TEXT CHECK (
+    \\        rdo_code IS NULL OR
+    \\        (length(rdo_code) = 3 AND rdo_code NOT GLOB '*[^0-9]*')
+    \\    ),
+    \\    branch_code_evidence_id TEXT REFERENCES taxpayer_registration_evidence(id)
+    \\        ON DELETE RESTRICT,
+    \\    lifecycle_evidence_id TEXT REFERENCES taxpayer_registration_evidence(id)
+    \\        ON DELETE RESTRICT,
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    FOREIGN KEY (registration_unit_id, taxpayer_id)
+    \\        REFERENCES taxpayer_registration_units(id, taxpayer_id) ON DELETE RESTRICT,
+    \\    UNIQUE (registration_unit_id, sequence),
+    \\    CHECK (
+    \\        (branch_code_state = 'unconfirmed' AND branch_code IS NOT NULL AND
+    \\         legacy_suffix IS NULL AND branch_code_evidence_id IS NULL) OR
+    \\        (branch_code_state = 'confirmed' AND branch_code IS NOT NULL AND
+    \\         legacy_suffix IS NULL AND branch_code_evidence_id IS NOT NULL) OR
+    \\        (branch_code_state = 'legacy_unresolved' AND branch_code IS NULL AND
+    \\         legacy_suffix IS NOT NULL AND branch_code_evidence_id IS NULL)
+    \\    ),
+    \\    CHECK (
+    \\        (status = 'pending_evidence' AND branch_code_state = 'unconfirmed' AND
+    \\         lifecycle_evidence_id IS NULL) OR
+    \\        (status IN ('confirmed_active', 'confirmed_closed') AND
+    \\         branch_code_state = 'confirmed' AND lifecycle_evidence_id IS NOT NULL) OR
+    \\        (status = 'legacy_unresolved' AND
+    \\         branch_code_state = 'legacy_unresolved' AND lifecycle_evidence_id IS NULL)
+    \\    ),
+    \\    CHECK (
+    \\        (kind = 'head_office' AND
+    \\         (branch_code_state = 'legacy_unresolved' OR branch_code = '00000')) OR
+    \\        (kind = 'branch' AND
+    \\         (branch_code_state = 'legacy_unresolved' OR branch_code <> '00000'))
+    \\    )
+    \\);
+    \\CREATE TRIGGER taxpayer_registration_unit_revisions_sequence_guard
+    \\BEFORE INSERT ON taxpayer_registration_unit_revisions
+    \\WHEN NEW.sequence <> COALESCE((
+    \\ SELECT MAX(existing.sequence) + 1
+    \\ FROM taxpayer_registration_unit_revisions AS existing
+    \\ WHERE existing.registration_unit_id = NEW.registration_unit_id
+    \\), 1)
+    \\BEGIN
+    \\ SELECT RAISE(ABORT, 'stale registration unit revision sequence');
+    \\END;
+    \\CREATE TRIGGER taxpayer_registration_head_office_guard
+    \\BEFORE INSERT ON taxpayer_registration_unit_revisions
+    \\WHEN NEW.kind = 'head_office' AND NEW.status <> 'confirmed_closed'
+    \\AND EXISTS (
+    \\    SELECT 1 FROM taxpayer_registration_unit_revisions AS existing
+    \\    WHERE existing.taxpayer_id = NEW.taxpayer_id
+    \\      AND existing.registration_unit_id <> NEW.registration_unit_id
+    \\      AND existing.kind = 'head_office'
+    \\      AND existing.status <> 'confirmed_closed'
+    \\      AND NOT EXISTS (
+    \\          SELECT 1
+    \\          FROM taxpayer_registration_unit_revisions AS same_day_later
+    \\          WHERE same_day_later.registration_unit_id = existing.registration_unit_id
+    \\            AND same_day_later.effective_from = existing.effective_from
+    \\            AND same_day_later.sequence > existing.sequence
+    \\      )
+    \\      AND existing.effective_from <= MIN(
+    \\          COALESCE(NEW.effective_until, '9999-12-31'),
+    \\          COALESCE((
+    \\          SELECT date(MIN(next_new.effective_from), '-1 day')
+    \\          FROM taxpayer_registration_unit_revisions AS next_new
+    \\          WHERE next_new.registration_unit_id = NEW.registration_unit_id
+    \\            AND next_new.effective_from > NEW.effective_from
+    \\          ), '9999-12-31')
+    \\      )
+    \\      AND NEW.effective_from <= MIN(
+    \\          COALESCE(existing.effective_until, '9999-12-31'),
+    \\          COALESCE((
+    \\          SELECT date(MIN(next_existing.effective_from), '-1 day')
+    \\          FROM taxpayer_registration_unit_revisions AS next_existing
+    \\          WHERE next_existing.registration_unit_id = existing.registration_unit_id
+    \\            AND next_existing.effective_from > existing.effective_from
+    \\          ), '9999-12-31')
+    \\      )
+    \\)
+    \\BEGIN SELECT RAISE(ABORT, 'multiple effective head offices'); END;
+    \\CREATE TRIGGER taxpayer_registration_active_code_guard
+    \\BEFORE INSERT ON taxpayer_registration_unit_revisions
+    \\WHEN NEW.branch_code_state = 'confirmed'
+    \\AND EXISTS (
+    \\    SELECT 1 FROM taxpayer_registration_unit_revisions AS existing
+    \\    WHERE existing.taxpayer_id = NEW.taxpayer_id
+    \\      AND existing.registration_unit_id <> NEW.registration_unit_id
+    \\      AND existing.branch_code = NEW.branch_code
+    \\      AND existing.branch_code_state = 'confirmed'
+    \\      AND NOT EXISTS (
+    \\          SELECT 1
+    \\          FROM taxpayer_registration_unit_revisions AS same_day_later
+    \\          WHERE same_day_later.registration_unit_id = existing.registration_unit_id
+    \\            AND same_day_later.effective_from = existing.effective_from
+    \\            AND same_day_later.sequence > existing.sequence
+    \\      )
+    \\      AND existing.effective_from <= MIN(
+    \\          COALESCE(NEW.effective_until, '9999-12-31'),
+    \\          COALESCE((
+    \\          SELECT date(MIN(next_new.effective_from), '-1 day')
+    \\          FROM taxpayer_registration_unit_revisions AS next_new
+    \\          WHERE next_new.registration_unit_id = NEW.registration_unit_id
+    \\            AND next_new.effective_from > NEW.effective_from
+    \\          ), '9999-12-31')
+    \\      )
+    \\      AND NEW.effective_from <= MIN(
+    \\          COALESCE(existing.effective_until, '9999-12-31'),
+    \\          COALESCE((
+    \\          SELECT date(MIN(next_existing.effective_from), '-1 day')
+    \\          FROM taxpayer_registration_unit_revisions AS next_existing
+    \\          WHERE next_existing.registration_unit_id = existing.registration_unit_id
+    \\            AND next_existing.effective_from > existing.effective_from
+    \\          ), '9999-12-31')
+    \\      )
+    \\)
+    \\BEGIN SELECT RAISE(ABORT, 'duplicate effective branch code'); END;
+    \\CREATE TRIGGER taxpayer_registration_unit_revisions_transfer_jurisdiction_guard
+    \\BEFORE INSERT ON taxpayer_registration_unit_revisions
+    \\WHEN NEW.status = 'confirmed_active'
+    \\ AND NEW.branch_code_state = 'confirmed'
+    \\ AND EXISTS (
+    \\    SELECT 1
+    \\    FROM taxpayer_registration_unit_revisions AS previous
+    \\    WHERE previous.registration_unit_id = NEW.registration_unit_id
+    \\      AND previous.sequence = (
+    \\          SELECT MAX(candidate.sequence)
+    \\          FROM taxpayer_registration_unit_revisions AS candidate
+    \\          WHERE candidate.registration_unit_id = NEW.registration_unit_id
+    \\            AND candidate.sequence < NEW.sequence
+    \\      )
+    \\      AND previous.status = 'confirmed_active'
+    \\      AND previous.branch_code = NEW.branch_code
+    \\      AND (NEW.rdo_code IS NULL OR NEW.rdo_code IS previous.rdo_code)
+    \\ )
+    \\BEGIN SELECT RAISE(ABORT, 'active transfer requires changed destination RDO'); END;
+    \\CREATE TRIGGER taxpayer_registration_unit_revisions_evidence_guard
+    \\BEFORE INSERT ON taxpayer_registration_unit_revisions
+    \\WHEN NEW.status IN ('confirmed_active', 'confirmed_closed')
+    \\ AND (
+    \\  NOT EXISTS (
+    \\    SELECT 1 FROM taxpayer_registration_current_evidence_reviews AS lifecycle_evidence
+    \\    WHERE lifecycle_evidence.evidence_id = NEW.lifecycle_evidence_id
+    \\      AND lifecycle_evidence.review_state = 'accepted'
+    \\  )
+    \\  OR (
+    \\    NEW.branch_code_state = 'confirmed'
+    \\    AND NOT EXISTS (
+    \\      SELECT 1 FROM taxpayer_registration_current_evidence_reviews AS branch_evidence
+    \\      WHERE branch_evidence.evidence_id = NEW.branch_code_evidence_id
+    \\        AND branch_evidence.review_state = 'accepted'
+    \\    )
+    \\  )
+    \\ )
+    \\BEGIN
+    \\  SELECT RAISE(ABORT, 'confirmed registration unit requires accepted evidence');
+    \\END;
+    \\CREATE TRIGGER taxpayer_registration_unit_revisions_assertion_guard
+    \\BEFORE INSERT ON taxpayer_registration_unit_revisions
+    \\WHEN NEW.status IN ('confirmed_active', 'confirmed_closed')
+    \\ AND (
+    \\   NOT EXISTS (
+    \\     SELECT 1
+    \\     FROM taxpayer_registration_evidence_assertions AS assertion
+    \\     JOIN taxpayer_registration_current_evidence_reviews AS evidence
+    \\       ON evidence.evidence_id = assertion.evidence_id
+    \\     WHERE assertion.evidence_id = NEW.lifecycle_evidence_id
+    \\       AND assertion.taxpayer_id = NEW.taxpayer_id
+    \\       AND assertion.registration_unit_id = NEW.registration_unit_id
+    \\       AND assertion.effective_from = NEW.effective_from
+    \\       AND assertion.fact_kind = 'registration_unit'
+    \\       AND assertion.branch_code = NEW.branch_code
+    \\       AND assertion.registration_unit_status = NEW.status
+    \\       AND assertion.rdo_code IS NEW.rdo_code
+    \\       AND evidence.review_state = 'accepted'
+    \\   )
+    \\   OR NOT EXISTS (
+    \\     SELECT 1
+    \\     FROM taxpayer_registration_evidence_assertions AS assertion
+    \\     JOIN taxpayer_registration_current_evidence_reviews AS evidence
+    \\       ON evidence.evidence_id = assertion.evidence_id
+    \\     WHERE assertion.evidence_id = NEW.branch_code_evidence_id
+    \\       AND assertion.taxpayer_id = NEW.taxpayer_id
+    \\       AND assertion.registration_unit_id = NEW.registration_unit_id
+    \\       AND assertion.fact_kind = 'registration_unit'
+    \\       AND assertion.branch_code = NEW.branch_code
+    \\       AND assertion.registration_unit_status IN (
+    \\           'confirmed_active', 'confirmed_closed'
+    \\       )
+    \\       AND evidence.review_state = 'accepted'
+    \\   )
+    \\ )
+    \\BEGIN SELECT RAISE(ABORT, 'confirmed registration unit requires matching evidence assertion'); END;
+    \\CREATE TRIGGER taxpayer_registration_unit_revisions_update_guard
+    \\BEFORE UPDATE ON taxpayer_registration_unit_revisions
+    \\BEGIN SELECT RAISE(ABORT, 'registration unit revision is immutable'); END;
+    \\CREATE TRIGGER taxpayer_registration_unit_revisions_delete_guard
+    \\BEFORE DELETE ON taxpayer_registration_unit_revisions
+    \\BEGIN SELECT RAISE(ABORT, 'registration unit revision is permanent'); END;
+    \\CREATE TABLE taxpayer_registration_unit_contact_revisions (
+    \\    id TEXT PRIMARY KEY CHECK (length(trim(id)) BETWEEN 1 AND 64),
+    \\    taxpayer_id TEXT NOT NULL REFERENCES taxpayer_registration_taxpayers(id)
+    \\        ON DELETE RESTRICT,
+    \\    registration_unit_id TEXT NOT NULL,
+    \\    sequence INTEGER NOT NULL CHECK (sequence BETWEEN 1 AND 4294967295),
+    \\    effective_from TEXT NOT NULL CHECK (
+    \\        length(effective_from) = 10 AND
+    \\        substr(effective_from, 1, 4) <> '0000' AND
+    \\        date(effective_from) = effective_from
+    \\    ),
+    \\    effective_until TEXT CHECK (
+    \\        effective_until IS NULL OR (
+    \\            length(effective_until) = 10 AND
+    \\            substr(effective_until, 1, 4) <> '0000' AND
+    \\            date(effective_until) = effective_until AND
+    \\            effective_until >= effective_from
+    \\        )
+    \\    ),
+    \\    registered_address TEXT NOT NULL CHECK (
+    \\        length(CAST(registered_address AS BLOB)) BETWEEN 1 AND 255 AND
+    \\        registered_address = trim(
+    \\            registered_address, char(9) || char(10) || char(13) || ' '
+    \\        ) AND
+    \\        instr(registered_address, char(0)) = 0 AND
+    \\        registered_address NOT GLOB (
+    \\            '*[' || char(1) || '-' || char(31) || char(127) || ']*'
+    \\        )
+    \\    ),
+    \\    zip_code TEXT CHECK (
+    \\        zip_code IS NULL OR (
+    \\            length(zip_code) = 4 AND zip_code NOT GLOB '*[^0-9]*'
+    \\        )
+    \\    ),
+    \\    contact_number TEXT CHECK (
+    \\        contact_number IS NULL OR (
+    \\            (length(contact_number) BETWEEN 7 AND 15 AND
+    \\                contact_number NOT GLOB '*[^0-9]*') OR
+    \\            (length(contact_number) BETWEEN 8 AND 16 AND
+    \\                substr(contact_number, 1, 1) = '+' AND
+    \\                substr(contact_number, 2) NOT GLOB '*[^0-9]*')
+    \\        )
+    \\    ),
+    \\    email_address TEXT CHECK (
+    \\        email_address IS NULL OR (
+    \\            length(CAST(email_address AS BLOB)) BETWEEN 3 AND 254 AND
+    \\            email_address = trim(
+    \\                email_address, char(9) || char(10) || char(13) || ' '
+    \\            ) AND
+    \\            instr(email_address, char(0)) = 0 AND
+    \\            email_address NOT GLOB (
+    \\                '*[' || char(1) || '-' || char(31) || char(127) || ']*'
+    \\            ) AND
+    \\            instr(email_address, '@') > 1 AND
+    \\            instr(substr(email_address, instr(email_address, '@') + 1), '@') = 0 AND
+    \\            instr(substr(email_address, instr(email_address, '@') + 1), '.') > 0
+    \\        )
+    \\    ),
+    \\    evidence_id TEXT NOT NULL REFERENCES taxpayer_registration_evidence(id)
+    \\        ON DELETE RESTRICT,
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    FOREIGN KEY (registration_unit_id, taxpayer_id)
+    \\      REFERENCES taxpayer_registration_units(id, taxpayer_id) ON DELETE RESTRICT,
+    \\    UNIQUE (registration_unit_id, sequence)
+    \\);
+    \\CREATE INDEX taxpayer_registration_unit_contact_effective_idx
+    \\ON taxpayer_registration_unit_contact_revisions (
+    \\    taxpayer_id, registration_unit_id, effective_from, effective_until
+    \\);
+    \\CREATE TRIGGER taxpayer_registration_unit_contact_revisions_sequence_guard
+    \\BEFORE INSERT ON taxpayer_registration_unit_contact_revisions
+    \\WHEN NEW.sequence <> COALESCE((
+    \\    SELECT MAX(existing.sequence) + 1
+    \\    FROM taxpayer_registration_unit_contact_revisions AS existing
+    \\    WHERE existing.registration_unit_id = NEW.registration_unit_id
+    \\), 1)
+    \\BEGIN SELECT RAISE(ABORT, 'stale registration unit contact revision sequence'); END;
+    \\CREATE TRIGGER taxpayer_registration_unit_contact_revisions_overlap_guard
+    \\BEFORE INSERT ON taxpayer_registration_unit_contact_revisions
+    \\WHEN EXISTS (
+    \\    WITH candidate_rows AS (
+    \\        SELECT id, sequence, effective_from, effective_until
+    \\        FROM taxpayer_registration_unit_contact_revisions
+    \\        WHERE registration_unit_id = NEW.registration_unit_id
+    \\        UNION ALL
+    \\        SELECT NEW.id, NEW.sequence, NEW.effective_from, NEW.effective_until
+    \\    ),
+    \\    current_rows AS (
+    \\        SELECT candidate.id, candidate.effective_from,
+    \\               candidate.effective_until
+    \\        FROM candidate_rows AS candidate
+    \\        WHERE NOT EXISTS (
+    \\            SELECT 1
+    \\            FROM candidate_rows AS same_day_later
+    \\            WHERE same_day_later.effective_from = candidate.effective_from
+    \\              AND same_day_later.sequence > candidate.sequence
+    \\        )
+    \\    ),
+    \\    resolved_intervals AS (
+    \\        SELECT current.id, current.effective_from,
+    \\          MIN(
+    \\            COALESCE(current.effective_until, '9999-12-31'),
+    \\            COALESCE(date((
+    \\                SELECT MIN(next.effective_from)
+    \\                FROM current_rows AS next
+    \\                WHERE next.effective_from > current.effective_from
+    \\            ), '-1 day'), '9999-12-31')
+    \\          ) AS resolved_until
+    \\        FROM current_rows AS current
+    \\    )
+    \\    SELECT 1
+    \\    FROM resolved_intervals AS left_interval
+    \\    JOIN resolved_intervals AS right_interval
+    \\      ON left_interval.id < right_interval.id
+    \\    WHERE left_interval.effective_from <= right_interval.resolved_until
+    \\      AND right_interval.effective_from <= left_interval.resolved_until
+    \\)
+    \\BEGIN SELECT RAISE(ABORT, 'overlapping registration unit contact revisions'); END;
+    \\CREATE TRIGGER taxpayer_registration_unit_contact_revisions_evidence_guard
+    \\BEFORE INSERT ON taxpayer_registration_unit_contact_revisions
+    \\WHEN NOT EXISTS (
+    \\    SELECT 1
+    \\    FROM taxpayer_registration_current_evidence_reviews AS evidence
+    \\    WHERE evidence.evidence_id = NEW.evidence_id
+    \\      AND evidence.review_state = 'accepted'
+    \\)
+    \\BEGIN SELECT RAISE(ABORT, 'registration unit contact revision requires current accepted evidence'); END;
+    \\CREATE TRIGGER taxpayer_registration_unit_contact_revisions_assertion_guard
+    \\BEFORE INSERT ON taxpayer_registration_unit_contact_revisions
+    \\WHEN NOT EXISTS (
+    \\    SELECT 1
+    \\    FROM taxpayer_registration_evidence_assertions AS assertion
+    \\    WHERE assertion.evidence_id = NEW.evidence_id
+    \\      AND assertion.taxpayer_id = NEW.taxpayer_id
+    \\      AND assertion.registration_unit_id = NEW.registration_unit_id
+    \\      AND assertion.effective_from = NEW.effective_from
+    \\      AND assertion.fact_kind = 'registration_unit_contact'
+    \\      AND assertion.registered_address = NEW.registered_address
+    \\      AND assertion.zip_code IS NEW.zip_code
+    \\      AND assertion.contact_number IS NEW.contact_number
+    \\      AND assertion.email_address IS NEW.email_address
+    \\)
+    \\BEGIN SELECT RAISE(ABORT, 'registration unit contact revision requires matching evidence assertion'); END;
+    \\CREATE TRIGGER taxpayer_registration_unit_contact_revisions_update_guard
+    \\BEFORE UPDATE ON taxpayer_registration_unit_contact_revisions
+    \\BEGIN SELECT RAISE(ABORT, 'registration unit contact revision is immutable'); END;
+    \\CREATE TRIGGER taxpayer_registration_unit_contact_revisions_delete_guard
+    \\BEFORE DELETE ON taxpayer_registration_unit_contact_revisions
+    \\BEGIN SELECT RAISE(ABORT, 'registration unit contact revision is permanent'); END;
+    \\CREATE TABLE taxpayer_registration_tax_type_registrations (
+    \\    id TEXT PRIMARY KEY CHECK (length(trim(id)) BETWEEN 1 AND 64),
+    \\    taxpayer_id TEXT NOT NULL REFERENCES taxpayer_registration_taxpayers(id)
+    \\        ON DELETE RESTRICT,
+    \\    registration_unit_id TEXT NOT NULL,
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    FOREIGN KEY (registration_unit_id, taxpayer_id)
+    \\        REFERENCES taxpayer_registration_units(id, taxpayer_id) ON DELETE RESTRICT
+    \\);
+    \\CREATE TRIGGER taxpayer_registration_tax_type_registrations_update_guard
+    \\BEFORE UPDATE ON taxpayer_registration_tax_type_registrations
+    \\BEGIN SELECT RAISE(ABORT, 'tax type registration shell is immutable'); END;
+    \\CREATE TRIGGER taxpayer_registration_tax_type_registrations_delete_guard
+    \\BEFORE DELETE ON taxpayer_registration_tax_type_registrations
+    \\BEGIN SELECT RAISE(ABORT, 'tax type registration shell is permanent'); END;
+    \\CREATE TABLE taxpayer_registration_tax_type_registration_revisions (
+    \\    id TEXT PRIMARY KEY CHECK (length(trim(id)) BETWEEN 1 AND 64),
+    \\    registration_id TEXT NOT NULL
+    \\        REFERENCES taxpayer_registration_tax_type_registrations(id) ON DELETE RESTRICT,
+    \\    sequence INTEGER NOT NULL CHECK (sequence BETWEEN 1 AND 4294967295),
+    \\    effective_from TEXT NOT NULL CHECK (
+    \\        length(effective_from) = 10 AND
+    \\        substr(effective_from, 1, 4) <> '0000' AND
+    \\        date(effective_from) = effective_from
+    \\    ),
+    \\    effective_until TEXT CHECK (
+    \\        effective_until IS NULL OR (
+    \\            length(effective_until) = 10 AND
+    \\            substr(effective_until, 1, 4) <> '0000' AND
+    \\            date(effective_until) = effective_until AND
+    \\            effective_until >= effective_from
+    \\        )
+    \\    ),
+    \\    tax_type TEXT NOT NULL CHECK (tax_type IN (
+    \\        'vat', 'percentage_tax', 'income_tax', 'withholding', 'other'
+    \\    )),
+    \\    status TEXT NOT NULL CHECK (status IN (
+    \\        'pending_evidence', 'confirmed_active', 'confirmed_closed',
+    \\        'legacy_unresolved'
+    \\    )),
+    \\    evidence_id TEXT REFERENCES taxpayer_registration_evidence(id)
+    \\        ON DELETE RESTRICT,
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    UNIQUE (registration_id, sequence),
+    \\    CHECK (
+    \\        (status IN ('confirmed_active', 'confirmed_closed') AND evidence_id IS NOT NULL) OR
+    \\        (status IN ('pending_evidence', 'legacy_unresolved') AND evidence_id IS NULL)
+    \\    )
+    \\);
+    \\CREATE TRIGGER taxpayer_registration_tax_type_registration_revisions_sequence_guard
+    \\BEFORE INSERT ON taxpayer_registration_tax_type_registration_revisions
+    \\WHEN NEW.sequence <> COALESCE((
+    \\ SELECT MAX(existing.sequence) + 1
+    \\ FROM taxpayer_registration_tax_type_registration_revisions AS existing
+    \\ WHERE existing.registration_id = NEW.registration_id
+    \\), 1)
+    \\BEGIN
+    \\ SELECT RAISE(ABORT, 'stale tax type registration revision sequence');
+    \\END;
+    \\CREATE TRIGGER taxpayer_registration_tax_type_revisions_identity_guard
+    \\BEFORE INSERT ON taxpayer_registration_tax_type_registration_revisions
+    \\WHEN EXISTS (
+    \\  SELECT 1
+    \\  FROM taxpayer_registration_tax_type_registration_revisions AS existing
+    \\  WHERE existing.registration_id = NEW.registration_id
+    \\    AND existing.tax_type <> NEW.tax_type
+    \\)
+    \\BEGIN
+    \\  SELECT RAISE(ABORT, 'tax type registration cannot change tax type');
+    \\END;
+    \\CREATE TRIGGER taxpayer_registration_tax_type_revisions_shell_guard
+    \\BEFORE INSERT ON taxpayer_registration_tax_type_registration_revisions
+    \\WHEN EXISTS (
+    \\  SELECT 1
+    \\  FROM taxpayer_registration_tax_type_registrations AS proposed
+    \\  JOIN taxpayer_registration_tax_type_registrations AS existing
+    \\    ON existing.taxpayer_id = proposed.taxpayer_id
+    \\   AND existing.registration_unit_id = proposed.registration_unit_id
+    \\   AND existing.id <> proposed.id
+    \\  JOIN taxpayer_registration_tax_type_registration_revisions AS existing_revision
+    \\    ON existing_revision.registration_id = existing.id
+    \\  WHERE proposed.id = NEW.registration_id
+    \\    AND existing_revision.tax_type = NEW.tax_type
+    \\)
+    \\BEGIN
+    \\  SELECT RAISE(ABORT, 'duplicate tax type registration shell');
+    \\END;
+    \\CREATE TRIGGER taxpayer_registration_tax_type_revisions_active_unit_guard
+    \\BEFORE INSERT ON taxpayer_registration_tax_type_registration_revisions
+    \\WHEN NEW.status = 'confirmed_active'
+    \\ AND NOT EXISTS (
+    \\  SELECT 1
+    \\  FROM taxpayer_registration_tax_type_registrations AS registration
+    \\  JOIN taxpayer_registration_unit_revisions AS unit
+    \\    ON unit.taxpayer_id = registration.taxpayer_id
+    \\   AND unit.registration_unit_id = registration.registration_unit_id
+    \\  WHERE registration.id = NEW.registration_id
+    \\    AND unit.effective_from = (
+    \\      SELECT MAX(candidate.effective_from)
+    \\      FROM taxpayer_registration_unit_revisions AS candidate
+    \\      WHERE candidate.taxpayer_id = registration.taxpayer_id
+    \\        AND candidate.registration_unit_id = registration.registration_unit_id
+    \\        AND candidate.effective_from <= NEW.effective_from
+    \\    )
+    \\    AND unit.sequence = (
+    \\      SELECT MAX(candidate_sequence.sequence)
+    \\      FROM taxpayer_registration_unit_revisions AS candidate_sequence
+    \\      WHERE candidate_sequence.taxpayer_id = registration.taxpayer_id
+    \\        AND candidate_sequence.registration_unit_id = registration.registration_unit_id
+    \\        AND candidate_sequence.effective_from = unit.effective_from
+    \\    )
+    \\    AND (unit.effective_until IS NULL OR unit.effective_until >= NEW.effective_from)
+    \\    AND unit.status = 'confirmed_active'
+    \\ )
+    \\BEGIN
+    \\  SELECT RAISE(ABORT, 'active tax type registration requires active registration unit');
+    \\END;
+    \\CREATE TRIGGER taxpayer_registration_tax_type_revisions_evidence_guard
+    \\BEFORE INSERT ON taxpayer_registration_tax_type_registration_revisions
+    \\WHEN NEW.status IN ('confirmed_active', 'confirmed_closed')
+    \\ AND NOT EXISTS (
+    \\  SELECT 1
+    \\  FROM taxpayer_registration_current_evidence_reviews AS evidence
+    \\  WHERE evidence.evidence_id = NEW.evidence_id
+    \\    AND evidence.review_state = 'accepted'
+    \\)
+    \\BEGIN
+    \\  SELECT RAISE(ABORT, 'confirmed tax type registration requires accepted evidence');
+    \\END;
+    \\CREATE TRIGGER taxpayer_registration_tax_type_registration_revisions_assertion_guard
+    \\BEFORE INSERT ON taxpayer_registration_tax_type_registration_revisions
+    \\WHEN NEW.status IN ('confirmed_active', 'confirmed_closed')
+    \\ AND NOT EXISTS (
+    \\   SELECT 1
+    \\   FROM taxpayer_registration_tax_type_registrations AS registration
+    \\   JOIN taxpayer_registration_evidence_assertions AS assertion
+    \\     ON assertion.taxpayer_id = registration.taxpayer_id
+    \\    AND assertion.registration_unit_id = registration.registration_unit_id
+    \\   JOIN taxpayer_registration_current_evidence_reviews AS evidence
+    \\     ON evidence.evidence_id = assertion.evidence_id
+    \\   WHERE registration.id = NEW.registration_id
+    \\     AND assertion.evidence_id = NEW.evidence_id
+    \\     AND assertion.effective_from = NEW.effective_from
+    \\     AND assertion.fact_kind = 'tax_type_registration'
+    \\     AND assertion.tax_type = NEW.tax_type
+    \\     AND assertion.tax_type_status = NEW.status
+    \\     AND evidence.review_state = 'accepted'
+    \\ )
+    \\BEGIN SELECT RAISE(ABORT, 'confirmed tax type registration requires matching evidence assertion'); END;
+    \\CREATE TRIGGER taxpayer_registration_tax_type_registration_revisions_update_guard
+    \\BEFORE UPDATE ON taxpayer_registration_tax_type_registration_revisions
+    \\BEGIN SELECT RAISE(ABORT, 'tax type registration revision is immutable'); END;
+    \\CREATE TRIGGER taxpayer_registration_tax_type_registration_revisions_delete_guard
+    \\BEFORE DELETE ON taxpayer_registration_tax_type_registration_revisions
+    \\BEGIN SELECT RAISE(ABORT, 'tax type registration revision is permanent'); END;
+    \\CREATE TABLE taxpayer_registration_branch_code_lineage (
+    \\    taxpayer_id TEXT NOT NULL REFERENCES taxpayer_registration_taxpayers(id)
+    \\        ON DELETE RESTRICT,
+    \\    branch_code TEXT NOT NULL CHECK (
+    \\        length(branch_code) = 5 AND branch_code NOT GLOB '*[^0-9]*'
+    \\    ),
+    \\    registration_unit_id TEXT NOT NULL REFERENCES taxpayer_registration_units(id)
+    \\        ON DELETE RESTRICT,
+    \\    evidence_id TEXT NOT NULL REFERENCES taxpayer_registration_evidence(id)
+    \\        ON DELETE RESTRICT,
+    \\    unit_revision_id TEXT NOT NULL
+    \\        REFERENCES taxpayer_registration_unit_revisions(id) ON DELETE RESTRICT,
+    \\    recorded_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    \\    PRIMARY KEY (taxpayer_id, branch_code)
+    \\);
+    \\CREATE TRIGGER taxpayer_registration_branch_code_lineage_evidence_guard
+    \\BEFORE INSERT ON taxpayer_registration_branch_code_lineage
+    \\WHEN NOT EXISTS (
+    \\  SELECT 1
+    \\  FROM taxpayer_registration_current_evidence_reviews AS evidence
+    \\  WHERE evidence.evidence_id = NEW.evidence_id
+    \\    AND evidence.review_state = 'accepted'
+    \\)
+    \\BEGIN
+    \\  SELECT RAISE(ABORT, 'branch code lineage requires accepted evidence');
+    \\END;
+    \\CREATE TRIGGER taxpayer_registration_branch_code_lineage_revision_guard
+    \\BEFORE INSERT ON taxpayer_registration_branch_code_lineage
+    \\WHEN NOT EXISTS (
+    \\  SELECT 1
+    \\  FROM taxpayer_registration_unit_revisions AS revision
+    \\  WHERE revision.id = NEW.unit_revision_id
+    \\    AND revision.taxpayer_id = NEW.taxpayer_id
+    \\    AND revision.registration_unit_id = NEW.registration_unit_id
+    \\    AND revision.branch_code_state = 'confirmed'
+    \\    AND revision.branch_code = NEW.branch_code
+    \\    AND revision.branch_code_evidence_id = NEW.evidence_id
+    \\)
+    \\BEGIN SELECT RAISE(ABORT, 'branch code lineage must match confirmed unit revision'); END;
+    \\CREATE TRIGGER taxpayer_registration_branch_code_lineage_update_guard
+    \\BEFORE UPDATE ON taxpayer_registration_branch_code_lineage
+    \\BEGIN SELECT RAISE(ABORT, 'branch code lineage is immutable'); END;
+    \\CREATE TRIGGER taxpayer_registration_branch_code_lineage_delete_guard
+    \\BEFORE DELETE ON taxpayer_registration_branch_code_lineage
+    \\BEGIN SELECT RAISE(ABORT, 'branch code lineage is permanent'); END;
+    \\CREATE TRIGGER taxpayer_registration_unit_revisions_lineage_reuse_guard
+    \\BEFORE INSERT ON taxpayer_registration_unit_revisions
+    \\WHEN NEW.branch_code_state = 'confirmed' AND EXISTS (
+    \\ SELECT 1
+    \\ FROM taxpayer_registration_branch_code_lineage AS lineage
+    \\ WHERE lineage.taxpayer_id = NEW.taxpayer_id
+    \\ AND lineage.branch_code = NEW.branch_code
+    \\ AND lineage.registration_unit_id <> NEW.registration_unit_id
+    \\)
+    \\BEGIN
+    \\ SELECT RAISE(ABORT, 'branch code lineage cannot be reused by another unit');
+    \\END;
+    \\CREATE TRIGGER taxpayer_registration_unit_revisions_lineage_materialize
+    \\AFTER INSERT ON taxpayer_registration_unit_revisions
+    \\WHEN NEW.branch_code_state = 'confirmed' AND NOT EXISTS (
+    \\ SELECT 1
+    \\ FROM taxpayer_registration_branch_code_lineage AS lineage
+    \\ WHERE lineage.taxpayer_id = NEW.taxpayer_id
+    \\ AND lineage.branch_code = NEW.branch_code
+    \\)
+    \\BEGIN
+    \\ INSERT INTO taxpayer_registration_branch_code_lineage (
+    \\   taxpayer_id, branch_code, registration_unit_id, evidence_id,
+    \\   unit_revision_id
+    \\ ) VALUES (
+    \\   NEW.taxpayer_id, NEW.branch_code, NEW.registration_unit_id,
+    \\   NEW.branch_code_evidence_id, NEW.id
+    \\ );
+    \\END;
+    \\CREATE TABLE taxpayer_registration_migration_decisions (
+    \\    id TEXT PRIMARY KEY CHECK (length(trim(id)) BETWEEN 1 AND 64),
+    \\    legacy_profile_id TEXT NOT NULL UNIQUE
+    \\        CHECK (length(trim(legacy_profile_id)) BETWEEN 1 AND 64),
+    \\    disposition TEXT NOT NULL CHECK (disposition IN (
+    \\        'safe_to_map', 'legacy_read_only', 'blocked'
+    \\    )),
+    \\    reason TEXT NOT NULL CHECK (length(trim(reason)) BETWEEN 1 AND 1024),
+    \\    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    \\);
+    \\CREATE TRIGGER taxpayer_registration_migration_decisions_update_guard
+    \\BEFORE UPDATE ON taxpayer_registration_migration_decisions
+    \\BEGIN SELECT RAISE(ABORT, 'migration decision is immutable'); END;
+    \\CREATE TRIGGER taxpayer_registration_migration_decisions_delete_guard
+    \\BEFORE DELETE ON taxpayer_registration_migration_decisions
+    \\BEGIN SELECT RAISE(ABORT, 'migration decision is permanent'); END;
+;
+
 test "tax profile migration is namespaced idempotent and preserves user_version" {
     var store = try Store.openMemory(std.testing.allocator);
     defer store.close();
@@ -22206,6 +24143,1150 @@ test "tax profile migration is namespaced idempotent and preserves user_version"
         @as(i64, 73),
         sqlite.sqlite3_column_int64(user_version.raw, 0),
     );
+}
+
+test "registration fixture directory atomically claims an isolated child and resumes" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+
+    try temporary.dir.writeFile(std.testing.io, .{
+        .sub_path = "sibling-user-artifact.txt",
+        .data = "preserve me",
+    });
+
+    const claiming_identity = blk: {
+        var claimed = try openRegistrationFixturePreviewDirectory(
+            temporary.dir,
+            std.testing.io,
+        );
+        defer claimed.close(std.testing.io);
+
+        const origin = claimed.databaseOrigin();
+        const identity = switch (origin) {
+            .fixture_directory => |value| value,
+            .preexisting_or_unknown => return error.TestUnexpectedResult,
+        };
+        try std.testing.expectEqual(
+            RegistrationFixtureDirectoryState.claiming,
+            identity.state,
+        );
+        try std.testing.expectError(
+            error.FileNotFound,
+            claimed.dir.statFile(
+                std.testing.io,
+                "calendar.sqlite3",
+                .{ .follow_symlinks = false },
+            ),
+        );
+        break :blk identity;
+    };
+
+    var resumed = try openRegistrationFixturePreviewDirectory(
+        temporary.dir,
+        std.testing.io,
+    );
+    defer resumed.close(std.testing.io);
+    const resumed_origin = resumed.databaseOrigin();
+    const resumed_identity = switch (resumed_origin) {
+        .fixture_directory => |value| value,
+        .preexisting_or_unknown => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(
+        RegistrationFixtureDirectoryState.claiming,
+        resumed_identity.state,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &claiming_identity.claim_id,
+        &resumed_identity.claim_id,
+    );
+
+    var sibling_buffer: [32]u8 = undefined;
+    const sibling = try temporary.dir.readFile(
+        std.testing.io,
+        "sibling-user-artifact.txt",
+        &sibling_buffer,
+    );
+    try std.testing.expectEqualStrings("preserve me", sibling);
+}
+
+test "registration fixture directory rejects a lost claim race without writes" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+
+    try temporary.dir.createDir(
+        std.testing.io,
+        registration_fixture_directory_name,
+        .default_dir,
+    );
+    var competing_directory = try temporary.dir.openDir(
+        std.testing.io,
+        registration_fixture_directory_name,
+        .{},
+    );
+    try competing_directory.writeFile(std.testing.io, .{
+        .sub_path = "other-component.txt",
+        .data = "not fixture-owned",
+    });
+    competing_directory.close(std.testing.io);
+
+    try std.testing.expectError(
+        Error.RegistrationFixtureDirectoryUnowned,
+        openRegistrationFixturePreviewDirectory(
+            temporary.dir,
+            std.testing.io,
+        ),
+    );
+
+    var preserved_directory = try temporary.dir.openDir(
+        std.testing.io,
+        registration_fixture_directory_name,
+        .{},
+    );
+    defer preserved_directory.close(std.testing.io);
+    var artifact_buffer: [32]u8 = undefined;
+    const artifact = try preserved_directory.readFile(
+        std.testing.io,
+        "other-component.txt",
+        &artifact_buffer,
+    );
+    try std.testing.expectEqualStrings("not fixture-owned", artifact);
+    try std.testing.expectError(
+        error.FileNotFound,
+        preserved_directory.statFile(
+            std.testing.io,
+            registration_fixture_directory_marker_name,
+            .{ .follow_symlinks = false },
+        ),
+    );
+    try std.testing.expectError(
+        error.FileNotFound,
+        preserved_directory.statFile(
+            std.testing.io,
+            "calendar.sqlite3",
+            .{ .follow_symlinks = false },
+        ),
+    );
+}
+
+test "registration fixture directory rejects incomplete and oversized markers" {
+    const claim_id: RegistrationFixtureClaimId = @splat('0');
+    var valid_marker_buffer: [registration_fixture_marker_max_bytes]u8 = undefined;
+    const valid_marker = registrationFixtureOwnerMarkerBytes(
+        .claiming,
+        claim_id,
+        &valid_marker_buffer,
+    );
+    var oversized_marker_buffer: [
+        registration_fixture_marker_max_bytes +
+            "unexpected=true\n".len
+    ]u8 = undefined;
+    const oversized_marker = try std.fmt.bufPrint(
+        &oversized_marker_buffer,
+        "{s}unexpected=true\n",
+        .{valid_marker},
+    );
+    const invalid_markers = [_][]const u8{
+        "",
+        "component=tin-branch-fixture-preview\n",
+        oversized_marker,
+    };
+
+    for (invalid_markers) |invalid_marker| {
+        var temporary = std.testing.tmpDir(.{});
+        defer temporary.cleanup();
+        try temporary.dir.createDir(
+            std.testing.io,
+            registration_fixture_directory_name,
+            .default_dir,
+        );
+        var directory = try temporary.dir.openDir(
+            std.testing.io,
+            registration_fixture_directory_name,
+            .{},
+        );
+        try directory.writeFile(std.testing.io, .{
+            .sub_path = registration_fixture_directory_marker_name,
+            .data = invalid_marker,
+        });
+        directory.close(std.testing.io);
+
+        try std.testing.expectError(
+            Error.RegistrationFixtureDirectoryUnowned,
+            openRegistrationFixturePreviewDirectory(
+                temporary.dir,
+                std.testing.io,
+            ),
+        );
+
+        var preserved = try temporary.dir.openDir(
+            std.testing.io,
+            registration_fixture_directory_name,
+            .{},
+        );
+        defer preserved.close(std.testing.io);
+        var marker_buffer: [128]u8 = undefined;
+        const marker = try preserved.readFile(
+            std.testing.io,
+            registration_fixture_directory_marker_name,
+            &marker_buffer,
+        );
+        try std.testing.expectEqualStrings(invalid_marker, marker);
+        try std.testing.expectError(
+            error.FileNotFound,
+            preserved.statFile(
+                std.testing.io,
+                "calendar.sqlite3",
+                .{ .follow_symlinks = false },
+            ),
+        );
+    }
+}
+
+test "registration fixture directory rejects child and marker symlinks" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+
+    {
+        var temporary = std.testing.tmpDir(.{});
+        defer temporary.cleanup();
+        try temporary.dir.createDir(
+            std.testing.io,
+            "outside",
+            .default_dir,
+        );
+        temporary.dir.symLink(
+            std.testing.io,
+            "outside",
+            registration_fixture_directory_name,
+            .{ .is_directory = true },
+        ) catch |err| switch (err) {
+            error.AccessDenied, error.PermissionDenied => return error.SkipZigTest,
+            else => return err,
+        };
+        try std.testing.expectError(
+            Error.RegistrationFixtureDirectoryUnowned,
+            openRegistrationFixturePreviewDirectory(
+                temporary.dir,
+                std.testing.io,
+            ),
+        );
+    }
+
+    {
+        var temporary = std.testing.tmpDir(.{});
+        defer temporary.cleanup();
+        try temporary.dir.createDir(
+            std.testing.io,
+            registration_fixture_directory_name,
+            .default_dir,
+        );
+        const claim_id: RegistrationFixtureClaimId = @splat('0');
+        var valid_marker_buffer: [registration_fixture_marker_max_bytes]u8 = undefined;
+        const valid_marker = registrationFixtureOwnerMarkerBytes(
+            .claiming,
+            claim_id,
+            &valid_marker_buffer,
+        );
+        try temporary.dir.writeFile(std.testing.io, .{
+            .sub_path = "external-valid-marker",
+            .data = valid_marker,
+        });
+        var directory = try temporary.dir.openDir(
+            std.testing.io,
+            registration_fixture_directory_name,
+            .{},
+        );
+        directory.symLink(
+            std.testing.io,
+            "../external-valid-marker",
+            registration_fixture_directory_marker_name,
+            .{},
+        ) catch |err| switch (err) {
+            error.AccessDenied, error.PermissionDenied => return error.SkipZigTest,
+            else => return err,
+        };
+        directory.close(std.testing.io);
+
+        try std.testing.expectError(
+            Error.RegistrationFixtureDirectoryUnowned,
+            openRegistrationFixturePreviewDirectory(
+                temporary.dir,
+                std.testing.io,
+            ),
+        );
+    }
+}
+
+test "registration fixture ownership is claimed once and survives reopen checks" {
+    var store = try Store.openMemory(std.testing.allocator);
+    defer store.close();
+
+    try std.testing.expect(
+        !try store.registrationFixturePreviewOwnershipPresent(),
+    );
+    try std.testing.expectEqual(
+        RegistrationFixtureOwnershipResult.claimed_empty_ledger,
+        try store.ensureRegistrationFixturePreviewOwnership(
+            testing.fixtureDatabaseOrigin(.claiming),
+        ),
+    );
+    try std.testing.expect(try store.registrationFixturePreviewOwnershipPresent());
+    try std.testing.expectEqual(
+        RegistrationFixtureOwnershipResult.already_claimed,
+        try store.ensureRegistrationFixturePreviewOwnership(
+            testing.fixtureDatabaseOrigin(.ready),
+        ),
+    );
+}
+
+test "session-only fixture memory binds a previously ready directory nonce" {
+    const capability =
+        key_custody.bootstrapCurrentArtifactStorage().development_plaintext;
+    const identity: RegistrationFixtureDirectoryIdentity = .{
+        .state = .ready,
+        .claim_id = @splat('a'),
+    };
+    var store = try Store.openRegistrationFixturePreviewMemory(
+        capability,
+        std.testing.allocator,
+        identity,
+    );
+    defer store.close();
+
+    try std.testing.expect(try store.registrationFixturePreviewOwnershipPresent());
+    try std.testing.expectEqual(
+        RegistrationFixtureOwnershipResult.already_claimed,
+        try store.ensureRegistrationFixturePreviewOwnership(
+            .{ .fixture_directory = identity },
+        ),
+    );
+}
+
+test "registration fixture ownership survives a file-backed reopen" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var directory_path: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var database_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var database_path_length: usize = undefined;
+    const capability =
+        key_custody.bootstrapCurrentArtifactStorage().development_plaintext;
+    const ready_identity = blk: {
+        var fixture_directory = try openRegistrationFixturePreviewDirectory(
+            temporary.dir,
+            std.testing.io,
+        );
+        defer fixture_directory.close(std.testing.io);
+
+        const directory_length = try fixture_directory.realPath(
+            std.testing.io,
+            &directory_path,
+        );
+        const database_path = try std.fmt.bufPrint(
+            &database_path_buffer,
+            "{s}/fixture-owned.sqlite3",
+            .{directory_path[0..directory_length]},
+        );
+        database_path_length = database_path.len;
+        try std.testing.expectEqual(
+            RegistrationFixtureOwnershipResult.claimed_empty_ledger,
+            try Store.testingEstablishRegistrationFixturePreviewDatabaseOwnership(
+                capability,
+                std.testing.allocator,
+                database_path,
+                fixture_directory.databaseOrigin(),
+            ),
+        );
+        try fixture_directory.publishReady(std.testing.io);
+        try std.testing.expectEqual(
+            RegistrationFixtureDirectoryState.ready,
+            fixture_directory.identity.state,
+        );
+        break :blk fixture_directory.identity;
+    };
+
+    var resumed_fixture_directory = try openRegistrationFixturePreviewDirectory(
+        temporary.dir,
+        std.testing.io,
+    );
+    defer resumed_fixture_directory.close(std.testing.io);
+    try std.testing.expectEqual(
+        RegistrationFixtureDirectoryState.ready,
+        resumed_fixture_directory.identity.state,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        ready_identity.claim_id[0..],
+        resumed_fixture_directory.identity.claim_id[0..],
+    );
+
+    var reopened = try Store.testingOpenFixturePreviewDevelopmentPlaintext(
+        capability,
+        std.testing.allocator,
+        database_path_buffer[0..database_path_length],
+        resumed_fixture_directory.identity,
+    );
+    defer reopened.close();
+    try std.testing.expect(
+        try reopened.registrationFixturePreviewOwnershipPresent(),
+    );
+}
+
+test "registration fixture ownership refuses a preexisting unowned database" {
+    var store = try Store.openMemory(std.testing.allocator);
+    defer store.close();
+
+    try std.testing.expectEqual(
+        RegistrationFixtureOwnershipResult.unowned_existing_database,
+        try store.ensureRegistrationFixturePreviewOwnership(.preexisting_or_unknown),
+    );
+    try std.testing.expect(
+        !try store.registrationFixturePreviewOwnershipPresent(),
+    );
+}
+
+test "registration fixture ownership rejects unmarked canonical target rows" {
+    var store = try Store.openMemory(std.testing.allocator);
+    defer store.close();
+
+    try store.exec(
+        \\INSERT INTO taxpayer_registration_taxpayers(id)
+        \\VALUES ('unowned-canonical-taxpayer');
+    );
+    try std.testing.expectEqual(
+        RegistrationFixtureOwnershipResult.unowned_target_rows,
+        try store.ensureRegistrationFixturePreviewOwnership(
+            testing.fixtureDatabaseOrigin(.claiming),
+        ),
+    );
+    try std.testing.expect(
+        !try store.registrationFixturePreviewOwnershipPresent(),
+    );
+}
+
+test "registration fixture ownership does not resume a marked database with legacy profiles" {
+    var store = try Store.openMemory(std.testing.allocator);
+    defer store.close();
+
+    try std.testing.expectEqual(
+        RegistrationFixtureOwnershipResult.claimed_empty_ledger,
+        try store.ensureRegistrationFixturePreviewOwnership(
+            testing.fixtureDatabaseOrigin(.claiming),
+        ),
+    );
+    try store.exec(
+        \\INSERT INTO tax_profiles(id, owner_id)
+        \\VALUES (
+        \\    'late-legacy-profile',
+        \\    (SELECT id FROM tax_profile_local_owner WHERE singleton = 1)
+        \\);
+    );
+
+    try std.testing.expectEqual(
+        RegistrationFixtureOwnershipResult.legacy_profiles_present,
+        try store.ensureRegistrationFixturePreviewOwnership(
+            testing.fixtureDatabaseOrigin(.ready),
+        ),
+    );
+}
+
+test "v28 migration failure rolls back schema and version atomically" {
+    var store = try openLegacyStoreForTest(27);
+    defer store.close();
+
+    try std.testing.expectError(
+        Error.SqliteFailure,
+        store.migrateToV28WithSchema(
+            schema_v28 ++
+                "\nSELECT * FROM taxpayer_registration_injected_failure;",
+        ),
+    );
+    try std.testing.expectEqual(@as(u32, 27), try store.schemaVersion());
+
+    var registration_objects = try store.prepare(
+        \\SELECT COUNT(*)
+        \\FROM sqlite_schema
+        \\WHERE type IN ('table', 'view', 'trigger')
+        \\  AND name GLOB 'taxpayer_registration_*';
+    );
+    defer registration_objects.deinit();
+    try std.testing.expectEqual(StepResult.row, try registration_objects.step());
+    try std.testing.expectEqual(
+        @as(i64, 0),
+        sqlite.sqlite3_column_int64(registration_objects.raw, 0),
+    );
+
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+}
+
+test "v28 adds an empty isolated registration ledger without rewriting legacy profiles" {
+    const allocator = std.testing.allocator;
+    var store = try openLegacyStoreForTest(27);
+    defer store.close();
+
+    const legacy_profile = "v28-legacy-profile";
+    try store.createProfileWithRevision(
+        .{ .id = legacy_profile },
+        testRevisionWithTin(
+            legacy_profile,
+            0,
+            "V28 Legacy Profile",
+            "2026-01-01",
+            "123456789000",
+        ),
+    );
+
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+    for ([_][]const u8{
+        "taxpayer_registration_taxpayers",
+        "taxpayer_registration_taxpayer_revisions",
+        "taxpayer_registration_evidence",
+        "taxpayer_registration_evidence_review_decisions",
+        "taxpayer_registration_evidence_assertions",
+        "taxpayer_registration_units",
+        "taxpayer_registration_unit_revisions",
+        "taxpayer_registration_unit_contact_revisions",
+        "taxpayer_registration_tax_type_registrations",
+        "taxpayer_registration_tax_type_registration_revisions",
+        "taxpayer_registration_branch_code_lineage",
+        "taxpayer_registration_migration_decisions",
+    }) |table_name| {
+        try std.testing.expect(try tableExistsForTest(&store, table_name));
+    }
+    for ([_][]const u8{
+        "taxpayer_registration_taxpayer_revisions",
+        "taxpayer_registration_unit_revisions",
+        "taxpayer_registration_unit_contact_revisions",
+        "taxpayer_registration_tax_type_registration_revisions",
+    }) |table_name| {
+        var sql_buffer: [256]u8 = undefined;
+        const sql = try std.fmt.bufPrint(
+            &sql_buffer,
+            "SELECT COUNT(*) FROM pragma_table_info('{s}') WHERE name = 'effective_until';",
+            .{table_name},
+        );
+        var effective_until_column = try store.prepare(sql);
+        defer effective_until_column.deinit();
+        try std.testing.expectEqual(StepResult.row, try effective_until_column.step());
+        try std.testing.expectEqual(
+            @as(i64, 1),
+            sqlite.sqlite3_column_int64(effective_until_column.raw, 0),
+        );
+    }
+
+    var effective_tin_guard = try store.prepare(
+        \\SELECT COUNT(*)
+        \\FROM sqlite_schema
+        \\WHERE type = 'trigger'
+        \\  AND name = 'taxpayer_registration_taxpayer_revisions_tin_guard';
+    );
+    defer effective_tin_guard.deinit();
+    try std.testing.expectEqual(StepResult.row, try effective_tin_guard.step());
+    try std.testing.expectEqual(
+        @as(i64, 1),
+        sqlite.sqlite3_column_int64(effective_tin_guard.raw, 0),
+    );
+
+    var legacy_revision = (try store.getCurrentRevision(allocator, legacy_profile)) orelse
+        return error.TestUnexpectedResult;
+    defer legacy_revision.deinit(allocator);
+    try std.testing.expectEqualStrings("123456789000", legacy_revision.tin);
+
+    var ledger_count = try store.prepare(
+        \\SELECT COUNT(*) FROM taxpayer_registration_taxpayers;
+    );
+    defer ledger_count.deinit();
+    try std.testing.expectEqual(StepResult.row, try ledger_count.step());
+    try std.testing.expectEqual(
+        @as(i64, 0),
+        sqlite.sqlite3_column_int64(ledger_count.raw, 0),
+    );
+}
+
+test "v28 evidence storage and review audit shapes fail closed" {
+    var store = try Store.openMemory(std.testing.allocator);
+    defer store.close();
+
+    try store.exec(
+        \\INSERT INTO taxpayer_registration_evidence (
+        \\  id, source_kind, sha256, display_name, byte_size, captured_on,
+        \\  storage_reference_kind, storage_reference
+        \\) VALUES
+        \\  ('v28-audit-evidence-a', 'cor',
+        \\   '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        \\   'Audit COR A', 0, '2026-01-01',
+        \\   'protected_local_path', 'evidence/cor/a.enc'),
+        \\  ('v28-audit-evidence-b', 'ecor',
+        \\   'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789',
+        \\   'Audit COR B', 0, '2026-01-01',
+        \\   'encrypted_blob_reference', 'keychain-blob:cor-b'),
+        \\  ('v28-audit-evidence-actor', 'migration_record',
+        \\   '1111111111111111111111111111111111111111111111111111111111111111',
+        \\   'Actor test evidence', 0, '2026-01-01',
+        \\   'protected_local_path', '/protected/test/actor-test-evidence.pdf');
+        \\INSERT INTO taxpayer_registration_evidence_review_decisions (
+        \\  id, evidence_id, sequence, review_state,
+        \\  reviewer_kind, reviewer_local_owner_id, reviewer_service_actor_id,
+        \\  reviewed_at, review_reason
+        \\) VALUES
+        \\  ('v28-audit-review-a1', 'v28-audit-evidence-a', 1, 'accepted',
+        \\   'service', NULL, 'v28-registration-review-service', 1,
+        \\   'COR A accepted after review'),
+        \\  ('v28-audit-review-b1', 'v28-audit-evidence-b', 1, 'accepted',
+        \\   'local_owner',
+        \\   (SELECT id FROM tax_profile_local_owner WHERE singleton = 1),
+        \\   NULL, 1, 'Local owner accepted COR B');
+    );
+
+    for ([_][*:0]const u8{
+        \\INSERT INTO taxpayer_registration_evidence (
+        \\  id, source_kind, sha256, display_name, byte_size, captured_on,
+        \\  storage_reference_kind, storage_reference
+        \\) VALUES (
+        \\  'v28-invalid-metadata-reference', 'cor',
+        \\  '2222222222222222222222222222222222222222222222222222222222222222',
+        \\  'Invalid metadata reference', 0, '2026-01-01',
+        \\  'metadata_only_non_authoritative', 'must-be-null'
+        \\);
+        ,
+        \\INSERT INTO taxpayer_registration_evidence (
+        \\  id, source_kind, sha256, display_name, byte_size, captured_on,
+        \\  storage_reference_kind, storage_reference
+        \\) VALUES (
+        \\  'v28-invalid-protected-reference', 'cor',
+        \\  '3333333333333333333333333333333333333333333333333333333333333333',
+        \\  'Invalid protected reference', 0, '2026-01-01',
+        \\  'protected_local_path', '   '
+        \\);
+        ,
+        \\INSERT INTO taxpayer_registration_evidence_review_decisions (
+        \\  id, evidence_id, sequence, review_state,
+        \\  reviewer_kind, reviewer_local_owner_id, reviewer_service_actor_id,
+        \\  reviewed_at, review_reason
+        \\) VALUES (
+        \\  'v28-invalid-missing-service-actor', 'v28-audit-evidence-actor',
+        \\  1, 'accepted', 'service', NULL, NULL, 1, 'Missing service actor'
+        \\);
+        ,
+        \\INSERT INTO taxpayer_registration_evidence_review_decisions (
+        \\  id, evidence_id, sequence, review_state,
+        \\  reviewer_kind, reviewer_local_owner_id, reviewer_service_actor_id,
+        \\  reviewed_at, review_reason
+        \\) VALUES (
+        \\  'v28-invalid-missing-local-actor', 'v28-audit-evidence-actor',
+        \\  1, 'accepted', 'local_owner', NULL, NULL, 1, 'Missing local actor'
+        \\);
+        ,
+        \\INSERT INTO taxpayer_registration_evidence_review_decisions (
+        \\  id, evidence_id, sequence, review_state,
+        \\  reviewer_kind, reviewer_local_owner_id, reviewer_service_actor_id,
+        \\  reviewed_at, review_reason,
+        \\  supersedes_decision_id, contradicts_decision_id
+        \\) VALUES (
+        \\  'v28-invalid-cross-stream-link', 'v28-audit-evidence-a',
+        \\  2, 'rejected', 'service', NULL, 'v28-registration-review-service',
+        \\  2, 'Cross-stream contradiction', NULL, 'v28-audit-review-b1'
+        \\);
+        ,
+        \\INSERT INTO taxpayer_registration_evidence_review_decisions (
+        \\  id, evidence_id, sequence, review_state,
+        \\  reviewer_kind, reviewer_local_owner_id, reviewer_service_actor_id,
+        \\  reviewed_at, review_reason, contradicts_decision_id
+        \\) VALUES (
+        \\  'v28-invalid-missing-link', 'v28-audit-evidence-a',
+        \\  2, 'rejected', 'service', NULL, 'v28-registration-review-service',
+        \\  2, 'Missing contradiction target', 'v28-review-does-not-exist'
+        \\);
+    }) |sql| {
+        try std.testing.expectError(Error.SqliteConstraint, store.exec(sql));
+    }
+
+    try store.exec(
+        \\INSERT INTO taxpayer_registration_evidence_review_decisions (
+        \\  id, evidence_id, sequence, review_state,
+        \\  reviewer_kind, reviewer_local_owner_id, reviewer_service_actor_id,
+        \\  reviewed_at, review_reason, contradicts_decision_id
+        \\) VALUES (
+        \\  'v28-audit-review-a2', 'v28-audit-evidence-a', 2, 'rejected',
+        \\  'service', NULL, 'v28-registration-review-service', 2,
+        \\  'Later review rejected COR A', 'v28-audit-review-a1'
+        \\);
+    );
+
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\UPDATE taxpayer_registration_evidence
+            \\SET display_name = 'Rewritten evidence'
+            \\WHERE id = 'v28-audit-evidence-a';
+        ),
+    );
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\UPDATE taxpayer_registration_evidence_review_decisions
+            \\SET review_reason = 'Rewritten decision'
+            \\WHERE id = 'v28-audit-review-a1';
+        ),
+    );
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\DELETE FROM taxpayer_registration_evidence_review_decisions
+            \\WHERE id = 'v28-audit-review-a1';
+        ),
+    );
+
+    var audit = try store.prepare(
+        \\SELECT current.decision_id, current.review_state, current.review_reason,
+        \\       (SELECT COUNT(*)
+        \\        FROM taxpayer_registration_evidence_review_decisions AS all_reviews
+        \\        WHERE all_reviews.evidence_id = current.evidence_id)
+        \\FROM taxpayer_registration_current_evidence_reviews AS current
+        \\WHERE current.evidence_id = 'v28-audit-evidence-a';
+    );
+    defer audit.deinit();
+    try std.testing.expectEqual(StepResult.row, try audit.step());
+    try std.testing.expectEqualStrings(
+        "v28-audit-review-a2",
+        columnText(audit.raw, 0) orelse return error.TestUnexpectedResult,
+    );
+    try std.testing.expectEqualStrings(
+        "rejected",
+        columnText(audit.raw, 1) orelse return error.TestUnexpectedResult,
+    );
+    try std.testing.expectEqualStrings(
+        "Later review rejected COR A",
+        columnText(audit.raw, 2) orelse return error.TestUnexpectedResult,
+    );
+    try std.testing.expectEqual(@as(i64, 2), sqlite.sqlite3_column_int64(audit.raw, 3));
+}
+
+test "v28 registration guards reject retroactive overlapping effective intervals" {
+    var store = try Store.openMemory(std.testing.allocator);
+    defer store.close();
+
+    try store.exec(
+        \\INSERT INTO taxpayer_registration_taxpayers (id)
+        \\VALUES ('v28-interval-taxpayer');
+        \\INSERT INTO taxpayer_registration_evidence (
+        \\  id, source_kind, sha256, display_name, byte_size, captured_on,
+        \\  storage_reference_kind, storage_reference
+        \\) VALUES (
+        \\  'v28-confirmed-evidence', 'cor',
+        \\  '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        \\  'Confirmed COR', 0, '2026-01-01',
+        \\  'protected_local_path', '/protected/test/confirmed-cor.pdf'
+        \\);
+        \\INSERT INTO taxpayer_registration_units (id, taxpayer_id) VALUES
+        \\  ('v28-existing-head-office', 'v28-interval-taxpayer'),
+        \\  ('v28-retroactive-head-office', 'v28-interval-taxpayer'),
+        \\  ('v28-existing-branch', 'v28-interval-taxpayer'),
+        \\  ('v28-retroactive-branch', 'v28-interval-taxpayer');
+        \\INSERT INTO taxpayer_registration_evidence_assertions (
+        \\  id, evidence_id, taxpayer_id, registration_unit_id, effective_from,
+        \\  fact_kind, branch_code, registration_unit_status
+        \\) VALUES (
+        \\  'v28-confirmed-assertion', 'v28-confirmed-evidence',
+        \\  'v28-interval-taxpayer', 'v28-existing-branch', '2026-01-10',
+        \\  'registration_unit', '00001', 'confirmed_active'
+        \\);
+        \\INSERT INTO taxpayer_registration_evidence_review_decisions (
+        \\  id, evidence_id, sequence, review_state,
+        \\  reviewer_kind, reviewer_local_owner_id, reviewer_service_actor_id,
+        \\  reviewed_at, review_reason
+        \\) VALUES (
+        \\  'v28-confirmed-review', 'v28-confirmed-evidence', 1, 'accepted',
+        \\  'service', NULL, 'v28-test-reviewer', 1, 'Confirmed COR accepted'
+        \\);
+        \\INSERT INTO taxpayer_registration_unit_revisions (
+        \\  id, taxpayer_id, registration_unit_id, sequence, effective_from,
+        \\  kind, branch_code_state, branch_code, legacy_suffix, status,
+        \\  branch_code_evidence_id, lifecycle_evidence_id
+        \\) VALUES
+        \\  ('v28-existing-head-office-revision', 'v28-interval-taxpayer',
+        \\   'v28-existing-head-office', 1, '2026-01-10', 'head_office',
+        \\   'legacy_unresolved', NULL, '001', 'legacy_unresolved', NULL, NULL),
+        \\  ('v28-existing-branch-revision', 'v28-interval-taxpayer',
+        \\   'v28-existing-branch', 1, '2026-01-10', 'branch',
+        \\   'confirmed', '00001', NULL, 'confirmed_active',
+        \\   'v28-confirmed-evidence', 'v28-confirmed-evidence');
+    );
+
+    // Each proposed state begins before the existing state. The guards must
+    // check the whole effective interval, not merely the proposed start date.
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\INSERT INTO taxpayer_registration_unit_revisions (
+            \\  id, taxpayer_id, registration_unit_id, sequence, effective_from,
+            \\  kind, branch_code_state, branch_code, legacy_suffix, status,
+            \\  branch_code_evidence_id, lifecycle_evidence_id
+            \\) VALUES (
+            \\  'v28-retroactive-head-office-revision', 'v28-interval-taxpayer',
+            \\  'v28-retroactive-head-office', 1, '2026-01-01', 'head_office',
+            \\  'legacy_unresolved', NULL, '002', 'legacy_unresolved', NULL, NULL
+            \\);
+        ),
+    );
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\INSERT INTO taxpayer_registration_unit_revisions (
+            \\  id, taxpayer_id, registration_unit_id, sequence, effective_from,
+            \\  kind, branch_code_state, branch_code, legacy_suffix, status,
+            \\  branch_code_evidence_id, lifecycle_evidence_id
+            \\) VALUES (
+            \\  'v28-retroactive-branch-revision', 'v28-interval-taxpayer',
+            \\  'v28-retroactive-branch', 1, '2026-01-01', 'branch',
+            \\  'confirmed', '00001', NULL, 'confirmed_active',
+            \\  'v28-confirmed-evidence', 'v28-confirmed-evidence'
+            \\);
+        ),
+    );
+
+    var revision_count = try store.prepare(
+        \\SELECT COUNT(*) FROM taxpayer_registration_unit_revisions;
+    );
+    defer revision_count.deinit();
+    try std.testing.expectEqual(StepResult.row, try revision_count.step());
+    try std.testing.expectEqual(
+        @as(i64, 2),
+        sqlite.sqlite3_column_int64(revision_count.raw, 0),
+    );
+}
+
+test "v28 same-day corrections ignore superseded effective heads" {
+    var store = try Store.openMemory(std.testing.allocator);
+    defer store.close();
+
+    try store.exec(
+        \\INSERT INTO taxpayer_registration_taxpayers (id) VALUES
+        \\  ('same-day-tin-a'),
+        \\  ('same-day-tin-b'),
+        \\  ('same-day-tin-c');
+        \\INSERT INTO taxpayer_registration_taxpayer_revisions (
+        \\  id, taxpayer_id, sequence, effective_from, tin9
+        \\) VALUES (
+        \\  'same-day-tin-a-revision-1', 'same-day-tin-a', 1,
+        \\  '2026-01-01', '123456789'
+        \\);
+        \\INSERT INTO taxpayer_registration_evidence (
+        \\  id, source_kind, sha256, display_name, byte_size, captured_on,
+        \\  storage_reference_kind, storage_reference
+        \\) VALUES (
+        \\  'same-day-tin-correction-evidence', 'cor',
+        \\  '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        \\  'Same-day TIN correction', 0, '2026-01-01',
+        \\  'protected_local_path', '/protected/test/same-day-tin-correction.pdf'
+        \\);
+        \\INSERT INTO taxpayer_registration_evidence_assertions (
+        \\  id, evidence_id, taxpayer_id, registration_unit_id, effective_from,
+        \\  fact_kind, tin9
+        \\) VALUES (
+        \\  'same-day-tin-correction-assertion',
+        \\  'same-day-tin-correction-evidence', 'same-day-tin-a', NULL,
+        \\  '2026-01-01', 'taxpayer_tin_root', '987654321'
+        \\);
+        \\INSERT INTO taxpayer_registration_evidence_review_decisions (
+        \\  id, evidence_id, sequence, review_state,
+        \\  reviewer_kind, reviewer_local_owner_id, reviewer_service_actor_id,
+        \\  reviewed_at, review_reason
+        \\) VALUES (
+        \\  'same-day-tin-correction-review',
+        \\  'same-day-tin-correction-evidence', 1, 'accepted',
+        \\  'service', NULL, 'same-day-reviewer', 1,
+        \\  'Accepted same-day TIN correction'
+        \\);
+        \\INSERT INTO taxpayer_registration_taxpayer_revisions (
+        \\  id, taxpayer_id, sequence, effective_from, tin9, evidence_id
+        \\) VALUES
+        \\  ('same-day-tin-a-revision-2', 'same-day-tin-a', 2,
+        \\   '2026-01-01', '987654321', 'same-day-tin-correction-evidence'),
+        \\  ('same-day-tin-b-revision-1', 'same-day-tin-b', 1,
+        \\   '2026-01-01', '123456789', NULL);
+    );
+
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\INSERT INTO taxpayer_registration_taxpayer_revisions (
+            \\  id, taxpayer_id, sequence, effective_from, tin9
+            \\) VALUES (
+            \\  'same-day-tin-c-revision-1', 'same-day-tin-c', 1,
+            \\  '2026-01-01', '987654321'
+            \\);
+        ),
+    );
+
+    try store.exec(
+        \\INSERT INTO taxpayer_registration_taxpayers (id)
+        \\VALUES ('same-day-office-taxpayer');
+        \\INSERT INTO taxpayer_registration_units (id, taxpayer_id) VALUES
+        \\  ('same-day-office-original', 'same-day-office-taxpayer'),
+        \\  ('same-day-office-replacement', 'same-day-office-taxpayer'),
+        \\  ('same-day-office-conflict', 'same-day-office-taxpayer');
+        \\INSERT INTO taxpayer_registration_evidence (
+        \\  id, source_kind, sha256, display_name, byte_size, captured_on,
+        \\  storage_reference_kind, storage_reference
+        \\) VALUES
+        \\  ('same-day-office-active-evidence', 'cor',
+        \\   '1111111111111111111111111111111111111111111111111111111111111111',
+        \\   'Same-day active head office', 0, '2026-01-01',
+        \\   'protected_local_path', '/protected/test/same-day-office-active.pdf'),
+        \\  ('same-day-office-closed-evidence', 'cor',
+        \\   '2222222222222222222222222222222222222222222222222222222222222222',
+        \\   'Same-day closed head office', 0, '2026-01-01',
+        \\   'protected_local_path', '/protected/test/same-day-office-closed.pdf');
+        \\INSERT INTO taxpayer_registration_evidence_assertions (
+        \\  id, evidence_id, taxpayer_id, registration_unit_id, effective_from,
+        \\  fact_kind, branch_code, registration_unit_status
+        \\) VALUES
+        \\  ('same-day-office-active-assertion',
+        \\   'same-day-office-active-evidence', 'same-day-office-taxpayer',
+        \\   'same-day-office-original', '2026-01-01',
+        \\   'registration_unit', '00000', 'confirmed_active'),
+        \\  ('same-day-office-closed-assertion',
+        \\   'same-day-office-closed-evidence', 'same-day-office-taxpayer',
+        \\   'same-day-office-original', '2026-01-01',
+        \\   'registration_unit', '00000', 'confirmed_closed');
+        \\INSERT INTO taxpayer_registration_evidence_review_decisions (
+        \\  id, evidence_id, sequence, review_state,
+        \\  reviewer_kind, reviewer_local_owner_id, reviewer_service_actor_id,
+        \\  reviewed_at, review_reason
+        \\) VALUES
+        \\  ('same-day-office-active-review',
+        \\   'same-day-office-active-evidence', 1, 'accepted',
+        \\   'service', NULL, 'same-day-reviewer', 1,
+        \\   'Accepted active head office'),
+        \\  ('same-day-office-closed-review',
+        \\   'same-day-office-closed-evidence', 1, 'accepted',
+        \\   'service', NULL, 'same-day-reviewer', 2,
+        \\   'Accepted closed head office');
+        \\INSERT INTO taxpayer_registration_unit_revisions (
+        \\  id, taxpayer_id, registration_unit_id, sequence, effective_from,
+        \\  kind, branch_code_state, branch_code, legacy_suffix, status,
+        \\  branch_code_evidence_id, lifecycle_evidence_id
+        \\) VALUES
+        \\  ('same-day-office-original-revision-1', 'same-day-office-taxpayer',
+        \\   'same-day-office-original', 1, '2026-01-01', 'head_office',
+        \\   'confirmed', '00000', NULL, 'confirmed_active',
+        \\   'same-day-office-active-evidence', 'same-day-office-active-evidence'),
+        \\  ('same-day-office-original-revision-2', 'same-day-office-taxpayer',
+        \\   'same-day-office-original', 2, '2026-01-01', 'head_office',
+        \\   'confirmed', '00000', NULL, 'confirmed_closed',
+        \\   'same-day-office-closed-evidence', 'same-day-office-closed-evidence'),
+        \\  ('same-day-office-replacement-revision-1', 'same-day-office-taxpayer',
+        \\   'same-day-office-replacement', 1, '2026-01-01', 'head_office',
+        \\   'unconfirmed', '00000', NULL, 'pending_evidence', NULL, NULL);
+    );
+
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\INSERT INTO taxpayer_registration_unit_revisions (
+            \\  id, taxpayer_id, registration_unit_id, sequence, effective_from,
+            \\  kind, branch_code_state, branch_code, legacy_suffix, status
+            \\) VALUES (
+            \\  'same-day-office-conflict-revision-1', 'same-day-office-taxpayer',
+            \\  'same-day-office-conflict', 1, '2026-01-01', 'head_office',
+            \\  'unconfirmed', '00000', NULL, 'pending_evidence'
+            \\);
+        ),
+    );
+}
+
+test "v28 registration ledger lets duplicate candidates coexist until confirmation" {
+    var store = try Store.openMemory(std.testing.allocator);
+    defer store.close();
+
+    try store.exec(
+        \\INSERT INTO taxpayer_registration_taxpayers (id)
+        \\VALUES ('v28-candidate-taxpayer');
+        \\INSERT INTO taxpayer_registration_units (id, taxpayer_id) VALUES
+        \\  ('v28-candidate-one', 'v28-candidate-taxpayer'),
+        \\  ('v28-candidate-two', 'v28-candidate-taxpayer');
+        \\INSERT INTO taxpayer_registration_unit_revisions (
+        \\  id, taxpayer_id, registration_unit_id, sequence, effective_from,
+        \\  kind, branch_code_state, branch_code, legacy_suffix, status
+        \\) VALUES
+        \\  ('v28-candidate-one-revision', 'v28-candidate-taxpayer',
+        \\   'v28-candidate-one', 1, '2026-01-01', 'branch',
+        \\   'unconfirmed', '00001', NULL, 'pending_evidence'),
+        \\  ('v28-candidate-two-revision', 'v28-candidate-taxpayer',
+        \\   'v28-candidate-two', 1, '2026-01-01', 'branch',
+        \\   'unconfirmed', '00001', NULL, 'pending_evidence');
+    );
+
+    var revision_count = try store.prepare(
+        \\SELECT COUNT(*) FROM taxpayer_registration_unit_revisions;
+    );
+    defer revision_count.deinit();
+    try std.testing.expectEqual(StepResult.row, try revision_count.step());
+    try std.testing.expectEqual(
+        @as(i64, 2),
+        sqlite.sqlite3_column_int64(revision_count.raw, 0),
+    );
+}
+
+test "v28 registration persistence guards roots, tax types, and accepted evidence" {
+    var store = try Store.openMemory(std.testing.allocator);
+    defer store.close();
+
+    try store.exec(
+        \\INSERT INTO taxpayer_registration_taxpayers (id)
+        \\VALUES ('v28-boundary-taxpayer');
+        \\INSERT INTO taxpayer_registration_taxpayer_revisions (
+        \\  id, taxpayer_id, sequence, effective_from, tin9
+        \\) VALUES (
+        \\  'v28-boundary-taxpayer-revision-1', 'v28-boundary-taxpayer', 1,
+        \\  '2026-01-01', '123456789'
+        \\);
+        \\INSERT INTO taxpayer_registration_evidence (
+        \\  id, source_kind, sha256, display_name, byte_size, captured_on,
+        \\  storage_reference_kind, storage_reference
+        \\) VALUES
+        \\  ('v28-boundary-accepted', 'cor',
+        \\   '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        \\   'Accepted COR', 0, '2026-01-01',
+        \\   'protected_local_path', '/protected/test/v28-boundary-accepted-cor.pdf'),
+        \\  ('v28-boundary-rejected', 'cor',
+        \\   'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789',
+        \\   'Rejected COR', 0, '2026-01-01',
+        \\   'metadata_only_non_authoritative', NULL);
+        \\INSERT INTO taxpayer_registration_units (id, taxpayer_id) VALUES
+        \\  ('v28-boundary-head-office', 'v28-boundary-taxpayer'),
+        \\  ('v28-boundary-rejected-branch', 'v28-boundary-taxpayer');
+        \\INSERT INTO taxpayer_registration_evidence_assertions (
+        \\  id, evidence_id, taxpayer_id, registration_unit_id, effective_from,
+        \\  fact_kind, branch_code, registration_unit_status
+        \\) VALUES (
+        \\  'v28-boundary-head-assertion', 'v28-boundary-accepted',
+        \\  'v28-boundary-taxpayer', 'v28-boundary-head-office', '2026-01-01',
+        \\  'registration_unit', '00000', 'confirmed_active'
+        \\);
+        \\INSERT INTO taxpayer_registration_evidence_assertions (
+        \\  id, evidence_id, taxpayer_id, registration_unit_id, effective_from,
+        \\  fact_kind, tax_type, tax_type_status
+        \\) VALUES (
+        \\  'v28-boundary-vat-assertion', 'v28-boundary-accepted',
+        \\  'v28-boundary-taxpayer', 'v28-boundary-head-office', '2026-01-01',
+        \\  'tax_type_registration', 'vat', 'confirmed_active'
+        \\);
+        \\INSERT INTO taxpayer_registration_evidence_review_decisions (
+        \\  id, evidence_id, sequence, review_state,
+        \\  reviewer_kind, reviewer_local_owner_id, reviewer_service_actor_id,
+        \\  reviewed_at, review_reason
+        \\) VALUES
+        \\  ('v28-boundary-accepted-review', 'v28-boundary-accepted', 1,
+        \\   'accepted', 'service', NULL, 'v28-test-reviewer', 1,
+        \\   'Accepted after registration review'),
+        \\  ('v28-boundary-rejected-review', 'v28-boundary-rejected', 1,
+        \\   'rejected', 'service', NULL, 'v28-test-reviewer', 1,
+        \\   'Wrong subject');
+        \\INSERT INTO taxpayer_registration_unit_revisions (
+        \\  id, taxpayer_id, registration_unit_id, sequence, effective_from,
+        \\  kind, branch_code_state, branch_code, legacy_suffix, status,
+        \\  branch_code_evidence_id, lifecycle_evidence_id
+        \\) VALUES (
+        \\  'v28-boundary-head-revision-1', 'v28-boundary-taxpayer',
+        \\  'v28-boundary-head-office', 1, '2026-01-01',
+        \\  'head_office', 'confirmed', '00000', NULL, 'confirmed_active',
+        \\  'v28-boundary-accepted', 'v28-boundary-accepted'
+        \\);
+        \\INSERT INTO taxpayer_registration_tax_type_registrations (
+        \\  id, taxpayer_id, registration_unit_id
+        \\) VALUES
+        \\  ('v28-boundary-vat-registration', 'v28-boundary-taxpayer',
+        \\   'v28-boundary-head-office'),
+        \\  ('v28-boundary-rejected-registration', 'v28-boundary-taxpayer',
+        \\   'v28-boundary-head-office');
+        \\INSERT INTO taxpayer_registration_tax_type_registration_revisions (
+        \\  id, registration_id, sequence, effective_from, tax_type, status, evidence_id
+        \\) VALUES (
+        \\  'v28-boundary-vat-revision-1', 'v28-boundary-vat-registration', 1,
+        \\  '2026-01-01', 'vat', 'confirmed_active', 'v28-boundary-accepted'
+        \\);
+    );
+
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\INSERT INTO taxpayer_registration_taxpayer_revisions (
+            \\  id, taxpayer_id, sequence, effective_from, tin9
+            \\) VALUES (
+            \\  'v28-boundary-taxpayer-revision-2', 'v28-boundary-taxpayer', 2,
+            \\  '2026-02-01', '987654321'
+            \\);
+        ),
+    );
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\INSERT INTO taxpayer_registration_unit_revisions (
+            \\  id, taxpayer_id, registration_unit_id, sequence, effective_from,
+            \\  kind, branch_code_state, branch_code, legacy_suffix, status,
+            \\  branch_code_evidence_id, lifecycle_evidence_id
+            \\) VALUES (
+            \\  'v28-boundary-rejected-branch-revision', 'v28-boundary-taxpayer',
+            \\  'v28-boundary-rejected-branch', 1, '2026-01-01',
+            \\  'branch', 'confirmed', '00001', NULL, 'confirmed_active',
+            \\  'v28-boundary-rejected', 'v28-boundary-rejected'
+            \\);
+        ),
+    );
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\INSERT INTO taxpayer_registration_tax_type_registration_revisions (
+            \\  id, registration_id, sequence, effective_from, tax_type, status, evidence_id
+            \\) VALUES (
+            \\  'v28-boundary-vat-revision-2', 'v28-boundary-vat-registration', 2,
+            \\  '2026-02-01', 'income_tax', 'confirmed_active', 'v28-boundary-accepted'
+            \\);
+        ),
+    );
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\INSERT INTO taxpayer_registration_tax_type_registration_revisions (
+            \\  id, registration_id, sequence, effective_from, tax_type, status, evidence_id
+            \\) VALUES (
+            \\  'v28-boundary-rejected-vat-revision',
+            \\  'v28-boundary-rejected-registration', 1,
+            \\  '2026-01-01', 'vat', 'confirmed_active', 'v28-boundary-rejected'
+            \\);
+        ),
+    );
+    try std.testing.expectError(
+        Error.SqliteConstraint,
+        store.exec(
+            \\INSERT INTO taxpayer_registration_branch_code_lineage (
+            \\  taxpayer_id, branch_code, registration_unit_id, evidence_id, unit_revision_id
+            \\) VALUES (
+            \\  'v28-boundary-taxpayer', '00000', 'v28-boundary-head-office',
+            \\  'v28-boundary-rejected', 'v28-boundary-head-revision-1'
+            \\);
+        ),
+    );
+
+    var counts = try store.prepare(
+        \\SELECT
+        \\  (SELECT COUNT(*) FROM taxpayer_registration_taxpayer_revisions),
+        \\  (SELECT COUNT(*) FROM taxpayer_registration_unit_revisions),
+        \\  (SELECT COUNT(*) FROM taxpayer_registration_tax_type_registration_revisions),
+        \\  (SELECT COUNT(*) FROM taxpayer_registration_branch_code_lineage);
+    );
+    defer counts.deinit();
+    try std.testing.expectEqual(StepResult.row, try counts.step());
+    try std.testing.expectEqual(@as(i64, 1), sqlite.sqlite3_column_int64(counts.raw, 0));
+    try std.testing.expectEqual(@as(i64, 1), sqlite.sqlite3_column_int64(counts.raw, 1));
+    try std.testing.expectEqual(@as(i64, 1), sqlite.sqlite3_column_int64(counts.raw, 2));
+    // Every accepted confirmed unit revision materializes its immutable
+    // branch-code lineage row in the same statement. Rejected writes above
+    // must not add a second lineage record.
+    try std.testing.expectEqual(@as(i64, 1), sqlite.sqlite3_column_int64(counts.raw, 3));
 }
 
 test "fresh schema does not create the rejected annual election table" {
@@ -24958,8 +28039,9 @@ test "file store reopens with revisions Forms Set and drafts intact" {
     }
 }
 
-test "latest schema migrates every prior version idempotently and keeps legacy drafts" {
-    for ([_]u32{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }) |legacy_version| {
+test "empty schema fixtures for every supported prior version migrate idempotently" {
+    for (1..latest_schema_version) |version_index| {
+        const legacy_version: u32 = @intCast(version_index);
         var store = try openLegacyStoreForTest(legacy_version);
         defer store.close();
         try std.testing.expectEqual(
@@ -24994,6 +28076,14 @@ test "latest schema migrates every prior version idempotently and keeps legacy d
         try std.testing.expect(try tableExistsForTest(
             &store,
             "tax_form_on_demand_occurrence_counters",
+        ));
+        try std.testing.expect(try tableExistsForTest(
+            &store,
+            "taxpayer_registration_taxpayers",
+        ));
+        try std.testing.expect(try tableExistsForTest(
+            &store,
+            "taxpayer_registration_migration_decisions",
         ));
         try store.migrate();
         try std.testing.expectEqual(
@@ -30088,7 +33178,7 @@ fn v14PreservedRowidsForTest(store: *Store) ![8]i64 {
 }
 
 fn openLegacyStoreForTest(version: u32) !Store {
-    std.debug.assert(version >= 1 and version <= 25);
+    std.debug.assert(version >= 1 and version < latest_schema_version);
     var raw: ?*sqlite.sqlite3 = null;
     const flags = sqlite.SQLITE_OPEN_READWRITE |
         sqlite.SQLITE_OPEN_CREATE |
@@ -30151,6 +33241,8 @@ fn openLegacyStoreForTest(version: u32) !Store {
     if (version >= 23) try store.migrateToV23();
     if (version >= 24) try store.migrateToV24();
     if (version >= 25) try store.migrateToV25();
+    if (version >= 26) try store.migrateToV26();
+    if (version >= 27) try store.migrateToV27();
     return store;
 }
 

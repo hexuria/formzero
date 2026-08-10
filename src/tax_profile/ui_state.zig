@@ -13,6 +13,7 @@ const fields = @import("field.zig");
 const model = @import("model.zig");
 const applicability = @import("applicability.zig");
 const rdo_reference = @import("rdo_reference.zig");
+const registration_evidence_store = @import("registration_evidence_store.zig");
 const catalog = @import("../forms/generated/catalog.zig");
 const multi_select = @import("../components/multi_select.zig");
 
@@ -1347,16 +1348,15 @@ pub const State = struct {
         const profile_id = self.selectedProfileId() orelse
             return error.NoSelectedProfile;
 
-        var digest_text: [64]u8 = undefined;
-        const measured = try hashCorFile(path, &digest_text);
+        const fingerprint = try fingerprintEvidenceFile(path);
         const generated = try store.generateOpaqueId();
         try store.attachCorDocument(.{
             .id = &generated,
             .profile_id = profile_id,
             .file_path = path,
-            .file_name = fileNameOf(path),
-            .sha256 = &digest_text,
-            .byte_size = measured,
+            .file_name = evidenceFileName(path),
+            .sha256 = &fingerprint.sha256,
+            .byte_size = fingerprint.byte_size,
         });
         self.refreshCorEvidence();
     }
@@ -4063,8 +4063,6 @@ fn trimmed(value: []const u8) []const u8 {
 
 /// A COR is a registration certificate, not an archive: anything past this is
 /// not the document it claims to be, and reading it would only stall the app.
-const max_cor_document_bytes: u64 = 16 * 1024 * 1024;
-
 /// The application's I/O handle, published once at boot.
 ///
 /// Filesystem calls need one, and a message handler has no other way to reach
@@ -4077,82 +4075,45 @@ pub fn publishIo(io: std.Io) void {
     app_io = io;
 }
 
-pub const CorFileError = error{
+pub const EvidenceFileError = error{
     CorFileUnreadable,
     CorFileEmpty,
     CorFileTooLarge,
     CorFileUnsupported,
 };
 
-/// Hashes the document at `path` and returns its size, refusing anything that
-/// is not a PDF or a common image. The signature check reads the real bytes
-/// rather than trusting the extension, which is what a file name can lie about.
-fn hashCorFile(path: []const u8, digest_text: *[64]u8) CorFileError!u64 {
+pub const CorFileError = EvidenceFileError;
+
+pub const EvidenceFileFingerprint = registration_evidence_store.Fingerprint;
+
+/// Measures and fingerprints a selected registration-evidence file using the
+/// same bounded, signature-checked path as the legacy COR attachment workflow.
+pub fn fingerprintEvidenceFile(path: []const u8) EvidenceFileError!EvidenceFileFingerprint {
     const io = app_io orelse return error.CorFileUnreadable;
-    var file = std.Io.Dir.cwd().openFile(io, path, .{}) catch
-        return error.CorFileUnreadable;
-    defer file.close(io);
-
-    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
-    var buffer: [64 * 1024]u8 = undefined;
-    var total: u64 = 0;
-    var signature: [8]u8 = undefined;
-    var signature_len: usize = 0;
-    while (true) {
-        const read = file.readPositionalAll(io, &buffer, total) catch |err| {
-            // A short final chunk ends the file rather than failing it.
-            if (err != error.EndOfStream) return error.CorFileUnreadable;
-            break;
-        };
-        if (read == 0) break;
-        if (signature_len < signature.len) {
-            const take = @min(signature.len - signature_len, read);
-            @memcpy(signature[signature_len..][0..take], buffer[0..take]);
-            signature_len += take;
-        }
-        hasher.update(buffer[0..read]);
-        total += read;
-        if (total > max_cor_document_bytes) return error.CorFileTooLarge;
-        if (read < buffer.len) break;
-    }
-    if (total == 0) return error.CorFileEmpty;
-    if (!isSupportedCorSignature(signature[0..signature_len])) {
-        return error.CorFileUnsupported;
-    }
-
-    var digest: [32]u8 = undefined;
-    hasher.final(&digest);
-    _ = std.fmt.bufPrint(digest_text, "{x}", .{&digest}) catch unreachable;
-    return total;
-}
-
-fn isSupportedCorSignature(signature: []const u8) bool {
-    if (std.mem.startsWith(u8, signature, "%PDF-")) return true;
-    if (std.mem.startsWith(u8, signature, "\x89PNG\r\n\x1a\n")) return true;
-    // JPEG: start of image plus the first marker byte.
-    if (signature.len >= 3 and
-        std.mem.startsWith(u8, signature, "\xff\xd8\xff")) return true;
-    return false;
+    return registration_evidence_store.inspect(io, path) catch |err| switch (err) {
+        error.SourceMissing, error.SourceUnreadable => error.CorFileUnreadable,
+        error.Empty => error.CorFileEmpty,
+        error.TooLarge => error.CorFileTooLarge,
+        error.Unsupported => error.CorFileUnsupported,
+    };
 }
 
 /// Re-checks a referenced document without loading it into the model.
 fn verifyCorFile(path: []const u8, expected_digest: []const u8) State.CorEvidenceState {
-    var digest_text: [64]u8 = undefined;
-    const size = hashCorFile(path, &digest_text) catch |err| return switch (err) {
+    const fingerprint = fingerprintEvidenceFile(path) catch |err| return switch (err) {
         // A file that is present but no longer the attached document is a
         // different situation from one that is gone, and the user needs to
         // be able to tell them apart.
         error.CorFileUnsupported, error.CorFileEmpty, error.CorFileTooLarge => .changed,
         error.CorFileUnreadable => .moved,
     };
-    _ = size;
-    return if (std.mem.eql(u8, &digest_text, expected_digest))
+    return if (std.mem.eql(u8, &fingerprint.sha256, expected_digest))
         .on_file
     else
         .changed;
 }
 
-fn fileNameOf(path: []const u8) []const u8 {
+pub fn evidenceFileName(path: []const u8) []const u8 {
     if (std.fs.path.basename(path).len != 0) return std.fs.path.basename(path);
     return path;
 }

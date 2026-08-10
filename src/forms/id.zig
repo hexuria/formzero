@@ -1,6 +1,6 @@
-//! Stable semantic identifiers for forms, revisions, fields, drafts, and
-//! filings. They remain strings at persistence boundaries without becoming
-//! interchangeable `[]const u8` values inside the domain.
+//! Stable semantic identifiers for forms, revisions, fields, drafts, filings,
+//! and filing-policy evidence. They remain strings at persistence boundaries
+//! without becoming interchangeable `[]const u8` values inside the domain.
 
 const std = @import("std");
 
@@ -16,6 +16,8 @@ const Kind = enum {
     field,
     draft,
     filing,
+    filing_policy_revision,
+    policy_evidence,
 };
 
 fn Identifier(comptime kind: Kind, comptime maximum: usize) type {
@@ -70,6 +72,10 @@ fn Identifier(comptime kind: Kind, comptime maximum: usize) type {
             return self.bytes[0..self.len];
         }
 
+        pub fn isEmpty(self: *const Self) bool {
+            return self.len == 0;
+        }
+
         pub fn eql(self: *const Self, other: *const Self) bool {
             return std.mem.eql(u8, self.asSlice(), other.asSlice());
         }
@@ -81,10 +87,26 @@ pub const RevisionLabel = Identifier(.revision_label, 48);
 pub const FieldId = Identifier(.field, 80);
 pub const DraftId = Identifier(.draft, 64);
 pub const FilingId = Identifier(.filing, 64);
+pub const FilingPolicyRevisionId = Identifier(.filing_policy_revision, 64);
+pub const PolicyEvidenceId = Identifier(.policy_evidence, 64);
+
+comptime {
+    if (FormCode == RevisionLabel) @compileError("form code and revision label must stay distinct");
+    if (FilingPolicyRevisionId == PolicyEvidenceId) {
+        @compileError("policy revision and evidence identifiers must stay distinct");
+    }
+}
 
 pub const FormRevision = struct {
     code: FormCode,
     revision: RevisionLabel,
+
+    pub fn parse(code: []const u8, revision: []const u8) Error!FormRevision {
+        return .{
+            .code = try FormCode.parse(code),
+            .revision = try RevisionLabel.parse(revision),
+        };
+    }
 
     pub fn initComptime(
         comptime code: []const u8,
@@ -99,6 +121,10 @@ pub const FormRevision = struct {
     pub fn eql(self: *const FormRevision, other: *const FormRevision) bool {
         return self.code.eql(&other.code) and
             self.revision.eql(&other.revision);
+    }
+
+    pub fn isValid(self: *const FormRevision) bool {
+        return !self.code.isEmpty() and !self.revision.isEmpty();
     }
 };
 
@@ -117,4 +143,14 @@ test "form and field identifier types remain distinct and stable" {
         "2551q.part-1.tin",
         field_id.asSlice(),
     );
+}
+
+test "form revision runtime parsing and validation use the canonical identity" {
+    const revision = try FormRevision.parse(" 2550Q ", "2024-04-ENCS");
+    try std.testing.expect(revision.isValid());
+    try std.testing.expectEqualStrings("2550Q", revision.code.asSlice());
+    try std.testing.expectError(error.Empty, FormRevision.parse("", "2024-04-ENCS"));
+
+    const invalid: FormRevision = .{ .code = .{}, .revision = .{} };
+    try std.testing.expect(!invalid.isValid());
 }

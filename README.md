@@ -16,6 +16,7 @@ global form/deadline dashboard, and a functional tax-calendar engine.
 | Calendar policy | Persisted in SQLite with sourced holidays and overrides |
 | Calendar export | Functional `.ics` handoff to the default calendar app, scoped to the profile's Forms Set |
 | Tax profiles and Forms Set | Persisted, revisioned, effective-dated, and the sole source of form availability for the taxpayer calendar and its export |
+| Canonical TIN root, Registration Units, and filing scope | Isolated session-only fixture-preview vertical slice: evidence-gated head office/branch lifecycle, fail-closed 2550Q planning, transient scope-provenance validation, and a value-owned read-only preview snapshot; immutable draft/artifact provenance remains deferred, while legacy cutover and the production policy catalog remain blocked |
 | Recurring form drafts | Existing 2551Q/1701Q save/resume plus a grounded, ordered 1701Q exact-core integration in progress |
 | Grounded 1701Q core | Exact 173-control contract, calculations, ordered validation, immutable profile mapping, candidate plaintext codecs, decrypt-only Artifact Lab, and schema-v4 draft streams under test |
 | Other form editors and print previews | UI/projection coverage only; not filing-ready |
@@ -107,27 +108,42 @@ and is a copied application directory, not an MSI/MSIX installer.
 
 ## Development rule
 
-`src/app.native` is generated. Edit files under `src/components/`,
-`src/pages/`, or `src/app-root.fragment`, then run:
+The Native entrypoint and its bounded import shards are generated:
+
+- `src/app.native`
+- `src/app-shared.generated.native`
+- `src/app-pages.generated.native`
+- `src/app-forms.generated.native`
+- `src/app-auxiliary.generated.native`
+
+Edit files under `src/components/`, `src/pages/`, or
+`src/app-root.fragment`, then run:
 
 ```sh
 just generate
 ```
 
-Commit the regenerated `src/app.native`. The generator is deterministic and
-idempotent.
+Commit all five regenerated Native outputs together. The generator is
+deterministic and idempotent.
 
 ## Source map
 
 - `src/main.zig` — application model, messages, navigation, effects, and tests
 - `src/components/` — reusable UI and state components
 - `src/pages/` — editable page and form markup
+- `src/app*.generated.native` — generated bounded Native import shards
+- `src/app.native` — generated Native root entrypoint
 - `src/calendar/domain.zig` — deadline rules and schedule resolution
 - `src/calendar/store.zig` — SQLite schema, policy, and provider mappings
 - `src/calendar/ics.zig` — RFC 5545 calendar generation
 - `src/calendar/ui_state.zig` — calendar state and application adapter
 - `src/tax_profile/` — reusable facts, immutable revisions, evolution,
-  persistence, and profile UI state
+  persistence, canonical Taxpayer/Registration Unit evidence, migration
+  inventory, and profile UI state
+- `src/filing/` — reviewed policy selection, Filing Planner resolution,
+  transient scope-provenance validation, and a value-owned read-only preview
+  snapshot, plus exact form projection context; immutable draft/artifact
+  provenance remains deferred
 - `src/form_engine/` — occurrence-first exact form contracts, calculations,
   validation, workflow, and draft state
 - `src/forms/` — generated catalog contracts and Native-facing form adapters

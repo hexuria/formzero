@@ -21,8 +21,8 @@ implemented or legally authoritative.
 
 | Document group | Status | Use it for |
 | --- | --- | --- |
-| `CONTEXT.md`, TIN/branch guide, revised TIN/branch plan | Proposed target and research authority as of 2026-08-07 | Taxpayer versus Registration Unit terminology, Branch Code evidence, Filing Unit and Return Coverage, migration design, and unresolved policy work |
-| `ARCHITECTURE.md`, ownership matrix, `IMPLEMENTATION_PLAN.md` | Current implementation contract or implementation history | Existing profile projection, Forms Set persistence, editor bindings, snapshots, and verification gates |
+| `CONTEXT.md`, TIN/branch guide, revised TIN/branch plan | Target and research authority, with a preview-slice status update as of 2026-08-09 | Taxpayer versus Registration Unit terminology, Branch Code evidence, Filing Unit and Return Coverage, migration design, implemented preview boundaries, and unresolved policy work |
+| `ARCHITECTURE.md`, ownership matrix, `IMPLEMENTATION_PLAN.md` | Current implementation contract or implementation history | Existing profile projection, Forms Set persistence, editor bindings, snapshots, verification gates, and compatibility boundaries beside the new preview slice |
 | Tax Form Library/COR architecture | Mixed: implemented Forms Set baseline plus follow-up design | Current library behavior and still-proposed COR-assisted setup, subject to the TIN/branch clarification below |
 | Dated audit, UX specification, Fable prompt, and superseded execution plan | Historical evidence | Reconstructing earlier decisions, screenshots, defects, and rejected or superseded models |
 
@@ -54,7 +54,20 @@ When documents conflict:
 
 ## Change boundary
 
-The 2026-08-07 documents are documentation only. They do not change the current
-schema, migrate existing profiles, enable a form, or authorize a filing. Any
-implementation must follow the revised plan's evidence inventory, migration
-decision ledger, write-frozen cutover, rollback, and verification gates.
+The implementation branch now contains a deliberately isolated preview-only
+vertical slice on additive schema v28. It can create and review session-only
+canonical Taxpayer/Registration Unit fixture data only when the explicit
+fixture flag and an explicitly selected, fixture-owned data directory pass the
+migration guard. Fixture mode atomically creates or validates the marked
+`tin-branch-fixture-preview-v1/` child directory, then runs the tax-profile,
+calendar, and news SQLite stores in memory; it never opens SQLite through a
+pathname derived from that child. Reviewed evidence copies remain
+capability-relative to the retained directory handle, and calendar export is
+disabled for fixture sessions. An existing unmarked
+child fails closed, while unrelated sibling artifacts remain outside the
+fixture-owned boundary.
+It can resolve and display one read-only 2550Q scope preview, but it does not
+migrate legacy profiles, perform the reviewed write-frozen cutover or rollback,
+create a fileable draft, authorize filing, print, or submit. Those later steps
+still require the revised plan's migration decision ledger, production policy,
+provenance, rollback, and verification gates.

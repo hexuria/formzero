@@ -75,13 +75,14 @@ jobs:
           npx native --version || true
 
       # Gate 1 — the runtime entrypoint must match the editable fragments.
-      # src/app.native is generated and committed; a drift here means someone
-      # hand-edited generated output or forgot to regenerate.
+      # src/app.native and its four bounded import shards are generated and
+      # committed; drift means someone hand-edited an output or forgot to
+      # regenerate the complete set.
       - name: Generate and assert no drift
         run: |
           npm run generate
           if [ -n "$(git status --porcelain)" ]; then
-            echo '::error::`npm run generate` produced changes. Commit the regenerated output.'
+            echo '::error::`npm run generate` produced changes. Commit every regenerated output.'
             git status --short
             git --no-pager diff
             exit 1

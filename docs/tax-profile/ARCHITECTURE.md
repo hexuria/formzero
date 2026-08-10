@@ -6,8 +6,12 @@
 > supersede any profile-per-branch, generated Branch Code, or
 > Forms-Set-as-obligation assumption. This document remains the contract for
 > currently implemented reusable-field ownership, form-role projection, and
-> immutable draft snapshots. The proposed Taxpayer/Registration Unit model is
-> not implemented merely because it is documented.
+> immutable draft snapshots. A bounded, explicit session-only fixture-preview slice now
+> implements canonical Taxpayer/Registration Unit identity, evidence-gated
+> confirmation, fail-closed 2550Q planning, and a read-only resolved preview.
+> It does not implement reviewed legacy cutover/rollback, production filing
+> policy, fileable drafts, or submission; the full target is not implemented
+> merely because it is documented.
 
 > Current execution contract (2026-08-05): the current sections of the
 > [Form-profile ownership matrix](FORM_PROFILE_OWNERSHIP_MATRIX_2026-08-04.md)
