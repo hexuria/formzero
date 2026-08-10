@@ -526,12 +526,16 @@ test "protected copy rejects a ledger-incompatible destination before mutation" 
     );
     const fingerprint = try inspect(std.testing.io, source_path);
     var protected_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const protected_suffix_len =
+        1 + directory_name.len + 1 + fingerprint.sha256.len;
+    const oversized_data_dir =
+        "a" ** (protected_path_buffer.len - protected_suffix_len + 1);
 
     try std.testing.expectError(
         error.PathTooLong,
         protect(
             std.testing.io,
-            "a/" ** 1000,
+            oversized_data_dir,
             source_path,
             &fingerprint.sha256,
             fingerprint.byte_size,

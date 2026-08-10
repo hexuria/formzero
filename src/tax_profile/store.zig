@@ -2838,8 +2838,13 @@ pub const RegistrationFixtureDirectory = struct {
 
 fn syncRegistrationFixtureDirectory(dir: std.Io.Dir, io: std.Io) !void {
     if (@import("builtin").os.tag == .windows) return;
+    var sync_directory = try dir.openDir(io, ".", .{
+        .iterate = true,
+        .follow_symlinks = false,
+    });
+    defer sync_directory.close(io);
     const directory_file: std.Io.File = .{
-        .handle = dir.handle,
+        .handle = sync_directory.handle,
         .flags = .{ .nonblocking = false },
     };
     try directory_file.sync(io);
