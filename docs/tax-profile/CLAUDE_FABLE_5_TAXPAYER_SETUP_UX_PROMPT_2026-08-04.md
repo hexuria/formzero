@@ -1,5 +1,11 @@
 # Claude Fable 5 prompt: taxpayer setup, yearly forms, COR, and branches
 
+> **Historical prompt — do not reuse as a current design brief.** Its
+> branch-as-separate-profile and Branch Code assumptions are superseded by the
+> [multi-branch guide](TIN_BRANCH_PROFILE_AND_FILING_GUIDE_2026-08-07.md) and
+> [revised implementation plan](TIN_BRANCH_IMPLEMENTATION_PLAN_2026-08-07.md).
+> It remains only as evidence of the 2026-08-04 exploration.
+
 Copy this entire prompt into Claude Fable 5. Attach these two screenshots to
 the same request if image attachments are available:
 
