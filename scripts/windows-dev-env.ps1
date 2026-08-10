@@ -13,7 +13,7 @@ $ErrorActionPreference = "Stop"
 # The verified x64 binaries run under Windows emulation and Zig cross-compiles
 # the shipped application for the real aarch64-windows target.
 
-$taskToolRoot = Join-Path $env:LOCALAPPDATA "eBIRForms\toolchains"
+$taskToolRoot = Join-Path $env:LOCALAPPDATA "Buwiz\toolchains"
 $nodeRoot = Join-Path $env:LOCALAPPDATA (
     "Microsoft\WinGet\Packages\" +
     "OpenJS.NodeJS.LTS_Microsoft.Winget.Source_8wekyb3d8bbwe\" +
@@ -77,9 +77,9 @@ $env:PATH = @(
 ) -join ";"
 $env:NATIVE_SDK_ZIG = $zigExe
 $env:NATIVE_SDK_PATH = $sdkRoot
-$env:EBIRFORMS_NATIVE_CLI = $nativeExe
-$env:EBIRFORMS_WINDOWS_TARGET = "aarch64-windows"
-$env:npm_config_cache = Join-Path $env:LOCALAPPDATA "eBIRForms\npm-cache"
+$env:BUWIZ_NATIVE_CLI = $nativeExe
+$env:BUWIZ_WINDOWS_TARGET = "aarch64-windows"
+$env:npm_config_cache = Join-Path $env:LOCALAPPDATA "Buwiz\npm-cache"
 
 # Zig cache writes on the mapped W: workspace failed atomic renames during
 # the audited Windows build. Keep both cache layers on the local filesystem;
@@ -88,10 +88,10 @@ $env:npm_config_cache = Join-Path $env:LOCALAPPDATA "eBIRForms\npm-cache"
 $cacheLeaf = Split-Path -Leaf $repositoryRoot
 $cacheLeaf = $cacheLeaf -replace "[^A-Za-z0-9._-]", "_"
 $env:ZIG_GLOBAL_CACHE_DIR = Join-Path $env:LOCALAPPDATA (
-    "eBIRForms\zig-cache\global"
+    "Buwiz\zig-cache\global"
 )
 $env:ZIG_LOCAL_CACHE_DIR = Join-Path $env:LOCALAPPDATA (
-    "eBIRForms\zig-cache\local\$cacheLeaf"
+    "Buwiz\zig-cache\local\$cacheLeaf"
 )
 foreach (
     $cacheDirectory in @(

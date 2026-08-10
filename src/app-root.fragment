@@ -2,7 +2,6 @@
   <if test="{shellVisible}">
     <use
       template="app-shell"
-      brand_logo="{brandLogo}"
       app_icon="{appIcon}"
       bagong_logo="{bagongPilipinasLogo}"
       bir_logo="{birLogo}"

@@ -1,5 +1,5 @@
 {
-  "name": "eBIRForms Native",
+  "name": "Buwiz App Native",
 
   // Debian-based Node 22 image. README.md requires Node 22.15+, and the
   // devcontainers image tracks the latest 22.x release.

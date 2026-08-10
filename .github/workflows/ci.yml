@@ -91,7 +91,9 @@ jobs:
       # Gate 2 — the tax catalog is authored in strict TypeScript and compiled
       # to Zig. Typecheck it and prove the committed Zig matches.
       - name: Check tax catalog
-        run: npm run check:tax-catalog
+        run: |
+          npm run test:app-identity
+          npm run check:tax-catalog
 
       # Gate 3 — no whitespace damage or conflict markers in the change itself.
       - name: Check diff hygiene
@@ -111,7 +113,10 @@ jobs:
 
       # Gate 5 — markup and manifest must match the model contract.
       - name: Strict check
-        run: npx native check . --strict
+        run: |
+          npx native check . --strict
+          eval "$(node scripts/app-identity.mjs prepare --format shell)"
+          npx native doctor --manifest "$BUWIZ_MANIFEST" --strict
 
       # Gate 6 — the ReleaseFast application must compile. Zig's lazy analysis
       # lets test and build each miss code reachable only from the other, so
@@ -165,18 +170,19 @@ jobs:
 
       - name: Install Linux artifact
         env:
-          EBIRFORMS_INSTALL_DIR: ${{ runner.temp }}/ebirforms-install
+          BUWIZ_INSTALL_DIR: ${{ runner.temp }}/buwiz-install
         run: just install
 
       - name: Assert Linux install layout
         env:
-          EBIRFORMS_INSTALL_DIR: ${{ runner.temp }}/ebirforms-install
+          BUWIZ_INSTALL_DIR: ${{ runner.temp }}/buwiz-install
         run: |
-          test -x "$EBIRFORMS_INSTALL_DIR/bin/ebirforms-zero"
-          test -x "$EBIRFORMS_INSTALL_DIR/lib/ebirforms-zero/bin/ebirforms-zero"
-          test -f "$EBIRFORMS_INSTALL_DIR/share/applications/ebirforms-zero.desktop"
-          grep -Fq "Exec=\"$EBIRFORMS_INSTALL_DIR/bin/ebirforms-zero\"" \
-            "$EBIRFORMS_INSTALL_DIR/share/applications/ebirforms-zero.desktop"
+          eval "$(node scripts/app-identity.mjs prepare --format shell)"
+          test -x "$BUWIZ_INSTALL_DIR/bin/$BUWIZ_APP_NAME"
+          test -x "$BUWIZ_INSTALL_DIR/lib/$BUWIZ_APP_NAME/bin/$BUWIZ_APP_NAME"
+          test -f "$BUWIZ_INSTALL_DIR/share/applications/$BUWIZ_APP_NAME.desktop"
+          grep -Fq "Exec=\"$BUWIZ_INSTALL_DIR/bin/$BUWIZ_APP_NAME\"" \
+            "$BUWIZ_INSTALL_DIR/share/applications/$BUWIZ_APP_NAME.desktop"
 
   setup-script:
     name: Setup script (${{ matrix.os }})

@@ -904,7 +904,7 @@ pub const State = struct {
         var calendar_name_buffer: [320]u8 = undefined;
         const calendar_name = try std.fmt.bufPrint(
             &calendar_name_buffer,
-            "{s} — eBIRForms Tax Deadlines",
+            "{s} — Buwiz Tax Deadlines",
             .{profile.name},
         );
 
@@ -1882,7 +1882,7 @@ test "ICS export contains the complete selected calendar year" {
     try std.testing.expect(std.mem.indexOf(
         u8,
         bytes,
-        "X-WR-CALNAME:Alpha Profile — eBIRForms Tax Deadlines",
+        "X-WR-CALNAME:Alpha Profile — Buwiz Tax Deadlines",
     ) != null);
     try std.testing.expect(std.mem.indexOf(
         u8,

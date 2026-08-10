@@ -71,7 +71,7 @@ It deliberately does not download or replace tools. A missing file or hash
 mismatch is a hard failure that must be reviewed, not bypassed.
 
 The script also places npm and both Zig cache layers under
-`%LOCALAPPDATA%\eBIRForms`. Do not put Zig caches on the mapped `W:` drive:
+`%LOCALAPPDATA%\Buwiz`. Do not put Zig caches on the mapped `W:` drive:
 that filesystem failed atomic cache renames during the audit.
 
 ## First setup
@@ -111,9 +111,10 @@ just install
 ```
 
 `just package` builds the unsigned Windows ARM64 directory artifact. `just
-install` copies it to `%LOCALAPPDATA%\Programs\eBIRForms` by default and creates
-`eBIRForms.lnk` in the current user's Start Menu. Set
-`$env:EBIRFORMS_INSTALL_DIR` to change the parent directory before running
+install` copies the main build to `%LOCALAPPDATA%\Programs\Buwiz App` by default and creates
+`Buwiz App.lnk` in the current user's Start Menu. Branch builds include their
+sanitized branch suffix in both locations. Set `$env:BUWIZ_INSTALL_DIR` to
+change the parent directory before running
 `just install`; previous installs are moved to timestamped `.previous.*`
 siblings.
 
@@ -125,9 +126,10 @@ Run formatting and generation before Native checks:
 & $env:NATIVE_SDK_ZIG fmt --check build.zig src
 npm run generate
 npm run check:tax-catalog
-& $env:EBIRFORMS_NATIVE_CLI test . --yes -Dplatform=null
-& $env:EBIRFORMS_NATIVE_CLI check . --strict
-& $env:EBIRFORMS_NATIVE_CLI doctor --manifest app.zon
+& $env:BUWIZ_NATIVE_CLI test . --yes -Dplatform=null
+& $env:BUWIZ_NATIVE_CLI check . --strict
+$identity = node scripts/app-identity.mjs prepare --format json | ConvertFrom-Json
+& $env:BUWIZ_NATIVE_CLI doctor --manifest $identity.manifestPath
 ```
 
 Run the Native-SDK-independent grounded-core root on both the host and product
@@ -135,9 +137,9 @@ architectures:
 
 ```powershell
 $coreX64Cache = Join-Path $env:LOCALAPPDATA `
-  "eBIRForms\zig-cache\core-x64"
+  "Buwiz\zig-cache\core-x64"
 $coreArm64Cache = Join-Path $env:LOCALAPPDATA `
-  "eBIRForms\zig-cache\core-arm64"
+  "Buwiz\zig-cache\core-arm64"
 
 & $env:NATIVE_SDK_ZIG test src/core_logic_test.zig `
   --cache-dir $coreX64Cache
@@ -186,18 +188,22 @@ worktree, then package the resulting binary with the pinned Native CLI:
   -Dtarget=aarch64-windows `
   -Doptimize=ReleaseFast
 
-& $env:EBIRFORMS_NATIVE_CLI package `
+$identity = node scripts/app-identity.mjs prepare --format json | ConvertFrom-Json
+$packageRoot = "zig-out\package\$($identity.appName)-windows"
+& $env:BUWIZ_NATIVE_CLI package `
   --target windows `
-  --manifest app.zon `
-  --output zig-out\package\windows `
-  --binary zig-out\bin\ebirforms-zero.exe `
+  --manifest $identity.manifestPath `
+  --output $packageRoot `
+  --binary "zig-out\bin\$($identity.appName).exe" `
   --optimize ReleaseFast `
   --web-layer exclude `
   --web-engine system `
   --signing none `
   --assets assets
 
-& .\scripts\verify-windows-package.ps1
+& .\scripts\verify-windows-package.ps1 `
+  -AppName $identity.appName `
+  -BundleId $identity.bundleId
 ```
 
 On a clean `npm ci`, `zig build package` fails because the published
@@ -208,9 +214,10 @@ CLI directly against the already-built ARM64 binary; do not copy an
 unreviewed missing source file into the dependency or weaken the package
 checks.
 
-The installed product is `zig-out\bin\ebirforms-zero.exe`. The direct package
-step produces an unsigned verification artifact directory at
-`zig-out\package\windows`. The audited directory contains 13 files, including
+The main-branch product is `zig-out\bin\buwiz.exe`; other branches use the
+resolved `buwiz-<branch>-<hash>.exe` name. The direct package step produces an
+unsigned verification artifact directory at `$packageRoot`. The audited
+directory contains 13 files, including
 the packaged executable, package manifest, icon, README, resource assets, and
 asset manifest. It contains no PDB.
 
@@ -226,13 +233,13 @@ request an archive and does not require `zip`. If a convenience ZIP is made
 later, it remains unsigned and is not an installer.
 
 The packager does not clean its output directory. Before the final package,
-resolve the exact absolute `zig-out\package\windows` path and safely move any
+resolve the exact absolute `$packageRoot` path and safely move any
 older directory aside so stale files cannot enter the inventory.
 
 The final `package-manifest.zon` must report a Windows artifact, version
-`0.1.0`, application ID `dev.goldcoders.ebirforms`, the
-`ebirforms-zero.exe` executable, `ReleaseFast`, GUI subsystem, no web layer,
-no signing, eight assets, and both `native_views` and `gpu_surfaces`.
+`0.1.0`, the resolved `$identity.bundleId`, the resolved
+`$($identity.appName).exe` executable, `ReleaseFast`, GUI subsystem, no web layer,
+no signing, seven assets, and both `native_views` and `gpu_surfaces`.
 
 `scripts\verify-windows-package.ps1` is the required post-package verifier.
 It checks installed/package executable equality, ARM64 PE32+ GUI identity,
@@ -240,7 +247,7 @@ one `IMAGE_DEBUG_TYPE_REPRO` entry with no CodeView/RSDS entry, the visible
 `development_only_plaintext_not_production` classification, `NotSigned`,
 manifest identity and native-only settings, PDB absence, and WebView2-loader
 absence. It writes the sorted value-free inventory to
-`zig-out\package\windows-package-inventory.txt`.
+`zig-out\package\$($identity.appName)-windows-package-inventory.txt`.
 
 ## Local worktree rule
 
@@ -256,7 +263,10 @@ Synchronize only the reviewed source state into that worktree. Do not copy
 SQLite databases, payload captures, protocol secrets, decrypted artifacts, or
 other taxpayer-bearing files.
 
-## Current reproducible ARM64 build and package evidence
+## Historical pre-Buwiz ARM64 build and package evidence
+
+The following snapshot records the pre-rename `ebirforms-zero` identity. It is
+retained as build provenance and does not describe current output names.
 
 The current reviewed-source inventory contains 113 files, matches all 113
 copied entries in the local Windows build worktree, and has SHA-256
@@ -515,7 +525,8 @@ Windows setup does not promote unfinished filing capabilities:
   `legacy_plaintext_untrusted` under an approved transition policy; and
   terminal unsafe classifications stop before SQL/PRAGMA authority;
 - application startup acquires a source-minted artifact bootstrap before
-  reading `EBIRFORMS_DATA_DIR`, resolving or creating paths, or performing
+  reading `BUWIZ_DATA_DIR` (or the main-build-only `EBIRFORMS_DATA_DIR`
+  compatibility override), resolving or creating paths, or performing
   storage I/O. The shared calendar and tax-profile file constructors require
   and identity-check that opaque development capability before path
   validation. The old public two-argument `Store.open` surface is absent and

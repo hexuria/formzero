@@ -23,14 +23,14 @@ if (-not (Test-Path -LiteralPath $ZigExecutable -PathType Leaf)) {
 }
 
 $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
-$caseName = "ebirforms-production-release-gate-$PID-$([Guid]::NewGuid())"
+$caseName = "buwiz-production-release-gate-$PID-$([Guid]::NewGuid())"
 $caseRoot = [IO.Path]::GetFullPath((Join-Path $temporaryRoot $caseName))
 $optionPrefix = Join-Path $caseRoot "option-prefix"
 $ambiguousPrefix = Join-Path $caseRoot "ambiguous-prefix"
 $cache = Join-Path $env:LOCALAPPDATA (
-    "eBIRForms\zig-cache\production-release-gate-regression"
+    "Buwiz\zig-cache\production-release-gate-regression"
 )
-$globalCache = Join-Path $env:LOCALAPPDATA "eBIRForms\zig-cache\global"
+$globalCache = Join-Path $env:LOCALAPPDATA "Buwiz\zig-cache\global"
 $locationPushed = $false
 
 function Invoke-ZigBuildCase {
@@ -177,7 +177,7 @@ finally {
             [StringComparison]::OrdinalIgnoreCase
         ) -or
         -not ([IO.Path]::GetFileName($resolvedCaseRoot)).StartsWith(
-            "ebirforms-production-release-gate-",
+        "buwiz-production-release-gate-",
             [StringComparison]::Ordinal
         )
     ) {

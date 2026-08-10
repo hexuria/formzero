@@ -2,11 +2,11 @@
   <column gap="24" cross="center">
     <column gap="4" cross="center">
       <badge variant="outline">BIR</badge>
-      <text size="display">e-BIRForms</text>
+      <text wrap="true" text-alignment="center" size="display">{appDisplayName}</text>
     </column>
 
     <column gap="8" cross="center">
-      <text wrap="true" text-alignment="center" size="heading">Enter PIN to unlock e-BIRForms</text>
+      <text wrap="true" text-alignment="center" size="heading">Enter PIN to unlock {appDisplayName}</text>
       <text wrap="true" text-alignment="center" foreground="text_muted">
         Your tax records remain protected while this session is locked.
       </text>

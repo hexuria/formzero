@@ -92,7 +92,8 @@ Build with automation enabled:
 
 ```sh
 npx native build . --yes -Dautomation=true
-./zig-out/bin/ebirforms-zero
+eval "$(node scripts/app-identity.mjs prepare --format shell)"
+"./zig-out/bin/$BUWIZ_APP_NAME"
 ```
 
 From another terminal in the same project directory:
@@ -144,7 +145,9 @@ just install
 ```
 
 On macOS, `just package` creates an ad-hoc signed `.app` and `just install`
-copies it to `~/Applications/eBIRForms.app`. On Linux, install GTK4 development
+copies the main build to `~/Applications/Buwiz App.app`. Branch builds receive
+a branch-specific display name, bundle ID, executable, install path, and data
+directory. On Linux, install GTK4 development
 files first; `just package` creates the Native SDK directory artifact and
 `just install` places it under `~/.local` by default. On Windows ARM64, load
 the pinned environment from the Windows guide before `just package` or
@@ -206,22 +209,22 @@ Exit gate: a clean runner reproduces the complete quality gate and live smoke.
 Exit gate: each capability has domain tests, negative security tests, recovery
 behavior, and an explicit user-visible state model.
 
-## Current verified baseline
+## Historical verified baseline (pre-Buwiz identity)
 
 On 2026-08-03, on macOS arm64 and on the `macos-latest` CI runner:
 
 - the test graph reported 909 passed and 3 skipped across 13 build steps;
 - all 27 markup files and `app.zon` passed strict checking;
 - `npm run generate` reported no drift and the catalog check verified 51 codes;
-- the ReleaseFast binary built at `zig-out/bin/ebirforms-zero`.
+- the ReleaseFast binary built at the then-current `zig-out/bin/ebirforms-zero`.
 
 The 912 figure sums three overlapping roots — the application artifact plus the
 attached store and 1701Q persistence roots — so it is a graph total, not a
 count of unique tests. The three skips are screenshot generators that run only
 when their environment variable is set.
 
-This baseline is now reproduced by CI on every push and pull request rather
-than asserted by hand.
+Current CI reproduces the same classes of checks using the resolved Buwiz
+identity on every push and pull request.
 
 These are development gates, not filing certification or production release
 approval.
