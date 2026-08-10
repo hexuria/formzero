@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Provision the eBIRForms toolchain: a pinned Zig compiler, a verified Node
+# Provision the Buwiz App toolchain: a pinned Zig compiler, a verified Node
 # runtime, and the locked npm dependencies.
 #
 # This is the single provisioning path shared by GitHub Actions

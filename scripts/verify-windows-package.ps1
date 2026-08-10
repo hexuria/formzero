@@ -2,23 +2,34 @@ param(
     [string]$RepositoryRoot = [IO.Path]::GetFullPath(
         (Join-Path $PSScriptRoot "..")
     ),
+    [string]$AppName,
+    [string]$BundleId,
     [switch]$RunPeParserSelfTests
 )
 
 $ErrorActionPreference = "Stop"
 
-$installedExe = Join-Path $RepositoryRoot (
-    "zig-out\bin\ebirforms-zero.exe"
-)
+if ([string]::IsNullOrWhiteSpace($AppName) -or
+    [string]::IsNullOrWhiteSpace($BundleId)) {
+    $identityJson = & node (
+        Join-Path $RepositoryRoot "scripts/app-identity.mjs"
+    ) prepare --format json
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to resolve Buwiz app identity."
+    }
+    $identity = $identityJson | ConvertFrom-Json
+    $AppName = [string]$identity.appName
+    $BundleId = [string]$identity.bundleId
+}
+
+$installedExe = Join-Path $RepositoryRoot ("zig-out\bin\$AppName.exe")
 $packageRoot = Join-Path $RepositoryRoot (
-    "zig-out\package\windows"
+    "zig-out\package\$AppName-windows"
 )
-$packagedExe = Join-Path $packageRoot (
-    "bin\ebirforms-zero.exe"
-)
+$packagedExe = Join-Path $packageRoot ("bin\$AppName.exe")
 $manifestPath = Join-Path $packageRoot "package-manifest.zon"
 $inventoryPath = Join-Path $RepositoryRoot (
-    "zig-out\package\windows-package-inventory.txt"
+    "zig-out\package\$AppName-windows-package-inventory.txt"
 )
 
 function Assert-Equal {
@@ -694,14 +705,14 @@ $requiredManifestFragments = @(
     '.artifact = "windows"'
     '.target = "windows"'
     '.version = "0.1.0"'
-    '.app_id = "dev.goldcoders.ebirforms"'
-    '.executable = "ebirforms-zero.exe"'
+    ".app_id = `"$BundleId`""
+    ".executable = `"$AppName.exe`""
     '.optimize = "ReleaseFast"'
     '.web_engine = "system"'
     '.web_layer = "none (declared: .webview_layer = \"exclude\")"'
     '.signing = "none"'
     '.subsystem = "gui"'
-    '.asset_count = 8'
+    '.asset_count = 7'
     '"native_views"'
     '"gpu_surfaces"'
 )

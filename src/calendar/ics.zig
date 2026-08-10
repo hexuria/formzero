@@ -41,8 +41,10 @@ pub const Event = struct {
 };
 
 pub const Options = struct {
-    calendar_name: []const u8 = "eBIRForms Tax Deadlines",
-    prod_id: []const u8 = "-//Goldcoders//eBIRForms Tax Calendar//EN",
+    calendar_name: []const u8 = "Buwiz Tax Deadlines",
+    prod_id: []const u8 = "-//Goldcoders//Buwiz Tax Calendar//EN",
+    // Keep the legacy UID domain and extension stable so re-exporting an
+    // existing calendar updates events instead of creating duplicates.
     uid_domain: []const u8 = "ebirforms.goldcoders.dev",
     /// Optional opaque tax-profile identity used only to namespace UIDs.
     /// The obligation key itself remains profile-independent for provider

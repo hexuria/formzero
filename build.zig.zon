@@ -1,6 +1,6 @@
 .{
-    .name = .ebirforms_zero,
-    .fingerprint = 0x4287c24c5a707070,
+    .name = .buwiz_app,
+    .fingerprint = 0x603bdc085ea1e3ae,
     .version = "0.1.0",
     .minimum_zig_version = "0.16.0",
     .dependencies = .{

@@ -227,7 +227,7 @@
   </column>
 </template>
 
-<template name="app-sidebar-full" args="brand_logo overlay=false">
+<template name="app-sidebar-full" args="app_icon overlay=false">
   <stack width="280">
     <status-bar background="surface" border-color="surface"></status-bar>
     <row width="280">
@@ -267,13 +267,21 @@
 
       <row
         width="255"
-        height="64"
+        height="88"
+        padding="8"
+        gap="10"
         main="center"
         cross="center"
         role="button"
         label="Open Global Dashboard"
         on-press="show_global_dashboard">
-        <image image="{brand_logo}" width="216" height="54" label="eBIRForms"/>
+        <image image="{app_icon}" width="52" height="52" label="{appDisplayName}"/>
+        <column grow="1" gap="2">
+          <text><span weight="bold">Buwiz App</span></text>
+          <if test="{branchBuild}">
+            <text wrap="true" size="sm" foreground="text_muted">Branch: {appBuildSlug}</text>
+          </if>
+        </column>
       </row>
 
       <row width="232" height="56" cross="center" gap="8">
@@ -413,7 +421,7 @@
         role="button"
         label="Open Global Dashboard"
         on-press="show_global_dashboard">
-        <image image="{app_icon}" width="48" height="48" label="eBIRForms"/>
+        <image image="{app_icon}" width="48" height="48" label="{appDisplayName}"/>
       </row>
 
       <row width="48" height="56" main="center" cross="center">
@@ -650,14 +658,14 @@
   </alert>
 </template>
 
-<template name="app-shell" args="brand_logo app_icon bagong_logo bir_logo goldcoders_logo">
+<template name="app-shell" args="app_icon bagong_logo bir_logo goldcoders_logo">
   <stack grow="1">
     <status-bar background="background" border-color="background"></status-bar>
 
     <column grow="1">
       <row grow="1">
         <if test="{sidebarExpandedVisible}">
-          <use template="app-sidebar-full" brand_logo="{brand_logo}"/>
+          <use template="app-sidebar-full" app_icon="{app_icon}"/>
         </if>
         <if test="{sidebarRailVisible}">
           <use template="app-sidebar-rail" app_icon="{app_icon}"/>
@@ -686,7 +694,7 @@
         <row grow="1">
           <use
             template="app-sidebar-full"
-            brand_logo="{brand_logo}"
+            app_icon="{app_icon}"
             overlay="true"/>
           <status-bar
             grow="1"

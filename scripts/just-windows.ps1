@@ -23,6 +23,18 @@ $repositoryRoot = [IO.Path]::GetFullPath(
 )
 Set-Location -LiteralPath $repositoryRoot
 
+$identityJson = & node scripts/app-identity.mjs prepare --format json
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to resolve Buwiz app identity."
+}
+$appIdentity = $identityJson | ConvertFrom-Json
+$appName = [string]$appIdentity.appName
+$displayName = [string]$appIdentity.displayName
+$bundleId = [string]$appIdentity.bundleId
+$manifestPath = [string]$appIdentity.manifestPath
+$packageRelativePath = "zig-out\package\$appName-windows"
+$resolvedPackageRoot = Join-Path $repositoryRoot $packageRelativePath
+
 function Invoke-Checked {
     param(
         [Parameter(Mandatory = $true, Position = 0)]
@@ -43,12 +55,12 @@ function Invoke-NativeCli {
         [string[]]$Arguments
     )
 
-    if ([string]::IsNullOrWhiteSpace($env:EBIRFORMS_NATIVE_CLI)) {
+    if ([string]::IsNullOrWhiteSpace($env:BUWIZ_NATIVE_CLI)) {
         Invoke-Checked "npx.cmd" (@("native") + $Arguments)
         return
     }
 
-    Invoke-Checked $env:EBIRFORMS_NATIVE_CLI $Arguments
+    Invoke-Checked $env:BUWIZ_NATIVE_CLI $Arguments
 }
 
 function Require-TargetEnvironment {
@@ -58,9 +70,9 @@ function Require-TargetEnvironment {
             "dot-source scripts/windows-dev-env.ps1 before running this command."
         )
     }
-    if ([string]::IsNullOrWhiteSpace($env:EBIRFORMS_WINDOWS_TARGET)) {
+    if ([string]::IsNullOrWhiteSpace($env:BUWIZ_WINDOWS_TARGET)) {
         throw (
-            "EBIRFORMS_WINDOWS_TARGET is not set. In the same PowerShell " +
+            "BUWIZ_WINDOWS_TARGET is not set. In the same PowerShell " +
             "session, dot-source scripts/windows-dev-env.ps1 first."
         )
     }
@@ -87,8 +99,9 @@ switch ($Command) {
     }
 
     "check" {
+        Invoke-Checked "npm.cmd" @("run", "test:app-identity")
         Invoke-Checked "npm.cmd" @("run", "check:tax-catalog")
-        Invoke-NativeCli @("check", ".", "--strict")
+        Invoke-NativeCli @("check", [string]$appIdentity.appRoot, "--strict")
     }
 
     "test" {
@@ -98,7 +111,7 @@ switch ($Command) {
     "build" {
         Invoke-TargetZig @(
             "build",
-            "-Dtarget=$env:EBIRFORMS_WINDOWS_TARGET",
+            "-Dtarget=$env:BUWIZ_WINDOWS_TARGET",
             "-Doptimize=ReleaseFast"
         )
     }
@@ -106,7 +119,7 @@ switch ($Command) {
     "build-automation" {
         Invoke-TargetZig @(
             "build",
-            "-Dtarget=$env:EBIRFORMS_WINDOWS_TARGET",
+            "-Dtarget=$env:BUWIZ_WINDOWS_TARGET",
             "-Doptimize=ReleaseFast",
             "-Dautomation=true"
         )
@@ -118,21 +131,20 @@ switch ($Command) {
             "dev",
             ".",
             "--yes",
-            "-Dtarget=$env:EBIRFORMS_WINDOWS_TARGET"
+            "-Dtarget=$env:BUWIZ_WINDOWS_TARGET"
         )
     }
 
     "doctor" {
-        Invoke-NativeCli @("doctor", "--manifest", "app.zon", "--strict")
+        Invoke-NativeCli @("doctor", "--manifest", $manifestPath, "--strict")
     }
 
     "package" {
         Require-TargetEnvironment
 
-        $packageRoot = Join-Path $repositoryRoot "zig-out\package\windows"
-        if (Test-Path -LiteralPath $packageRoot) {
-            $backup = "$packageRoot.previous.$(Get-Date -Format yyyyMMdd-HHmmss)"
-            Move-Item -LiteralPath $packageRoot -Destination $backup
+        if (Test-Path -LiteralPath $resolvedPackageRoot) {
+            $backup = "$resolvedPackageRoot.previous.$(Get-Date -Format yyyyMMdd-HHmmss)"
+            Move-Item -LiteralPath $resolvedPackageRoot -Destination $backup
             Write-Host "Moved previous package to $backup"
         }
 
@@ -141,11 +153,11 @@ switch ($Command) {
             "--target",
             "windows",
             "--manifest",
-            "app.zon",
+            $manifestPath,
             "--output",
-            "zig-out\package\windows",
+            $packageRelativePath,
             "--binary",
-            "zig-out\bin\ebirforms-zero.exe",
+            "zig-out\bin\$appName.exe",
             "--optimize",
             "ReleaseFast",
             "--web-layer",
@@ -166,14 +178,16 @@ switch ($Command) {
             "-File",
             $verifier,
             "-RepositoryRoot",
-            $repositoryRoot
+            $repositoryRoot,
+            "-AppName",
+            $appName,
+            "-BundleId",
+            $bundleId
         )
     }
 
     "app" {
-        $packagedExe = Join-Path (
-            Join-Path $repositoryRoot "zig-out\package\windows"
-        ) "bin\ebirforms-zero.exe"
+        $packagedExe = Join-Path $resolvedPackageRoot "bin\$appName.exe"
         if (-not (Test-Path -LiteralPath $packagedExe -PathType Leaf)) {
             throw "Packaged Windows executable is missing: $packagedExe"
         }
@@ -182,19 +196,18 @@ switch ($Command) {
     }
 
     "install" {
-        $packageRoot = Join-Path $repositoryRoot "zig-out\package\windows"
-        if (-not (Test-Path -LiteralPath $packageRoot -PathType Container)) {
-            throw "Windows package directory is missing: $packageRoot"
+        if (-not (Test-Path -LiteralPath $resolvedPackageRoot -PathType Container)) {
+            throw "Windows package directory is missing: $resolvedPackageRoot"
         }
 
         $parentDirectory = if (
-            [string]::IsNullOrWhiteSpace($env:EBIRFORMS_INSTALL_DIR)
+            [string]::IsNullOrWhiteSpace($env:BUWIZ_INSTALL_DIR)
         ) {
             Join-Path $env:LOCALAPPDATA "Programs"
         } else {
-            $env:EBIRFORMS_INSTALL_DIR
+            $env:BUWIZ_INSTALL_DIR
         }
-        $targetDirectory = Join-Path $parentDirectory "eBIRForms"
+        $targetDirectory = Join-Path $parentDirectory $displayName
         New-Item -ItemType Directory -Force -Path $parentDirectory | Out-Null
 
         if (Test-Path -LiteralPath $targetDirectory) {
@@ -204,9 +217,9 @@ switch ($Command) {
         }
 
         New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null
-        Get-ChildItem -LiteralPath $packageRoot -Force |
+        Get-ChildItem -LiteralPath $resolvedPackageRoot -Force |
             Copy-Item -Destination $targetDirectory -Recurse -Force
-        $installedExe = Join-Path $targetDirectory "bin\ebirforms-zero.exe"
+        $installedExe = Join-Path $targetDirectory "bin\$appName.exe"
         if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {
             throw "Installed Windows executable is missing: $installedExe"
         }
@@ -215,7 +228,7 @@ switch ($Command) {
         )
         New-Item -ItemType Directory -Force -Path $startMenuDirectory |
             Out-Null
-        $shortcutPath = Join-Path $startMenuDirectory "eBIRForms.lnk"
+        $shortcutPath = Join-Path $startMenuDirectory "$displayName.lnk"
         $shell = New-Object -ComObject WScript.Shell
         $shortcut = $shell.CreateShortcut($shortcutPath)
         $shortcut.TargetPath = $installedExe

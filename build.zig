@@ -2,6 +2,17 @@ const std = @import("std");
 const native_sdk = @import("native_sdk");
 const storage_policy = @import("src/security/key_custody.zig");
 
+const AppIdentity = struct {
+    slug: []const u8,
+    app_name: []const u8,
+    display_name: []const u8,
+    bundle_id: []const u8,
+    shell_role: []const u8,
+    app_root: []const u8,
+    manifest_path: []const u8,
+    is_main: bool,
+};
+
 pub fn build(b: *std.Build) void {
     const production_release_requested = b.option(
         bool,
@@ -18,12 +29,31 @@ pub fn build(b: *std.Build) void {
         return;
     }
 
+    const identity = resolveAppIdentity(b);
     const artifacts = native_sdk.addAppArtifacts(
         b,
         b.dependency("native_sdk", .{}),
-        .{ .name = "ebirforms-zero" },
+        .{
+            .name = identity.app_name,
+            .app_root = identity.app_root,
+        },
     );
+    if (!identity.is_main) disableUnsafeNativePackageStep(b);
     const sqlite = b.dependency("sqlite", .{});
+
+    const identity_options = b.addOptions();
+    identity_options.addOption([]const u8, "slug", identity.slug);
+    identity_options.addOption([]const u8, "app_name", identity.app_name);
+    identity_options.addOption([]const u8, "display_name", identity.display_name);
+    identity_options.addOption([]const u8, "bundle_id", identity.bundle_id);
+    identity_options.addOption([]const u8, "shell_role", identity.shell_role);
+    identity_options.addOption([]const u8, "manifest_path", identity.manifest_path);
+    identity_options.addOption(bool, "is_main", identity.is_main);
+    const identity_module = identity_options.createModule();
+    artifacts.exe.root_module.addImport("app_identity", identity_module);
+    if (artifacts.tests.root_module != artifacts.exe.root_module) {
+        artifacts.tests.root_module.addImport("app_identity", identity_module);
+    }
 
     // Reviewed release-shaped setting: retain only the reproducible PE debug
     // marker and omit the unstable CodeView/RSDS record.
@@ -43,6 +73,69 @@ pub fn build(b: *std.Build) void {
     addSqliteLinkedTestRoots(b, sqlite, artifacts.tests.root_module);
     addProductionReleaseGateRegression(b);
     addWindowsPackagePeParserRegression(b);
+}
+
+fn disableUnsafeNativePackageStep(b: *std.Build) void {
+    const package_top = b.top_level_steps.get("package") orelse
+        @panic("Native SDK did not register its standard package step");
+    package_top.step.dependencies.clearRetainingCapacity();
+    const failure = b.addFail(
+        "zig build package cannot use the static root app.zon for a branch " ++
+            "identity; use `just package`, which supplies the resolved manifest",
+    );
+    package_top.step.dependOn(&failure.step);
+}
+
+fn resolveAppIdentity(b: *std.Build) AppIdentity {
+    const node = b.graph.environ_map.get("BUWIZ_NODE") orelse "node";
+    const script = b.pathFromRoot("scripts/app-identity.mjs");
+    const result = std.process.run(b.allocator, b.graph.io, .{
+        .argv = &.{ node, script, "prepare", "--format", "json" },
+        .stdout_limit = .limited(16 * 1024),
+        .stderr_limit = .limited(16 * 1024),
+    }) catch |err| std.debug.panic(
+        "failed to resolve Buwiz app identity: {s}",
+        .{@errorName(err)},
+    );
+    if (result.term != .exited or result.term.exited != 0) {
+        std.debug.panic(
+            "failed to resolve Buwiz app identity:\n{s}",
+            .{std.mem.trimEnd(u8, result.stderr, "\r\n")},
+        );
+    }
+
+    const JsonIdentity = struct {
+        ref: []const u8,
+        slug: []const u8,
+        isMain: bool,
+        appName: []const u8,
+        displayName: []const u8,
+        bundleId: []const u8,
+        shellRole: []const u8,
+        appRoot: []const u8,
+        manifestPath: []const u8,
+    };
+    const parsed = std.json.parseFromSliceLeaky(
+        JsonIdentity,
+        b.allocator,
+        result.stdout,
+        .{},
+    ) catch identityOutputPanic();
+
+    return .{
+        .slug = parsed.slug,
+        .app_name = parsed.appName,
+        .display_name = parsed.displayName,
+        .bundle_id = parsed.bundleId,
+        .shell_role = parsed.shellRole,
+        .app_root = parsed.appRoot,
+        .manifest_path = parsed.manifestPath,
+        .is_main = parsed.isMain,
+    };
+}
+
+fn identityOutputPanic() noreturn {
+    @panic("scripts/app-identity.mjs returned an invalid build identity");
 }
 
 fn addSqlite(module: *std.Build.Module, sqlite: *std.Build.Dependency) void {

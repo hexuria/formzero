@@ -1,4 +1,4 @@
-//! eBIRForms application state and Native SDK wiring.
+//! Buwiz App state and Native SDK wiring.
 //!
 //! The screens remain declarative `.native` templates. Zig owns the small
 //! application state: navigation, appearance and accessibility preferences,
@@ -9,6 +9,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const runner = @import("runner");
 const native_sdk = @import("native_sdk");
+const app_identity = @import("app_identity");
 const multi_select = @import("components/multi_select.zig");
 const segmented_tin = @import("components/segmented_tin.zig");
 const calendar_domain = @import("calendar/domain.zig");
@@ -193,8 +194,8 @@ const shell_views = [_]native_sdk.ShellView{
         .label = canvas_label,
         .kind = .gpu_surface,
         .fill = true,
-        .role = "eBIRForms application",
-        .accessibility_label = "eBIRForms",
+        .role = app_identity.shell_role,
+        .accessibility_label = app_identity.display_name,
         .gpu_backend = .software,
         .gpu_pixel_format = .bgra8_unorm,
         .gpu_present_mode = .timer,
@@ -205,7 +206,7 @@ const shell_views = [_]native_sdk.ShellView{
 };
 const shell_windows = [_]native_sdk.ShellWindow{.{
     .label = "main",
-    .title = "eBIRForms",
+    .title = app_identity.display_name,
     .width = window_width,
     .height = window_height,
     .min_width = 360,
@@ -1838,12 +1839,20 @@ pub const Model = struct {
         "hasSelectedTaxpayer",
     };
 
-    pub fn brandLogo(_: *const Model) u64 {
-        return 1;
-    }
-
     pub fn appIcon(_: *const Model) u64 {
         return 6;
+    }
+
+    pub fn appDisplayName(_: *const Model) []const u8 {
+        return app_identity.display_name;
+    }
+
+    pub fn appBuildSlug(_: *const Model) []const u8 {
+        return app_identity.slug;
+    }
+
+    pub fn branchBuild(_: *const Model) bool {
+        return !app_identity.is_main;
     }
 
     pub fn bagongPilipinasLogo(_: *const Model) u64 {
@@ -15516,7 +15525,6 @@ fn profileCalendarExportOpened(
 }
 
 fn registerBootImages(model: *Model, fx: *Effects) void {
-    fx.loadImage(.{ .id = 1, .path = "assets/brand/ebirforms.png" });
     fx.loadImage(.{ .id = 2, .path = "assets/brand/bagong-pilipinas.png" });
     fx.loadImage(.{ .id = 3, .path = "assets/brand/bir-new-logo.png" });
     fx.loadImage(.{ .id = 4, .path = "assets/brand/goldcoders-logo.png" });
@@ -15526,7 +15534,7 @@ fn registerBootImages(model: *Model, fx: *Effects) void {
     refreshImportantNews(model, fx);
 }
 
-const EbirFormsApp = native_sdk.UiApp(Model, Msg);
+const BuwizApp = native_sdk.UiApp(Model, Msg);
 pub const app_markup = @embedFile("app.native");
 const multi_select_component_markup = @embedFile("components/multi-select-combobox.native");
 const multi_select_component_fixture = multi_select_component_markup ++
@@ -15688,35 +15696,35 @@ fn usePackagedMacResources(io: std.Io) !void {
         .{},
     ) catch |err| {
         std.log.err(
-            "packaged eBIRForms resources are missing at {s}: {s}",
+            "packaged Buwiz App resources are missing at {s}: {s}",
             .{ resources_path, @errorName(err) },
         );
         return err;
     };
     defer resources.close(io);
-    var brand_asset = resources.openFile(
+    var app_icon_asset = resources.openFile(
         io,
-        "assets/brand/ebirforms.png",
+        "assets/icon.png",
         .{ .allow_directory = false },
     ) catch |err| {
         std.log.err(
-            "packaged eBIRForms brand asset is missing: {s}",
+            "packaged Buwiz App icon is missing: {s}",
             .{@errorName(err)},
         );
         return err;
     };
-    brand_asset.close(io);
+    app_icon_asset.close(io);
     try std.process.setCurrentPath(io, resources_path);
 }
 
 test "macOS bundle resources path recognizes only an exact app executable" {
     var output: [256]u8 = undefined;
     const resources = (try macBundleResourcesPath(
-        "/Applications/eBIRForms.app/Contents/MacOS/eBIRForms",
+        "/Applications/Buwiz App.app/Contents/MacOS/buwiz",
         &output,
     )).?;
     try std.testing.expectEqualStrings(
-        "/Applications/eBIRForms.app/Contents/Resources",
+        "/Applications/Buwiz App.app/Contents/Resources",
         resources,
     );
 
@@ -15726,12 +15734,12 @@ test "macOS bundle resources path recognizes only an exact app executable" {
     );
     try std.testing.expect(ordinary == null);
     const near_match = try macBundleResourcesPath(
-        "/Applications/eBIRForms.appish/Contents/MacOS/eBIRForms",
+        "/Applications/Buwiz App.appish/Contents/MacOS/buwiz",
         &output,
     );
     try std.testing.expect(near_match == null);
     const nested_executable = try macBundleResourcesPath(
-        "/Applications/eBIRForms.app/Contents/MacOS/bin/eBIRForms",
+        "/Applications/Buwiz App.app/Contents/MacOS/bin/buwiz",
         &output,
     );
     try std.testing.expect(nested_executable == null);
@@ -15742,7 +15750,7 @@ test "macOS bundle resources path rejects truncation" {
     try std.testing.expectError(
         error.PathTooLong,
         macBundleResourcesPath(
-            "/Applications/eBIRForms.app/Contents/MacOS/eBIRForms",
+            "/Applications/Buwiz App.app/Contents/MacOS/buwiz",
             &output,
         ),
     );
@@ -15767,9 +15775,28 @@ pub fn main(init: std.process.Init) !void {
     const platform = app_dirs.currentPlatform();
     const environment = native_sdk.debug.envFromMap(init.environ_map);
     var data_dir_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    const configured_data_dir = init.environ_map.get("EBIRFORMS_DATA_DIR") orelse
+    const buwiz_data_dir = init.environ_map.get("BUWIZ_DATA_DIR");
+    const legacy_data_dir = init.environ_map.get("EBIRFORMS_DATA_DIR");
+    if (buwiz_data_dir != null and legacy_data_dir != null and
+        !std.mem.eql(u8, buwiz_data_dir.?, legacy_data_dir.?))
+    {
+        std.log.err(
+            "BUWIZ_DATA_DIR and legacy EBIRFORMS_DATA_DIR point to different locations",
+            .{},
+        );
+        return error.ConflictingDataDirectoryOverrides;
+    }
+    if (!app_identity.is_main and buwiz_data_dir == null and legacy_data_dir != null) {
+        std.log.err(
+            "branch builds reject EBIRFORMS_DATA_DIR; use BUWIZ_DATA_DIR for an isolated branch data directory",
+            .{},
+        );
+        return error.LegacyDataDirectoryForbiddenForBranchBuild;
+    }
+    const configured_data_dir = buwiz_data_dir orelse
+        (if (app_identity.is_main) legacy_data_dir else null) orelse
         try app_dirs.resolveOne(
-            .{ .name = "ebirforms-zero" },
+            .{ .name = app_identity.app_name },
             platform,
             environment,
             .data,
@@ -15805,7 +15832,7 @@ pub fn main(init: std.process.Init) !void {
     const export_path = try app_dirs.join(
         platform,
         &export_path_buffer,
-        &.{ data_dir, "ebirforms-tax-calendar.ics" },
+        &.{ data_dir, "buwiz-tax-calendar.ics" },
     );
 
     var calendar_store =
@@ -15840,8 +15867,8 @@ pub fn main(init: std.process.Init) !void {
     // caller-selected working directory.
     try usePackagedMacResources(init.io);
 
-    const app_state = try EbirFormsApp.create(std.heap.page_allocator, .{
-        .name = "ebirforms-zero",
+    const app_state = try BuwizApp.create(std.heap.page_allocator, .{
+        .name = app_identity.app_name,
         .scene = shell_scene,
         .canvas_label = canvas_label,
         .update_fx = updateWithEffects,
@@ -15920,9 +15947,9 @@ pub fn main(init: std.process.Init) !void {
     defer app_state.model.exact1701Q.deinit();
 
     try runner.runWithOptions(app_state.app(), .{
-        .app_name = "ebirforms-zero",
-        .window_title = "eBIRForms",
-        .bundle_id = "dev.goldcoders.ebirforms",
+        .app_name = app_identity.app_name,
+        .window_title = app_identity.display_name,
+        .bundle_id = app_identity.bundle_id,
         .icon_path = "assets/icon.png",
         .default_frame = geometry.RectF.init(0, 0, window_width, window_height),
         .restore_state = false,

@@ -94,7 +94,7 @@
             <column grow="1" gap="4">
               <text><span weight="bold">Appearance</span></text>
               <text wrap="true" foreground="text_muted">
-                Follow the system appearance or keep eBIRForms in a specific theme.
+                Follow the system appearance or keep Buwiz App in a specific theme.
               </text>
             </column>
           </row>
@@ -126,7 +126,7 @@
           <column grow="1" gap="4">
             <text><span weight="bold">Appearance</span></text>
             <text wrap="true" foreground="text_muted">
-              Follow the system appearance or keep eBIRForms in a specific theme.
+              Follow the system appearance or keep Buwiz App in a specific theme.
             </text>
           </column>
           <toggle-group gap="2" label="Application appearance">

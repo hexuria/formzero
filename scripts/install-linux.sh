@@ -3,15 +3,17 @@
 set -euo pipefail
 
 repository_root="$(cd "$(dirname "$BASH_SOURCE")/.." && pwd -P)"
-package_root="$repository_root/zig-out/package/linux"
+cd "$repository_root"
+eval "$(node scripts/app-identity.mjs prepare --format shell)"
+package_root="$repository_root/zig-out/package/$BUWIZ_APP_NAME-linux"
 
 if [ ! -d "$package_root" ]; then
     printf 'error: Linux package directory is missing: %s\n' "$package_root" >&2
     exit 1
 fi
 
-prefix="${EBIRFORMS_INSTALL_DIR:-$HOME/.local}"
-app_name="ebirforms-zero"
+prefix="${BUWIZ_INSTALL_DIR:-$HOME/.local}"
+app_name="$BUWIZ_APP_NAME"
 app_dir="$prefix/lib/$app_name"
 launcher="$prefix/bin/$app_name"
 desktop_file="$prefix/share/applications/$app_name.desktop"

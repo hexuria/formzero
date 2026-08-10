@@ -1,8 +1,8 @@
-# eBIRForms Native
+# Buwiz App
 
 [![CI](https://github.com/hexuria/formzero/actions/workflows/ci.yml/badge.svg)](https://github.com/hexuria/formzero/actions/workflows/ci.yml)
 
-Cross-platform reconstruction of eBIRForms, built with Native SDK 0.6.1 and
+Cross-platform Buwiz tax application, built with Native SDK 0.6.1 and
 Zig 0.16.0. The app includes responsive desktop UI, ten BIR form layouts, a
 global form/deadline dashboard, and a functional tax-calendar engine.
 
@@ -65,6 +65,7 @@ just run
 ```sh
 just run       # local Debug app with hot reload
 just build     # ReleaseFast binary in zig-out/bin/
+just identity  # show this checkout's resolved app name and bundle ID
 just package   # macOS .app, Linux package, or Windows ARM64 package
 just app       # package, then open/launch it
 just install   # install for the current user on macOS, Linux, or Windows
@@ -74,13 +75,26 @@ just verify    # check, test, build, and whitespace validation
 ```
 
 `just install` keeps the previous user-level app as a timestamped sibling. On
-macOS it installs to `~/Applications/eBIRForms.app` by default. On Linux it
-installs the package under `~/.local/lib/ebirforms-zero`, adds a launcher at
-`~/.local/bin/ebirforms-zero`, and installs the desktop entry under
+macOS the `main` build installs to `~/Applications/Buwiz App.app` by default. On Linux it
+installs the package under `~/.local/lib/buwiz`, adds a launcher at
+`~/.local/bin/buwiz`, and installs the desktop entry under
 `~/.local/share/applications`. On Windows it installs the unsigned package to
-`%LOCALAPPDATA%\Programs\eBIRForms` and creates a Start Menu shortcut. Set
-`EBIRFORMS_INSTALL_DIR` to override the install prefix on Linux or the parent
+`%LOCALAPPDATA%\Programs\Buwiz App` and creates a Start Menu shortcut. Set
+`BUWIZ_INSTALL_DIR` to override the install prefix on Linux or the parent
 directory on macOS and Windows.
+
+Builds from branches other than `main` automatically receive a readable,
+collision-resistant suffix in the executable name, display name, bundle ID,
+package directory, install path, and default data directory. For example, a
+`feature/tin` build is
+named `buwiz-feature-tin-<hash>` and can run beside both the main Buwiz App and
+the legacy eBIRForms application. Detached checkouts must set
+`BUWIZ_BUILD_REF` to the source branch name before building. Use
+`BUWIZ_DATA_DIR` for an explicit data location; branch builds reject the legacy
+`EBIRFORMS_DATA_DIR` override so they cannot silently reuse legacy app data.
+Use `just package` for distributable artifacts. On non-main branches, the
+Native SDK's direct `zig build package` step fails closed because that upstream
+step reads the unsuffixed root manifest.
 
 Linux builds require GTK4 development files because the Native SDK uses the
 system GTK host. Install them with `sudo apt-get install pkg-config libgtk-4-dev` on
