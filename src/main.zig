@@ -14943,15 +14943,28 @@ fn appendSyncedOverrideCounts(
             " {d} rejected.",
             .{summary.rejected},
         ) catch "";
+    var pruned_buffer: [64]u8 = undefined;
+    const pruned = if (summary.pruned_expired == 0)
+        ""
+    else
+        std.fmt.bufPrint(
+            &pruned_buffer,
+            " {d} expired override{s} removed.",
+            .{
+                summary.pruned_expired,
+                if (summary.pruned_expired == 1) "" else "s",
+            },
+        ) catch "";
     var buffer: [256]u8 = undefined;
     const text = std.fmt.bufPrint(
         &buffer,
-        "{s} {d} BIR override{s} synced.{s}",
+        "{s} {d} BIR override{s} synced.{s}{s}",
         .{
             model.calendar.notice.text(),
             summary.inserted + summary.updated,
             if (summary.inserted + summary.updated == 1) "" else "s",
             rejected,
+            pruned,
         },
     ) catch return;
     model.calendar.setNotice(.success, text);

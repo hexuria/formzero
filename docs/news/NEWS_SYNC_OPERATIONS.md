@@ -336,6 +336,17 @@ feed. Because an override's identity is
 same record in place — in the pipeline and in every app that syncs it. It never
 creates a duplicate.
 
+## Synced overrides expire on their own
+
+A feed carries only recent issuances, so nothing in it would ever remove an
+override once written and each taxpayer's calendar store would grow for ever.
+Every sync therefore sweeps synced rows whose extended date is more than 400
+days past — just over a year, so the whole prior filing year stays visible for
+anyone comparing this year's dates against last year's. The reload notice
+reports what went. Manually entered overrides are never swept: the operator
+wrote them, and only the operator removes them. Dismissal tombstones also
+stay, since they are what stops a pruned row being re-added.
+
 ## Dismissing a bad synced override in the app
 
 A synced override that should not apply is removed by the user, not by editing

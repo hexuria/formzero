@@ -10,7 +10,7 @@ calls: every task says exactly what to change, how to prove it worked, and what
 to do when it does not. Read §1 (the operating manual) before touching
 anything.
 
-Progress: 6/13 tasks complete.
+Progress: 7/13 tasks complete.
 
 ---
 
@@ -331,7 +331,7 @@ blocker here.
   - Verify: TS suite green, count above baseline; snapshots restored.
   - Commit: `feat: notice a same-size PDF replacement via ETag`
 
-- [ ] **C8 — prune long-expired synced overrides.**
+- [x] **C8 — prune long-expired synced overrides.**
   - Files: `src/calendar/store.zig` (+ its tests in-file).
   - Change: at the end of `syncOverridesFromFeed`'s transaction, delete rows
     where `origin='synced'` AND `external_ref IS NOT NULL` AND

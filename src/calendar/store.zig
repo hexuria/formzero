@@ -147,7 +147,19 @@ pub const SyncSummary = struct {
     updated: usize = 0,
     skipped_dismissed: usize = 0,
     rejected: usize = 0,
+    /// Synced rows dropped because their extension expired long ago.
+    pruned_expired: usize = 0,
 };
+
+/// How long a synced override outlives the deadline it moved.
+///
+/// A feed carries only recent issuances, so nothing else would ever remove
+/// these rows and every taxpayer's store would grow without bound. Just over a
+/// year keeps the whole prior filing year visible — a reader comparing this
+/// year's dates against last year's still sees why a date moved — while
+/// letting anything older go. Manual rows are never pruned: the operator
+/// entered those, and only the operator removes them.
+pub const synced_override_retention_days: u16 = 400;
 
 pub const NonWorkingDayWrite = struct {
     id: ?i64 = null,
@@ -686,9 +698,36 @@ pub const Store = struct {
             }
         }
 
+        summary.pruned_expired = try self.pruneExpiredSyncedOverrides();
+
         try self.commit();
         committed = true;
         return summary;
+    }
+
+    /// Deletes synced rows whose extension is more than
+    /// `synced_override_retention_days` past. Runs inside the caller's
+    /// transaction. Manual rows and dismissal tombstones are untouched: the
+    /// tombstones are what stop a pruned row being re-added, and they cost a
+    /// single reference string each.
+    fn pruneExpiredSyncedOverrides(self: *Store) !usize {
+        var statement = try self.prepare(
+            \\DELETE FROM calendar_overrides
+            \\WHERE origin = 'synced'
+            \\  AND external_ref IS NOT NULL
+            \\  AND adjusted_deadline < date('now', ?);
+        );
+        defer statement.deinit();
+        var cutoff_buffer: [24]u8 = undefined;
+        const cutoff = try std.fmt.bufPrint(
+            &cutoff_buffer,
+            "-{d} days",
+            .{synced_override_retention_days},
+        );
+        try statement.bindText(1, cutoff);
+        if (try statement.step() != .done) return Error.SqliteFailure;
+        const removed = sqlite.sqlite3_changes(self.db.?);
+        return if (removed < 0) 0 else @intCast(removed);
     }
 
     fn syncedExternalRef(
@@ -2341,4 +2380,77 @@ fn tableHasColumn(store: *Store, wanted: []const u8) !bool {
         if (std.mem.eql(u8, name, wanted)) return true;
     }
     return false;
+}
+
+test "a sync prunes synced overrides a year past their extension" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    const forms = [_][]const u8{"1601C"};
+    const rdo_codes = [_][]const u8{"039"};
+
+    // A feed carries only recent issuances, so nothing but this prune would
+    // ever remove a synced row: without it every store grows for ever.
+    const stale = [_]FeedOverrideRecord{.{
+        .external_ref = "bir:rmc:2024:001/2024-01-10/nonefps",
+        .title = "Long-past extension",
+        .source_reference = "RMC No. 1-2024",
+        .original_deadline = "2024-01-10",
+        .adjusted_deadline = "2024-01-17",
+        .form_codes = &forms,
+        .rdo_codes = &rdo_codes,
+    }};
+    const first = try store.syncOverridesFromFeed(&stale);
+    try std.testing.expectEqual(@as(usize, 1), first.inserted);
+    // Its own sync does not prune it: the row is written before the sweep, and
+    // the sweep is what a later run performs.
+    try std.testing.expectEqual(@as(usize, 1), first.pruned_expired);
+
+    var after_first = try store.listOverrides(allocator);
+    defer after_first.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), after_first.items.len);
+}
+
+test "pruning spares manual rows and extensions still worth showing" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    const forms = [_][]const u8{"1601C"};
+    const rdo_codes = [_][]const u8{"039"};
+
+    // Entered by hand, and older than any retention window: only the operator
+    // removes what the operator wrote.
+    const manual_id = try store.putOverride(.{
+        .title = "Locally noted extension",
+        .source = "Branch advisory",
+        .original_deadline = "2019-01-10",
+        .adjusted_deadline = "2019-01-17",
+        .affected_form_codes = &forms,
+        .regions = &rdo_codes,
+    });
+
+    // Dated ahead of any clock this test could run under, so the assertion is
+    // about the retention rule rather than about when the suite executes.
+    const records = [_]FeedOverrideRecord{.{
+        .external_ref = feed_reference,
+        .title = "Extension still worth showing",
+        .source_reference = "RMC No. 89-2026",
+        .original_deadline = "2099-01-10",
+        .adjusted_deadline = "2099-01-17",
+        .form_codes = &forms,
+        .rdo_codes = &rdo_codes,
+    }};
+    const summary = try store.syncOverridesFromFeed(&records);
+    try std.testing.expectEqual(@as(usize, 1), summary.inserted);
+    try std.testing.expectEqual(@as(usize, 0), summary.pruned_expired);
+
+    var list = try store.listOverrides(allocator);
+    defer list.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), list.items.len);
+
+    var manual = (try store.getOverride(allocator, manual_id)).?;
+    defer manual.deinit(allocator);
+    try std.testing.expectEqual(Origin.manual, manual.origin);
 }
