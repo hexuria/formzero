@@ -10,7 +10,7 @@ calls: every task says exactly what to change, how to prove it worked, and what
 to do when it does not. Read §1 (the operating manual) before touching
 anything.
 
-Progress: 1/13 tasks complete.
+Progress: 2/13 tasks complete.
 
 ---
 
@@ -235,7 +235,7 @@ blocker here.
     `git checkout -- scripts/news-sync/feed scripts/news-sync/state scripts/news-sync/review`.
   - Commit: `fix: keep publishing when one circular's PDF is unfetchable`
 
-- [ ] **C3 [blocking] — raise the notice caps before they truncate.**
+- [x] **C3 [blocking] — raise the notice caps before they truncate.**
   - Files: `src/news/domain.zig` (`max_notices` 120 → **240**, comment updated
     — the cap must hold a full year of BIR issuance at ~20/month),
     `scripts/news-sync/feed.ts` (`maxNotices` 120 → **240**, comment names the

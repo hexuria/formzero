@@ -267,7 +267,9 @@ Contract rules (enforce in `feed.ts` and again in `feed_json.zig`):
   efps_and_nonefps | registration | submission | unknown`. v1 compiler emits
   override records only for `nonefps` and `efps_and_nonefps`; other channels
   stay review-report-only (locked decision L10).
-- `notices` sorted by `published_at_unix` descending; ≤ 120 entries; summary
+- `notices` sorted by `published_at_unix` descending; ≤ 240 entries (raised
+  from 120 on 2026-08-11: the live feed reached 115 within eight months and
+  would have started truncating whole months); summary
   ≤ 4096 bytes (matches [domain.zig](../../src/news/domain.zig) bounds);
   `month_bucket` = issue date's `YYYY-MM` in Asia/Manila (app recomputes and
   trusts its own computation; the field exists for humans and diffing).

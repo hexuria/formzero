@@ -911,7 +911,7 @@ test("validateFeed rejects a feed over the 512 KiB budget", () => {
   const { feed } = compileFeed({ issuances, extractions: [], generatedAtUnix: 0 });
   assert.ok(
     validateFeed(feed).some((message) => message.includes("over the 524288-byte budget")),
-    "120 max-length summaries must exceed the published size budget",
+    `${maxNotices} max-length summaries must exceed the published size budget`,
   );
 });
 
@@ -967,4 +967,16 @@ test("RMC 62-2026 scopes two offices but emits no override", () => {
     [...new Set(rows.map((row) => rowDropReason(row, scope)))].toSorted(),
     ["channel_not_emittable", "window_row"],
   );
+});
+
+test("the notice cap matches the app's, and holds a year of BIR issuance", () => {
+  // The app restates this bound as `domain.max_notices` in
+  // src/news/domain.zig, where an equivalent test asserts the same number.
+  // Nothing imports across the two languages, so the pair is held by these two
+  // assertions and nothing else — change one and the other must follow.
+  assert.equal(maxNotices, 240);
+  // BIR published ~20 issuances a month through 2026. A cap the year outgrows
+  // truncates the oldest notices, and the month-scoped pane shows that as an
+  // empty month rather than as an error.
+  assert.ok(maxNotices >= 12 * 20, "the cap must hold a full year at ~20 a month");
 });

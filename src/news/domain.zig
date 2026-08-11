@@ -6,7 +6,13 @@
 
 const std = @import("std");
 
-pub const max_notices: usize = 120;
+/// Notices the cache retains, mirrored by `maxNotices` in
+/// `scripts/news-sync/feed.ts`; a test on each side pins the pair.
+///
+/// Sized to hold a full year of BIR issuance (~20 a month). The month-scoped
+/// news pane reads from this cache, so a cap the year outgrows does not fail
+/// loudly — it silently empties the earliest months' panes.
+pub const max_notices: usize = 240;
 pub const max_feed_bytes: usize = 1024 * 1024;
 // A single feed may legitimately fill the cache, so one document may carry as
 // many entries as the cache retains.
@@ -317,4 +323,16 @@ test "Manila month bucketing stays correct before the epoch" {
     const manila_leap_1968: i64 = -58_089_600;
     try std.testing.expectEqual(@as(i32, 1968), manilaCivilDate(manila_leap_1968).year);
     try std.testing.expectEqual(@as(u8, 2), manilaCivilDate(manila_leap_1968).month);
+}
+
+test "the notice cap matches the pipeline's and holds a year of issuance" {
+    // The pipeline restates this bound as `maxNotices` in
+    // scripts/news-sync/feed.ts, where an equivalent test asserts the same
+    // number. Nothing links the two languages, so this pair of assertions is
+    // the only thing holding them together.
+    try std.testing.expectEqual(@as(usize, 240), max_notices);
+    // BIR published about twenty issuances a month through 2026, and the
+    // month-scoped pane reads this cache, so a cap the year outgrows empties
+    // the earliest months rather than reporting anything.
+    try std.testing.expect(max_notices >= 12 * 20);
 }

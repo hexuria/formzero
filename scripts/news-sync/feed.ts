@@ -62,8 +62,18 @@ export type CivilDate = {
   day: number;
 };
 
-/** Notice cap from §4.1; mirrors the app's `domain.max_notices` after T5.3. */
-export const maxNotices = 120;
+/**
+ * Notice cap from §4.1; mirrors the app's `domain.max_notices`, and the pair is
+ * pinned by a test on each side.
+ *
+ * Sized to hold a full year: BIR published ~115 issuances in the first eight
+ * months of 2026, so ~20 a month. At 120 the cap would have bitten within
+ * weeks and silently dropped the oldest months, emptying their dashboard panes
+ * — the month-scoped pane failing first, and quietly. 240 clears a year with
+ * room to spare and still costs little: notices measure ~500 bytes each, so a
+ * full feed is ~120 KiB against the 512 KiB budget.
+ */
+export const maxNotices = 240;
 /** Summary byte cap from §4.1; mirrors the app's notice summary bound. */
 export const maxSummaryBytes = 4096;
 /** Serialized feed budget from §4.1 (the app rejects oversized bodies). */
