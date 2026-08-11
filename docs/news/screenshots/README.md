@@ -12,6 +12,13 @@ profiles configured.
 | `01-august-nationwide-baseline.png` | Nationwide (default) | **9 deadlines** | 1 deadline |
 | `02-august-rdo-039-markers-moved.png` | RDO 039 – South Quezon City | **6 deadlines** | **4 deadlines** |
 | `03-july-2026-news-pane.png` | July 2026, nationwide | — | — |
+| `04-published-feed-rdo-039.png` | RDO 039, reading the **published** GitHub feed with no `BUWIZ_NEWS_FEED_URL` | **6 deadlines** | **4 deadlines** |
+
+Shot 04 is from R4, after the feed went live: same behaviour as shot 02 but
+sourced from `raw.githubusercontent.com/hexuria/formzero/news-feed/feed.json`
+rather than a locally served file, and its news pane carries RMC 90-2026,
+RMC 91-2026 and RMO 20-2026 — issuances BIR published that morning, which the
+scheduled workflow picked up on its own.
 
 The three deadlines that move between the first two shots are
 `1601C`, `0619E` and `0619F` — RMC No. 89-2026's non-eFPS extension, applied

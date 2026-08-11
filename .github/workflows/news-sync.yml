@@ -63,6 +63,40 @@ jobs:
           npm run typecheck:news-sync
           npm run test:news-sync
 
+      # The previous run's outputs live on the publishing branch, not in this
+      # checkout: `main` only carries the snapshot committed with the last code
+      # change. Restoring them is what makes a run idempotent. Without it every
+      # run rediscovers each issuance published since that commit, re-downloads
+      # its PDF, and republishes a feed that differs only in `generated_at_unix`
+      # and `firstSeenAtUnix` — four commits a day whether or not BIR published
+      # anything. A missing branch (the very first run) correctly leaves the
+      # checked-in files in place.
+      - name: Restore the published outputs
+        run: |
+          set -euo pipefail
+          if ! git ls-remote --exit-code --heads origin news-feed >/dev/null 2>&1; then
+            echo 'news-feed does not exist yet; keeping the checked-in outputs.'
+            exit 0
+          fi
+          git fetch --depth=1 origin news-feed
+          restore() { # <path-on-news-feed> <path-in-checkout>
+            if git cat-file -e "origin/news-feed:$1" 2>/dev/null; then
+              git show "origin/news-feed:$1" > "$2"
+              echo "restored $1"
+            else
+              echo "news-feed carries no $1; keeping the checked-in copy."
+            fi
+          }
+          restore feed.json scripts/news-sync/feed/feed.json
+          restore state/seen.json scripts/news-sync/state/seen.json
+          # Review reports are regenerated per extracted circular; restoring
+          # them keeps an unchanged run from rewriting identical files.
+          rm -rf scripts/news-sync/review
+          mkdir -p scripts/news-sync/review
+          git archive origin/news-feed review \
+            | tar -x --strip-components=1 -C scripts/news-sync/review \
+            || echo 'news-feed carries no review/; starting empty.'
+
       - name: Run sync
         id: sync
         run: |

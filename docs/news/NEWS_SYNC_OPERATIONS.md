@@ -98,6 +98,14 @@ A failed run publishes nothing. The previously published feed stays live and
 the app keeps serving it, and if the fetch itself fails the app keeps its last
 good SQLite cache.
 
+Each run restores `feed.json`, `state/seen.json` and `review/` from the
+`news-feed` branch before syncing. The checkout only carries the snapshot
+committed alongside the last code change, so without that restore a run
+rediscovers every issuance published since then, re-downloads its PDF, and
+republishes a feed differing only in `generated_at_unix` and `firstSeenAtUnix`
+— a commit every six hours whether or not BIR published anything. With it, a
+run that finds nothing new makes no commit at all.
+
 ## Migrating the feed to Cloudflare R2 + a Worker (decided, not yet scheduled)
 
 GitHub raw is the accepted v1 host (decision Q1, 2026-08-11): zero
