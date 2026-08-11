@@ -1,0 +1,100 @@
+{
+  "issuances": {
+    "bir:rmc:2026:084": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:085": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:086": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:087": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:088": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:089": {
+      "pdfSha256": "offline-layout:ab856eb6ee2fe4ce261e5162f22682cf548ac8bd0a05a85fd9c687a8e1269b45",
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 1786752000,
+      "feedRev": 1
+    },
+    "bir:rmo:2026:014": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:015": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:016": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:017": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:018": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:019": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rr:2026:001": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rr:2026:002": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rr:2026:003": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rr:2026:004": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    }
+  }
+}

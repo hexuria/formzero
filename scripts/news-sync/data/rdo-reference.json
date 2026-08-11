@@ -1,0 +1,554 @@
+[
+  {
+    "code": "001",
+    "name": "Laoag City"
+  },
+  {
+    "code": "002",
+    "name": "Vigan City"
+  },
+  {
+    "code": "003",
+    "name": "San Fernando, La Union"
+  },
+  {
+    "code": "004",
+    "name": "Calasiao, Pangasinan"
+  },
+  {
+    "code": "005",
+    "name": "Alaminos City"
+  },
+  {
+    "code": "006",
+    "name": "Urdaneta City"
+  },
+  {
+    "code": "007",
+    "name": "Bangued, Abra"
+  },
+  {
+    "code": "008",
+    "name": "Baguio City"
+  },
+  {
+    "code": "009",
+    "name": "La Trinidad, Benguet"
+  },
+  {
+    "code": "010",
+    "name": "Lagawe, Ifugao"
+  },
+  {
+    "code": "011",
+    "name": "Tabuk City, Kalinga"
+  },
+  {
+    "code": "012",
+    "name": "Lagawe, Ifugao"
+  },
+  {
+    "code": "013",
+    "name": "Tuguegarao City"
+  },
+  {
+    "code": "014",
+    "name": "Bayombong, Nueva Vizcaya"
+  },
+  {
+    "code": "015",
+    "name": "Ilagan, Isabela"
+  },
+  {
+    "code": "016",
+    "name": "Cabarroguis, Quirino"
+  },
+  {
+    "code": "17A",
+    "name": "Tarlac City"
+  },
+  {
+    "code": "17B",
+    "name": "Paniqui, Tarlac"
+  },
+  {
+    "code": "018",
+    "name": "Olongapo City"
+  },
+  {
+    "code": "019",
+    "name": "Subic Bay Freeport Zone"
+  },
+  {
+    "code": "020",
+    "name": "Balanga City, Bataan"
+  },
+  {
+    "code": "21A",
+    "name": "North Pampanga"
+  },
+  {
+    "code": "21B",
+    "name": "South Pampanga"
+  },
+  {
+    "code": "21C",
+    "name": "Clark Freeport Zone"
+  },
+  {
+    "code": "022",
+    "name": "Baler, Aurora"
+  },
+  {
+    "code": "23A",
+    "name": "North Nueva Ecija"
+  },
+  {
+    "code": "23B",
+    "name": "South Nueva Ecija"
+  },
+  {
+    "code": "024",
+    "name": "Valenzuela City"
+  },
+  {
+    "code": "25A",
+    "name": "West Bulacan"
+  },
+  {
+    "code": "25B",
+    "name": "East Bulacan"
+  },
+  {
+    "code": "026",
+    "name": "Malabon and Navotas"
+  },
+  {
+    "code": "027",
+    "name": "Caloocan City"
+  },
+  {
+    "code": "028",
+    "name": "Novaliches"
+  },
+  {
+    "code": "029",
+    "name": "San Nicolas"
+  },
+  {
+    "code": "030",
+    "name": "Binondo"
+  },
+  {
+    "code": "031",
+    "name": "Sta. Cruz"
+  },
+  {
+    "code": "032",
+    "name": "Quiapo, Sampaloc"
+  },
+  {
+    "code": "033",
+    "name": "Intramuros, Ermita, Malate"
+  },
+  {
+    "code": "034",
+    "name": "Paco, Pandacan, Sta. Ana"
+  },
+  {
+    "code": "035",
+    "name": "RDO 035"
+  },
+  {
+    "code": "036",
+    "name": "RDO 036"
+  },
+  {
+    "code": "037",
+    "name": "RDO 037"
+  },
+  {
+    "code": "038",
+    "name": "North Quezon City"
+  },
+  {
+    "code": "039",
+    "name": "South Quezon City"
+  },
+  {
+    "code": "040",
+    "name": "Cubao"
+  },
+  {
+    "code": "041",
+    "name": "Mandaluyong City"
+  },
+  {
+    "code": "042",
+    "name": "San Juan City"
+  },
+  {
+    "code": "043",
+    "name": "RDO 043"
+  },
+  {
+    "code": "43A",
+    "name": "East Pasig"
+  },
+  {
+    "code": "43B",
+    "name": "West Pasig"
+  },
+  {
+    "code": "044",
+    "name": "Taguig and Pateros"
+  },
+  {
+    "code": "045",
+    "name": "Marikina City"
+  },
+  {
+    "code": "046",
+    "name": "Cainta and Taytay"
+  },
+  {
+    "code": "047",
+    "name": "East Makati"
+  },
+  {
+    "code": "048",
+    "name": "West Makati"
+  },
+  {
+    "code": "049",
+    "name": "North Makati"
+  },
+  {
+    "code": "050",
+    "name": "South Makati"
+  },
+  {
+    "code": "051",
+    "name": "Pasay City"
+  },
+  {
+    "code": "052",
+    "name": "Parañaque City"
+  },
+  {
+    "code": "53A",
+    "name": "Las Piñas City"
+  },
+  {
+    "code": "53B",
+    "name": "Muntinlupa City"
+  },
+  {
+    "code": "54A",
+    "name": "Trece Martires City"
+  },
+  {
+    "code": "54B",
+    "name": "Bacoor City"
+  },
+  {
+    "code": "055",
+    "name": "San Pablo City"
+  },
+  {
+    "code": "056",
+    "name": "Calamba City"
+  },
+  {
+    "code": "057",
+    "name": "Biñan City"
+  },
+  {
+    "code": "058",
+    "name": "Batangas City"
+  },
+  {
+    "code": "059",
+    "name": "Lipa City"
+  },
+  {
+    "code": "060",
+    "name": "Lucena City"
+  },
+  {
+    "code": "061",
+    "name": "Gumaca, Quezon"
+  },
+  {
+    "code": "062",
+    "name": "Boac, Marinduque"
+  },
+  {
+    "code": "063",
+    "name": "Calapan City"
+  },
+  {
+    "code": "064",
+    "name": "San Jose, Occidental Mindoro"
+  },
+  {
+    "code": "065",
+    "name": "Naga City"
+  },
+  {
+    "code": "066",
+    "name": "Iriga City"
+  },
+  {
+    "code": "067",
+    "name": "Legazpi City"
+  },
+  {
+    "code": "068",
+    "name": "Sorsogon City"
+  },
+  {
+    "code": "069",
+    "name": "Virac, Catanduanes"
+  },
+  {
+    "code": "070",
+    "name": "Masbate City"
+  },
+  {
+    "code": "071",
+    "name": "Kalibo, Aklan"
+  },
+  {
+    "code": "072",
+    "name": "Roxas City"
+  },
+  {
+    "code": "073",
+    "name": "San Jose, Antique"
+  },
+  {
+    "code": "074",
+    "name": "Iloilo City"
+  },
+  {
+    "code": "075",
+    "name": "Zarraga, Iloilo"
+  },
+  {
+    "code": "076",
+    "name": "Victorias City"
+  },
+  {
+    "code": "077",
+    "name": "Bacolod City"
+  },
+  {
+    "code": "078",
+    "name": "Binalbagan, Negros Occidental"
+  },
+  {
+    "code": "079",
+    "name": "Dumaguete City"
+  },
+  {
+    "code": "080",
+    "name": "Mandaue City"
+  },
+  {
+    "code": "081",
+    "name": "Cebu City North"
+  },
+  {
+    "code": "082",
+    "name": "Cebu City South"
+  },
+  {
+    "code": "083",
+    "name": "Talisay City"
+  },
+  {
+    "code": "084",
+    "name": "Tagbilaran City"
+  },
+  {
+    "code": "085",
+    "name": "Catarman, Northern Samar"
+  },
+  {
+    "code": "086",
+    "name": "Borongan City"
+  },
+  {
+    "code": "087",
+    "name": "Catbalogan City"
+  },
+  {
+    "code": "088",
+    "name": "Tacloban City"
+  },
+  {
+    "code": "089",
+    "name": "Ormoc City"
+  },
+  {
+    "code": "090",
+    "name": "Maasin City"
+  },
+  {
+    "code": "091",
+    "name": "Dipolog City"
+  },
+  {
+    "code": "092",
+    "name": "Pagadian City"
+  },
+  {
+    "code": "93A",
+    "name": "Zamboanga City"
+  },
+  {
+    "code": "93B",
+    "name": "Zamboanga Sibugay"
+  },
+  {
+    "code": "094",
+    "name": "Isabela City"
+  },
+  {
+    "code": "095",
+    "name": "Jolo, Sulu"
+  },
+  {
+    "code": "096",
+    "name": "Bongao, Tawi-Tawi"
+  },
+  {
+    "code": "097",
+    "name": "Gingoog City"
+  },
+  {
+    "code": "098",
+    "name": "Cagayan de Oro City"
+  },
+  {
+    "code": "099",
+    "name": "Malaybalay City"
+  },
+  {
+    "code": "100",
+    "name": "Ozamiz City"
+  },
+  {
+    "code": "101",
+    "name": "Iligan City"
+  },
+  {
+    "code": "102",
+    "name": "Marawi City"
+  },
+  {
+    "code": "103",
+    "name": "Butuan City"
+  },
+  {
+    "code": "104",
+    "name": "Bayugan City"
+  },
+  {
+    "code": "105",
+    "name": "Surigao City"
+  },
+  {
+    "code": "106",
+    "name": "Tandag City"
+  },
+  {
+    "code": "107",
+    "name": "Cotabato City"
+  },
+  {
+    "code": "108",
+    "name": "Kidapawan City"
+  },
+  {
+    "code": "109",
+    "name": "Tacurong City"
+  },
+  {
+    "code": "110",
+    "name": "General Santos City"
+  },
+  {
+    "code": "111",
+    "name": "Koronadal City"
+  },
+  {
+    "code": "112",
+    "name": "Tagum City"
+  },
+  {
+    "code": "113",
+    "name": "Davao City"
+  },
+  {
+    "code": "114",
+    "name": "Mati City"
+  },
+  {
+    "code": "115",
+    "name": "Digos City"
+  },
+  {
+    "code": "116",
+    "name": "Bislig City"
+  },
+  {
+    "code": "117",
+    "name": "RDO 117"
+  },
+  {
+    "code": "118",
+    "name": "RDO 118"
+  },
+  {
+    "code": "119",
+    "name": "RDO 119"
+  },
+  {
+    "code": "120",
+    "name": "RDO 120"
+  },
+  {
+    "code": "121",
+    "name": "RDO 121"
+  },
+  {
+    "code": "122",
+    "name": "RDO 122"
+  },
+  {
+    "code": "123",
+    "name": "RDO 123"
+  },
+  {
+    "code": "124",
+    "name": "RDO 124"
+  },
+  {
+    "code": "125",
+    "name": "RDO 125"
+  },
+  {
+    "code": "126",
+    "name": "RDO 126"
+  },
+  {
+    "code": "127",
+    "name": "RDO 127"
+  },
+  {
+    "code": "132",
+    "name": "RDO 132"
+  }
+]

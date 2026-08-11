@@ -1,0 +1,264 @@
+#!/usr/bin/env node
+
+// Generates the news-sync vocabularies from their Zig sources of truth:
+//
+//   src/tax_profile/rdo_reference.zig  -> scripts/news-sync/data/rdo-reference.json
+//   src/calendar/domain.zig            -> scripts/news-sync/form-codes.ts
+//
+// The extractor validates every RDO code and form code it emits against these
+// vocabularies, so a silent drift between the Zig app and the TypeScript
+// pipeline would let bogus codes into feed.json. `--check` (and the colocated
+// parity test) regenerate in memory and fail when the committed artifacts no
+// longer match their sources.
+
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+export type RdoEntry = {
+  code: string;
+  name: string;
+};
+
+export type FormCodeAlias = {
+  display: string;
+  canonical: string;
+};
+
+export type GeneratedArtifact = {
+  relativePath: string;
+  content: string;
+};
+
+const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
+
+export const projectRoot = path.resolve(scriptDirectory, "../..");
+export const rdoSourcePath = "src/tax_profile/rdo_reference.zig";
+export const formCodeSourcePath = "src/calendar/domain.zig";
+export const rdoReferencePath = "scripts/news-sync/data/rdo-reference.json";
+export const formCodesPath = "scripts/news-sync/form-codes.ts";
+export const expectedRdoEntryCount = 138;
+
+function fail(message: string): never {
+  throw new Error(message);
+}
+
+function sliceZigTable(source: string, declaration: string, sourcePath: string): string {
+  const start = source.indexOf(declaration);
+  if (start === -1) fail(`Cannot locate ${declaration} in ${sourcePath}`);
+  const open = source.indexOf("{", start);
+  if (open === -1) fail(`${declaration} in ${sourcePath} has no opening brace`);
+
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === "{") depth += 1;
+    else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(open + 1, index);
+    }
+  }
+  fail(`${declaration} in ${sourcePath} is not brace-balanced`);
+}
+
+export function parseRdoEntries(source: string): RdoEntry[] {
+  const table = sliceZigTable(source, "pub const entries = [_]Entry", rdoSourcePath);
+  const entries: RdoEntry[] = [];
+  const seen = new Set<string>();
+
+  for (const match of table.matchAll(
+    /\.\{\s*\.code\s*=\s*"([^"]+)"\s*,\s*\.name\s*=\s*"([^"]*)"\s*,?\s*\}/gu,
+  )) {
+    const code = match[1];
+    const name = match[2];
+    if (!/^[0-9]{3}$|^[0-9]{2}[A-Z]$/u.test(code)) {
+      fail(`${rdoSourcePath} has an unexpected RDO code shape: ${code}`);
+    }
+    if (!name.trim()) fail(`${rdoSourcePath} RDO ${code} has an empty name`);
+    if (seen.has(code)) fail(`${rdoSourcePath} declares duplicate RDO code ${code}`);
+    seen.add(code);
+    entries.push({ code, name });
+  }
+
+  if (entries.length !== expectedRdoEntryCount) {
+    fail(
+      `${rdoSourcePath} yielded ${entries.length} RDO entries; expected ` +
+        `${expectedRdoEntryCount}`,
+    );
+  }
+  return entries;
+}
+
+export function parseFormCodeAliases(source: string): FormCodeAlias[] {
+  const table = sliceZigTable(
+    source,
+    "const canonical_aliases = [_]CanonicalAlias",
+    formCodeSourcePath,
+  );
+  const aliases: FormCodeAlias[] = [];
+  const seen = new Set<string>();
+
+  for (const match of table.matchAll(
+    /\.\{\s*\.display\s*=\s*"([^"]+)"\s*,\s*\.canonical\s*=\s*"([^"]+)"\s*,?\s*\}/gu,
+  )) {
+    const display = match[1];
+    const canonical = match[2];
+    if (!/^[0-9A-Z-]+$/u.test(display)) {
+      fail(`${formCodeSourcePath} has an unexpected display form code: ${display}`);
+    }
+    if (!/^[0-9A-Z]+$/u.test(canonical)) {
+      fail(`${formCodeSourcePath} has an unexpected canonical form code: ${canonical}`);
+    }
+    if (seen.has(display)) {
+      fail(`${formCodeSourcePath} declares duplicate display form code ${display}`);
+    }
+    seen.add(display);
+    aliases.push({ display, canonical });
+  }
+
+  if (aliases.length === 0) fail(`${formCodeSourcePath} yielded no canonical aliases`);
+  const canonicalSet = new Set(aliases.map((alias) => alias.canonical));
+  for (const canonical of canonicalSet) {
+    if (!seen.has(canonical)) {
+      fail(
+        `${formCodeSourcePath} canonical code ${canonical} has no self-alias; the ` +
+          "extractor relies on canonical spellings resolving to themselves",
+      );
+    }
+  }
+  return aliases;
+}
+
+export function renderRdoReferenceJson(entries: readonly RdoEntry[]): string {
+  return `${JSON.stringify(entries, null, 2)}\n`;
+}
+
+export function renderFormCodesModule(aliases: readonly FormCodeAlias[]): string {
+  const canonical = [...new Set(aliases.map((alias) => alias.canonical))].toSorted();
+  const lines: string[] = [
+    "// GENERATED FILE - DO NOT EDIT.",
+    `// Generated by scripts/news-sync/generate-data.ts from the canonical_aliases`,
+    `// table in ${formCodeSourcePath}.`,
+    "// Regenerate with: npm run generate:news-sync-data",
+    "",
+    "const CANONICAL_BY_DISPLAY: ReadonlyMap<string, string> = new Map([",
+  ];
+  for (const alias of aliases) {
+    lines.push(`  [${JSON.stringify(alias.display)}, ${JSON.stringify(alias.canonical)}],`);
+  }
+  lines.push(
+    "]);",
+    "",
+    "/** Every canonical app form code the calendar engine recognizes. */",
+    "export const CANONICAL_FORM_CODES: ReadonlySet<string> = new Set([",
+  );
+  for (const code of canonical) {
+    lines.push(`  ${JSON.stringify(code)},`);
+  }
+  lines.push(
+    "]);",
+    "",
+    "/**",
+    " * Maps a form number as printed on an issuance to its canonical app code.",
+    " * Returns null for anything outside the calendar engine's alias table, which",
+    " * is how the extractor drops form-like noise instead of inventing overrides.",
+    " */",
+    "export function canonicalFormCode(display: string): string | null {",
+    "  return CANONICAL_BY_DISPLAY.get(display.trim().toUpperCase()) ?? null;",
+    "}",
+    "",
+  );
+  return lines.join("\n");
+}
+
+export async function buildArtifacts(): Promise<GeneratedArtifact[]> {
+  const [rdoSource, formCodeSource] = await Promise.all([
+    readFile(path.join(projectRoot, rdoSourcePath), "utf8"),
+    readFile(path.join(projectRoot, formCodeSourcePath), "utf8"),
+  ]);
+
+  return [
+    {
+      relativePath: rdoReferencePath,
+      content: renderRdoReferenceJson(parseRdoEntries(rdoSource)),
+    },
+    {
+      relativePath: formCodesPath,
+      content: renderFormCodesModule(parseFormCodeAliases(formCodeSource)),
+    },
+  ];
+}
+
+function firstDifference(current: string, expected: string): string {
+  const currentLines = current.split("\n");
+  const expectedLines = expected.split("\n");
+  const limit = Math.max(currentLines.length, expectedLines.length);
+  for (let index = 0; index < limit; index += 1) {
+    if (currentLines[index] !== expectedLines[index]) {
+      return (
+        `line ${index + 1}\n` +
+        `  on disk:   ${currentLines[index] ?? "<end of file>"}\n` +
+        `  generated: ${expectedLines[index] ?? "<end of file>"}`
+      );
+    }
+  }
+  return "line endings differ";
+}
+
+async function emit(artifact: GeneratedArtifact, checkOnly: boolean): Promise<boolean> {
+  const absolutePath = path.join(projectRoot, artifact.relativePath);
+  let current: string | null = null;
+  try {
+    current = await readFile(absolutePath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  if (current === artifact.content) return false;
+  if (checkOnly) {
+    const detail =
+      current === null
+        ? "file is missing"
+        : firstDifference(current, artifact.content);
+    fail(
+      `${artifact.relativePath} is missing or stale; run ` +
+        `npm run generate:news-sync-data\n${detail}`,
+    );
+  }
+
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await writeFile(absolutePath, artifact.content, "utf8");
+  return true;
+}
+
+async function main(): Promise<void> {
+  const checkOnly = process.argv.slice(2).includes("--check");
+  const artifacts = await buildArtifacts();
+  const changed = (
+    await Promise.all(artifacts.map((artifact) => emit(artifact, checkOnly)))
+  ).filter(Boolean).length;
+
+  if (checkOnly) {
+    process.stdout.write(
+      `news-sync-data: verified ${artifacts.length} generated vocabularies against ` +
+        `${rdoSourcePath} and ${formCodeSourcePath}.\n`,
+    );
+  } else if (changed === 0) {
+    process.stdout.write("news-sync-data: generated outputs are already up to date.\n");
+  } else {
+    process.stdout.write(`news-sync-data: updated ${changed} generated outputs.\n`);
+  }
+}
+
+const invokedPath = process.argv[1];
+const isEntrypoint =
+  invokedPath !== undefined &&
+  path.resolve(invokedPath) === fileURLToPath(import.meta.url);
+
+if (isEntrypoint) {
+  main().catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`news-sync-data: ${message}\n`);
+    process.exitCode = 1;
+  });
+}

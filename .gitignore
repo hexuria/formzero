@@ -11,6 +11,10 @@ coverage/
 test-results/
 *.log
 
+# news-sync scratch: downloaded PDFs and cached extraction results. The
+# published outputs (feed/, state/, review/) are committed; this is not.
+scripts/news-sync/work/
+
 # Local configuration and signing credentials
 .env
 .env.*
