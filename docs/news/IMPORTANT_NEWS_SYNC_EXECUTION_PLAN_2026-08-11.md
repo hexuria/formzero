@@ -1,6 +1,6 @@
 # Important News rework: BIR-sourced news + automatic deadline overrides
 
-Status: implemented on this branch, pending the T8.2 live dry-run and review.
+Status: implemented and dry-run against the live BIR site; pending review.
 Date: 2026-08-11 (Asia/Manila). Branch: `gol/important-news-google-search-8efadb`.
 Author input: replace the Official Gazette RSS feed with BIR's own publications,
 extract deadline-extension issuances (e.g. RMC No. 89-2026), and turn them into
@@ -11,7 +11,7 @@ by an implementation agent without further research. Every claim about live
 BIR endpoints below was verified by direct probing on 2026-08-11; the captured
 evidence is committed under `scripts/news-sync/fixtures/2026-08-11/`.
 
-Progress: 28/30 tasks complete (see §6 checkboxes).
+Progress: 29/31 tasks complete (see §6 checkboxes).
 
 **Start here for remaining work:** [NEXT_STEPS.md](NEXT_STEPS.md) — the
 remaining-work plan: phases R1–R4 (defect fixes → commit/PR → live dry-run →
@@ -789,7 +789,7 @@ CREATE TABLE calendar_override_dismissals (
 - [ ] **T7.4 (deferred, tracked)** persistence of the selector — needs an app
 settings store; explicitly out of v1. Recorded in §10.
 
-### Phase 8 — end-to-end proof, docs, cleanup — 2/3 complete
+### Phase 8 — end-to-end proof, docs, cleanup — 3/3 complete
 
 - [x] **T8.1 fixture-to-marker E2E test** — `test: feed to marker E2E`
 - One Zig test (main.zig test block, following the startup-refresh test at
@@ -799,7 +799,7 @@ settings store; explicitly out of v1. Recorded in §10.
   resolves 1601C July-2026 to 2026-08-17 `Extended`, RDO 113 stays
   2026-08-10, July news view is empty with the default message.
 
-- [ ] **T8.2 live dry-run** — manual checklist, not code
+- [x] **T8.2 live dry-run** — manual checklist, not code
 - `npm run news:sync -- all` against the live site; inspect
   `review/bir-rmc-2026-089.md`; confirm feed matches Appendix A; `just run`,
   point the app at the published feed (or a `file://`-served copy via a dev
@@ -858,6 +858,29 @@ data; both are the same class as the 16-slot region cap that nearly shipped
   messages the UI does.
 - Acceptance: the test fails if `selectedTaxpayerCalendarContext` stops
   passing the profile's RDO.
+
+### Phase 10 — found by the live dry-run — 0/1 complete
+
+Added 2026-08-11 from the T8.2 walkthrough (see
+[screenshots/README.md](screenshots/README.md)). The notice-date defect that
+run also found was fixed in the same pass and needs no task.
+
+- [ ] **T10.1 extractor misses circulars that spell out their offices** — `feat(news-sync): widen RDO and table-header matching`
+- Problem: of the seven 2026 extension circulars, only RMC 89-2026 produced
+  overrides. Two are image-only scans (documented D3 limit, flagged correctly).
+  RMC 62-2026 is a genuine miss: it has a clean text layer but names its
+  offices as `Revenue District Office No. 1 10 - General Santos City` in a
+  numbered list, which the `RDO No. X` pattern does not match, and its table
+  header OCR'd to `I)ue Date` / `E:rtended Due Date`, which the header probe
+  does not match, so no deadline table was located at all.
+- Fix: accept the spelled-out `Revenue District Office No.` form alongside the
+  abbreviation, and make the table-header probe OCR-tolerant the way the
+  channel-header regexes already are. Commit the RMC 62-2026 layout text as a
+  second extraction fixture — one fixture taught the extractor one circular's
+  habits.
+- Acceptance: RMC 62-2026 yields RDO codes 110 and 111, its office-count
+  invariant passes, and its deadline rows extract; RMC 89-2026's golden output
+  is unchanged.
 
 ---
 
