@@ -434,6 +434,11 @@ pub const State = struct {
     attachment_selection_policy: AttachmentSelectionPolicy = .implicit_first,
     selected_revision_id: StableIdText = .{},
     selected_revision_sequence: ?u32 = null,
+    /// The Registration Unit's district as the loaded revision records it,
+    /// kept apart from the `rdo` editor buffer of the same value. Only an
+    /// appended revision changes where a taxpayer is registered, so callers
+    /// that scope policy by district must not read a half-typed field.
+    registered_rdo: ?fields.RdoCode = null,
     editing_new: bool = true,
     profile_mode: ProfileMode = .creating,
     loaded_shape_supported: bool = true,
@@ -1217,6 +1222,15 @@ pub const State = struct {
     pub fn selectedProfileDomainId(self: *const State) ?model.ProfileId {
         if (!self.has_selection) return null;
         return model.ProfileId.parse(self.selected_id.text()) catch null;
+    }
+
+    /// Where the selected taxpayer is registered according to the revision on
+    /// disk — the answer a restart would give. Empty when nobody is selected,
+    /// or while a draft registration has never been saved.
+    pub fn registeredRdoCode(self: *const State) []const u8 {
+        if (!self.has_selection) return "";
+        if (self.registered_rdo) |*code| return code.asSlice();
+        return "";
     }
 
     pub fn selectedRevisionId(self: *const State) ?[]const u8 {
@@ -3473,6 +3487,7 @@ pub const State = struct {
         self.selected_id.clear();
         self.selected_revision_id.clear();
         self.selected_revision_sequence = null;
+        self.registered_rdo = null;
     }
 
     /// Remembers how the selected taxpayer presents, so the header stays
@@ -3523,6 +3538,7 @@ pub const State = struct {
 
         try self.selected_revision_id.set(revision.id.asSlice());
         self.selected_revision_sequence = revision.sequence;
+        self.registered_rdo = revision.identity.rdo_code;
         if (!load_editor) return;
 
         self.editing_new = false;
