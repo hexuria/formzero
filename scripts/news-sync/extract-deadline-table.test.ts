@@ -49,6 +49,7 @@ test("parseCircularAnchors returns nulls when the prose carries no anchors", () 
   assert.deepEqual(parseCircularAnchors("no dates here at all"), {
     globalExtendedDate: null,
     window: null,
+    referenceYear: null,
   });
 });
 
@@ -396,8 +397,7 @@ test("close-set header columns cannot let one literal fill both", () => {
   const lines = [header, tableLine("BIR Form 1601-C", [[overlap, "June 30,2026"]])];
   const [row] = extractDeadlineRows(lines.join("\n"), {
     globalExtendedDate: "2026-06-30",
-    window: null,
-  });
+    window: null, referenceYear: 2026 });
   assert.ok(row);
   assert.equal(row.dateAssignment, "window");
   assert.equal(row.originalDate, null);
@@ -408,7 +408,7 @@ test("an empty Extended column is a merged cell, not a damaged one", () => {
   // fallback applies only when something unreadable is actually printed there.
   assert.ok(SYNTHETIC_GEOMETRY);
   const { dueColumn, extendedColumn } = SYNTHETIC_GEOMETRY;
-  const anchorsWithGlobal = { globalExtendedDate: "2026-08-17", window: null };
+  const anchorsWithGlobal = { globalExtendedDate: "2026-08-17", window: null, referenceYear: 2026 };
 
   const blank = [
     SYNTHETIC_HEADER,
@@ -432,4 +432,49 @@ test("an empty Extended column is a merged cell, not a damaged one", () => {
   assert.equal(damagedRow.originalDate, "2026-08-10");
   assert.equal(damagedRow.extendedDate, "2026-08-17");
   assert.ok(damagedRow.notes.some((note) => note.includes("Extended Due Date column unreadable")));
+});
+
+test("a date literal outside the circular's year is refused, not read as a pair", () => {
+  // RMC 62-2026 really does carry `June 25,2426` — OCR damage in the year, not
+  // a date. It parses cleanly as a candidate, and today it stays out of the
+  // table only because it sits at column 67 while the due column is 78. That
+  // is alignment luck, so the year window makes the refusal a rule.
+  const damaged = scanDateCandidates("June 25,2426            June 30,2026");
+  assert.equal(damaged[0].iso, "2426-06-25", "the literal parses; only the year is impossible");
+
+  const header = "  BIR Forms/Returns          Due Date        Extended Due Date";
+  const dueColumn = header.indexOf("Due Date");
+  const extendedColumn = header.indexOf("Extended Due Date");
+  const row =
+    "  BIR Form 2550Q".padEnd(dueColumn) +
+    "June 25,2426".padEnd(extendedColumn - dueColumn) +
+    "June 30,2026";
+  const table = [header, "", row, ""].join("\n");
+  const anchors = { globalExtendedDate: "2026-06-30", window: null, referenceYear: 2026 };
+
+  const guarded = extractDeadlineRows(table, anchors);
+  assert.equal(guarded.length, 1);
+  assert.equal(guarded[0].originalDate, null, "an impossible year cannot open a pair");
+  assert.equal(guarded[0].dateAssignment, "window");
+  assert.ok(
+    guarded[0].notes.some((note) => note.includes("outside the circular's year")),
+    "the refusal is recorded rather than silent",
+  );
+
+  // Without a year to check against, the old behaviour stands: the literal is
+  // structurally valid and becomes the row's original date.
+  const unguarded = extractDeadlineRows(table, { ...anchors, referenceYear: null });
+  assert.equal(unguarded[0].originalDate, "2426-06-25");
+});
+
+test("the year window leaves every real circular's extraction untouched", () => {
+  // Both committed fixtures parse identically with the guard active: RMC 89
+  // through its own 2026 anchor, RMC 62 through the archive's date of issue.
+  const rmc89Guarded = extractDeadlineRows(layoutText, { ...anchors, referenceYear: 2026 });
+  assert.deepEqual(rmc89Guarded, rows);
+  const rmc62Guarded = extractDeadlineRows(rmc62LayoutText, {
+    ...rmc62Anchors,
+    referenceYear: 2026,
+  });
+  assert.deepEqual(rmc62Guarded, rmc62Rows);
 });

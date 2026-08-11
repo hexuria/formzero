@@ -10,7 +10,7 @@ calls: every task says exactly what to change, how to prove it worked, and what
 to do when it does not. Read §1 (the operating manual) before touching
 anything.
 
-Progress: 2/13 tasks complete.
+Progress: 3/13 tasks complete.
 
 ---
 
@@ -257,7 +257,7 @@ blocker here.
 
 ### Phase C-C — extraction correctness (P2)
 
-- [ ] **C4 — reject date literals outside the circular's year window.**
+- [x] **C4 — reject date literals outside the circular's year window.**
   - Files: `scripts/news-sync/extract-deadline-table.ts` (+ its test file).
   - Change: `extractDeadlineRows` / its date-candidate scan already receives
     the circular's anchors; thread the issuance year (from

@@ -23,6 +23,13 @@ import type { Channel, Confidence, DateAssignment, ExtensionRow } from "./types.
 export type CircularAnchors = {
   globalExtendedDate: string | null;
   window: { from: string; to: string } | null;
+  /**
+   * The year this circular is about, used to refuse date literals OCR has
+   * mangled beyond the plausible: `June 25,2426` parses as a structurally
+   * valid year 2426. Null when the circular offers nothing to anchor on, in
+   * which case no year check runs.
+   */
+  referenceYear: number | null;
 };
 
 export type ColumnGeometry = {
@@ -160,6 +167,61 @@ export function scanDateCandidates(text: string): DateCandidate[] {
   return candidates;
 }
 
+/**
+ * A circular extends deadlines within its own year, so a literal outside
+ * `referenceYear` +/- 1 is OCR damage rather than a date. Spec 5.1 promised
+ * this window; without it `parseNoisyDate`'s structural bounds alone let a
+ * mangled digit through as a date centuries away.
+ */
+function outsideYearWindow(candidate: DateCandidate, referenceYear: number | null): boolean {
+  if (candidate.iso === null || referenceYear === null) return false;
+  const year = Number.parseInt(candidate.iso.slice(0, 4), 10);
+  return Math.abs(year - referenceYear) > 1;
+}
+
+/** The candidate, or a copy demoted to unreadable when its year is impossible. */
+function withinYearWindow(
+  candidate: DateCandidate | null,
+  referenceYear: number | null,
+): DateCandidate | null {
+  if (candidate === null || !outsideYearWindow(candidate, referenceYear)) return candidate;
+  return {
+    ...candidate,
+    iso: null,
+    notes: [
+      ...candidate.notes,
+      `refused ${candidate.iso} — outside the circular's year ${String(referenceYear)}`,
+    ],
+  };
+}
+
+/**
+ * Why this block prints no usable pair, when the reason is a refused year
+ * rather than an empty cell. Without this a refused row reads as "nothing
+ * printed here", which is the one thing it is not.
+ */
+function yearRefusalNotes(
+  lines: readonly string[],
+  block: DeadlineBlock,
+  geometry: ColumnGeometry,
+  referenceYear: number | null,
+): string[] {
+  if (referenceYear === null) return [];
+  const notes: string[] = [];
+  for (let index = block.startLine; index <= block.endLine && index < lines.length; index += 1) {
+    for (const column of [geometry.dueColumn, geometry.extendedColumn]) {
+      const candidate = candidateAt(scanDateCandidates(lines[index]), column);
+      if (candidate !== null && outsideYearWindow(candidate, referenceYear)) {
+        notes.push(
+          `Refused ${String(candidate.iso)} printed here (${candidate.text.trim()}): outside ` +
+            `the circular's year ${String(referenceYear)}, so it is OCR damage, not a deadline`,
+        );
+      }
+    }
+  }
+  return notes;
+}
+
 function candidateAt(
   candidates: readonly DateCandidate[],
   column: number,
@@ -180,9 +242,16 @@ function candidateAt(
  * 16,2026`).
  */
 export function parseCircularAnchors(layoutText: string): CircularAnchors {
+  const globalExtendedDate = parseUntilAnchor(layoutText);
+  const window = parseWindowAnchor(layoutText);
+  // Whatever the prose commits to first: a circular's own extended date, else
+  // the window it names. `extractCircular` overrides this with the archive's
+  // date of issue when it has one, which is typed rather than OCR'd.
+  const anchorDate = globalExtendedDate ?? window?.from ?? null;
   return {
-    globalExtendedDate: parseUntilAnchor(layoutText),
-    window: parseWindowAnchor(layoutText),
+    globalExtendedDate,
+    window,
+    referenceYear: anchorDate === null ? null : Number.parseInt(anchorDate.slice(0, 4), 10),
   };
 }
 
@@ -463,10 +532,13 @@ function datePairOnLine(
   anchors: CircularAnchors,
 ): DatePair | null {
   const candidates = scanDateCandidates(line);
-  const due = candidateAt(candidates, geometry.dueColumn);
+  const due = withinYearWindow(candidateAt(candidates, geometry.dueColumn), anchors.referenceYear);
   if (due === null || due.iso === null) return null;
 
-  const extended = candidateAt(candidates, geometry.extendedColumn);
+  const extended = withinYearWindow(
+    candidateAt(candidates, geometry.extendedColumn),
+    anchors.referenceYear,
+  );
 
   // An empty Extended column is a merged cell, not a damaged one, and §5.6.5
   // forbids reconstructing merged cells in v1. It also stops a single literal
@@ -525,7 +597,7 @@ export function extractDeadlineRows(
   const blocks = splitBlocks(lines, geometry, headerIndex + 1, lines.length - 1);
   const tableBlocks = trimToSignature(blocks, lines, geometry, anchors);
 
-  return tableBlocks.map((block) => toRow(block, geometry, anchors));
+  return tableBlocks.map((block) => toRow(block, geometry, anchors, lines));
 }
 
 /** Drops the closing prose and signature block that follow the last date pair. */
@@ -551,6 +623,7 @@ function toRow(
   block: DeadlineBlock,
   geometry: ColumnGeometry,
   anchors: CircularAnchors,
+  lines: readonly string[],
 ): ExtensionRow {
   const channel = classifyChannel(block.channelSeed, block.description);
   const forms = harvestFormCodes(block.description);
@@ -584,9 +657,14 @@ function toRow(
     originalDate = null;
     extendedDate = anchors.globalExtendedDate;
     confidence = "review";
+    const refusals = yearRefusalNotes(lines, block, geometry, anchors.referenceYear);
     notes.push(
-      "No date pair printed on this block's lines; recorded against the " +
-        "circular window (no override emitted)",
+      refusals.length > 0
+        ? "No usable date pair on this block's lines; recorded against the " +
+            "circular window (no override emitted)"
+        : "No date pair printed on this block's lines; recorded against the " +
+            "circular window (no override emitted)",
+      ...refusals,
     );
   }
 
