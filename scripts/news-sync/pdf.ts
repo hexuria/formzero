@@ -149,7 +149,17 @@ export async function remotePdfIdentity(
   url: string,
 ): Promise<{ bytes: number | null; etag: string | null }> {
   try {
-    const response = await fetch(url, { method: "HEAD", redirect: "follow" });
+    const response = await fetch(url, {
+      method: "HEAD",
+      redirect: "follow",
+      // Ask for the stored bytes, not a compressed rendering of them. Node's
+      // fetch negotiates gzip by default, and bir-cdn answers that by dropping
+      // Content-Length entirely and weakening its ETag -- so both signals this
+      // function exists to read come back unusable and every run re-downloads
+      // every circular. `curl -I` sees the real values only because it does not
+      // negotiate encoding.
+      headers: { "accept-encoding": "identity" },
+    });
     if (!response.ok) return { bytes: null, etag: null };
     const header = response.headers.get("content-length");
     const parsed = header === null ? Number.NaN : Number.parseInt(header, 10);
