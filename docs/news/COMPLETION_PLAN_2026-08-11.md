@@ -10,7 +10,9 @@ calls: every task says exactly what to change, how to prove it worked, and what
 to do when it does not. Read §1 (the operating manual) before touching
 anything.
 
-Progress: 9/13 tasks complete.
+Progress: 10/13 tasks complete — every agent-executable task is done.
+The three open items are the two merges (C0, C11) and the post-merge
+production check that depends on them (C12).
 
 ---
 
@@ -443,3 +445,11 @@ production state.
   403 there degrades to a download attempt rather than being distinguishable.
   That is safe but means an origin refusing HEAD and GET costs one wasted
   request before the refusal is recognised.
+- C2 follow-up: the poppler check sat before the download, so a refused PDF
+  could not be absorbed without a binary that circular never needed. CI's
+  TypeScript gate runs without poppler and caught it; the check now sits on the
+  line that converts a PDF. Reproduce CI locally with
+  `env PATH="/usr/bin:/bin" node --experimental-strip-types --test "scripts/news-sync/**/*.test.ts"`.
+- C5 corrected a claim in Appendix A.1: RMC 89-2026 states no office count in
+  its text. The "58 stated on page 1" figure came from press coverage, not the
+  circular.
