@@ -151,8 +151,8 @@ just install
 On macOS, `just package` creates an ad-hoc signed `.app` and `just install`
 copies the main build to `~/Applications/Buwiz App.app`. Branch builds receive
 a branch-specific display name, bundle ID, executable, install path, and data
-directory. On Linux, install GTK4 development
-files first; `just package` creates the Native SDK directory artifact and
+directory. On Linux, install GTK4 and WebKitGTK 6.0 development files first;
+`just package` creates the Native SDK directory artifact and
 `just install` places it under `~/.local` by default. On Windows ARM64, load
 the pinned environment from the Windows guide before `just package` or
 `just install`; the result is an unsigned directory package with a per-user
@@ -170,8 +170,8 @@ requires all of the following:
 7. a final artifact that is not modified after signing.
 
 Do not call a build “deployed” or “production-ready” until these gates pass.
-Linux and Windows are development targets only: Linux still needs a system
-GTK4 runtime, and Windows is currently audited on ARM64 with an unsigned
+Linux and Windows are development targets only: Linux still needs system GTK4
+and WebKitGTK 6.0 runtimes, and Windows is currently audited on ARM64 with an unsigned
 directory package. AppImage, Flatpak, tarball, MSI, MSIX, signing, and
 notarization remain separate release work.
 

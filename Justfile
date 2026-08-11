@@ -93,6 +93,7 @@ build: generate
 [linux]
 build: generate
     bash scripts/check-linux-deps.sh
+    node scripts/patch-native-sdk-combobox-tab.mjs
     npx native build . --yes
 
 # Build a ReleaseFast binary with Native automation enabled.
@@ -108,11 +109,13 @@ build-automation: generate
 [linux]
 build-automation: generate
     bash scripts/check-linux-deps.sh
+    node scripts/patch-native-sdk-combobox-tab.mjs
     npx native build . --yes -Dautomation=true
 
 # Run the local Debug app with Native markup hot reload.
 [macos]
 run: generate
+    node scripts/patch-native-sdk-combobox-tab.mjs
     npx native dev . --yes
 
 [windows]
@@ -122,6 +125,7 @@ run: generate
 [linux]
 run: generate
     bash scripts/check-linux-deps.sh
+    node scripts/patch-native-sdk-combobox-tab.mjs
     npx native dev . --yes
 
 # Check the toolchain and manifest without building the app.

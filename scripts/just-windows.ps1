@@ -131,6 +131,7 @@ switch ($Command) {
 
     "run" {
         Require-TargetEnvironment
+        Invoke-Checked "node" @("scripts/patch-native-sdk-combobox-tab.mjs")
         Invoke-NativeCli @(
             "dev",
             ".",
