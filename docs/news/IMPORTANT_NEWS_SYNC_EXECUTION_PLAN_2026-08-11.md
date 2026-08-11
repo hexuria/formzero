@@ -859,13 +859,13 @@ data; both are the same class as the 16-slot region cap that nearly shipped
 - Acceptance: the test fails if `selectedTaxpayerCalendarContext` stops
   passing the profile's RDO.
 
-### Phase 10 — found by the live dry-run — 0/1 complete
+### Phase 10 — found by the live dry-run — 1/2 complete
 
 Added 2026-08-11 from the T8.2 walkthrough (see
 [screenshots/README.md](screenshots/README.md)). The notice-date defect that
 run also found was fixed in the same pass and needs no task.
 
-- [ ] **T10.1 extractor misses circulars that spell out their offices** — `feat(news-sync): widen RDO and table-header matching`
+- [x] **T10.1 extractor misses circulars that spell out their offices** — `feat(news-sync): widen RDO and table-header matching`
 - Problem: of the seven 2026 extension circulars, only RMC 89-2026 produced
   overrides. Two are image-only scans (documented D3 limit, flagged correctly).
   RMC 62-2026 is a genuine miss: it has a clean text layer but names its
@@ -881,6 +881,22 @@ run also found was fixed in the same pass and needs no task.
 - Acceptance: RMC 62-2026 yields RDO codes 110 and 111, its office-count
   invariant passes, and its deadline rows extract; RMC 89-2026's golden output
   is unchanged.
+
+- [ ] **T10.2 merged deadline-table cells** — decision needed, see [MERGED_CELL_INVESTIGATION.md](MERGED_CELL_INVESTIGATION.md)
+- Investigated 2026-08-11; no code shipped. The plan's own `-tsv` upgrade path
+  (§5.6 step 5) rests on a false premise: RMC 89-2026's table has 8 bordered
+  rows, not 22, and a row prints its pair once against an arbitrary paragraph,
+  so word coordinates carry no row-boundary signal — measured true boundaries
+  (15.5–16.3 pt) sit strictly inside the intra-row paragraph gaps (13.5–40.4 pt).
+- Consequence worth acting on: the published feed **under-applies** RMC 89-2026.
+  2200-M, 2200-C, 0620, 1600-VT/PT, 1606 and the NGAs block share the Aug-10
+  cell with 1601C, and 1701Q and 1707-A share the Aug-15 cell with 1702. They
+  are named in the review report but absent from the feed. Error is in the safe
+  direction (an earlier date is shown), but the gap is real.
+- Options, with recommendation: enter the missing rows as manual overrides now;
+  or ship raster rule detection with an implausibility guard; or accept
+  correct-by-omission. See the investigation for why raster detection alone was
+  refused — its failure mode fabricates overrides silently.
 
 ---
 
