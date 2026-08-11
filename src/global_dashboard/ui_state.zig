@@ -9,10 +9,12 @@
 //! The one taxpayer-shaped input the dashboard accepts is an optional RDO
 //! context. Without it the page is the honest nationwide schedule, which is
 //! what it exists to be; with it the caller re-projects the same loaded
-//! policy through one district so RDO-scoped overrides become visible. The
-//! context is session-only and never persisted: a scoped view must not
-//! outlive the session that asked for it, or a later reader would mistake it
-//! for the nationwide schedule.
+//! policy through one district so RDO-scoped overrides become visible. This
+//! module holds the context only for the running session. A caller that
+//! carries one across launches owns two obligations with it: the code must
+//! still name a district in the caller's canonical reference, and the caption
+//! must be restored alongside the projection, or a later reader would mistake
+//! a district view for the nationwide schedule.
 
 const std = @import("std");
 
