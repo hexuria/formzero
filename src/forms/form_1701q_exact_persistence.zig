@@ -2037,13 +2037,16 @@ fn seedSyntheticProfileRepository(repository: *store.Store) !void {
             .contact = .{
                 .registered_address = "SYNTHETIC PERSISTENCE ADDRESS",
                 .zip_code = "1000",
+                .contact_number = "+639171234567",
                 .email_address = "synthetic-r1@example.test",
             },
+            .accounting_period_basis = .calendar,
             .subject = .{ .individual = .{
                 .name = "PERSISTENCE SYNTHETIC FILER",
                 .date_of_birth = dateText(
                     try model.Date.init(1990, 1, 15),
                 ),
+                .citizenship = "Filipino",
             } },
         },
     );

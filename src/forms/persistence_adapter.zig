@@ -2317,6 +2317,14 @@ fn persistTestRevision(
                 null,
         },
         .subject = persistenceSubject(&revision.subject),
+        .accounting_period_basis = if (revision.accounting_period_basis) |basis|
+            switch (basis) {
+                .calendar => .calendar,
+                .fiscal => .fiscal,
+            }
+        else
+            null,
+        .fiscal_year_end_month = revision.fiscal_year_end_month,
     };
     if (revision.sequence == 1) {
         try store.createProfileWithRevision(

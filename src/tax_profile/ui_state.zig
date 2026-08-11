@@ -5999,13 +5999,19 @@ test "legacy sole-proprietor load migrates through canonical individual save" {
         },
         .contact = .{
             .address = try fields.RegisteredAddress.parse("Quezon City"),
+            .zip_code = try fields.ZipCode.parse("1100"),
+            .contact_number = try fields.ContactNumber.parse("09171234567"),
+            .email_address = try fields.EmailAddress.parse("legacy@example.ph"),
         },
         .subject = .{ .sole_proprietor = .{
             .person = .{
                 .name = try fields.TaxpayerName.parse("Legacy Professional"),
+                .date_of_birth = try model.Date.parseIso("1990-01-02"),
+                .citizenship = try fields.Citizenship.parse("Filipino"),
             },
             .trade_name = try fields.RegisteredName.parse("Legacy Trade Name"),
         } },
+        .accounting_period_basis = .calendar,
     };
     try profile_persistence.createProfileWithRevision(
         &store,
@@ -7394,12 +7400,18 @@ test "a taxpayer past the display bound is reachable by search" {
             },
             .contact = .{
                 .address = try fields.RegisteredAddress.parse("Quezon City"),
+                .zip_code = try fields.ZipCode.parse("1100"),
+                .contact_number = try fields.ContactNumber.parse("09171234567"),
+                .email_address = try fields.EmailAddress.parse("scale@example.ph"),
             },
             .subject = .{ .individual = .{
                 .name = try fields.TaxpayerName.parse(
                     try std.fmt.bufPrint(&name_buffer, "Taxpayer {d:0>4}", .{index}),
                 ),
+                .date_of_birth = try model.Date.parseIso("1990-01-02"),
+                .citizenship = try fields.Citizenship.parse("Filipino"),
             } },
+            .accounting_period_basis = .calendar,
         };
         try profile_persistence.createProfileWithRevision(
             &store,

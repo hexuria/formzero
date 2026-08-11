@@ -1763,11 +1763,10 @@ test "Tax Form Profile persistence enforces generated setup and Forms Set covera
         .manual_entry,
     );
     other_base.identity.tin = try field.Tin.parse("987-654-321-000");
-    const other_profile = try editor.begin(other_base)
-        .individual(.{
-            .name = try field.TaxpayerName.parse("OTHER TAXPAYER"),
-        })
-        .build();
+    const other_profile = try testIndividualRevisionFromBase(
+        other_base,
+        "OTHER TAXPAYER",
+    );
     try createProfileWithRevision(
         &store,
         allocator,
@@ -2336,8 +2335,8 @@ test "normal Base writes create no retired component rows" {
         "revision-sole-proprietor",
         .{ .imported = try field.SourceReference.parse("bir-import-2026") },
     );
-    var revision = try editor.begin(base)
-        .soleProprietor(.{
+    var revision = try buildProductionTestRevision(
+        editor.begin(base).soleProprietor(.{
             .person = .{
                 .name = try field.TaxpayerName.parse("MARIA SANTOS"),
                 .date_of_birth = try model.Date.parseIso("1995-06-01"),
@@ -2347,8 +2346,8 @@ test "normal Base writes create no retired component rows" {
                 ),
             },
             .trade_name = try field.RegisteredName.parse("MARIA'S BAKERY"),
-        })
-        .build();
+        }),
+    );
     try revision.validate();
 
     try createProfileWithRevision(&store, allocator, .active, &revision);
@@ -2509,13 +2508,15 @@ test "every legal entity subject kind round trips exactly" {
             "123-456-78{d}-000",
             .{index},
         ));
-        const revision = try editor.begin(base).legalEntity(.{
-            .registered_name = try field.RegisteredName.parse(
-                "EXAMPLE LEGAL ENTITY",
-            ),
-            .trade_name = try field.RegisteredName.parse("EXAMPLE TRADE"),
-            .kind = kind,
-        }).build();
+        const revision = try buildProductionTestRevision(
+            editor.begin(base).legalEntity(.{
+                .registered_name = try field.RegisteredName.parse(
+                    "EXAMPLE LEGAL ENTITY",
+                ),
+                .trade_name = try field.RegisteredName.parse("EXAMPLE TRADE"),
+                .kind = kind,
+            }),
+        );
         try createProfileWithRevision(&store, allocator, .active, &revision);
         var loaded = (try loadCurrentRevision(
             &store,
@@ -2570,12 +2571,32 @@ fn testIndividualRevision() !model.ProfileRevision {
         "revision-individual",
         .manual_entry,
     );
-    return try editor.begin(base).individual(.{
-        .name = try field.TaxpayerName.parse("JUAN DELA CRUZ"),
+    return testIndividualRevisionFromBase(base, "JUAN DELA CRUZ");
+}
+
+/// All adapter fixtures model a current, production-saveable profile. The
+/// storage schema is deliberately nullable for compatibility reads, but test
+/// writes must supply the current required accounting and natural-person
+/// facts before crossing the persistence boundary.
+fn buildProductionTestRevision(
+    ready: editor.Ready,
+) !model.ProfileRevision {
+    var revision = try ready.build();
+    revision.accounting_period_basis = .calendar;
+    try revision.validate();
+    return revision;
+}
+
+fn testIndividualRevisionFromBase(
+    base: editor.Base,
+    name: []const u8,
+) !model.ProfileRevision {
+    return buildProductionTestRevision(editor.begin(base).individual(.{
+        .name = try field.TaxpayerName.parse(name),
         .date_of_birth = try model.Date.parseIso("1990-01-02"),
         .citizenship = try field.Citizenship.parse("Filipino"),
         .foreign_tax_number = try field.ForeignTaxNumber.parse("JP-98765"),
-    }).build();
+    }));
 }
 
 fn testBase(

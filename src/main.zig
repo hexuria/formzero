@@ -19143,11 +19143,15 @@ fn appendLegacyIncompleteContactRevisionForTest(
     revision.contact.zip_code = null;
     revision.contact.contact_number = null;
     revision.contact.email_address = null;
-    try profile_persistence.appendRevision(
-        store,
+    var rows = try profile_persistence.toWriteRows(
         allocator,
         &revision,
         owned.revision.sequence,
+    );
+    defer rows.deinit(allocator);
+    try profile_store.testing.appendLegacyBaseRevision(
+        store,
+        rows.revision,
     );
 }
 

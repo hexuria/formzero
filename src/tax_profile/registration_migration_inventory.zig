@@ -2549,6 +2549,7 @@ fn createFixtureProfile(
                 },
                 .trade_name = "Fixture Trade",
             } },
+            .accounting_period_basis = .calendar,
         },
     );
 }
