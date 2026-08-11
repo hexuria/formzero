@@ -3,6 +3,8 @@ param(
     [ValidateSet(
         "setup",
         "check",
+        "news-sync",
+        "news-sync-offline",
         "test",
         "build",
         "build-automation",
@@ -101,7 +103,20 @@ switch ($Command) {
     "check" {
         Invoke-Checked "npm.cmd" @("run", "test:app-identity")
         Invoke-Checked "npm.cmd" @("run", "check:tax-catalog")
+        Invoke-Checked "npm.cmd" @("run", "typecheck:news-sync")
+        Invoke-Checked "npm.cmd" @("run", "test:news-sync")
         Invoke-NativeCli @("check", [string]$appIdentity.appRoot, "--strict")
+    }
+
+    # The news pipeline is plain Node and needs no Zig toolchain, but a live
+    # run still wants poppler's pdftotext on PATH; sync.ts exits 2 with the
+    # install hint when it is missing.
+    "news-sync" {
+        Invoke-Checked "npm.cmd" @("run", "news:sync", "--", "all")
+    }
+
+    "news-sync-offline" {
+        Invoke-Checked "npm.cmd" @("run", "news:sync", "--", "all", "--offline")
     }
 
     "test" {

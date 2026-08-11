@@ -108,7 +108,21 @@ just test
 just build
 just package
 just install
+just news-sync
+just news-sync-offline
 ```
+
+The two `news-sync` recipes run the BIR issuance pipeline. They are plain Node
+and need no Zig toolchain, so they resolve through `{{ npm_command }}` on every
+platform without a Windows-specific recipe; a live run additionally wants
+poppler's `pdftotext` on `PATH`, and the pipeline exits 2 with the install hint
+when it is missing. `scripts/just-windows.ps1` accepts them as verbs too, and
+its `check` verb now runs the pipeline's typecheck and test suite alongside the
+catalog checks, matching the unix recipe.
+
+These news verbs have not been exercised on the audited ARM64 host — the
+PowerShell parses and every npm script it names exists, but nothing beyond that
+is verified on Windows.
 
 `just package` builds the unsigned Windows ARM64 directory artifact. `just
 install` copies the main build to `%LOCALAPPDATA%\Programs\Buwiz App` by default and creates

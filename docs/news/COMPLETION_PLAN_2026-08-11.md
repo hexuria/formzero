@@ -10,7 +10,7 @@ calls: every task says exactly what to change, how to prove it worked, and what
 to do when it does not. Read §1 (the operating manual) before touching
 anything.
 
-Progress: 4/13 tasks complete.
+Progress: 5/13 tasks complete.
 
 ---
 
@@ -299,7 +299,7 @@ blocker here.
 
 ### Phase C-D — hygiene and coverage (P3)
 
-- [ ] **C6 — Windows recipes for the news pipeline.**
+- [x] **C6 — Windows recipes for the news pipeline.**
   - Files: `scripts/just-windows.ps1`, `Justfile` (windows recipe stubs if the
     existing pattern needs them).
   - Change: mirror what the unix recipes gained: the `check` verb also runs
