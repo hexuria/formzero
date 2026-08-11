@@ -4134,8 +4134,7 @@ pub const Model = struct {
     }
 
     pub fn profileRdoSelectionMissing(self: *const Model) bool {
-        return !self.profileTaxViewing() and
-            rdo_reference.findByCode(self.taxProfiles.rdo.text()) == null;
+        return self.profileRdoErrorVisible();
     }
 
     pub fn profileRdoOptionRows(
@@ -4342,6 +4341,14 @@ pub const Model = struct {
 
     pub fn profileSubjectErrorVisible(self: *const Model) bool {
         return self.profileFieldErrorVisible(.taxpayer_type);
+    }
+
+    pub fn profileRdoErrorVisible(self: *const Model) bool {
+        return self.profileFieldErrorVisible(.rdo_code);
+    }
+
+    pub fn profileRdoValidationMessage(self: *const Model) []const u8 {
+        return self.profileFieldValidationMessage(.rdo_code);
     }
 
     pub fn profileSubjectValidationMessage(self: *const Model) []const u8 {
@@ -11478,6 +11485,7 @@ pub const Msg = union(enum) {
     profile_tin_segment_branch_input: canvas.TextInputEvent,
     profile_rdo_toggle_picker,
     profile_rdo_close_picker,
+    profile_rdo_blurred,
     profile_rdo_query_input: canvas.TextInputEvent,
     profile_rdo_select: usize,
     profile_name_input: canvas.TextInputEvent,
@@ -13488,6 +13496,10 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             }
         },
         .profile_rdo_close_picker => syncProfileRdoControl(model),
+        .profile_rdo_blurred => {
+            syncProfileRdoControl(model);
+            model.taxProfiles.revealProfileFieldValidation(.rdo_code);
+        },
         .profile_rdo_query_input => |edit| {
             applyProfileRdoQuery(model, edit);
         },
@@ -13557,6 +13569,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             applyProfileCitizenshipQuery(model, edit);
         },
         .profile_citizenship_blurred => {
+            syncProfileCitizenshipControl(model);
             model.taxProfiles.revealProfileFieldValidation(.citizenship);
         },
         .profile_foreign_tax_number_input => |edit| {
@@ -13602,6 +13615,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.profileEffectiveStartYearPickerVisible = edit != .clear;
         },
         .profile_effective_start_year_blurred => {
+            model.profileEffectiveStartYearPickerVisible = false;
             model.taxProfiles.revealProfileFieldValidation(.effective_start);
         },
         .profile_effective_start_year_select => |year| {
@@ -13620,6 +13634,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.profileEffectiveEndYearPickerVisible = edit != .clear;
         },
         .profile_effective_end_year_blurred => {
+            model.profileEffectiveEndYearPickerVisible = false;
             model.taxProfiles.revealProfileFieldValidation(.effective_end);
         },
         .profile_effective_end_year_select => |year| {
@@ -27354,6 +27369,45 @@ test "profile RDO filter marks its first result for keyboard entry" {
         model.profileRdoQueryValue(),
     );
     try std.testing.expect(!model.profileRdoSelectionMissing());
+}
+
+test "profile combobox blur closes popups and reveals only applicable validation" {
+    var model = Model{ .page = .profile_setup };
+
+    try std.testing.expect(!model.profileRdoErrorVisible());
+    update(&model, .profile_rdo_toggle_picker);
+    try std.testing.expect(model.profileRdoPickerOpen());
+    update(&model, .profile_rdo_blurred);
+    try std.testing.expect(!model.profileRdoPickerOpen());
+    try std.testing.expect(model.profileRdoErrorVisible());
+    try std.testing.expectEqualStrings(
+        "RDO is required.",
+        model.profileRdoValidationMessage(),
+    );
+    update(&model, .{ .profile_rdo_select = 0 });
+    try std.testing.expect(!model.profileRdoErrorVisible());
+
+    model.taxProfiles.setSubjectKind(.individual);
+    model.taxProfiles.setNaturalPersonClassification(.pure_compensation);
+    update(&model, .profile_citizenship_toggle_picker);
+    try std.testing.expect(model.profileCitizenshipPickerOpen());
+    update(&model, .profile_citizenship_blurred);
+    try std.testing.expect(!model.profileCitizenshipPickerOpen());
+    try std.testing.expect(model.profileCitizenshipErrorVisible());
+    update(&model, .{ .profile_citizenship_select = 0 });
+    try std.testing.expect(!model.profileCitizenshipErrorVisible());
+
+    update(&model, .profile_effective_start_year_toggle_picker);
+    try std.testing.expect(model.profileEffectiveStartYearPickerOpen());
+    update(&model, .profile_effective_start_year_blurred);
+    try std.testing.expect(!model.profileEffectiveStartYearPickerOpen());
+    try std.testing.expect(model.profileEffectiveStartErrorVisible());
+
+    update(&model, .profile_effective_end_year_toggle_picker);
+    try std.testing.expect(model.profileEffectiveEndYearPickerOpen());
+    update(&model, .profile_effective_end_year_blurred);
+    try std.testing.expect(!model.profileEffectiveEndYearPickerOpen());
+    try std.testing.expect(!model.profileEffectiveEndErrorVisible());
 }
 
 test "registration filing tab keeps legacy workspace fail closed" {

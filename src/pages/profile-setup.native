@@ -54,7 +54,7 @@
 <template name="profile-rdo-editor">
   <column gap="4">
     <stack>
-      <combobox height="44" text="{profileRdoQueryValue}" placeholder="Search code or city" label="Revenue District Office (RDO)" selected="{profileRdoCommittedSelection}" expanded="{profileRdoPickerOpen}" autofocus="{profileRdoAutofocus}" on-input="profile_rdo_query_input" on-press="profile_rdo_toggle_picker"/>
+      <combobox height="44" text="{profileRdoQueryValue}" placeholder="Search code or city" label="Revenue District Office (RDO)" selected="{profileRdoCommittedSelection}" expanded="{profileRdoPickerOpen}" autofocus="{profileRdoAutofocus}" on-input="profile_rdo_query_input" on-press="profile_rdo_toggle_picker" on-blur="profile_rdo_blurred"/>
       <if test="{profileRdoPickerOpen}">
         <dropdown-menu anchor="below" anchor-alignment="stretch" on-dismiss="profile_rdo_close_picker">
           <column padding="4" gap="2">
@@ -65,8 +65,8 @@
         </dropdown-menu>
       </if>
     </stack>
-    <if test="{profileRdoSelectionMissing}">
-      <text wrap="true" foreground="warning">Choose an RDO from the filtered results.</text>
+    <if test="{profileRdoErrorVisible}">
+      <text wrap="true" foreground="destructive">{profileRdoValidationMessage}</text>
     </if>
   </column>
 </template>

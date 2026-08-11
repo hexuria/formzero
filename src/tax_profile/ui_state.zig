@@ -139,6 +139,7 @@ pub const EffectiveDateMode = enum {
 /// Field-level feedback is intentionally owned beside the validation rules so
 /// save eligibility, focus-loss messages, and errors cannot drift apart.
 pub const ProfileField = enum {
+    rdo_code,
     taxpayer_type,
     taxpayer_name,
     registered_address,
@@ -811,6 +812,16 @@ pub const State = struct {
         field: ProfileField,
     ) ?[]const u8 {
         return switch (field) {
+            .rdo_code => blk: {
+                const value = trimmed(self.rdo.text());
+                if (value.len == 0) {
+                    break :blk "RDO is required.";
+                }
+                if (rdo_reference.findByCode(value) == null) {
+                    break :blk "Choose an RDO from the filtered results.";
+                }
+                break :blk null;
+            },
             .taxpayer_type => if (!self.subject_kind_selected)
                 "Taxpayer Type is required."
             else
