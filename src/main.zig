@@ -21,6 +21,7 @@ const news_domain = @import("news/domain.zig");
 const news_feed_json = @import("news/feed_json.zig");
 const news_store = @import("news/store.zig");
 const news_ui = @import("news/ui_state.zig");
+const preferences_store = @import("preferences/store.zig");
 const profile_ui = @import("tax_profile/ui_state.zig");
 const registration_domain = @import("tax_profile/registration_domain.zig");
 const registration_editor = @import("tax_profile/registration_editor_ui.zig");
@@ -1590,6 +1591,9 @@ pub const Model = struct {
     // Resolved once at startup; the environment override lives as long as the
     // process, so the slice is safe to hold for the session.
     newsFeedUrl: []const u8 = important_news_feed_url,
+    /// App-owned interface preferences. `null` leaves every preference at its
+    /// default for the session, which is what an unreadable store degrades to.
+    preferencesStore: ?*preferences_store.Store = null,
     taxProfiles: profile_ui.State = .{},
     registrationLedger: ?registration_ledger.TaxpayerRegistrationLedger = null,
     registrationMutationGate: RegistrationMutationGate = .{},
@@ -1733,6 +1737,7 @@ pub const Model = struct {
         "newsAllocator",
         "newsNotices",
         "newsFeedUrl",
+        "preferencesStore",
         "calendarToday",
         "profileSubjectPickerVisible",
         "profileClassificationPickerVisible",
@@ -2316,8 +2321,11 @@ pub const Model = struct {
         return "Showing the first 1024 taxpayers. Search finds the rest.";
     }
 
+    /// The district of the taxpayer's saved registration, never the profile
+    /// editor's copy of it. A district-scoped deadline may move when a new
+    /// revision is recorded; it must not move while the field is being typed.
     pub fn selectedTaxpayerRdo(self: *const Model) []const u8 {
-        return self.taxProfiles.rdo.text();
+        return self.taxProfiles.registeredRdoCode();
     }
 
     pub fn hasSelectedTaxpayer(self: *const Model) bool {
@@ -13546,14 +13554,25 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .toggle_theme => {
             bumpSidebarActionEpoch(model);
             model.themePreference = if (effectiveColorScheme(model) == .dark) .light else .dark;
+            recordThemePreference(model);
         },
-        .set_theme_system => model.themePreference = .system,
-        .set_theme_light => model.themePreference = .light,
-        .set_theme_dark => model.themePreference = .dark,
+        .set_theme_system => {
+            model.themePreference = .system;
+            recordThemePreference(model);
+        },
+        .set_theme_light => {
+            model.themePreference = .light;
+            recordThemePreference(model);
+        },
+        .set_theme_dark => {
+            model.themePreference = .dark;
+            recordThemePreference(model);
+        },
         .expand_sidebar => {
             if (model.viewportClass == .desktop) {
                 model.sidebarPreference = .expanded;
                 model.sidebarOverlayOpen = false;
+                recordSidebarPreference(model);
             } else {
                 model.sidebarOverlayOpen = true;
             }
@@ -13561,10 +13580,12 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .collapse_sidebar => {
             model.sidebarPreference = .rail;
             model.sidebarOverlayOpen = false;
+            recordSidebarPreference(model);
         },
         .hide_sidebar => {
             model.sidebarPreference = .hidden;
             model.sidebarOverlayOpen = false;
+            recordSidebarPreference(model);
         },
         .open_sidebar_overlay => model.sidebarOverlayOpen = true,
         .close_sidebar_overlay => model.sidebarOverlayOpen = false,
@@ -13576,9 +13597,11 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
                     .rail
                 else
                     .expanded;
+                recordSidebarPreference(model);
             } else {
                 model.sidebarPreference = .hidden;
                 model.sidebarOverlayOpen = false;
+                recordSidebarPreference(model);
             }
         },
         .sidebar_profile_search_changed => |edit| {
@@ -14639,6 +14662,7 @@ fn selectGlobalRdoContext(model: *Model, entry_index: usize) void {
         return;
     };
     closeGlobalRdoContextPicker(model);
+    recordGlobalRdoContext(model);
     if (!changed) return;
     applyGlobalRdoContext(model);
 }
@@ -14646,9 +14670,95 @@ fn selectGlobalRdoContext(model: *Model, entry_index: usize) void {
 fn clearGlobalRdoContext(model: *Model) void {
     const changed = model.globalDashboard.clearRdoContext();
     closeGlobalRdoContextPicker(model);
+    recordGlobalRdoContext(model);
     if (!changed) return;
     const calendar = &model.globalDashboard.calendar;
     calendar.recompute() catch |err| calendar.setError(err);
+}
+
+/// Records how the reader wants the dashboard scoped so the next launch opens
+/// on the same view. Nationwide is recorded as a choice rather than as the
+/// absence of one, so clearing a district stays cleared. A preference that
+/// fails to record costs one re-selection and must not disturb the projection
+/// the reader just asked for.
+fn recordGlobalRdoContext(model: *Model) void {
+    const store = model.preferencesStore orelse return;
+    const preference = if (model.globalDashboard.rdoContext()) |code|
+        preferences_store.RdoContextPreference.district(code) catch return
+    else
+        preferences_store.RdoContextPreference.nationwide;
+    store.saveDashboardRdoContext(preference) catch {};
+}
+
+/// Reopens the dashboard on the district the reader last chose, before the
+/// first frame, so the scoped projection and its caption arrive together.
+///
+/// A stored code the canonical reference no longer carries degrades to the
+/// nationwide schedule: the caption cannot name that district, and a scope the
+/// page cannot name reads as the nationwide schedule it is not. The record is
+/// left in place so a later reference revision restores the reader's choice
+/// instead of this launch silently discarding it.
+fn restoreGlobalRdoContext(model: *Model) void {
+    const store = model.preferencesStore orelse return;
+    const recorded = (store.loadDashboardRdoContext() catch return) orelse
+        return;
+    if (recorded.isNationwide()) return;
+    if (rdo_reference.findByCode(recorded.code()) == null) return;
+    _ = model.globalDashboard.setRdoContext(recorded.code()) catch return;
+    applyGlobalRdoContext(model);
+}
+
+/// Records how the reader wants the application to look. `.system` is written
+/// as the choice it is, so a reader who deliberately follows the desktop
+/// appearance is distinguishable from one who has never chosen. A preference
+/// that fails to record costs one re-selection and must not disturb the
+/// appearance the reader just asked for.
+fn recordThemePreference(model: *Model) void {
+    const store = model.preferencesStore orelse return;
+    const choice = preferences_store.InterfaceChoice.named(
+        @tagName(model.themePreference),
+    ) catch return;
+    store.saveThemePreference(choice) catch {};
+}
+
+/// Records the navigation width the reader chose. The overlay is a transient
+/// disclosure rather than a width, so it is deliberately not recorded.
+fn recordSidebarPreference(model: *Model) void {
+    const store = model.preferencesStore orelse return;
+    const choice = preferences_store.InterfaceChoice.named(
+        @tagName(model.sidebarPreference),
+    ) catch return;
+    store.saveSidebarPreference(choice) catch {};
+}
+
+/// Reopens the shell on the appearance and navigation width the reader last
+/// chose, before the first frame, so no launch shows a default and then
+/// corrects itself.
+///
+/// A recorded token this build no longer names degrades to that preference's
+/// default: the shell cannot render a choice it cannot name. The record is
+/// left in place so a later build that names it again honours the reader's
+/// choice instead of this launch silently discarding it. An unreadable record
+/// degrades the same way, and never keeps the other preference from being
+/// restored.
+fn restoreInterfacePreferences(model: *Model) void {
+    const store = model.preferencesStore orelse return;
+    if (store.loadThemePreference() catch null) |recorded| {
+        if (std.meta.stringToEnum(
+            ThemePreference,
+            recorded.token(),
+        )) |preference| {
+            model.themePreference = preference;
+        }
+    }
+    if (store.loadSidebarPreference() catch null) |recorded| {
+        if (std.meta.stringToEnum(
+            SidebarPreference,
+            recorded.token(),
+        )) |preference| {
+            model.sidebarPreference = preference;
+        }
+    }
 }
 
 fn attachImportantNews(
@@ -14833,15 +14943,28 @@ fn appendSyncedOverrideCounts(
             " {d} rejected.",
             .{summary.rejected},
         ) catch "";
+    var pruned_buffer: [64]u8 = undefined;
+    const pruned = if (summary.pruned_expired == 0)
+        ""
+    else
+        std.fmt.bufPrint(
+            &pruned_buffer,
+            " {d} expired override{s} removed.",
+            .{
+                summary.pruned_expired,
+                if (summary.pruned_expired == 1) "" else "s",
+            },
+        ) catch "";
     var buffer: [256]u8 = undefined;
     const text = std.fmt.bufPrint(
         &buffer,
-        "{s} {d} BIR override{s} synced.{s}",
+        "{s} {d} BIR override{s} synced.{s}{s}",
         .{
             model.calendar.notice.text(),
             summary.inserted + summary.updated,
             if (summary.inserted + summary.updated == 1) "" else "s",
             rejected,
+            pruned,
         },
     ) catch return;
     model.calendar.setNotice(.success, text);
@@ -18412,6 +18535,14 @@ pub fn main(init: std.process.Init) !void {
         &news_database_path_buffer,
         &.{ storage_data_dir, news_store.default_filename },
     );
+    // Interface preferences keep their own file: they are neither taxpayer
+    // data nor calendar policy, and losing them costs one re-selection.
+    var preferences_database_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const preferences_database_path = try app_dirs.join(
+        platform,
+        &preferences_database_path_buffer,
+        &.{ storage_data_dir, preferences_store.default_filename },
+    );
     var export_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const export_path = try app_dirs.join(
         platform,
@@ -18461,6 +18592,14 @@ pub fn main(init: std.process.Init) !void {
             news_database_path,
         );
     defer important_news_store.close();
+    var interface_preferences = if (fixture_directory != null)
+        try preferences_store.Store.openMemory(init.gpa)
+    else
+        try preferences_store.Store.openRecoverable(
+            init.gpa,
+            preferences_database_path,
+        );
+    defer interface_preferences.close();
     const boot_time = bootCalendarTime(init.io);
     var boot_date: [10]u8 = undefined;
     @memcpy(boot_date[0..4], boot_time.stamp[0..4]);
@@ -18500,6 +18639,8 @@ pub fn main(init: std.process.Init) !void {
         if (fixture_directory) |*directory| directory.dir else data_directory;
     app_state.model.fixturePreviewSession = fixture_preview_requested;
     app_state.model.newsFeedUrl = news_feed_url;
+    app_state.model.preferencesStore = &interface_preferences;
+    restoreInterfacePreferences(&app_state.model);
     app_state.model.calendarToday = try calendar_domain.Date.init(
         boot_time.year,
         boot_time.month,
@@ -18521,6 +18662,7 @@ pub fn main(init: std.process.Init) !void {
         boot_time.year,
         boot_time.month,
     );
+    restoreGlobalRdoContext(&app_state.model);
     try app_state.model.profileCalendar.attach(
         init.gpa,
         &calendar_store,
@@ -23093,6 +23235,45 @@ fn rdoReferenceIndex(code: []const u8) ?usize {
     return null;
 }
 
+/// Rebuilds the Global Dashboard the way startup does: a fresh model over the
+/// same persisted stores, with the recorded RDO context restored before any
+/// frame is produced. The caller owns the returned model.
+fn relaunchGlobalDashboard(
+    allocator: std.mem.Allocator,
+    calendar_store: *calendar_ui.persistence.Store,
+    preferences: ?*preferences_store.Store,
+) !*Model {
+    const model = try allocator.create(Model);
+    errdefer allocator.destroy(model);
+    model.* = .{};
+    model.preferencesStore = preferences;
+    try model.globalDashboard.calendar.attach(
+        allocator,
+        calendar_store,
+        "/tmp/buwiz-dashboard-relaunch-test.ics",
+        "20260811T010203Z",
+        2026,
+        8,
+    );
+    restoreGlobalRdoContext(model);
+    return model;
+}
+
+/// Rebuilds the shell the way startup does: a fresh model over the same
+/// preference store, with the recorded interface choices restored before any
+/// frame is produced. The caller owns the returned model.
+fn relaunchShell(
+    allocator: std.mem.Allocator,
+    preferences: ?*preferences_store.Store,
+) !*Model {
+    const model = try allocator.create(Model);
+    errdefer allocator.destroy(model);
+    model.* = .{};
+    model.preferencesStore = preferences;
+    restoreInterfacePreferences(model);
+    return model;
+}
+
 test "the published BIR feed moves the RDO 039 marker and leaves the nation alone" {
     const allocator = std.testing.allocator;
     var news_cache = try news_store.Store.openMemory(allocator);
@@ -23101,12 +23282,17 @@ test "the published BIR feed moves the RDO 039 marker and leaves the nation alon
         allocator,
     );
     defer calendar_store.close();
+    var interface_preferences = try preferences_store.Store.openMemory(
+        allocator,
+    );
+    defer interface_preferences.close();
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const scratch = arena.allocator();
 
     var model = Model{};
+    model.preferencesStore = &interface_preferences;
     // The three calendar surfaces share one store exactly as startup wires
     // them, so a synced override reaches every projection it should.
     try model.calendar.attach(
@@ -23274,6 +23460,39 @@ test "the published BIR feed moves the RDO 039 marker and leaves the nation alon
         scoped_dashboard.status,
     );
 
+    // The next launch opens on that same district: the moved marker and the
+    // caption that keeps it honest are both there before the first frame.
+    {
+        const relaunched = try relaunchGlobalDashboard(
+            allocator,
+            &calendar_store,
+            &interface_preferences,
+        );
+        defer allocator.destroy(relaunched);
+        try std.testing.expect(relaunched.globalRdoContextActive());
+        try std.testing.expectEqualStrings(
+            "039 - South Quezon City",
+            relaunched.globalRdoContextLabel(scratch),
+        );
+        try std.testing.expectEqualStrings(
+            "Showing RDO 039 - South Quezon City policy view, not the nationwide schedule.",
+            relaunched.globalRdoContextCaption(scratch),
+        );
+        const restored_scope = resolvedDeadlineFor(
+            &relaunched.globalDashboard.calendar,
+            "1601C",
+            "2026-08-10",
+        ) orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqual(
+            try calendar_domain.Date.init(2026, 8, 17),
+            restored_scope.final_deadline,
+        );
+        try std.testing.expectEqual(
+            calendar_domain.DeadlineStatus.extended,
+            restored_scope.status,
+        );
+    }
+
     // A district outside the circular reads the ordinary schedule again.
     const rdo_113 = rdoReferenceIndex("113") orelse
         return error.TestUnexpectedResult;
@@ -23302,6 +23521,329 @@ test "the published BIR feed moves the RDO 039 marker and leaves the nation alon
     try std.testing.expectEqual(
         try calendar_domain.Date.init(2026, 8, 10),
         restored.final_deadline,
+    );
+
+    // Clearing is a choice, not the absence of one: the record says nationwide
+    // and the next launch opens on the nationwide schedule with no caption.
+    const cleared = (try interface_preferences.loadDashboardRdoContext()) orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expect(cleared.isNationwide());
+    {
+        const relaunched = try relaunchGlobalDashboard(
+            allocator,
+            &calendar_store,
+            &interface_preferences,
+        );
+        defer allocator.destroy(relaunched);
+        try std.testing.expect(!relaunched.globalRdoContextActive());
+        try std.testing.expectEqualStrings(
+            "Nationwide",
+            relaunched.globalRdoContextLabel(scratch),
+        );
+        try std.testing.expectEqualStrings(
+            "",
+            relaunched.globalRdoContextCaption(scratch),
+        );
+        const nationwide_again = resolvedDeadlineFor(
+            &relaunched.globalDashboard.calendar,
+            "1601C",
+            "2026-08-10",
+        ) orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqual(
+            try calendar_domain.Date.init(2026, 8, 10),
+            nationwide_again.final_deadline,
+        );
+    }
+}
+
+test "a stored district the RDO reference dropped reopens nationwide" {
+    const allocator = std.testing.allocator;
+    var calendar_store = try calendar_ui.persistence.Store.openMemory(
+        allocator,
+    );
+    defer calendar_store.close();
+    var interface_preferences = try preferences_store.Store.openMemory(
+        allocator,
+    );
+    defer interface_preferences.close();
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+
+    // A code the canonical reference cannot name would caption as a scope the
+    // reader cannot identify, so it must not survive into the projection.
+    try std.testing.expect(rdo_reference.findByCode("ZZZ") == null);
+    try interface_preferences.saveDashboardRdoContext(
+        try preferences_store.RdoContextPreference.district("ZZZ"),
+    );
+
+    const relaunched = try relaunchGlobalDashboard(
+        allocator,
+        &calendar_store,
+        &interface_preferences,
+    );
+    defer allocator.destroy(relaunched);
+    try std.testing.expect(!relaunched.globalRdoContextActive());
+    try std.testing.expect(relaunched.globalRdoContextNationwide());
+    try std.testing.expectEqualStrings(
+        "Nationwide",
+        relaunched.globalRdoContextLabel(scratch),
+    );
+    try std.testing.expectEqualStrings(
+        "",
+        relaunched.globalRdoContextCaption(scratch),
+    );
+    try std.testing.expect(
+        relaunched.globalDashboard.calendar.notice_kind != .failure,
+    );
+
+    // The record is kept, not scrubbed: a later reference revision restores
+    // the reader's choice instead of this launch discarding it.
+    const kept = (try interface_preferences.loadDashboardRdoContext()) orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("ZZZ", kept.code());
+}
+
+test "a corrupt or absent preference store still opens the dashboard" {
+    const allocator = std.testing.allocator;
+    var calendar_store = try calendar_ui.persistence.Store.openMemory(
+        allocator,
+    );
+    defer calendar_store.close();
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var directory_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const directory_len = try tmp.dir.realPath(
+        std.testing.io,
+        &directory_buffer,
+    );
+    var path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const store_path = try std.fmt.bufPrint(
+        &path_buffer,
+        "{s}/{s}",
+        .{
+            directory_buffer[0..directory_len],
+            preferences_store.default_filename,
+        },
+    );
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = preferences_store.default_filename,
+        .data = "this is not a database",
+    });
+    var recovered = try preferences_store.Store.openRecoverable(
+        allocator,
+        store_path,
+    );
+    defer recovered.close();
+
+    const corrupted = try relaunchGlobalDashboard(
+        allocator,
+        &calendar_store,
+        &recovered,
+    );
+    defer allocator.destroy(corrupted);
+    try std.testing.expect(!corrupted.globalRdoContextActive());
+    try std.testing.expectEqualStrings(
+        "Nationwide",
+        corrupted.globalRdoContextLabel(scratch),
+    );
+    try std.testing.expect(
+        corrupted.globalDashboard.calendar.notice_kind != .failure,
+    );
+
+    // A launch with no preference store at all reaches the same default.
+    const without_store = try relaunchGlobalDashboard(
+        allocator,
+        &calendar_store,
+        null,
+    );
+    defer allocator.destroy(without_store);
+    try std.testing.expect(!without_store.globalRdoContextActive());
+    try std.testing.expect(
+        without_store.globalDashboard.calendar.notice_kind != .failure,
+    );
+}
+
+test "a chosen theme and sidebar width reopen before the first frame" {
+    const allocator = std.testing.allocator;
+    var interface_preferences = try preferences_store.Store.openMemory(
+        allocator,
+    );
+    defer interface_preferences.close();
+
+    var model = Model{};
+    model.preferencesStore = &interface_preferences;
+    try std.testing.expectEqual(ThemePreference.system, model.themePreference);
+    try std.testing.expect(model.lightThemeActive());
+    try std.testing.expectEqual(
+        SidebarPreference.expanded,
+        model.sidebarPreference,
+    );
+
+    update(&model, .set_theme_dark);
+    update(&model, .hide_sidebar);
+    try std.testing.expect(model.darkThemeActive());
+
+    // The next launch opens dark with navigation docked away, before any
+    // frame is produced, rather than showing the defaults and correcting
+    // itself.
+    {
+        const relaunched = try relaunchShell(
+            allocator,
+            &interface_preferences,
+        );
+        defer allocator.destroy(relaunched);
+        try std.testing.expectEqual(
+            ThemePreference.dark,
+            relaunched.themePreference,
+        );
+        try std.testing.expect(relaunched.darkThemeActive());
+        try std.testing.expectEqual(
+            SidebarPreference.hidden,
+            relaunched.sidebarPreference,
+        );
+        try std.testing.expect(!relaunched.sidebarRailVisible());
+        try std.testing.expect(relaunched.sidebarLauncherVisible());
+    }
+
+    // Following the system appearance is a choice the next launch honours,
+    // not the absence of one.
+    update(&model, .set_theme_system);
+    update(&model, .collapse_sidebar);
+    const recorded_theme = (try interface_preferences.loadThemePreference()) orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("system", recorded_theme.token());
+    {
+        const relaunched = try relaunchShell(
+            allocator,
+            &interface_preferences,
+        );
+        defer allocator.destroy(relaunched);
+        try std.testing.expectEqual(
+            ThemePreference.system,
+            relaunched.themePreference,
+        );
+        try std.testing.expectEqual(
+            SidebarPreference.rail,
+            relaunched.sidebarPreference,
+        );
+        try std.testing.expect(relaunched.sidebarRailVisible());
+        try std.testing.expect(!relaunched.sidebarLauncherVisible());
+    }
+}
+
+test "an interface choice this build cannot name reopens on the default and is kept" {
+    const allocator = std.testing.allocator;
+    var interface_preferences = try preferences_store.Store.openMemory(
+        allocator,
+    );
+    defer interface_preferences.close();
+
+    // Tokens a later build may name but this one cannot. A choice the shell
+    // cannot render must not reach the first frame.
+    try std.testing.expect(
+        std.meta.stringToEnum(ThemePreference, "midnight") == null,
+    );
+    try std.testing.expect(
+        std.meta.stringToEnum(SidebarPreference, "floating") == null,
+    );
+    try interface_preferences.saveThemePreference(
+        try preferences_store.InterfaceChoice.named("midnight"),
+    );
+    try interface_preferences.saveSidebarPreference(
+        try preferences_store.InterfaceChoice.named("floating"),
+    );
+
+    const relaunched = try relaunchShell(allocator, &interface_preferences);
+    defer allocator.destroy(relaunched);
+    try std.testing.expectEqual(
+        ThemePreference.system,
+        relaunched.themePreference,
+    );
+    try std.testing.expect(relaunched.lightThemeActive());
+    try std.testing.expectEqual(
+        SidebarPreference.expanded,
+        relaunched.sidebarPreference,
+    );
+
+    // Both records are kept, not scrubbed: a later build that names them
+    // restores the reader's choice instead of this launch discarding it.
+    const theme = (try interface_preferences.loadThemePreference()) orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("midnight", theme.token());
+    const sidebar = (try interface_preferences.loadSidebarPreference()) orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("floating", sidebar.token());
+}
+
+test "a corrupt or absent preference store still opens the shell on its defaults" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var directory_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const directory_len = try tmp.dir.realPath(
+        std.testing.io,
+        &directory_buffer,
+    );
+    var path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const store_path = try std.fmt.bufPrint(
+        &path_buffer,
+        "{s}/{s}",
+        .{
+            directory_buffer[0..directory_len],
+            preferences_store.default_filename,
+        },
+    );
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = preferences_store.default_filename,
+        .data = "this is not a database",
+    });
+    var recovered = try preferences_store.Store.openRecoverable(
+        allocator,
+        store_path,
+    );
+    defer recovered.close();
+
+    const corrupted = try relaunchShell(allocator, &recovered);
+    defer allocator.destroy(corrupted);
+    try std.testing.expectEqual(
+        ThemePreference.system,
+        corrupted.themePreference,
+    );
+    try std.testing.expectEqual(
+        SidebarPreference.expanded,
+        corrupted.sidebarPreference,
+    );
+
+    // The recovered session still holds this session's choices.
+    update(corrupted, .set_theme_dark);
+    try std.testing.expect(corrupted.darkThemeActive());
+    const session_theme = (try recovered.loadThemePreference()) orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("dark", session_theme.token());
+
+    // A launch with no preference store at all reaches the same defaults and
+    // still lets the reader change them for the session.
+    const without_store = try relaunchShell(allocator, null);
+    defer allocator.destroy(without_store);
+    try std.testing.expectEqual(
+        ThemePreference.system,
+        without_store.themePreference,
+    );
+    try std.testing.expectEqual(
+        SidebarPreference.expanded,
+        without_store.sidebarPreference,
+    );
+    update(without_store, .hide_sidebar);
+    try std.testing.expectEqual(
+        SidebarPreference.hidden,
+        without_store.sidebarPreference,
     );
 }
 
@@ -23394,11 +23936,41 @@ test "the selected profile's registered RDO decides which synced override it see
         extended.source.text(),
     );
 
+    // Emptying the RDO field mid-edit is a keystroke, not a re-registration.
+    // The taxpayer is still registered in 039 until a revision says
+    // otherwise, so a recompute in that state keeps the extension.
+    update(&model, .edit_tax_profile);
+    try std.testing.expect(model.taxProfiles.profileEditing());
+    update(&model, .{ .profile_rdo_query_input = .clear });
+    try std.testing.expectEqualStrings("", model.taxProfiles.rdo.text());
+    try std.testing.expectEqualStrings("039", model.selectedTaxpayerRdo());
+    update(&model, .calendar_refresh);
+    const while_editing = resolvedDeadlineFor(
+        &model.profileCalendar,
+        "1601C",
+        "2026-08-10",
+    ) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(
+        try calendar_domain.Date.init(2026, 8, 17),
+        while_editing.final_deadline,
+    );
+    try std.testing.expectEqual(
+        calendar_domain.DeadlineStatus.extended,
+        while_editing.status,
+    );
+
+    // The taxpayer type the context carries is read from the stored row, so
+    // an unsaved change of legal subject cannot move a deadline either.
+    update(&model, .profile_subject_corporation);
+    try std.testing.expectEqualStrings(
+        "Individual",
+        model.selectedTaxpayerKind(),
+    );
+    update(&model, .profile_subject_individual);
+
     // Re-registering the same taxpayer in a district the circular does not
     // name returns the obligation to its statutory date, through the profile
     // editor rather than a hand-supplied context.
-    update(&model, .edit_tax_profile);
-    try std.testing.expect(model.taxProfiles.profileEditing());
     update(&model, .{
         .profile_rdo_select = rdoReferenceIndex("113") orelse
             return error.TestUnexpectedResult,

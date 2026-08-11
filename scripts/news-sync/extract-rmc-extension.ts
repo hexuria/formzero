@@ -11,6 +11,7 @@
 // Pure: no I/O, no clock. `layoutText` comes from pdf.ts, which owns the
 // download and the poppler call.
 
+import type { CircularAnchors } from "./extract-deadline-table.ts";
 import {
   extractDeadlineRows,
   parseCircularAnchors,
@@ -78,7 +79,15 @@ export function extractCircular(input: ExtractCircularInput): CircularExtraction
       : `page-1 letterhead issue date: ${headerDateIssued}`,
   );
 
-  const anchors = parseCircularAnchors(layoutText);
+  const parsedAnchors = parseCircularAnchors(layoutText);
+  // The archive's date of issue is typed by the CMS, not read off a scan, so
+  // it anchors the year better than anything in the page text.
+  const issuedYear =
+    issuance.dateIssued === null ? null : Number.parseInt(issuance.dateIssued.slice(0, 4), 10);
+  const anchors: CircularAnchors = {
+    ...parsedAnchors,
+    referenceYear: issuedYear ?? parsedAnchors.referenceYear,
+  };
   if (anchors.globalExtendedDate === null) {
     notes.push(
       "no circular-level extended date found in the prose; rows with a damaged extended " +

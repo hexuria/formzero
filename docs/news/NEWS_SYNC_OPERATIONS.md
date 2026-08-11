@@ -65,8 +65,8 @@ matter. `concurrency: news-sync` prevents two runs from racing on the
 publishing branch, and `workflow_dispatch` allows a manual run at any time.
 
 Most runs are no-ops. An issuance already recorded in `state/seen.json` with an
-unchanged PDF checksum skips extraction, and the publish step commits only when
-the compiled output actually changed.
+unchanged PDF skips both the download and the extraction, and the publish step
+commits only when the compiled output actually changed.
 
 ## What a run produces, and where the feed is published
 
@@ -75,7 +75,9 @@ One run writes four things inside `scripts/news-sync/`:
 - `feed/feed.json` — the compiled feed the app reads (schema 1, notices plus
   overrides, size budget 512 KiB).
 - `state/seen.json` — per-issuance dedupe state keyed by external id, holding
-  the PDF SHA-256 and the first-seen timestamp.
+  the PDF SHA-256, the size the origin served that PDF at, the extraction it
+  produced, and the first-seen timestamp. This is the pipeline's only durable
+  memory: `work/` never survives a runner.
 - `review/<external-id>.md` — one human-readable extraction report per
   deep-extracted circular, for example `review/bir-rmc-2026-089.md`.
 - `work/` — downloaded PDFs and cached extraction results. Scratch only, and
@@ -105,6 +107,102 @@ rediscovers every issuance published since then, re-downloads its PDF, and
 republishes a feed differing only in `generated_at_unix` and `firstSeenAtUnix`
 — a commit every six hours whether or not BIR published anything. With it, a
 run that finds nothing new makes no commit at all.
+
+## Unchanged PDFs are not re-downloaded
+
+A run asks the origin one HEAD per extension circular and skips both the
+download and the re-extraction when the answer matches what published state
+recorded. Size decides on its own only when there is nothing better: a strong
+`ETag` on both sides overrides a matching size, because a replacement document
+of identical length is the one edit a size check cannot see. A weak validator
+(`W/"…"`) promises only semantic equivalence, which is not the question, so it
+is ignored. Anything missing or disagreeing means download — never "assume
+unchanged".
+
+
+Before fetching an extension circular's PDF, a run issues one `HEAD` request and
+compares the origin's `Content-Length` with the size recorded in
+`state/seen.json` for the extraction it already has. When the two agree, the run
+skips the download *and* the re-extraction, and publishes the extraction stored
+in state. Seven circulars, 4.2 MB, four times a day, is what this avoids; the
+extraction lives in state precisely because a skipped download would otherwise
+silently drop that circular's overrides from the feed.
+
+The check only ever skips work on a positive answer. It falls back to
+downloading whenever anything is unknown or disagrees:
+
+- state carries no recorded size, or no recorded extraction (for example the
+  first run after a code change, or after `--force`);
+- the origin does not answer `HEAD`, answers non-2xx, or omits
+  `Content-Length`;
+- the reported size differs from the recorded one by a single byte.
+
+So a server that stops answering `HEAD`, or starts serving the PDF
+content-encoded, degrades to the old behaviour — four downloads a day — never
+to a stale feed. A run against `--offline` never fetches anything and is
+unaffected.
+
+`state/seen.json` grew when the extraction moved into it: expect roughly 60 KB
+rather than 16 KB on the `news-feed` branch, most of it RMC 89-2026's 60 matched
+RDOs and 22 table blocks. It still changes only when an extraction changes, so
+the publish diff stays quiet.
+
+## The curated supplement
+
+`scripts/news-sync/curated/overrides.json` is a small hand-authored file of
+override records that a human read off a circular's printed table. It exists
+for one specific limitation: BIR prints a merged deadline-table cell whose date
+pair appears **once**, next to an arbitrary paragraph inside a bordered row that
+may hold ten of them and span a page break. Word coordinates carry no
+row-boundary signal, so the extractor refuses to guess which paragraphs share a
+cell — a guess would fabricate overrides rather than miss them. The reasoning
+and the measurements are in
+[MERGED_CELL_INVESTIGATION.md](MERGED_CELL_INVESTIGATION.md).
+
+It travels in the published feed, and that is the point: a manual override typed
+into one user's calendar editor lives in that user's SQLite and reaches nobody
+else.
+
+**When to add one.** Only after reading the source PDF. The review report's
+"Dropped / needs review" section already names every held-back row with its
+nearest printed dates; open the PDF, confirm with your own eyes that the row
+sits inside the same bordered cell as an override the extractor did publish,
+and only then add an entry. If the row is not in that cell, or the circular
+prints no pair for it at all, it does not belong here.
+
+**How an entry is scoped.** It is not. An entry names a notice, a date pair, a
+channel and its form codes; the compiler matches it to the extracted record with
+that identity and the curated record *inherits that record's `rdo_codes`*. So
+the supplement can never disagree with the extraction about who is affected, and
+it follows the extraction automatically if the circular's office list is ever
+re-read. If no matching extracted record exists in the run, the entry is dropped
+with a reason in the log rather than published unscoped.
+
+**The rules the compiler enforces**, all of them the same rules extracted
+records obey:
+
+- `form_codes` must be canonical app codes (`2200M`, not `2200-M`). A
+  non-canonical code is dropped and reported; an entry left with none is
+  dropped entirely.
+- `channel` must be `nonefps` or `efps_and_nonefps`. Never add an eFPS-group
+  row: the app models non-eFPS statutory dates (locked decision L10).
+- The `adjusted_deadline` must match the extracted record's. A disagreement
+  means one of the two misread the cell, so neither is trusted and the curated
+  entry is dropped.
+- The published id is the extracted record's plus `-reviewed`, for example
+  `bir:rmc:2026:089/2026-08-10/nonefps-reviewed`. A curated record can never
+  collide with or overwrite an extracted one, and dismissing one in the app
+  does not dismiss the other.
+- A malformed entry, or a missing file, costs coverage and nothing else: the
+  run continues on the extracted records alone and logs why.
+
+Every entry carries a `reviewed` note naming the printed evidence and the page
+it is on, plus the date it was checked. **Re-check an entry whenever its
+circular is amended, superseded or re-issued, and delete it when the circular no
+longer applies** — nothing in the pipeline can notice that for you. Each review
+report separates the two provenances under "Emitted overrides
+(machine-extracted)" and "Curated supplements (human-authored)", and each run
+logs `overrides: N extracted, M curated`.
 
 ## Migrating the feed to Cloudflare R2 + a Worker (decided, not yet scheduled)
 
@@ -174,6 +272,28 @@ outage.
 
 ## Failure triage
 
+### The origin refuses a PDF (`pdf_unavailable`)
+
+bir-cdn has answered `403 AccessDenied` for a circular's PDF minutes after
+serving the same URL, which looks like hotlink or rate protection rather than
+a withdrawal. A run absorbs this rather than dying on it, and says which it
+did on the greppable summary line:
+
+- `pdf_reused=N` — the origin refused, but the circular's extraction was
+  already recorded in `state/seen.json`, so its overrides still publish. No
+  action needed; the next run usually fetches normally.
+- `pdf_unavailable=N` — the origin refused a circular this pipeline has never
+  read, so it contributes no overrides. The run still publishes every notice
+  and every other circular's overrides. Each one is logged as
+  `drop: pdf_unavailable — …`. If it persists across several runs, fetch the
+  PDF by hand and check whether BIR moved or withdrew it.
+
+Only the origin refusing is absorbed. A missing `pdftotext`, a parser fault,
+or any other error still fails the run, because those break every circular and
+a feed published around them would be quietly wrong rather than merely short.
+
+
+
 Start from the failed workflow run page. The final step prints the last 40
 lines of the sync log and a triage reminder as a `::error` annotation.
 
@@ -185,7 +305,8 @@ lines of the sync log and a triage reminder as a `::error` annotation.
 | `template-id discovery … failed; falling back to the checked-in id` | Discovery regex missed but the map saved the run. The feed is still correct. | Not urgent, but it means the page markup moved. Re-check `extractYearTemplateId` before the next January. |
 | Report says **Needs manual review: yes** with an unusable text layer | `pdftotext` produced under 200 characters per page, so BIR shipped a scan without an OCR layer. No rows were extracted and no override is emitted. | The notice still publishes. If the circular matters, enter the override by hand in the app's override editor. Adding an OCR stage is tracked as a follow-up, not a v1 behavior. |
 | Report says **office-count invariant FAILED** | The circular's prose states a number of affected offices that disagrees with the RDO codes actually matched. | Read `review/<external-id>.md`. The RDO matches section lists every match with its raw OCR text and its confidence, so the missing or spurious office is usually obvious. Overrides are still emitted, scoped to the offices that were matched — treat a mismatch as "the scope may be too narrow", not as "the dates are wrong". |
-| A known circular publishes as a notice but moves no marker | Ordinary and expected for most rows. Only rows with a date pair printed on their own lines become overrides; merged-cell rows are held back deliberately. | Read the "Dropped / needs review" section of the review report. Each held-back row is listed with its reason and its nearest printed dates, which is enough to add a manual override in seconds. |
+| A known circular publishes as a notice but moves no marker | Ordinary and expected for most rows. Only rows with a date pair printed on their own lines become overrides; merged-cell rows are held back deliberately. | Read the "Dropped / needs review" section of the review report. Each held-back row is listed with its reason and its nearest printed dates. If the row shares a bordered cell with a record the extractor did publish, add a curated supplement (above) so every install gets it; otherwise a local manual override in the app's editor is the fix. |
+| `drop: curated_no_extracted_record` in the log | A curated entry names a date pair this run did not extract, so it has no scope to inherit. Usually the circular was superseded, or the extractor's output moved. | Re-read the circular and either fix the entry's date pair or delete it. The feed is correct meanwhile — the entry is simply not published. |
 | The feed is stale but no run failed | Every run was a legitimate no-op, or the publish step found no change. | Check `state/seen.json` on the `news-feed` branch against the live archive. Use `--force` (below) to rewind one issuance. |
 
 Parser repairs are developed offline. The committed captures under
@@ -214,6 +335,17 @@ feed. Because an override's identity is
 `<external-id>/<original-date>/<channel>`, a corrected extraction updates the
 same record in place — in the pipeline and in every app that syncs it. It never
 creates a duplicate.
+
+## Synced overrides expire on their own
+
+A feed carries only recent issuances, so nothing in it would ever remove an
+override once written and each taxpayer's calendar store would grow for ever.
+Every sync therefore sweeps synced rows whose extended date is more than 400
+days past — just over a year, so the whole prior filing year stays visible for
+anyone comparing this year's dates against last year's. The reload notice
+reports what went. Manually entered overrides are never swept: the operator
+wrote them, and only the operator removes them. Dismissal tombstones also
+stay, since they are what stops a pruned row being re-added.
 
 ## Dismissing a bad synced override in the app
 

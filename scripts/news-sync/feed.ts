@@ -5,13 +5,24 @@
 // a non-eFPS channel, catalog-known form codes and a non-empty RDO scope).
 // Everything else is returned in `dropped` so the review report (review.ts) can
 // hand it to a human instead of silently guessing.
+//
+// The one exception is the curated supplement (`curated/overrides.json`), which
+// carries what a human read off the printed PDF for the merged table cells the
+// extractor will not guess. Curated records are merged here, in their own
+// external_ref namespace, and are held to the same §4.1 rules as extracted
+// ones — including their scope, which they inherit from the extracted record
+// they supplement rather than declare for themselves.
 
 import { Buffer } from "node:buffer";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { CANONICAL_FORM_CODES } from "./form-codes.ts";
 import type {
   Channel,
   CircularExtraction,
+  CuratedOverride,
   DateSource,
   ExtensionRow,
   Feed,
@@ -29,6 +40,8 @@ export type DropRecord = {
 export type CompileFeedInput = {
   issuances: IssuanceRecord[];
   extractions: CircularExtraction[];
+  /** Hand-authored supplements from `curated/overrides.json`; none by default. */
+  curated?: readonly CuratedOverride[];
   generatedAtUnix: number;
 };
 
@@ -49,8 +62,18 @@ export type CivilDate = {
   day: number;
 };
 
-/** Notice cap from §4.1; mirrors the app's `domain.max_notices` after T5.3. */
-export const maxNotices = 120;
+/**
+ * Notice cap from §4.1; mirrors the app's `domain.max_notices`, and the pair is
+ * pinned by a test on each side.
+ *
+ * Sized to hold a full year: BIR published ~115 issuances in the first eight
+ * months of 2026, so ~20 a month. At 120 the cap would have bitten within
+ * weeks and silently dropped the oldest months, emptying their dashboard panes
+ * — the month-scoped pane failing first, and quietly. 240 clears a year with
+ * room to spare and still costs little: notices measure ~500 bytes each, so a
+ * full feed is ~120 KiB against the 512 KiB budget.
+ */
+export const maxNotices = 240;
 /** Summary byte cap from §4.1; mirrors the app's notice summary bound. */
 export const maxSummaryBytes = 4096;
 /** Serialized feed budget from §4.1 (the app rejects oversized bodies). */
@@ -72,6 +95,21 @@ export const emittableChannels: ReadonlySet<Channel> = new Set<Channel>([
   "nonefps",
   "efps_and_nonefps",
 ]);
+
+/**
+ * Namespace suffix for a curated override record's `external_ref`.
+ *
+ * The app stores one override row per `external_ref` and upserts on it, so a
+ * curated record must never share an id with the extracted record it
+ * supplements: with the same id the two would overwrite each other run after
+ * run, and dismissing one would dismiss the other.
+ */
+export const curatedRefSuffix = "-reviewed";
+
+/** True for an override a human authored, false for one the extractor produced. */
+export function isCuratedRef(externalRef: string): boolean {
+  return externalRef.endsWith(curatedRefSuffix);
+}
 
 export function parseIsoDate(text: string): CivilDate | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(text);
@@ -283,6 +321,236 @@ function collectGroups(
   );
 }
 
+/** The committed curated supplement; the file documents itself in its `note`. */
+export const curatedOverridesPath = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "curated",
+  "overrides.json",
+);
+
+export type CuratedLoadResult = {
+  entries: CuratedOverride[];
+  /** Why any entry (or the whole file) was not usable. */
+  dropped: DropRecord[];
+};
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+/** A validated entry, or the reason this one cannot be trusted. */
+function parseCuratedEntry(value: unknown): CuratedOverride | string {
+  if (!isJsonObject(value)) return "entry is not a JSON object";
+
+  const noticeExternalId = nonEmptyString(value.notice_external_id);
+  if (noticeExternalId === null) return "notice_external_id must be a non-empty string";
+
+  const originalDeadline = nonEmptyString(value.original_deadline);
+  const adjustedDeadline = nonEmptyString(value.adjusted_deadline);
+  if (originalDeadline === null || parseIsoDate(originalDeadline) === null) {
+    return `original_deadline ${JSON.stringify(value.original_deadline)} is not a valid date`;
+  }
+  if (adjustedDeadline === null || parseIsoDate(adjustedDeadline) === null) {
+    return `adjusted_deadline ${JSON.stringify(value.adjusted_deadline)} is not a valid date`;
+  }
+  if (adjustedDeadline < originalDeadline) {
+    return `adjusted_deadline ${adjustedDeadline} precedes original_deadline ${originalDeadline}`;
+  }
+
+  const channel = nonEmptyString(value.channel);
+  if (channel === null || !emittableChannels.has(channel as Channel)) {
+    return `channel ${JSON.stringify(value.channel)} is not an emittable channel`;
+  }
+
+  if (!Array.isArray(value.form_codes) || value.form_codes.length === 0) {
+    return "form_codes must be a non-empty array";
+  }
+  const formCodes: string[] = [];
+  for (const code of value.form_codes) {
+    const parsed = nonEmptyString(code);
+    if (parsed === null) return `form_codes carries ${JSON.stringify(code)}, not a form code`;
+    formCodes.push(parsed);
+  }
+
+  const reviewed = nonEmptyString(value.reviewed);
+  if (reviewed === null) {
+    return "reviewed must name the printed evidence a human checked";
+  }
+  const reviewedOn = nonEmptyString(value.reviewed_on);
+  if (reviewedOn === null || parseIsoDate(reviewedOn) === null) {
+    return `reviewed_on ${JSON.stringify(value.reviewed_on)} is not a valid date`;
+  }
+
+  return {
+    noticeExternalId,
+    originalDeadline,
+    adjustedDeadline,
+    channel: channel as Channel,
+    formCodes,
+    reviewed,
+    reviewedOn,
+  };
+}
+
+/**
+ * Reads and validates the curated supplement.
+ *
+ * Nothing here is fatal: an unreadable file or a malformed entry is recorded in
+ * `dropped` and the run continues on the extracted records alone. The
+ * supplement can only ever add records a human vouched for, so losing it costs
+ * coverage, never correctness.
+ */
+export async function loadCuratedOverrides(
+  filePath: string = curatedOverridesPath,
+): Promise<CuratedLoadResult> {
+  let raw: string;
+  try {
+    raw = await readFile(filePath, "utf8");
+  } catch (error) {
+    const reason =
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+        ? "curated_file_missing"
+        : "curated_file_unreadable";
+    return {
+      entries: [],
+      dropped: [{ reason, detail: `${filePath}: ${(error as Error).message}` }],
+    };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    return {
+      entries: [],
+      dropped: [
+        { reason: "curated_file_unreadable", detail: `${filePath}: ${(error as Error).message}` },
+      ],
+    };
+  }
+  if (!isJsonObject(parsed) || !Array.isArray(parsed.entries)) {
+    return {
+      entries: [],
+      dropped: [
+        { reason: "curated_file_unreadable", detail: `${filePath}: no "entries" array` },
+      ],
+    };
+  }
+
+  const entries: CuratedOverride[] = [];
+  const dropped: DropRecord[] = [];
+  parsed.entries.forEach((value, index) => {
+    const entry = parseCuratedEntry(value);
+    if (typeof entry === "string") {
+      dropped.push({
+        reason: "curated_malformed_entry",
+        detail: `${filePath} entries[${index}]: ${entry}`,
+      });
+      return;
+    }
+    entries.push(entry);
+  });
+  return { entries, dropped };
+}
+
+/**
+ * Merges the curated supplement into the already-compiled extracted records.
+ *
+ * A curated entry is only ever an addition to an extracted record: it is
+ * matched to one by `(notice, original date, channel)`, inherits that record's
+ * RDO scope so the two can never disagree about who is affected, and is dropped
+ * with a reason whenever that record is absent from this run.
+ */
+function mergeCurated(
+  curated: readonly CuratedOverride[],
+  overrides: FeedOverride[],
+  emittedRefs: Set<string>,
+  publishedNoticeIds: ReadonlySet<string>,
+  dropped: DropRecord[],
+): void {
+  const extractedByRef = new Map(overrides.map((override) => [override.external_ref, override]));
+
+  for (const entry of curated) {
+    const baseRef = `${entry.noticeExternalId}/${entry.originalDeadline}/${entry.channel}`;
+    const at = `curated ${baseRef}`;
+
+    if (!publishedNoticeIds.has(entry.noticeExternalId)) {
+      dropped.push({
+        reason: "curated_unknown_notice",
+        detail: `${at} names ${entry.noticeExternalId}, which this feed does not publish`,
+      });
+      continue;
+    }
+
+    const base = extractedByRef.get(baseRef);
+    if (base === undefined) {
+      dropped.push({
+        reason: "curated_no_extracted_record",
+        detail:
+          `${at} supplements an override this run did not extract, so it has no RDO scope to ` +
+          "inherit; dropped rather than published unscoped",
+      });
+      continue;
+    }
+    if (base.adjusted_deadline !== entry.adjustedDeadline) {
+      dropped.push({
+        reason: "curated_date_pair_mismatch",
+        detail:
+          `${at} was reviewed as extending to ${entry.adjustedDeadline}, but the extracted ` +
+          `record reads ${base.adjusted_deadline}; one of the two misread the printed cell`,
+      });
+      continue;
+    }
+
+    const canonical: string[] = [];
+    const rejected: string[] = [];
+    for (const code of entry.formCodes) {
+      if (CANONICAL_FORM_CODES.has(code)) canonical.push(code);
+      else rejected.push(code);
+    }
+    if (rejected.length > 0) {
+      dropped.push({
+        reason: "curated_non_canonical_form_code",
+        detail:
+          `${at}: dropped form code(s) ${sortedUnique(rejected).join(", ")} — not in the app ` +
+          "catalog",
+      });
+    }
+    if (canonical.length === 0) {
+      dropped.push({
+        reason: "curated_no_canonical_form_codes",
+        detail: `${at} names no form code the app catalog knows`,
+      });
+      continue;
+    }
+
+    const externalRef = `${baseRef}${curatedRefSuffix}`;
+    if (emittedRefs.has(externalRef)) {
+      dropped.push({
+        reason: "curated_duplicate_external_ref",
+        detail: `${at} collides with an already emitted ${externalRef}`,
+      });
+      continue;
+    }
+    emittedRefs.add(externalRef);
+    overrides.push({
+      external_ref: externalRef,
+      title: `${base.title} — curated supplement`,
+      source_reference: base.source_reference,
+      original_deadline: entry.originalDeadline,
+      adjusted_deadline: entry.adjustedDeadline,
+      form_codes: sortedUnique(canonical),
+      rdo_codes: [...base.rdo_codes],
+      channel: entry.channel,
+      notice_external_id: entry.noticeExternalId,
+    });
+  }
+}
+
 /**
  * Compiles issuances plus PDF extractions into the published feed.
  *
@@ -382,6 +650,10 @@ export function compileFeed(input: CompileFeedInput): CompileFeedResult {
         notice_external_id: extraction.externalId,
       });
     }
+  }
+
+  if (input.curated !== undefined && input.curated.length > 0) {
+    mergeCurated(input.curated, overrides, emittedRefs, publishedNoticeIds, dropped);
   }
 
   overrides.sort((a, b) => compareStrings(a.external_ref, b.external_ref));
@@ -508,9 +780,14 @@ export function validateFeed(feed: Feed): string[] {
       overrideRefs.add(override.external_ref);
     }
 
+    // A curated record shares its supplemented record's identity plus the
+    // curated suffix; everything else must be exactly the derived identity.
     const expectedRef =
       `${override.notice_external_id}/${override.original_deadline}/${override.channel}`;
-    if (override.external_ref !== expectedRef) {
+    if (
+      override.external_ref !== expectedRef &&
+      override.external_ref !== `${expectedRef}${curatedRefSuffix}`
+    ) {
       violations.push(`${at} does not match its derived identity ${expectedRef}`);
     }
     if (!noticeIds.has(override.notice_external_id)) {

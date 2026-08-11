@@ -10,8 +10,8 @@ global form/deadline dashboard, and a functional tax-calendar engine.
 
 | Area | Status |
 | --- | --- |
-| Navigation, themes, responsive layouts | Functional |
-| Global Dashboard calendar | Functional; complete resolved schedule, never profile-filtered, with an optional session-only RDO context view |
+| Navigation, themes, responsive layouts | Functional; the theme and sidebar width are remembered across launches |
+| Global Dashboard calendar | Functional; complete resolved schedule, never profile-filtered, with an optional RDO context view that is remembered across launches |
 | Important News | Functional; BIR issuances compiled four times a day by the `scripts/news-sync/` pipeline from BIR's own publication API, shown for the calendar month in view, cached in SQLite with the last good copy retained when a refresh fails |
 | Tax deadline calculation | Functional; 20 compiled rule groups |
 | Calendar policy | Persisted in SQLite with sourced holidays and overrides |
@@ -144,6 +144,8 @@ deterministic and idempotent.
 - `src/calendar/ui_state.zig` — calendar state and application adapter
 - `src/news/feed_json.zig` — bounded parser for the compiled BIR feed, covering
   both the Important News notices and the synced deadline overrides
+- `src/preferences/store.zig` — app-owned interface preferences (theme, sidebar
+  width, dashboard RDO context) in their own `preferences.sqlite3`
 - `src/tax_profile/` — reusable facts, immutable revisions, evolution,
   persistence, canonical Taxpayer/Registration Unit evidence, migration
   inventory, and profile UI state

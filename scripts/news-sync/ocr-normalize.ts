@@ -69,6 +69,50 @@ export function normalizeDigits(text: string): string {
   return normalized;
 }
 
+/**
+ * Glyphs the OCR emits in place of a letter it could not resolve: any
+ * punctuation or symbol, plus the thin-stroke letters that punctuation is
+ * routinely confused with. Both damage classes appear in one line of the
+ * RMC 62-2026 table header — `Due Date` printed as `I)ue Date` (`D` became
+ * `I` + `)`) and `Extended Due Date` as `E:rtended Due Date` (`x` became
+ * `:` + `r`).
+ */
+const GLYPH_DEBRIS = String.raw`(?:[^\p{L}\p{N}\s]|[ilIjrt1])`;
+
+/** One letter the OCR lost, on which it spent one or two glyphs. */
+const DAMAGED_LETTER = `${GLYPH_DEBRIS}{1,2}`;
+
+/**
+ * Regex source matching `word` as printed, or with any *one* of its letters
+ * replaced by OCR debris. One damaged letter per word is the tolerance the
+ * scanned circulars actually need, and it keeps the pattern anchored on every
+ * remaining letter — `Extended` still demands seven exact letters, so widening
+ * the probe cannot turn arbitrary prose into a table header.
+ *
+ * Callers must apply the `i` and `u` flags; the source itself carries no case
+ * folding.
+ */
+export function ocrTolerantWord(word: string): string {
+  if (!/^[A-Za-z]+$/u.test(word)) {
+    throw new Error(`ocrTolerantWord expects a plain alphabetic word, got "${word}"`);
+  }
+  // Exact spelling first, so a clean header never pays for the tolerance.
+  const spellings = [word];
+  for (let index = 0; index < word.length; index += 1) {
+    spellings.push(word.slice(0, index) + DAMAGED_LETTER + word.slice(index + 1));
+  }
+  return `(?:${spellings.join("|")})`;
+}
+
+/** `ocrTolerantWord` over every word of a phrase, separated by whitespace. */
+export function ocrTolerantPhrase(phrase: string): string {
+  return phrase
+    .trim()
+    .split(/\s+/u)
+    .map(ocrTolerantWord)
+    .join(String.raw`\s+`);
+}
+
 export function levenshtein(a: string, b: string): number {
   if (a === b) return 0;
   if (a.length === 0) return b.length;

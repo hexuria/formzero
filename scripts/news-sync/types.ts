@@ -90,6 +90,33 @@ export type CircularExtraction = {
   notes: string[];
 };
 
+/**
+ * One hand-authored supplement to an extracted override record, as authored in
+ * `curated/overrides.json`.
+ *
+ * The extractor refuses to guess which description blocks share a merged
+ * deadline-table cell (docs/news/MERGED_CELL_INVESTIGATION.md), so the forms
+ * printed in the same bordered cell as an extracted date pair are read off the
+ * source PDF by a human and merged into the feed at compile time. A curated
+ * entry never invents a scope: it supplements an extracted record and inherits
+ * that record's `rdo_codes`.
+ */
+export type CuratedOverride = {
+  /** The notice this supplements; must be published in the same feed. */
+  noticeExternalId: string;
+  /** Must equal the extracted record's `original_deadline`. */
+  originalDeadline: string;
+  /** Must equal the extracted record's `adjusted_deadline`. */
+  adjustedDeadline: string;
+  channel: Channel;
+  /** Canonical app codes; anything outside the catalog is dropped and reported. */
+  formCodes: string[];
+  /** The printed evidence a human read, naming the cell and the PDF page. */
+  reviewed: string;
+  /** `YYYY-MM-DD` the evidence was last checked against the source PDF. */
+  reviewedOn: string;
+};
+
 export type FeedNotice = {
   external_id: string;
   kind: IssuanceKind;

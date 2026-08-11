@@ -9,7 +9,7 @@
 
 import path from "node:path";
 
-import { rowDropReason } from "./feed.ts";
+import { isCuratedRef, rowDropReason } from "./feed.ts";
 import type { DropRecord } from "./feed.ts";
 import type {
   CircularExtraction,
@@ -123,10 +123,8 @@ function rowTable(rows: readonly ExtensionRow[]): string[] {
   return lines;
 }
 
-function overrideSections(overrides: readonly FeedOverride[]): string[] {
-  if (overrides.length === 0) {
-    return ["_No override records were emitted for this circular._"];
-  }
+function overrideSections(overrides: readonly FeedOverride[], emptyText: string): string[] {
+  if (overrides.length === 0) return [`_${emptyText}_`];
 
   const lines = [
     "| External ref | Original | Adjusted | Channel | Form codes | RDO codes |",
@@ -163,6 +161,10 @@ export function renderReviewReport(input: ReviewReportInput): string {
   const emitted = input.emitted.filter(
     (override) => override.notice_external_id === extraction.externalId,
   );
+  // Split by provenance so a reader never has to guess which records the
+  // extractor produced and which a human added from the printed PDF.
+  const extracted = emitted.filter((override) => !isCuratedRef(override.external_ref));
+  const curated = emitted.filter((override) => isCuratedRef(override.external_ref));
   const rows = extraction.rows;
   const sourceReference = `${issuance.kind} No. ${issuance.number}`;
 
@@ -209,7 +211,10 @@ export function renderReviewReport(input: ReviewReportInput): string {
       extraction.window === null ? "—" : `${extraction.window.from} to ${extraction.window.to}`
     }`,
   );
-  lines.push(`- Override records emitted: ${emitted.length}`);
+  lines.push(
+    `- Override records emitted: ${emitted.length} ` +
+      `(${extracted.length} extracted, ${curated.length} curated)`,
+  );
   lines.push("");
   lines.push("Extraction notes:");
   lines.push("");
@@ -236,9 +241,21 @@ export function renderReviewReport(input: ReviewReportInput): string {
   lines.push(...rowTable(rows));
   lines.push("");
 
-  lines.push("## Emitted overrides");
+  lines.push("## Emitted overrides (machine-extracted)");
   lines.push("");
-  lines.push(...overrideSections(emitted));
+  lines.push(...overrideSections(extracted, "No override records were emitted for this circular."));
+  lines.push("");
+
+  lines.push("## Curated supplements (human-authored)");
+  lines.push("");
+  lines.push(
+    "Records a human read off the printed table and entered in " +
+      "`curated/overrides.json`, because the extractor refuses to guess which blocks share a " +
+      "merged deadline cell. Each one inherits the RDO scope of the extracted record it " +
+      "supplements; none of it came from the extractor.",
+  );
+  lines.push("");
+  lines.push(...overrideSections(curated, "No curated supplement is published for this circular."));
   lines.push("");
 
   lines.push("## Dropped / needs review");

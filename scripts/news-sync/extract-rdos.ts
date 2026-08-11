@@ -12,6 +12,7 @@
 // drops the office — dropping it would silently deny the extension to every
 // filer registered there.
 
+import { DUE_DATE_LABEL, EXTENDED_DUE_DATE_LABEL } from "./extract-deadline-table.ts";
 import { findRdoByCode, letteredVariants, normalizeRdoCode, rdoEntries } from "./rdo.ts";
 import type { RdoMatch } from "./types.ts";
 
@@ -29,27 +30,63 @@ const DIGITISH = "0-9OolI|SBTZG";
  * `RDO No. <code> - <name>` with every separator optional: the OCR loses the
  * space in `RDONo.3l`, turns the period into a hyphen in `RDO No- 34`, and
  * splits the number in `RDO No. I 16`.
+ *
+ * Circulars are inconsistent about the label: RMC 89-2026 tabulates
+ * `RDO No. 39`, RMC 62-2026 spells out `Revenue District Office No. 1 10` in a
+ * numbered list. Only the *singular* spelled-out form counts — the plural
+ * `Revenue District Offices (RDOs)` is the prose lead-in to the list, not an
+ * office, and must not match.
+ *
+ * The code itself may be broken into up to three digit-ish runs
+ * (`1 10` -> 110, `l l l` -> 111); each extra run must be space-separated, so
+ * the hyphen that introduces the office name always stops the capture.
  */
 const RDO_PATTERN = new RegExp(
-  String.raw`\bRDO\s*N[o0O]\s*[.,\-:]?\s*` +
-    String.raw`([${DIGITISH}]{1,4}(?:\s+[${DIGITISH}]{1,3})?[A-Ca-c]?)` +
+  String.raw`\b(?:RDO|Revenue\s+District\s+Office)\s*N[o0O]\s*[.,\-:]?\s*` +
+    String.raw`([${DIGITISH}]{1,4}(?:\s+[${DIGITISH}]{1,3}){0,2}[A-Ca-c]?)` +
     String.raw`\s*[-–—:]?\s*([^\n]{0,60})`,
   "giu",
 );
 
 const TABLE_HEADER_PATTERN = /BIR\s+Forms?\s*\/?\s*Returns/iu;
-const DUE_DATE_PATTERN = /Due\s+Date/iu;
-const EXTENDED_PATTERN = /Extended/iu;
 
 /** `RDO 037` — the reference's stand-in for an office it has no name for. */
 const PLACEHOLDER_NAME_PATTERN = /^rdo\s*[0-9]{1,3}[a-c]?$/iu;
 
 /**
  * A stated count of affected offices, e.g. `fifty-eight (58) Revenue District
- * Offices`. The gap is same-line and digit-free so that a code column entry
- * (`RDO No. 58 - West Batangas`) can never be read as a prose count.
+ * Offices` or `the following 58 Revenue District Offices`.
+ *
+ * A bare number near the word is not a count: RMC 62-2026 enumerates its two
+ * districts as `1.` and `2.`, and the list marker sat close enough to
+ * `Office` to be read as one. That produced a right answer for the wrong
+ * reason -- and only because OCR turned its `1.` into `L`, so the first
+ * marker never won the race. Had it read cleanly the circular would have
+ * reported a stated count of 1 against 2 districts and failed its own
+ * invariant.
+ *
+ * So the number must carry counting context: parenthesised, as a spelled
+ * count is written, or introduced by a word that can only precede a count.
+ * The gap stays same-line and digit-free so a code column entry
+ * (`RDO No. 58 - West Batangas`) can never qualify.
  */
-const OFFICE_COUNT_PATTERN = /\(?\b([0-9]{1,3})\b\)?[^\n0-9]{0,40}?Offices?\b/iu;
+const OFFICE_COUNT_PATTERN = new RegExp(
+  "(?:" +
+    // fifty-eight (58) Revenue District Offices
+    "\\((\\d{1,3})\\)" +
+    "|" +
+    // the following 58 Revenue District Offices
+    "\\b(?:following|affected|covered|impacted|listed|total\\s+of|all\\s+of)\\s+(\\d{1,3})\\b" +
+    "|" +
+    // the 12 affected offices
+    "\\b(\\d{1,3})\\s+(?:affected|covered|impacted|listed)\\b" +
+    ")" +
+    "[^\\n0-9]{0,40}?Offices?\\b",
+  "iu",
+);
+
+/** A line-start enumeration marker (`1.`, `2)`, `L`) introducing one office. */
+const LIST_MARKER_LINE = /^\s*(?:\d{1,2}|[A-Za-z])\s*[.)]?\s+Revenue\s+District\s+Office\b/iu;
 
 // Tokens too common across office names to carry any matching signal.
 const GENERIC_NAME_TOKENS: ReadonlySet<string> = new Set(["city", "and", "of", "the", "rdo", "no"]);
@@ -62,16 +99,27 @@ export function scanRegion(layoutText: string): string {
   const lines = layoutText.split(/\r?\n/u);
   const headerIndex = lines.findIndex(
     (line) =>
-      TABLE_HEADER_PATTERN.test(line) || (DUE_DATE_PATTERN.test(line) && EXTENDED_PATTERN.test(line)),
+      TABLE_HEADER_PATTERN.test(line) ||
+      (DUE_DATE_LABEL.test(line) && EXTENDED_DUE_DATE_LABEL.test(line)),
   );
   return (headerIndex === -1 ? lines : lines.slice(0, headerIndex)).join("\n");
 }
 
-/** Prose count of affected offices, for the caller's invariant check. */
+/**
+ * Prose count of affected offices, for the caller's invariant check, or null
+ * when the circular states none. Null is the common case and a safe one: the
+ * invariant then reports that there is nothing to compare, which is honest.
+ * A wrong count is worse than no count, because it fails a circular that was
+ * read correctly.
+ */
 export function parseStatedOfficeCount(text: string): number | null {
-  const match = OFFICE_COUNT_PATTERN.exec(text);
+  const withoutEnumeration = text
+    .split(/\r?\n/u)
+    .filter((line) => !LIST_MARKER_LINE.test(line))
+    .join("\n");
+  const match = OFFICE_COUNT_PATTERN.exec(withoutEnumeration);
   if (match === null) return null;
-  const value = Number.parseInt(match[1] ?? "", 10);
+  const value = Number.parseInt(match[1] ?? match[2] ?? match[3] ?? "", 10);
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
