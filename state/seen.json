@@ -2,690 +2,2431 @@
   "issuances": {
     "bir:rmc:2026:001": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:002": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:003": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:004": {
       "pdfSha256": "913ea748a51bfb699aa5f138b7a4fb950b62b20c68ffac2bc9b1c71b976869d3",
+      "pdfBytes": 113114,
       "firstSeenAtUnix": 1786431188,
-      "extractedAtUnix": 1786431188,
-      "feedRev": 2
+      "extractedAtUnix": 1786462044,
+      "feedRev": 3,
+      "extraction": {
+        "externalId": "bir:rmc:2026:004",
+        "headerDateIssued": null,
+        "globalExtendedDate": null,
+        "window": null,
+        "statedOfficeCount": null,
+        "rdos": [],
+        "rdoCodes": [],
+        "rows": [],
+        "needsManualReview": true,
+        "notes": [
+          "text layer unusable: 0 characters over 2 page(s), below the 200 characters/page floor — no extraction attempted (plan decision D3)"
+        ]
+      }
     },
     "bir:rmc:2026:005": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:006": {
       "pdfSha256": "2653da7f83af069e31910dd964bcd6302eceb2806a4b13830af60877ece94227",
+      "pdfBytes": 70146,
       "firstSeenAtUnix": 1786431188,
-      "extractedAtUnix": 1786431188,
-      "feedRev": 2
+      "extractedAtUnix": 1786462044,
+      "feedRev": 3,
+      "extraction": {
+        "externalId": "bir:rmc:2026:006",
+        "headerDateIssued": null,
+        "globalExtendedDate": null,
+        "window": null,
+        "statedOfficeCount": null,
+        "rdos": [],
+        "rdoCodes": [],
+        "rows": [],
+        "needsManualReview": true,
+        "notes": [
+          "text layer unusable: 0 characters over 1 page(s), below the 200 characters/page floor — no extraction attempted (plan decision D3)"
+        ]
+      }
     },
     "bir:rmc:2026:007": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:008": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:009": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:010": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:011": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:012": {
       "pdfSha256": "6339e1c390cc403a7a298b007c4d33744b022a8714a5a68cd3f7ade5c64dc81b",
+      "pdfBytes": 1032842,
       "firstSeenAtUnix": 1786431188,
-      "extractedAtUnix": 1786431188,
-      "feedRev": 2
+      "extractedAtUnix": 1786462044,
+      "feedRev": 3,
+      "extraction": {
+        "externalId": "bir:rmc:2026:012",
+        "headerDateIssued": null,
+        "globalExtendedDate": null,
+        "window": null,
+        "statedOfficeCount": null,
+        "rdos": [],
+        "rdoCodes": [],
+        "rows": [],
+        "needsManualReview": true,
+        "notes": [
+          "text layer unusable: 0 characters over 5 page(s), below the 200 characters/page floor — no extraction attempted (plan decision D3)"
+        ]
+      }
     },
     "bir:rmc:2026:013": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:014": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:015": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:016": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:017": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:018": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:019": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:020": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:021": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:022": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:023": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:024": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:025": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:026": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:027": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:028": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:029": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:030": {
       "pdfSha256": "6fd7552bfe1a94edd91ef6c799c704f7d67a20f67fdd4f0e3a48a8d3c901b9f4",
+      "pdfBytes": 64230,
       "firstSeenAtUnix": 1786431188,
-      "extractedAtUnix": 1786431188,
-      "feedRev": 2
+      "extractedAtUnix": 1786462044,
+      "feedRev": 3,
+      "extraction": {
+        "externalId": "bir:rmc:2026:030",
+        "headerDateIssued": "2026-04-14",
+        "globalExtendedDate": null,
+        "window": null,
+        "statedOfficeCount": null,
+        "rdos": [],
+        "rdoCodes": [],
+        "rows": [],
+        "needsManualReview": false,
+        "notes": [
+          "text layer: 1744 characters over 1 page(s)",
+          "page-1 letterhead issue date: 2026-04-14",
+          "no circular-level extended date found in the prose; rows with a damaged extended column cannot fall back to one",
+          "no stated extension window found in the prose",
+          "RDO references: 0 matched, 0 distinct office(s), 0 emitted code(s) after lettered expansion",
+          "no RDO scope resolved — an unscoped nationwide override is forbidden in v1, so no override can be emitted for this circular",
+          "office-count invariant: the prose states no count, nothing to compare",
+          "deadline table: 0 block(s), 0 with a printed date pair, 0 recorded against the circular window, 0 flagged for review",
+          "no deadline-table blocks were found; the table header may have moved"
+        ]
+      }
     },
     "bir:rmc:2026:031": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:032": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:033": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:034": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:035": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:036": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:037": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:038": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:039": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:040": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:041": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:042": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:043": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:044": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:045": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:046": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:047": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:048": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:049": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:050": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:051": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:052": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:053": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:054": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:055": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:056": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:057": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:058": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:059": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:060": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:061": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:062": {
       "pdfSha256": "cac44987509fca12da96e7f2fbbd83d22eecf0f88198b4319c8dfd2a24a49ecb",
+      "pdfBytes": 849149,
       "firstSeenAtUnix": 1786431188,
-      "extractedAtUnix": 1786431188,
-      "feedRev": 2
+      "extractedAtUnix": 1786462044,
+      "feedRev": 3,
+      "extraction": {
+        "externalId": "bir:rmc:2026:062",
+        "headerDateIssued": "2026-06-01",
+        "globalExtendedDate": null,
+        "window": null,
+        "statedOfficeCount": null,
+        "rdos": [
+          {
+            "raw": "Revenue District Office No. 1 10 - General Santos City and Sarangani",
+            "code": "110",
+            "referenceName": "General Santos City",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "Revenue District Office No. l l l - South Cotabato",
+            "code": "111",
+            "referenceName": "Koronadal City",
+            "matchedBy": "code",
+            "confidence": "review",
+            "notes": [
+              "reference name \"Koronadal City\" does not overlap the printed name \"South Cotabato\"; kept on code match"
+            ]
+          }
+        ],
+        "rdoCodes": [
+          "110",
+          "111"
+        ],
+        "rows": [
+          {
+            "channel": "submission",
+            "rawDescription": "All Transcript Sheets of Official Register Books (ORBs) used by Dealer/ Manufacturers/ Toll Manufacturers/ Assemblers/ Importers of Alcohol Products, Tobacco Products, Petroleum Products, Non-Essential Goods, Sweetened Beverage Products, Mineral products & Automobiles - Month of trlay 2026",
+            "formCodesDisplay": [],
+            "formCodesCanonical": [],
+            "originalDate": "2026-06-08",
+            "extendedDate": "2026-06-30",
+            "dateAssignment": "same_line",
+            "confidence": "high",
+            "notes": [
+              "Channel header: \"SUBMISSION\"",
+              "OCR month \"lune\" read as June (edit distance 1)",
+              "OCR month \"Lne\" read as June (edit distance 2)"
+            ]
+          },
+          {
+            "channel": "submission",
+            "rawDescription": "BIR National Office Bldg., Senator Miriam Defensor-santiago Aven ue, Diliman, Quezon City Website: www. bi r.gov. ph Trunkline: 8981-7000 i 8929-7676",
+            "formCodesDisplay": [],
+            "formCodesCanonical": [],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"SUBMISSION\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "submission",
+            "rawDescription": "Monthly e-Sales Report for all Taxpayers using CRM/POS and/or Other Similar Business Machines June 8, 2026 June -]0, 2026 whose last digit of 9-digit TIN is Even Number - Month of lNday 2026",
+            "formCodesDisplay": [],
+            "formCodesCanonical": [],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"E-SUBMISSION\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "submission",
+            "rawDescription": "List of Buyers of Sugar Together with a Copy of Certificate of Advance Payment of VAT made by each buyer appearing in the List by a Sugar Cooperative - Month of M:ay 2026",
+            "formCodesDisplay": [],
+            "formCodesCanonical": [],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"SUBMISSION\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "submission",
+            "rawDescription": "Information Return on Releases of Refined Sugar by the proprietor or Operator of a Sugar Refinery rr Miil - Month of l4ay 2026",
+            "formCodesDisplay": [],
+            "formCodesCanonical": [],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"SUBMISSION\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "submission",
+            "rawDescription": "Monthly e-Sales Report for all Taxpayers using CRM/POS and/or Other Similar Business Machines whose last digit of 9-digit TIN is Odd Number - Month of May 2026",
+            "formCodesDisplay": [],
+            "formCodesCanonical": [],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-SUBMISSION\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR Form 2200-M Excise Tax Return for the Amount of Excise Taxes Collected from Payment Made to Sellers of Metallic Minerals - Month of l|vlay 2026",
+            "formCodesDisplay": [
+              "2200-M"
+            ],
+            "formCodesCanonical": [
+              "2200M"
+            ],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"eFILING & PAYMENT/REMITTANCE (Online/lVlanual)\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR Forms l60l-C (Monthly Remittance lteturn of Income Taxes Withheld on Compensation) anc /or 0619- E (Monthly Remittance Form of Creditable Income Taxes Withheld-Expanded) and/or 0619-F (Monthly Remittance Form of Final Income Taxes rMithheld) Non-eFPS Filers - Month of trlay 2026",
+            "formCodesDisplay": [
+              "1601-C",
+              "0619-E",
+              "0619-F"
+            ],
+            "formCodesCanonical": [
+              "1601C",
+              "0619E",
+              "0619F"
+            ],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING & PAYMENT (Online/lVlanual)                     June i0,2426                  J:u;\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR Form 2200-C (Excise Tax Return for Cosmetic Procedures) with Monthly Summary of Cosmetic Procedures Performed - Month of May 2026",
+            "formCodesDisplay": [
+              "2200-C"
+            ],
+            "formCodesCanonical": [
+              "2200C"
+            ],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING & PAYMENT (Online/lVlanual)                     June i0,2426                  J:u;\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "efps_and_nonefps",
+            "rawDescription": "BIR Form 1600-VT (Monthly Remittance lletum of Value-Added Tax) and/or 1600-PT (Other Percentage Taxes Withheld) and Monthly Alphalist cf Payees (MAP) - eFPS & Non-eFPS Filers - Month of lflay 00 0 00 2 B 3 2026 /.4\\ BUREAU ( IF INTERNAL REVENUE \\:7 RecoRos t ,ANAG€MENT DIVISION BIR Form 1606 (Withholding Tax Remittanr:e Return for Onerous Transfer of Real Property, Ot,rer Than Capital Asset Including Taxable and Exempt) - Month 0e 2020 of M:ay 2026 ffi A.) ri rlft Ulrlll'- ? E:: _*-'lltrlc: ?Lol ph BIR Form 0620 (Monthly Remittance Form of Tax Withheld on the Amount Withdrawn liom the Decedent's Deposit Account) - eFPS & Non-eFPS Filers - Month of lday 2026 I",
+            "formCodesDisplay": [
+              "1600-VT",
+              "1600-PT",
+              "1606",
+              "0620"
+            ],
+            "formCodesCanonical": [
+              "1600VT",
+              "1600PT",
+              "1606",
+              "0620"
+            ],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING & PAYMENT (Online/lVlanual)                     June i0,2426                  J:u;\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "unknown",
+            "rawDescription": "June i0,2026 \" BIR Form 1600-VT (Monthly Remittance l(eturn of Value-Added Tax) and/or 1600-PT (Other Percentage Taxes Withheld) and BIR Form l60l-C (Monthly g,q ft,,*r, Remittance Return of Income Taxes Witrheld on @ ,,u0,n Mr.l.t AGFMEI{T RECORDS '9'A,p' DIVISION Compensation) - National Government Agencies E",
+            "formCodesDisplay": [
+              "1600-VT",
+              "1600-PT",
+              "1601-C"
+            ],
+            "formCodesCanonical": [
+              "1600VT",
+              "1600PT",
+              "1601C"
+            ],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING & e-PAYMENT/REMITTANCE\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "unknown",
+            "rawDescription": "(NGAs) - Month of llay 2026",
+            "formCodesDisplay": [],
+            "formCodesCanonical": [],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING & e-PAYMENT/REMITTANCE\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "efps_group_e",
+            "rawDescription": "ffi n I tLh-ws* il--r-drt/ -'l BIR Forms 1601-C (Monthly Remittance Iteturn of t .' : -l:pt..\"^ Income Taxes Withheld on Compensation) anclor 0619- E (Monthly Remittance Form of Creditable Income June i 1,2026 . Taxes Withheld-Expanded) and/or 0619-F (Monthly Remittance Form of Final Income Taxes Withheld) - eFPS Filers under Group E - Month of May 2026",
+            "formCodesDisplay": [
+              "1601-C",
+              "0619-E",
+              "0619-F"
+            ],
+            "formCodesCanonical": [
+              "1601C",
+              "0619E",
+              "0619F"
+            ],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "efps_group_d",
+            "rawDescription": "BIR Forms 1601-C (Monthly Remittance Return of Income Taxes Withheld on Compensation) anclor 0619- E (Monthly Remittance Form of Creditablc Income June i2,2A26 \" Taxes Withheld-Expanded) and/or 0619-F (Monthly Remittance Form of Final Income Taxes Withheld) - eFPS Filers under Group D - Month of M:ay'2026",
+            "formCodesDisplay": [
+              "1601-C",
+              "0619-E",
+              "0619-F"
+            ],
+            "formCodesCanonical": [
+              "1601C",
+              "0619E",
+              "0619F"
+            ],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "efps_group_c",
+            "rawDescription": "BIR Forms l60l-C (Monthly Remittance Return of Income Taxes Withheld on Compensation) anc /or 0619- E (Monthly Remittance Form of Creditablc lncome June r3,2426 ; Taxes Withheld-Expanded) and/or 0619-F (Monthly Remittance Form of Final Income Taxes Withheld) - eFPS Filers under Group C - Month of May 2026",
+            "formCodesDisplay": [
+              "1601-C",
+              "0619-E",
+              "0619-F"
+            ],
+            "formCodesCanonical": [
+              "1601C",
+              "0619E",
+              "0619F"
+            ],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "efps_group_b",
+            "rawDescription": "BIR Forms 1601-C (Monthly Remittance Iieturn of lncome Taxes Withheld on Compensation) anclor 0619- E (Monthly Remittance Form of Creditable Income )une .4,2026 Taxes Withheld-Expanded) and/or 0619-F (Monthly Remittance Form of Final Income Taxes Withheld) - eFPS Filers under Group B - Month of D.Iay ?,026",
+            "formCodesDisplay": [
+              "1601-C",
+              "0619-E",
+              "0619-F"
+            ],
+            "formCodesCanonical": [
+              "1601C",
+              "0619E",
+              "0619F"
+            ],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "registration",
+            "rawDescription": "Permanently Bound Loose-Leaf Bocks of Accounts/lnvoices and Other Accounting ltecords - )une ,5,2026 Fiscal Year ending May 31,2026",
+            "formCodesDisplay": [],
+            "formCodesCanonical": [],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"REGISTRATION (Ontine thru ORUS or lV{anuat)\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR Form I 702-RT/ 1 7 02-EX/ | 7 02-MX - Fisrcal Year ending February 28,2026",
+            "formCodesDisplay": [
+              "1702-RT",
+              "1702-EX"
+            ],
+            "formCodesCanonical": [
+              "1702RT",
+              "1702EX"
+            ],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING & PAYMENT (Online/lVlanual)\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR Form 1707-A (Annual Capital Gains Tax Return For Onerous Transfer of Shares of Stock Not Traded Through the Local Stock Exchange) - by Corporate Taxpayers - Fiscal Year ending February 28,2026",
+            "formCodesDisplay": [
+              "1707-A"
+            ],
+            "formCodesCanonical": [
+              "1707A"
+            ],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING & PAYMENT (Online/lVlanual)\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "efps_group_a",
+            "rawDescription": "BIR Forms 1601-C (Monthly Remittance ILeturn of Income Taxes Withheld on Compensation) anclor 0619- E (Monthly Remittance Form of Creditable Income June 1 5,2026 Taxes Withheld-Expanded) and/or 0619-F (Monthly Remittance Form of Final Income Taxes Withheld) - eFPS Filers under Group A - Month of May 2026",
+            "formCodesDisplay": [
+              "1601-C",
+              "0619-E",
+              "0619-F"
+            ],
+            "formCodesCanonical": [
+              "1601C",
+              "0619E",
+              "0619F"
+            ],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING & e-PAYMENT\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "efps_group_multi",
+            "rawDescription": "BIR Forms l60l-C (Monthly Remittance l,l.eturn of Income Taxes Withheld on Compensation) and./or 0619- E (Monthly Remittance Form of Creditable Income Taxes Withheld-Expanded)and/or 0619-F (Monthly Remittance Form of Final Income Taxes Withheld) - eFPS Filers under Group B, C, D & E - Month of May 2026",
+            "formCodesDisplay": [
+              "1601-C",
+              "0619-E",
+              "0619-F"
+            ],
+            "formCodesCanonical": [
+              "1601C",
+              "0619E",
+              "0619F"
+            ],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-PAYMENT\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "submission",
+            "rawDescription": "Consolidated Return of All Transactions based on the June t6,2026 jt:ne 30,2(126 Reconciled Data of Stockbrokers - June l-15, 2026",
+            "formCodesDisplay": [],
+            "formCodesCanonical": [],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"SUBMISSION\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "efps_and_nonefps",
+            "rawDescription": "BIR Form 1600-WP (Remittance Return of Percentage Tax on Winnings and Prizes Withheld by Racetrack June 1,-0,2026 \"lr,rne .10, 2026 Operators) - eFPS & Non-eFPS Filers - Monrh of Nlay 2026",
+            "formCodesDisplay": [
+              "1600-WP"
+            ],
+            "formCodesCanonical": [
+              "1600WP"
+            ],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING & PAYMENT (Online/lVlanual)\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "Quarterly Summary List of Sales/ Furchases/ Importations by a VAT Registered Taxpayers - Non- eFPS Filers - Fiscal Quarter ending tr.day 31,202G",
+            "formCodesDisplay": [],
+            "formCodesCanonical": [],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"SUBMISSION\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "submission",
+            "rawDescription": "Sworn Statement of Manufacturer's or l-nporter,s Volume of Sales of each particular Brand o,. Alcohol Products, Tobacco Products and Sweetened Beverage June 25,2026 \"lr.ne J0,2026 Products - Fiscal Quarter ending }.{ay 31,2026 00 0 :00 2 8 3",
+            "formCodesDisplay": [],
+            "formCodesCanonical": [],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"SUBMISSION\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "efps_and_nonefps",
+            "rawDescription": "\\.:./ RECORDS M ANAGEMENT DIVISION BIR Form 2550Q (Quarterly Value-Added Tax Returrn) - eFPS & Non-eFPS Filers - Fiscal euarter ending NIay 31,2026 ffi t0'/y BIR Form 2551Q (Quarterly Percentage Tax Returrr) - eFPS & Non-eFPS Filers - Fiscal Quarter ending lVlay 31,2026 June 25,2426 BIR Form 2550-DS (Value-Added Tax (VA'l) Return for Nonresident Digital Service Provider) - Fiscal Quarter ending Nday 31,2026",
+            "formCodesDisplay": [
+              "2550Q",
+              "2551Q",
+              "2550-DS"
+            ],
+            "formCodesCanonical": [
+              "2550Q",
+              "2551Q",
+              "2550DS"
+            ],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING & PAYMENT (Online/lVlanuat)                        6BUREAU OI INTERNAL REVENUE\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "One-Time Transactions (ONETT) - (BIR Form Nos. Deadlines falling I 800, 1 80 1, 1 706, 1707 , 1707 A) fiom June 8,2026 to June 29,2426 , Payment of Applicable Taxes Using BIR Payment Form Deadlines starting 0605 and Payment Form No. 0613 (Payment Form from June 8,2026 Under Tax Compliance Verification Drive/Tax to June 29,2026 Mapping)",
+            "formCodesDisplay": [
+              "1800",
+              "1801",
+              "1706",
+              "1707",
+              "1707A",
+              "0605",
+              "0613"
+            ],
+            "formCodesCanonical": [
+              "1800",
+              "1801",
+              "1706",
+              "1707",
+              "1707A",
+              "0605",
+              "0613"
+            ],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING & PAYMENT (Online/lVlanual)\"",
+              "Block states its own deadline range 2026-06-08 to 2426-06-29",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          }
+        ],
+        "needsManualReview": false,
+        "notes": [
+          "text layer: 9882 characters over 5 page(s)",
+          "page-1 letterhead issue date: 2026-06-01",
+          "no circular-level extended date found in the prose; rows with a damaged extended column cannot fall back to one",
+          "no stated extension window found in the prose",
+          "RDO references: 2 matched, 2 distinct office(s), 2 emitted code(s) after lettered expansion",
+          "office-count invariant: the prose states no count, nothing to compare",
+          "deadline table: 27 block(s), 1 with a printed date pair, 26 recorded against the circular window, 26 flagged for review"
+        ]
+      }
     },
     "bir:rmc:2026:063": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:064": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:065": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:066": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:067": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:068": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:069": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:070": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:071": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:072": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:073": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:074": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:075": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:076": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:077": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:078": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:079": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:080": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:081": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:082": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:083": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:084": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786752000,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:085": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786752000,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:086": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786752000,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:087": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786752000,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:088": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786752000,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:089": {
       "pdfSha256": "59bba7e9a114cbf7714903fa06513d00fb8113083ecba96dfa01f138cc5134e9",
+      "pdfBytes": 1970851,
       "firstSeenAtUnix": 1786752000,
-      "extractedAtUnix": 1786431188,
-      "feedRev": 2
+      "extractedAtUnix": 1786462044,
+      "feedRev": 3,
+      "extraction": {
+        "externalId": "bir:rmc:2026:089",
+        "headerDateIssued": "2026-08-10",
+        "globalExtendedDate": "2026-08-17",
+        "window": {
+          "from": "2026-08-10",
+          "to": "2026-08-16"
+        },
+        "statedOfficeCount": null,
+        "rdos": [
+          {
+            "raw": "RDO No. 24 -Valenzuela Citv",
+            "code": "024",
+            "referenceName": "Valenzuela City",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No, 26 - Malabon City and Navotas City",
+            "code": "026",
+            "referenceName": "Malabon and Navotas",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 27 - Caloocan City",
+            "code": "027",
+            "referenceName": "Caloocan City",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 28 - Novaliches",
+            "code": "028",
+            "referenceName": "Novaliches",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 29 -Tondo-San Nicolas",
+            "code": "029",
+            "referenceName": "San Nicolas",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 30 - Binondo",
+            "code": "030",
+            "referenceName": "Binondo",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDONo.3l- Sta. Cruz",
+            "code": "031",
+            "referenceName": "Sta. Cruz",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 32 - Quiapo-Sampaloc-San Miguel-",
+            "code": "032",
+            "referenceName": "Quiapo, Sampaloc",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDONo. 33 - lntramuros- Ermita-Malate",
+            "code": "033",
+            "referenceName": "Intramuros, Ermita, Malate",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No- 34 - Paco-Pandacan-Sta- Ana-San",
+            "code": "034",
+            "referenceName": "Paco, Pandacan, Sta. Ana",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 38 - North Quezon City",
+            "code": "038",
+            "referenceName": "North Quezon City",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 39 - South Quezon City",
+            "code": "039",
+            "referenceName": "South Quezon City",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 40 - Cubao",
+            "code": "040",
+            "referenceName": "Cubao",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 4l - Mandaluyong City",
+            "code": "041",
+            "referenceName": "Mandaluyong City",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 42 - San Juan City",
+            "code": "042",
+            "referenceName": "San Juan City",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 43 - Pasig City",
+            "code": "043",
+            "referenceName": "RDO 043",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": [
+              "reference name \"RDO 043\" is a placeholder; accepted on code alone",
+              "expanded 043 to lettered variants 43A, 43B"
+            ]
+          },
+          {
+            "raw": "RDO No. 44 - Taguig City and Pateros",
+            "code": "044",
+            "referenceName": "Taguig and Pateros",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 45 - North Rizal and Marikina Citv",
+            "code": "045",
+            "referenceName": "Marikina City",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 47- East Makati City",
+            "code": "047",
+            "referenceName": "East Makati",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 48 - West Makati City",
+            "code": "048",
+            "referenceName": "West Makati",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 49 - North Makati City",
+            "code": "049",
+            "referenceName": "North Makati",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 50 - South Makati City",
+            "code": "050",
+            "referenceName": "South Makati",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 5l - Pasay City",
+            "code": "051",
+            "referenceName": "Pasay City",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 52 - P ueC",
+            "code": "052",
+            "referenceName": "Parañaque City",
+            "matchedBy": "code",
+            "confidence": "review",
+            "notes": [
+              "reference name \"Parañaque City\" does not overlap the printed name \"P ueC\"; kept on code match"
+            ]
+          },
+          {
+            "raw": "RDO No. 53A - Las Pifras C",
+            "code": "53A",
+            "referenceName": "Las Piñas City",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 53B - Muntinlu C",
+            "code": "53B",
+            "referenceName": "Muntinlupa City",
+            "matchedBy": "code",
+            "confidence": "review",
+            "notes": [
+              "reference name \"Muntinlupa City\" does not overlap the printed name \"Muntinlu C\"; kept on code match"
+            ]
+          },
+          {
+            "raw": "RDO No. I 16 - Regular LT Audit Division I",
+            "code": "116",
+            "referenceName": "Bislig City",
+            "matchedBy": "code",
+            "confidence": "review",
+            "notes": [
+              "reference name \"Bislig City\" does not overlap the printed name \"Regular LT Audit Division I\"; kept on code match"
+            ]
+          },
+          {
+            "raw": "RDO No. 125 - Regular LT Audit Division II",
+            "code": "125",
+            "referenceName": "RDO 125",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": [
+              "reference name \"RDO 125\" is a placeholder; accepted on code alone"
+            ]
+          },
+          {
+            "raw": "RDO No. 126 - Regular LT Audit Division III",
+            "code": "126",
+            "referenceName": "RDO 126",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": [
+              "reference name \"RDO 126\" is a placeholder; accepted on code alone"
+            ]
+          },
+          {
+            "raw": "RDO No. 121 - LT Excise Division I",
+            "code": "121",
+            "referenceName": "RDO 121",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": [
+              "reference name \"RDO 121\" is a placeholder; accepted on code alone"
+            ]
+          },
+          {
+            "raw": "RDO No. 124 - LT Excise Division ll",
+            "code": "124",
+            "referenceName": "RDO 124",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": [
+              "reference name \"RDO 124\" is a placeholder; accepted on code alone"
+            ]
+          },
+          {
+            "raw": "RDO No. 2 - llocos Sur",
+            "code": "002",
+            "referenceName": "Vigan City",
+            "matchedBy": "code",
+            "confidence": "review",
+            "notes": [
+              "reference name \"Vigan City\" does not overlap the printed name \"llocos Sur\"; kept on code match"
+            ]
+          },
+          {
+            "raw": "RDO No. 3 - I-a Union",
+            "code": "003",
+            "referenceName": "San Fernando, La Union",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 4 - Central Pangasinan",
+            "code": "004",
+            "referenceName": "Calasiao, Pangasinan",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 5 - West Pangasinan",
+            "code": "005",
+            "referenceName": "Alaminos City",
+            "matchedBy": "code",
+            "confidence": "review",
+            "notes": [
+              "reference name \"Alaminos City\" does not overlap the printed name \"West Pangasinan\"; kept on code match"
+            ]
+          },
+          {
+            "raw": "RDO No. 6 - East Pangasinan",
+            "code": "006",
+            "referenceName": "Urdaneta City",
+            "matchedBy": "code",
+            "confidence": "review",
+            "notes": [
+              "reference name \"Urdaneta City\" does not overlap the printed name \"East Pangasinan\"; kept on code match"
+            ]
+          },
+          {
+            "raw": "RDONo.T- Abra",
+            "code": "007",
+            "referenceName": "Bangued, Abra",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 8 - Baguio City",
+            "code": "008",
+            "referenceName": "Baguio City",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDONo.9-Benguet",
+            "code": "009",
+            "referenceName": "La Trinidad, Benguet",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDONo. l0- Mountain Province",
+            "code": "010",
+            "referenceName": "Lagawe, Ifugao",
+            "matchedBy": "code",
+            "confidence": "review",
+            "notes": [
+              "reference name \"Lagawe, Ifugao\" does not overlap the printed name \"Mountain Province\"; kept on code match"
+            ]
+          },
+          {
+            "raw": "RDO No. 12 - Ifugao",
+            "code": "012",
+            "referenceName": "Lagawe, Ifugao",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. l7A - South Tarlac",
+            "code": "17A",
+            "referenceName": "Tarlac City",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. l78 - North Tarlac",
+            "code": "17B",
+            "referenceName": "Paniqui, Tarlac",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": [
+              "read trailing \"8\" as branch letter \"B\": 178 -> 17B"
+            ]
+          },
+          {
+            "raw": "RDO No. 18- Zambales",
+            "code": "018",
+            "referenceName": "Olongapo City",
+            "matchedBy": "code",
+            "confidence": "review",
+            "notes": [
+              "reference name \"Olongapo City\" does not overlap the printed name \"Zambales\"; kept on code match"
+            ]
+          },
+          {
+            "raw": "RDO No. 19 - Subic Bay Freeport Zone",
+            "code": "019",
+            "referenceName": "Subic Bay Freeport Zone",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 20 - Bataan",
+            "code": "020",
+            "referenceName": "Balanga City, Bataan",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 2lA - North Pampanga",
+            "code": "21A",
+            "referenceName": "North Pampanga",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 2lB - South Pampansa",
+            "code": "21B",
+            "referenceName": "South Pampanga",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 21C - Clark Freeport and Special",
+            "code": "21C",
+            "referenceName": "Clark Freeport Zone",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 25A - West Bulacan",
+            "code": "25A",
+            "referenceName": "West Bulacan",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 25B - East Bulacan",
+            "code": "25B",
+            "referenceName": "East Bulacan",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 46 - South Rizal",
+            "code": "046",
+            "referenceName": "Cainta and Taytay",
+            "matchedBy": "code",
+            "confidence": "review",
+            "notes": [
+              "reference name \"Cainta and Taytay\" does not overlap the printed name \"South Rizal\"; kept on code match"
+            ]
+          },
+          {
+            "raw": "RDO No. 54A - East Cavite",
+            "code": "54A",
+            "referenceName": "Trece Martires City",
+            "matchedBy": "code",
+            "confidence": "review",
+            "notes": [
+              "reference name \"Trece Martires City\" does not overlap the printed name \"East Cavite\"; kept on code match"
+            ]
+          },
+          {
+            "raw": "RDO No. 54B - West Cavite",
+            "code": "54B",
+            "referenceName": "Bacoor City",
+            "matchedBy": "code",
+            "confidence": "review",
+            "notes": [
+              "reference name \"Bacoor City\" does not overlap the printed name \"West Cavite\"; kept on code match"
+            ]
+          },
+          {
+            "raw": "RDO No. 58 - West Batangas",
+            "code": "058",
+            "referenceName": "Batangas City",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": []
+          },
+          {
+            "raw": "RDO No. 59 - East Batangas",
+            "code": "059",
+            "referenceName": "Lipa City",
+            "matchedBy": "code",
+            "confidence": "review",
+            "notes": [
+              "reference name \"Lipa City\" does not overlap the printed name \"East Batangas\"; kept on code match"
+            ]
+          },
+          {
+            "raw": "RDO No. 63 - Oriental Mindoro",
+            "code": "063",
+            "referenceName": "Calapan City",
+            "matchedBy": "code",
+            "confidence": "review",
+            "notes": [
+              "reference name \"Calapan City\" does not overlap the printed name \"Oriental Mindoro\"; kept on code match"
+            ]
+          },
+          {
+            "raw": "RDO No. 37 - Occidental Mindoro",
+            "code": "037",
+            "referenceName": "RDO 037",
+            "matchedBy": "code+name",
+            "confidence": "high",
+            "notes": [
+              "reference name \"RDO 037\" is a placeholder; accepted on code alone"
+            ]
+          }
+        ],
+        "rdoCodes": [
+          "002",
+          "003",
+          "004",
+          "005",
+          "006",
+          "007",
+          "008",
+          "009",
+          "010",
+          "012",
+          "018",
+          "019",
+          "020",
+          "024",
+          "026",
+          "027",
+          "028",
+          "029",
+          "030",
+          "031",
+          "032",
+          "033",
+          "034",
+          "037",
+          "038",
+          "039",
+          "040",
+          "041",
+          "042",
+          "043",
+          "044",
+          "045",
+          "046",
+          "047",
+          "048",
+          "049",
+          "050",
+          "051",
+          "052",
+          "058",
+          "059",
+          "063",
+          "116",
+          "121",
+          "124",
+          "125",
+          "126",
+          "17A",
+          "17B",
+          "21A",
+          "21B",
+          "21C",
+          "25A",
+          "25B",
+          "43A",
+          "43B",
+          "53A",
+          "53B",
+          "54A",
+          "54B"
+        ],
+        "rows": [
+          {
+            "channel": "submission",
+            "rawDescription": "List ofBuyers of Sugar Together with a Copy ofCertificate of Advance Payment ofVAT made by each buyer appearing in the List by a Sugar Cooperative. Month of July 2026 Information Retum on Releases ofRefined Sugar by the Proprietor or Operator of a Sugar Refinery or Mill. Month of July 2026",
+            "formCodesDisplay": [],
+            "formCodesCanonical": [],
+            "originalDate": null,
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"SUBMISSION\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "submission",
+            "rawDescription": "Monthly e-Sales Report for All Taxpayers using CRIWPOS and/or Other Similar Business Machines whose last digit of 9-digit TIN is Odd Number. Month of July 2026",
+            "formCodesDisplay": [],
+            "formCodesCanonical": [],
+            "originalDate": null,
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-SUBMISSION\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR Form 2200-M Excise Tax Return for the Amount ofExcise Taxes Collected from Payment Made to Sellers of Metallic Minerals. Month of July 2026",
+            "formCodesDisplay": [
+              "2200-M"
+            ],
+            "formCodesCanonical": [
+              "2200M"
+            ],
+            "originalDate": null,
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING & PAYMENT/REMITTANCE (Online,Manual)\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR Forms 1601-C (Monthly Remittance Retum of Income Taxes Witlrheld on Compensation) and/or 0619-E (Monthly Remittance Form of Creditable lncome Taxes Withheld-Expanded) and./or 06 1 9-F (Monthly Remittance Form of Final Income Taxes Withheld) - Non-eFPS Filers. Month of July 2026",
+            "formCodesDisplay": [
+              "1601-C",
+              "0619-E",
+              "0619-F"
+            ],
+            "formCodesCanonical": [
+              "1601C",
+              "0619E",
+              "0619F"
+            ],
+            "originalDate": "2026-08-10",
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "same_line",
+            "confidence": "high",
+            "notes": [
+              "Channel header: \"e-FlLlNG & PAYMENT (Online/Manual)\"",
+              "OCR month \"A]ugttst\" read as August (edit distance 2)"
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR Form 2200-C (Excise Tax Return for Cosmetic Procedures) with Monthly Summary of Cosmetic Procedures Performed. Month of July 2026",
+            "formCodesDisplay": [
+              "2200-C"
+            ],
+            "formCodesCanonical": [
+              "2200C"
+            ],
+            "originalDate": null,
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FlLlNG & PAYMENT (Online/Manual)\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "efps_and_nonefps",
+            "rawDescription": "BIR Form 0620 (Monthly Remittance Form of 000 00515 Tax Withheld on the Amount Withdrawn from RECOfiDS NAG€ the Decedent's Deposit Account) - eFPS & Non-eFPS Filers. Month of July 2026 AU6 10 2026 | BIR Form 160o-VT (Monthly Remittance Retum of Value-Added Tax) and,/or 1600-PT (Other Fercentage Taxes Withheld) and BYI FNT* ADM N UfitT . 1 TlMtl rt 0n Monthly Alphalist of Payees (MAP) eFPS & Non-eFPS Filers. Month of July 2026 I",
+            "formCodesDisplay": [
+              "0620",
+              "1600-VT",
+              "1600-PT"
+            ],
+            "formCodesCanonical": [
+              "0620",
+              "1600VT",
+              "1600PT"
+            ],
+            "originalDate": null,
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FlLlNG & PAYMENT (Online/Manual)\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "3 BIR Form 1606 - (Withlolding Tax Remittance Retum for Onerous Transfer of Real hoperty Other Than Capital Asset Including Taxable and Exempt). Month of July 2026",
+            "formCodesDisplay": [
+              "1606"
+            ],
+            "formCodesCanonical": [
+              "1606"
+            ],
+            "originalDate": null,
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FlLlNG & PAYMENT (Online/Manual)\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "unknown",
+            "rawDescription": "BIR Form 1600-VT (Monthly Remittance Return of Value-Added Tax) and/or BIR Form 1600-PT (Other Percentage Taxes Withheld) and 1601-C (Monthly Remittance Retum of Income Taxes Withheld on Compensation) - National Govemment Agencies (NGAs). Month of July 2026",
+            "formCodesDisplay": [
+              "1600-VT",
+              "1600-PT",
+              "1601-C"
+            ],
+            "formCodesCanonical": [
+              "1600VT",
+              "1600PT",
+              "1601C"
+            ],
+            "originalDate": null,
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING & e-PAYMENT/REMITTANCE\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "efps_group_e",
+            "rawDescription": "BIR Forms 1601 -C (Monthly Remittance Return of lncome Taxes Withheld on Compensation) and/or 0619-E (Monthly Remittance Form of Creditable Income Taxes Withheld-Expanded) and/or 0619-F (Monthly Remittance Form of Final lncome Taxes Withheld) - eFPS Filers under Group E. Month of July 2026",
+            "formCodesDisplay": [
+              "1601-C",
+              "0619-E",
+              "0619-F"
+            ],
+            "formCodesCanonical": [
+              "1601C",
+              "0619E",
+              "0619F"
+            ],
+            "originalDate": "2026-08-11",
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "same_line",
+            "confidence": "high",
+            "notes": [
+              "Channel header: \"e-FILING\"",
+              "OCR day \"1 l\" read as 11"
+            ]
+          },
+          {
+            "channel": "efps_group_d",
+            "rawDescription": "BIR Forms l60l -C (Monthly Remittance Retum of Income Taxes Withheld on Compensation) and/or 0619-E (Monthly Remittance Form of Creditable Income Taxes Withheld-Expanded) and/or 0619-F (Monthly Remittance Form of Final lncome Taxes Withheld) - eFPS Filers under Group D. Month of luly 2026 I",
+            "formCodesDisplay": [
+              "1601-C",
+              "0619-E",
+              "0619-F"
+            ],
+            "formCodesCanonical": [
+              "1601C",
+              "0619E",
+              "0619F"
+            ],
+            "originalDate": "2026-08-13",
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "same_line",
+            "confidence": "high",
+            "notes": [
+              "Channel header: \"e-FILING\"",
+              "Extended Due Date column unreadable (Angttst 1'? ,2026); used the circular's global extended date 2026-08-17"
+            ]
+          },
+          {
+            "channel": "efps_group_b",
+            "rawDescription": "BIR Forms l60l -C (Monthly Remittance Retum of lncome Taxes Withheld on Compensation) and/or 0619-E (Monthly Remittance Form of Creditable lncome Taxes Withheld-Expanded) and/or 06 l9-F (Monthly Remittance Form of Final Income Taxes Withheld) - eFPS Filers under Group B. Month of JuJy 2026",
+            "formCodesDisplay": [
+              "1601-C",
+              "0619-E",
+              "0619-F"
+            ],
+            "formCodesCanonical": [
+              "1601C",
+              "0619E",
+              "0619F"
+            ],
+            "originalDate": "2026-08-14",
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "same_line",
+            "confidence": "high",
+            "notes": [
+              "Channel header: \"e-FILING\""
+            ]
+          },
+          {
+            "channel": "registration",
+            "rawDescription": "Permanently Bound Loose-Leaf Books of Accounts/lnvoices and Other Accounting Records. Fiscal Year ending July 31,2026",
+            "formCodesDisplay": [],
+            "formCodesCanonical": [],
+            "originalDate": null,
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"REGISTRATION (Online Thru ORUS or Manual)\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR Form 1702 - RT/EX/MX. Fiscal Year ending April 30,2026 t:, RECORD i MANAGEMEI'IT DIVISION",
+            "formCodesDisplay": [
+              "1702-RT",
+              "1702-EX",
+              "1702-MX"
+            ],
+            "formCodesCanonical": [
+              "1702RT",
+              "1702EX",
+              "1702MX"
+            ],
+            "originalDate": "2026-08-15",
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "same_line",
+            "confidence": "high",
+            "notes": [
+              "Channel header: \"eFILING & PAYMENT (Online[vlanual)\""
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR Form 1707-A ({rrnu.l 6apital Gains Tax Retum For Onerous Transfer of Shares of 10 2026 Stock Not Traded Through the Local Stock R At]MIN UN IT . I 4l?,r-a EY: TIMt:",
+            "formCodesDisplay": [
+              "1707-A"
+            ],
+            "formCodesCanonical": [
+              "1707A"
+            ],
+            "originalDate": null,
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"eFILING & PAYMENT (Online[vlanual)\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "0000515 Exchange) - by Corporate Taxpayers. Fiscal Year ending April 30, 2026",
+            "formCodesDisplay": [],
+            "formCodesCanonical": [],
+            "originalDate": null,
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"eFILING & PAYMENT (Online[vlanual)\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR Form 1701Q (Quarterly Income Tax Retum For lndividuals, Estates & Trusts) and Summary Alphalist of Withholding Taxes I",
+            "formCodesDisplay": [
+              "1701Q"
+            ],
+            "formCodesCanonical": [
+              "1701Q"
+            ],
+            "originalDate": null,
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"eFILING & PAYMENT (Online[vlanual)\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "efps_and_nonefps",
+            "rawDescription": "(SAWT) - eFPS & Non-eFPS Filers. For the Quarter ending June 30,2026",
+            "formCodesDisplay": [],
+            "formCodesCanonical": [],
+            "originalDate": null,
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"eFILING & PAYMENT (Online[vlanual)\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "efps_group_a",
+            "rawDescription": "BIR Forms 1601-C (Monthly Remittance Retum of lncome Taxes Withheld on Compensation) and/or 0619-E (Monthly Remittance Form of Creditable Income Taxes Withheld-Expanded) and/or 061 9-F (Monthly Remittance Form of Final lncome Taxes Withheld) - eFPS Filers under Group A. Mont} of July 2026",
+            "formCodesDisplay": [
+              "1601-C",
+              "0619-E",
+              "0619-F"
+            ],
+            "formCodesCanonical": [
+              "1601C",
+              "0619E",
+              "0619F"
+            ],
+            "originalDate": null,
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILINC & e-PAYMENT\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "efps_group_multi",
+            "rawDescription": "BIR Forms 1601-C (Monthly Remittance Retum of lncome Taxes Withheld on Compensation) and/or 0619-E (Monthly Remittance Form of Creditable Income Taxes Withheld-Expanded) and/or 0619-F (Monthly Remittance Form of Final Income Taxes Withheld) - eFPS Filers under Group E, D ,C & B. Month of July 2026",
+            "formCodesDisplay": [
+              "1601-C",
+              "0619-E",
+              "0619-F"
+            ],
+            "formCodesCanonical": [
+              "1601C",
+              "0619E",
+              "0619F"
+            ],
+            "originalDate": null,
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-PAYMENT\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "submission",
+            "rawDescription": "Consolidated Retum of All Transactions based on the Reconciled Data of Stockbrokers. August l-15. 2026",
+            "formCodesDisplay": [],
+            "formCodesCanonical": [],
+            "originalDate": "2026-08-17",
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "same_line",
+            "confidence": "high",
+            "notes": [
+              "Channel header: \"SUBMISSION\""
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "One-Time Transactions (ONETT) - (BIR Form Nos.1800, 1801, 1706, 1707, 1707 A) - Deadlines falling fiom August 10,2026to August 16,2026",
+            "formCodesDisplay": [
+              "1800",
+              "1801",
+              "1706",
+              "1707",
+              "1707A"
+            ],
+            "formCodesCanonical": [
+              "1800",
+              "1801",
+              "1706",
+              "1707",
+              "1707A"
+            ],
+            "originalDate": null,
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FlLlNG & PAYMENT (Online/I4anual)\"",
+              "Block states its own deadline range 2026-08-10 to 2026-08-16",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "Payment of Applicable Taxes Using BIR Payment Form 0605 and Payment Form No F !NTERNAt REVENU E 0613 (Payment Form @RPT\"?,',1 ANAGEMENT DIVISIC] N BIU Under Tax Compliance Verification Drive/Tax Mapping) - Deadlines falling from August 10, AUI 10 2026 t I",
+            "formCodesDisplay": [
+              "0605",
+              "0613"
+            ],
+            "formCodesCanonical": [
+              "0605",
+              "0613"
+            ],
+            "originalDate": null,
+            "extendedDate": "2026-08-17",
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FlLlNG & PAYMENT (Online/I4anual)\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          }
+        ],
+        "needsManualReview": false,
+        "notes": [
+          "text layer: 9711 characters over 6 page(s)",
+          "page-1 letterhead issue date: 2026-08-10",
+          "RDO references: 58 matched, 58 distinct office(s), 60 emitted code(s) after lettered expansion",
+          "office-count invariant: the prose states no count, nothing to compare",
+          "deadline table: 22 block(s), 6 with a printed date pair, 16 recorded against the circular window, 16 flagged for review"
+        ]
+      }
     },
     "bir:rmc:2026:090": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786441890,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmc:2026:091": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786441890,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:001": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:002": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:003": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:004": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:005": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:006": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:007": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:008": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:009": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:010": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:011": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:012": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:013": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786431188,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:014": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786752000,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:015": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786752000,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:016": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786752000,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:017": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786752000,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:018": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786752000,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:019": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786752000,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rmo:2026:020": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786441890,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rr:2026:001": {
       "pdfSha256": "8d9d5fa0e9a374efa4aa2238820991265b85f8b69eb9ca740d12e973b59d8e1d",
+      "pdfBytes": 136661,
       "firstSeenAtUnix": 1786752000,
-      "extractedAtUnix": 1786431188,
-      "feedRev": 2
+      "extractedAtUnix": 1786462044,
+      "feedRev": 3,
+      "extraction": {
+        "externalId": "bir:rr:2026:001",
+        "headerDateIssued": null,
+        "globalExtendedDate": null,
+        "window": null,
+        "statedOfficeCount": null,
+        "rdos": [],
+        "rdoCodes": [],
+        "rows": [],
+        "needsManualReview": true,
+        "notes": [
+          "text layer unusable: 0 characters over 3 page(s), below the 200 characters/page floor — no extraction attempted (plan decision D3)"
+        ]
+      }
     },
     "bir:rr:2026:002": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786752000,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rr:2026:003": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786752000,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
     "bir:rr:2026:004": {
       "pdfSha256": null,
+      "pdfBytes": null,
       "firstSeenAtUnix": 1786752000,
       "extractedAtUnix": 0,
       "feedRev": 0
