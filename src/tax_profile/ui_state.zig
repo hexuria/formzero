@@ -5742,6 +5742,11 @@ test "editor visibility exhaustively delegates to central applicability" {
     // One state allocation avoids multiplying this large fixed-buffer model
     // across compile-time-unrolled cases and exhausting the test stack.
     var state = State{};
+    // The visibility methods intentionally require an explicit taxpayer-type
+    // choice; this exhaustive matrix supplies that committed UI state directly
+    // so its raw SubjectKind cases (including legacy compatibility tags) stay
+    // intact.
+    state.subject_kind_selected = true;
     for (std.meta.tags(model.SubjectKind)) |subject_kind| {
         for (std.meta.tags(model.NaturalPersonClassification)) |classification| {
             for ([_]bool{ false, true }) |has_trade_name| {
@@ -7161,6 +7166,7 @@ test "a branch reuses safe details and clears branch-specific base facts" {
     try std.testing.expect(state.beginAddBranch());
     try std.testing.expect(state.branchMode());
     try std.testing.expect(state.editing_new);
+    state.setAccountingPeriodBasis(.calendar);
 
     // The taxpayer's own details carry over.
     try std.testing.expectEqualStrings("123-456-789", state.tin.text());
@@ -7206,6 +7212,7 @@ test "a branch cannot become a different kind of taxpayer" {
     try workspaceFixture(&state, allocator, &store);
     try std.testing.expect(state.beginAddBranch());
     try std.testing.expectEqual(state.subject_kind, state.branch_source_kind);
+    state.setAccountingPeriodBasis(.calendar);
 
     state.rdo.set("043");
     state.registered_address.set("Makati City");
@@ -7228,6 +7235,7 @@ test "a branch cannot change the taxpayer it belongs to" {
     var state = State{};
     try workspaceFixture(&state, allocator, &store);
     try std.testing.expect(state.beginAddBranch());
+    state.setAccountingPeriodBasis(.calendar);
 
     state.rdo.set("043");
     state.registered_address.set("Makati City");
@@ -7439,6 +7447,7 @@ test "a corrected TIN reaches the sidebar and regroups its registrations" {
     const head_office_id = owner_storage[0..selected.len];
 
     try std.testing.expect(state.beginAddBranch());
+    state.setAccountingPeriodBasis(.calendar);
     state.rdo.set("043");
     state.registered_address.set("Makati City");
     state.zip_code.set("1200");
@@ -7489,6 +7498,7 @@ test "profile rows expose head office and branch identity" {
     var state = State{};
     try workspaceFixture(&state, allocator, &store);
     try std.testing.expect(state.beginAddBranch());
+    state.setAccountingPeriodBasis(.calendar);
     state.rdo.set("043");
     state.registered_address.set("Makati City");
     state.zip_code.set("1200");

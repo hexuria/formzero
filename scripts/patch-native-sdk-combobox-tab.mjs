@@ -344,6 +344,7 @@ if (!events.includes("A combobox uses Tab/Shift+Tab to enter its visible result"
                             index,
                             current_id,
                             entry_id,
+                            blurred_id,
                         );
                     }
                 }
