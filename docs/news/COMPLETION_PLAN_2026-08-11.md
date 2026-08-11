@@ -10,7 +10,7 @@ calls: every task says exactly what to change, how to prove it worked, and what
 to do when it does not. Read §1 (the operating manual) before touching
 anything.
 
-Progress: 3/13 tasks complete.
+Progress: 4/13 tasks complete.
 
 ---
 
@@ -273,7 +273,7 @@ blocker here.
   - Verify: TS suite green, count above baseline; snapshots restored.
   - Commit: `fix: refuse OCR date literals outside the circular's year`
 
-- [ ] **C5 — the office-count invariant only trusts a counted phrase.**
+- [x] **C5 — the office-count invariant only trusts a counted phrase.**
   - Files: `scripts/news-sync/extract-rdos.ts` (+ test file).
   - Change: `OFFICE_COUNT_PATTERN` currently accepts any 1–3 digit number
     within 40 chars before `Office(s)` — list markers and page numbers

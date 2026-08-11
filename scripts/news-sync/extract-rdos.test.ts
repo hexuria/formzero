@@ -199,13 +199,35 @@ test("RMC 62-2026 reads its spelled-out, OCR-damaged office list", () => {
   );
 });
 
-test("RMC 62-2026's office-count invariant holds", () => {
+test("RMC 62-2026 enumerates its offices and states no count", () => {
+  // It lists `1.` and `2.` rather than saying "the following two". The 2 that
+  // used to be reported was that list marker, close enough to the word
+  // `Office` to be mistaken for a count. It agreed with reality by accident,
+  // and only because OCR read the first marker as `L` so `1.` never won: read
+  // cleanly, the circular would have claimed one office against two and failed
+  // its own invariant.
   const { rdos, statedOfficeCount } = extractRdos(rmc62LayoutText);
   const matched = new Set(rdos.map((match) => match.code).filter((code) => code !== null));
 
-  assert.equal(statedOfficeCount, 2);
+  assert.equal(statedOfficeCount, null);
   assert.equal(matched.size, 2);
-  assert.equal(statedOfficeCount, matched.size);
+});
+
+test("a stated office count needs counting context, not proximity", () => {
+  assert.equal(parseStatedOfficeCount("the following 58 Revenue District Offices"), 58);
+  assert.equal(parseStatedOfficeCount("fifty-eight (58) Revenue District Offices"), 58);
+  assert.equal(parseStatedOfficeCount("a total of 12 Revenue District Offices"), 12);
+
+  // An enumeration marker is not a count, however close it sits.
+  assert.equal(
+    parseStatedOfficeCount("  2. Revenue District Office No. 111 - South Cotabato"),
+    null,
+  );
+  // Nor is a number that merely shares a line with the word.
+  assert.equal(
+    parseStatedOfficeCount("issued in view of Circular No. 123 by the Office of the President"),
+    null,
+  );
 });
 
 test("RMC 62-2026's offices carry the confidence their names earn", () => {

@@ -55,10 +55,38 @@ const PLACEHOLDER_NAME_PATTERN = /^rdo\s*[0-9]{1,3}[a-c]?$/iu;
 
 /**
  * A stated count of affected offices, e.g. `fifty-eight (58) Revenue District
- * Offices`. The gap is same-line and digit-free so that a code column entry
- * (`RDO No. 58 - West Batangas`) can never be read as a prose count.
+ * Offices` or `the following 58 Revenue District Offices`.
+ *
+ * A bare number near the word is not a count: RMC 62-2026 enumerates its two
+ * districts as `1.` and `2.`, and the list marker sat close enough to
+ * `Office` to be read as one. That produced a right answer for the wrong
+ * reason -- and only because OCR turned its `1.` into `L`, so the first
+ * marker never won the race. Had it read cleanly the circular would have
+ * reported a stated count of 1 against 2 districts and failed its own
+ * invariant.
+ *
+ * So the number must carry counting context: parenthesised, as a spelled
+ * count is written, or introduced by a word that can only precede a count.
+ * The gap stays same-line and digit-free so a code column entry
+ * (`RDO No. 58 - West Batangas`) can never qualify.
  */
-const OFFICE_COUNT_PATTERN = /\(?\b([0-9]{1,3})\b\)?[^\n0-9]{0,40}?Offices?\b/iu;
+const OFFICE_COUNT_PATTERN = new RegExp(
+  "(?:" +
+    // fifty-eight (58) Revenue District Offices
+    "\\((\\d{1,3})\\)" +
+    "|" +
+    // the following 58 Revenue District Offices
+    "\\b(?:following|affected|covered|impacted|listed|total\\s+of|all\\s+of)\\s+(\\d{1,3})\\b" +
+    "|" +
+    // the 12 affected offices
+    "\\b(\\d{1,3})\\s+(?:affected|covered|impacted|listed)\\b" +
+    ")" +
+    "[^\\n0-9]{0,40}?Offices?\\b",
+  "iu",
+);
+
+/** A line-start enumeration marker (`1.`, `2)`, `L`) introducing one office. */
+const LIST_MARKER_LINE = /^\s*(?:\d{1,2}|[A-Za-z])\s*[.)]?\s+Revenue\s+District\s+Office\b/iu;
 
 // Tokens too common across office names to carry any matching signal.
 const GENERIC_NAME_TOKENS: ReadonlySet<string> = new Set(["city", "and", "of", "the", "rdo", "no"]);
@@ -77,11 +105,21 @@ export function scanRegion(layoutText: string): string {
   return (headerIndex === -1 ? lines : lines.slice(0, headerIndex)).join("\n");
 }
 
-/** Prose count of affected offices, for the caller's invariant check. */
+/**
+ * Prose count of affected offices, for the caller's invariant check, or null
+ * when the circular states none. Null is the common case and a safe one: the
+ * invariant then reports that there is nothing to compare, which is honest.
+ * A wrong count is worse than no count, because it fails a circular that was
+ * read correctly.
+ */
 export function parseStatedOfficeCount(text: string): number | null {
-  const match = OFFICE_COUNT_PATTERN.exec(text);
+  const withoutEnumeration = text
+    .split(/\r?\n/u)
+    .filter((line) => !LIST_MARKER_LINE.test(line))
+    .join("\n");
+  const match = OFFICE_COUNT_PATTERN.exec(withoutEnumeration);
   if (match === null) return null;
-  const value = Number.parseInt(match[1] ?? "", 10);
+  const value = Number.parseInt(match[1] ?? match[2] ?? match[3] ?? "", 10);
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
