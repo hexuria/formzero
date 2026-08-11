@@ -1,10 +1,10 @@
 # Remaining-work plan — Important News + BIR deadline overrides
 
-> **Superseded:** the active tracker is now
-> [COMPLETION_PLAN_2026-08-11.md](COMPLETION_PLAN_2026-08-11.md) — a verified
-> gap report plus a 13-task execution plan with an operating manual for the
-> agents running it. This file stays as the history of the R1–R4 shipping
-> phases.
+> **Superseded:** the active tracker is
+> [COMPLETION_PLAN_2026-08-11.md](COMPLETION_PLAN_2026-08-11.md) — the verified
+> gap report, the thirteen-task completion plan, and the operating manual for
+> the agents running it. This file stays as the history of the R1–R4 shipping
+> phases and the decisions taken there.
 
 Branch `gol/important-news-google-search-8efadb` · companion to
 [the execution plan](IMPORTANT_NEWS_SYNC_EXECUTION_PLAN_2026-08-11.md)

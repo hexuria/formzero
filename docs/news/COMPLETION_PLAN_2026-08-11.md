@@ -10,7 +10,7 @@ calls: every task says exactly what to change, how to prove it worked, and what
 to do when it does not. Read §1 (the operating manual) before touching
 anything.
 
-Progress: 8/13 tasks complete.
+Progress: 9/13 tasks complete.
 
 ---
 
@@ -376,7 +376,7 @@ blocker here.
 
 ### Phase C-E — reconciliation
 
-- [ ] **C10 — make every tracker tell the truth.**
+- [x] **C10 — make every tracker tell the truth.**
   - Files: `docs/news/IMPORTANT_NEWS_SYNC_EXECUTION_PLAN_2026-08-11.md`,
     `docs/news/MERGED_CELL_INVESTIGATION.md`, `docs/news/NEXT_STEPS.md`.
   - Fix, verifying each count by grep rather than arithmetic in your head:

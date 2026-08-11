@@ -1,23 +1,31 @@
-# Merged deadline-table cells — investigation, and a decision you need to make
+# Merged deadline-table cells — investigation and outcome
 
 2026-08-11. Investigated the plan's documented upgrade path for the rows the
-extractor refuses to guess (§5.6 step 5, plan task T10.2). **No code shipped.**
-The documented approach rests on a false premise, and the honest alternative
-trades away the property the whole extractor is built on.
+extractor refuses to guess (§5.6 step 5, plan task T10.2). The documented
+approach rests on a false premise, and the honest alternative trades away the
+property the whole extractor is built on, so **no geometry pass was built**.
 
-## The finding that matters most
+**Resolved.** The gap this investigation found — the feed under-applying
+RMC 89-2026 — was closed instead by option 1 below: the missing forms ship as a
+human-reviewed curated supplement in `scripts/news-sync/curated/overrides.json`,
+merged into the feed under a `-reviewed` reference namespace and listed
+separately in the review report. The analysis that follows stands as the record
+of why options 2 and 3 were not taken, and of what a future attempt would face.
 
-**The published feed under-applies RMC 89-2026.** Its Aug 10 → Aug 17 extension
-is printed inside one bordered table cell that also contains **2200-M, 2200-C,
-0620, 1600-VT, 1600-PT, 1606** and the NGAs block — not only the
-1601C/0619E/0619F the feed currently carries. Likewise the Aug 15 → Aug 17 cell
-contains **1701Q and 1707-A** alongside 1702-RT/EX/MX.
+## The finding that matters most (since closed)
 
-So a taxpayer filing 1606 or 0620 in an affected district is shown **10 August**
-when BIR extended them to the 17th. The error is in the safe direction — the app
-shows the earlier date, so nobody files late on our advice — and every one of
-those rows is already named in `review/bir-rmc-2026-089.md` under "Dropped /
-needs review". But the feed is incomplete, and that is worth knowing plainly.
+**The feed under-applied RMC 89-2026.** Its Aug 10 → Aug 17 extension is printed
+inside one bordered table cell that also contains **2200-M, 2200-C, 0620,
+1600-VT, 1600-PT, 1606** and the NGAs block — not only the 1601C/0619E/0619F the
+extractor could read. Likewise the Aug 15 → Aug 17 cell contains **1701Q and
+1707-A** alongside 1702-RT/EX/MX.
+
+A taxpayer filing 1606 or 0620 in an affected district was therefore shown
+**10 August** when BIR had moved them to the 17th. The error ran in the safe
+direction — an earlier date, so nobody filed late on our advice — and every row
+was already named in `review/bir-rmc-2026-089.md` under "Dropped / needs
+review". The curated supplement now carries all eight forms, so the published
+feed states the extension in full.
 
 ## Why the documented `-tsv` path cannot work
 
@@ -81,9 +89,12 @@ That is not a regression — it is the circular being read correctly. It does me
 that §5.6.7's grouping rule would need rewriting, since 1701Q at
 2026-08-15 → 2026-08-17 has nowhere to land except the 1702 record.
 
-Three ways forward, in the order they are worth considering:
+Three ways forward, in the order they were considered. **Option 1 was taken**,
+in the shipped form described at the top of this file rather than as
+editor-entered rows, because a manual override reaches one local database and
+this had to reach every reader of the feed:
 
-1. **Enter the missing rows as manual overrides** (recommended for now). The
+1. **Enter the missing rows as reviewed overrides** (chosen). The
    editor exists, synced and manual rows already coexist, and
    `review/bir-rmc-2026-089.md` names every affected row with its dates. Eight
    forms, a few minutes, no new failure mode, and it closes the real-world gap

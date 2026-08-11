@@ -11,7 +11,7 @@ by an implementation agent without further research. Every claim about live
 BIR endpoints below was verified by direct probing on 2026-08-11; the captured
 evidence is committed under `scripts/news-sync/fixtures/2026-08-11/`.
 
-Progress: 29/31 tasks complete (see §6 checkboxes).
+Progress: 32/32 tasks complete (see §6 checkboxes).
 
 **Start here for remaining work:** [NEXT_STEPS.md](NEXT_STEPS.md) — the
 remaining-work plan: phases R1–R4 (defect fixes → commit/PR → live dry-run →
@@ -756,7 +756,7 @@ CREATE TABLE calendar_override_dismissals (
   syncs from re-adding it.”
 - Fragment + `just generate`; ui_state tests for the read-only gating.
 
-### Phase 7 — app: month-scoped news pane + RDO context — 3/4 complete
+### Phase 7 — app: month-scoped news pane + RDO context — 4/4 complete
 
 - [x] **T7.1 Manila month bucketing** — `feat(news): month bucket helper`
 - Add `pub fn manilaYearMonth(unix: i64) struct { year: i32, month: u8 }`
@@ -794,8 +794,13 @@ CREATE TABLE calendar_override_dismissals (
 - Tests: selecting `039` applies the Phase 6 synced override to the global
   projection; “Nationwide” restores the unscoped schedule.
 
-- [ ] **T7.4 (deferred, tracked)** persistence of the selector — needs an app
-settings store; explicitly out of v1. Recorded in §10.
+- [x] **T7.4** persistence of the selector — `feat: remember the dashboard's district context across launches`
+- Deferred at plan time for want of a settings store, then delivered
+  2026-08-11: the dashboard's district choice now lives in an app-owned
+  `preferences.sqlite3`, restored before the first frame, tri-state so a
+  cleared context persists as a deliberate "nationwide" rather than decaying
+  to "never chose", and degrading to nationwide on a code the reference no
+  longer knows while keeping the record.
 
 ### Phase 8 — end-to-end proof, docs, cleanup — 3/3 complete
 
@@ -867,7 +872,7 @@ data; both are the same class as the 16-slot region cap that nearly shipped
 - Acceptance: the test fails if `selectedTaxpayerCalendarContext` stops
   passing the profile's RDO.
 
-### Phase 10 — found by the live dry-run — 1/2 complete
+### Phase 10 — found by the live dry-run — 2/2 complete
 
 Added 2026-08-11 from the T8.2 walkthrough (see
 [screenshots/README.md](screenshots/README.md)). The notice-date defect that
@@ -890,7 +895,11 @@ run also found was fixed in the same pass and needs no task.
   invariant passes, and its deadline rows extract; RMC 89-2026's golden output
   is unchanged.
 
-- [ ] **T10.2 merged deadline-table cells** — decision needed, see [MERGED_CELL_INVESTIGATION.md](MERGED_CELL_INVESTIGATION.md)
+- [x] **T10.2 merged deadline-table cells** — resolved 2026-08-11 by curated supplement; see [MERGED_CELL_INVESTIGATION.md](MERGED_CELL_INVESTIGATION.md)
+- Outcome: the missing forms ship as a human-reviewed curated supplement in
+  `scripts/news-sync/curated/overrides.json`, merged into the feed under a
+  `-reviewed` reference namespace. The geometry pass stays unbuilt for the
+  reasons below.
 - Investigated 2026-08-11; no code shipped. The plan's own `-tsv` upgrade path
   (§5.6 step 5) rests on a false premise: RMC 89-2026's table has 8 bordered
   rows, not 22, and a row prints its pair once against an arbitrary paragraph,
