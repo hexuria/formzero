@@ -3527,6 +3527,18 @@ pub const Model = struct {
         return @min(480, available);
     }
 
+    pub fn profileDirtyNavigationDialogHeight(self: *const Model) f32 {
+        const has_supplemental_content =
+            self.profileSessionDraftActionVisible() or
+            self.profileSessionDraftBlockedVisible();
+
+        return switch (self.viewportClass) {
+            .phone => if (has_supplemental_content) 400 else 300,
+            .compact => if (has_supplemental_content) 340 else 280,
+            else => if (has_supplemental_content) 288 else 240,
+        };
+    }
+
     pub fn profileSessionDraftActionVisible(self: *const Model) bool {
         if (self.pendingProfileNavigation == null) return false;
         return self.taxProfiles.canSaveSessionDraft(&self.sessionProfileDraft);
@@ -23205,6 +23217,7 @@ test "parked Tax Profile session draft cannot be replaced by another edit" {
     try std.testing.expect(model.profileDirtyNavigationVisible());
     try std.testing.expect(!model.profileSessionDraftActionVisible());
     try std.testing.expect(model.profileSessionDraftBlockedVisible());
+    try expectDirtyNavigationDialogResponsiveLayout(&model, .supplemental);
     update(&model, .profile_discard_navigation);
     try std.testing.expect(model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
 
@@ -23291,12 +23304,51 @@ test "new Tax Profile session draft restores its source through the creation lif
     try std.testing.expect(!model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
 }
 
+const DirtyNavigationDialogContent = enum { basic, supplemental };
+
+const dirty_navigation_dialog_layout_cases = [_]struct {
+    label: []const u8,
+    width: usize,
+    height: usize,
+    basic_height: f32,
+    supplemental_height: f32,
+}{
+    .{
+        .label = "desktop",
+        .width = 1_400,
+        .height = 900,
+        .basic_height = 240,
+        .supplemental_height = 288,
+    },
+    .{
+        .label = "compact",
+        .width = 700,
+        .height = 900,
+        .basic_height = 280,
+        .supplemental_height = 340,
+    },
+    .{
+        .label = "phone minimum",
+        .width = 320,
+        .height = 500,
+        .basic_height = 300,
+        .supplemental_height = 400,
+    },
+};
+
 test "profile discard dialog is rooted and keeps creation drafts in memory only" {
     try std.testing.expect(
         std.mem.indexOf(
             u8,
             app_markup_root,
             "profileDirtyNavigationVisible",
+        ) != null,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            app_markup_root,
+            "height=\"{profileDirtyNavigationDialogHeight}\"",
         ) != null,
     );
     try std.testing.expect(
@@ -23317,6 +23369,10 @@ test "profile discard dialog is rooted and keeps creation drafts in memory only"
 
     update(&model, .go_back);
     try std.testing.expect(model.profileDirtyNavigationVisible());
+    try std.testing.expect(model.profileSessionDraftActionVisible());
+
+    try expectDirtyNavigationDialogResponsiveLayout(&model, .supplemental);
+
     update(&model, .profile_save_session_draft_navigation);
     try std.testing.expectEqual(@as(usize, 0), model.profileRows().len);
     try std.testing.expect(model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
@@ -23329,6 +23385,17 @@ test "profile discard dialog is rooted and keeps creation drafts in memory only"
         "Unpersisted Session Draft",
         model.taxProfiles.display_name.text(),
     );
+}
+
+test "profile discard dialog reserves responsive basic-content height" {
+    var model = Model{
+        .page = .profile_setup,
+        .pendingProfileNavigation = .registration_create_branch,
+    };
+    try std.testing.expect(!model.profileSessionDraftActionVisible());
+    try std.testing.expect(!model.profileSessionDraftBlockedVisible());
+
+    try expectDirtyNavigationDialogResponsiveLayout(&model, .basic);
 }
 
 test "profile editor Back exits clean edits and guards dirty edits" {
@@ -25616,6 +25683,123 @@ fn expectSetupWorkspaceLayoutClean(
         std.debug.print("  - {s}\n", .{writer.buffered()});
     }
     return error.LayoutAuditFindings;
+}
+
+/// Verifies every visible navigation action stays inside the clipped dialog
+/// surface. The surrounding setup page has its own broad audit; this focused
+/// assertion isolates the modal regression from unrelated background copy.
+fn expectDirtyNavigationDialogActionsInsideSurface(
+    model: *const Model,
+    width: usize,
+    height: usize,
+    label: []const u8,
+) !void {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var view = try initAppMarkupView(arena);
+    var ui = canvas.Ui(Msg).init(arena);
+    const tree = try ui.finalize(try view.build(&ui, model));
+    const dialog = findWidgetByKind(tree.root, .dialog) orelse
+        return error.DirtyNavigationDialogMissing;
+    const save_action = findWidgetByText(
+        dialog,
+        .button,
+        "Save draft and continue",
+    );
+    if (model.profileSessionDraftActionVisible() and save_action == null) {
+        return error.DirtyNavigationSaveActionMissing;
+    }
+    if (!model.profileSessionDraftActionVisible() and save_action != null) {
+        return error.DirtyNavigationUnexpectedSaveAction;
+    }
+    const discard_action = findWidgetByText(
+        dialog,
+        .button,
+        model.profileDiscardNavigationLabel(),
+    ) orelse return error.DirtyNavigationDiscardActionMissing;
+
+    const tokens = canvas.DesignTokens.theme(.{ .color_scheme = .light });
+    const nodes = try arena.alloc(
+        canvas.WidgetLayoutNode,
+        canvas.max_layout_audit_nodes,
+    );
+    const bounds = geometry.RectF.init(
+        0,
+        0,
+        @floatFromInt(width),
+        @floatFromInt(height),
+    );
+    const layout = try canvas.layoutWidgetTreeWithTokens(
+        tree.root,
+        bounds,
+        tokens,
+        nodes,
+    );
+    const dialog_frame = (layout.findById(dialog.id) orelse
+        return error.DirtyNavigationDialogLayoutMissing).frame.normalized();
+
+    var actions: [2]canvas.Widget = undefined;
+    var action_count: usize = 0;
+    if (save_action) |action| {
+        actions[action_count] = action;
+        action_count += 1;
+    }
+    actions[action_count] = discard_action;
+    action_count += 1;
+
+    for (actions[0..action_count]) |action| {
+        const action_frame = (layout.findById(action.id) orelse
+            return error.DirtyNavigationActionLayoutMissing).frame.normalized();
+        if (dialog_frame.containsRect(action_frame)) continue;
+
+        std.debug.print(
+            "dialog containment: {s} at {d}x{d}: action '{s}' frame " ++
+                "({d:.1},{d:.1} {d:.1}x{d:.1}) escapes dialog " ++
+                "({d:.1},{d:.1} {d:.1}x{d:.1})\n",
+            .{
+                label,
+                width,
+                height,
+                action.text,
+                action_frame.x,
+                action_frame.y,
+                action_frame.width,
+                action_frame.height,
+                dialog_frame.x,
+                dialog_frame.y,
+                dialog_frame.width,
+                dialog_frame.height,
+            },
+        );
+        return error.DirtyNavigationActionEscapesDialog;
+    }
+}
+
+fn expectDirtyNavigationDialogResponsiveLayout(
+    model: *Model,
+    content: DirtyNavigationDialogContent,
+) !void {
+    for (dirty_navigation_dialog_layout_cases) |case| {
+        update(model, .{
+            .viewport_width_changed = @floatFromInt(case.width),
+        });
+        const expected_height = switch (content) {
+            .basic => case.basic_height,
+            .supplemental => case.supplemental_height,
+        };
+        try std.testing.expectEqual(
+            expected_height,
+            model.profileDirtyNavigationDialogHeight(),
+        );
+        try expectDirtyNavigationDialogActionsInsideSurface(
+            model,
+            case.width,
+            case.height,
+            case.label,
+        );
+    }
 }
 
 test "taxpayer setup workspace lays out cleanly at every width" {
