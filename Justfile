@@ -31,7 +31,7 @@ generate:
     {{ npm_command }} run generate
 
 # Validate catalog ownership and Native markup/app manifest.
-[unix]
+[macos]
 check: generate
     #!/usr/bin/env bash
     set -euo pipefail
@@ -40,6 +40,21 @@ check: generate
     eval "$(node scripts/app-identity.mjs prepare --format shell)"
     node scripts/patch-native-sdk-combobox-tab.mjs
     npx native doctor --manifest "$BUWIZ_MANIFEST" --strict
+
+[linux]
+check: generate
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{ npm_command }} run test:app-identity
+    {{ npm_command }} run check:tax-catalog
+    bash scripts/check-linux-deps.sh
+    eval "$(node scripts/app-identity.mjs prepare --format shell)"
+    node scripts/patch-native-sdk-combobox-tab.mjs
+    # Strict doctor treats macOS-only codesigning as an unsupported Linux
+    # capability. Validate the manifest explicitly; build/package below prove
+    # the actual Linux host integration.
+    npx native validate "$BUWIZ_MANIFEST"
+    npx native doctor --manifest "$BUWIZ_MANIFEST"
 
 [windows]
 check: generate
@@ -102,12 +117,21 @@ run: generate
     npx native dev . --yes
 
 # Check the toolchain and manifest without building the app.
-[unix]
+[macos]
 doctor:
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(node scripts/app-identity.mjs prepare --format shell)"
     npx native doctor --manifest "$BUWIZ_MANIFEST" --strict
+
+[linux]
+doctor:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bash scripts/check-linux-deps.sh
+    eval "$(node scripts/app-identity.mjs prepare --format shell)"
+    npx native validate "$BUWIZ_MANIFEST"
+    npx native doctor --manifest "$BUWIZ_MANIFEST"
 
 [windows]
 doctor:
