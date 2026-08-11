@@ -5,6 +5,14 @@
 //! day focus, and form filter are deliberately independent of every taxpayer
 //! profile. Form option metadata stays caller-owned; this module only owns a
 //! bounded selection set keyed by the caller's stable option indices.
+//!
+//! The one taxpayer-shaped input the dashboard accepts is an optional RDO
+//! context. Without it the page is the honest nationwide schedule, which is
+//! what it exists to be; with it the caller re-projects the same loaded
+//! policy through one district so RDO-scoped overrides become visible. The
+//! context is session-only and never persisted: a scoped view must not
+//! outlive the session that asked for it, or a later reader would mistake it
+//! for the nationwide schedule.
 
 const std = @import("std");
 
@@ -13,6 +21,28 @@ const multi_select = @import("../components/multi_select.zig");
 
 pub const domain = calendar_ui.domain;
 pub const FormSelectionChange = multi_select.SelectionChange;
+
+/// Canonical Revenue District Office codes are three characters ("039",
+/// "17A"). Eight bytes absorbs a revised code without letting session state
+/// grow with the caller's input.
+pub const max_rdo_code_bytes = 8;
+
+pub const RdoContextError = error{
+    EmptyRdoCode,
+    RdoCodeTooLong,
+};
+
+/// A bounded copy of the caller's canonical RDO code. The dashboard stores
+/// the code rather than a reference row so this module stays independent of
+/// the RDO catalog that feeds the picker.
+pub const RdoContext = struct {
+    storage: [max_rdo_code_bytes]u8 = undefined,
+    len: usize = 0,
+
+    pub fn code(self: *const RdoContext) []const u8 {
+        return self.storage[0..self.len];
+    }
+};
 
 /// Creates the Global Dashboard's bounded session-state type.
 ///
@@ -45,6 +75,10 @@ pub fn State(
         /// A full date avoids treating the same day number in another month
         /// as selected if a caller changes the viewed calendar directly.
         selected_date: ?domain.Date = null,
+
+        /// `null` is the nationwide projection: the dashboard's default and
+        /// the only view that is a complete national schedule.
+        rdo_context: ?RdoContext = null,
 
         pub fn selectedDate(self: *const Self) ?domain.Date {
             const selected = self.selected_date orelse return null;
@@ -137,6 +171,48 @@ pub fn State(
             self.clearDayWhenPeriodChanged(year, month);
         }
 
+        /// The canonical code of the active RDO context, or `null` while the
+        /// dashboard shows the nationwide schedule.
+        pub fn rdoContext(self: *const Self) ?[]const u8 {
+            if (self.rdo_context) |*context| return context.code();
+            return null;
+        }
+
+        pub fn hasRdoContext(self: *const Self) bool {
+            return self.rdo_context != null;
+        }
+
+        /// Adopts a session RDO context and reports whether the projection
+        /// the caller must recompute actually changed. Validating the code
+        /// against an RDO catalog stays with the caller that owns the picker;
+        /// this refuses only what it cannot store, and a blank code, which
+        /// would silently read as the nationwide view.
+        pub fn setRdoContext(
+            self: *Self,
+            code: []const u8,
+        ) RdoContextError!bool {
+            const candidate = std.mem.trim(u8, code, " \t\r\n");
+            if (candidate.len == 0) return RdoContextError.EmptyRdoCode;
+            if (candidate.len > max_rdo_code_bytes) {
+                return RdoContextError.RdoCodeTooLong;
+            }
+            if (self.rdoContext()) |active| {
+                if (std.mem.eql(u8, active, candidate)) return false;
+            }
+            var context = RdoContext{};
+            @memcpy(context.storage[0..candidate.len], candidate);
+            context.len = candidate.len;
+            self.rdo_context = context;
+            return true;
+        }
+
+        /// Restores the nationwide projection.
+        pub fn clearRdoContext(self: *Self) bool {
+            const changed = self.rdo_context != null;
+            self.rdo_context = null;
+            return changed;
+        }
+
         pub fn selectedFormCount(self: *const Self) usize {
             return self.forms.selectedCount();
         }
@@ -218,6 +294,42 @@ test "calendar navigation clears a selected day after a successful move" {
     try std.testing.expectEqual(@as(i32, 2026), state.calendar.selected_year);
     try std.testing.expectEqual(@as(u8, 7), state.calendar.selected_month);
     try std.testing.expect(state.selectedDay() == null);
+}
+
+test "the dashboard starts nationwide and adopts one session RDO context" {
+    const TestState = State(2, 16);
+    var state = TestState{};
+
+    try std.testing.expect(!state.hasRdoContext());
+    try std.testing.expect(state.rdoContext() == null);
+    try std.testing.expect(!state.clearRdoContext());
+
+    try std.testing.expect(try state.setRdoContext("039"));
+    try std.testing.expect(state.hasRdoContext());
+    try std.testing.expectEqualStrings("039", state.rdoContext().?);
+
+    // Re-selecting the active district must not ask the caller to reproject.
+    try std.testing.expect(!try state.setRdoContext("  039  "));
+    try std.testing.expect(try state.setRdoContext("17A"));
+    try std.testing.expectEqualStrings("17A", state.rdoContext().?);
+
+    try std.testing.expect(state.clearRdoContext());
+    try std.testing.expect(state.rdoContext() == null);
+}
+
+test "an unusable RDO context code is refused instead of reading as nationwide" {
+    const TestState = State(2, 16);
+    var state = TestState{};
+
+    try std.testing.expectError(
+        error.EmptyRdoCode,
+        state.setRdoContext("   "),
+    );
+    try std.testing.expectError(
+        error.RdoCodeTooLong,
+        state.setRdoContext("0" ** (max_rdo_code_bytes + 1)),
+    );
+    try std.testing.expect(!state.hasRdoContext());
 }
 
 test "global form selection defaults to all and supports empty then all" {

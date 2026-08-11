@@ -46,11 +46,71 @@
   </column>
 </template>
 
+<template name="global-rdo-context">
+  <column gap="4">
+    <stack width="{globalRdoContextPickerWidth}">
+      <select
+        size="sm"
+        height="{globalRdoContextRowHeight}"
+        label="Revenue District Office context"
+        on-press="global_rdo_context_open">{globalRdoContextLabel}</select>
+
+      <if test="{globalRdoContextPickerOpen}">
+        <dropdown-menu
+          anchor="below"
+          anchor-alignment="stretch"
+          anchor-offset="4"
+          height="{globalRdoContextMenuHeight}"
+          on-dismiss="global_rdo_context_close">
+          <search-field
+            size="sm"
+            height="{globalRdoContextRowHeight}"
+            text="{globalRdoContextQueryValue}"
+            placeholder="Search code or city"
+            autofocus="true"
+            on-input="global_rdo_context_query"/>
+
+          <separator/>
+
+          <menu-item
+            height="{globalRdoContextRowHeight}"
+            selected="{globalRdoContextNationwide}"
+            on-press="global_rdo_context_clear">Nationwide</menu-item>
+
+          <separator/>
+
+          <scroll
+            height="{globalRdoContextOptionsHeight}"
+            overscroll="none"
+            label="Revenue District Office context options">
+            <column>
+              <for each="globalRdoContextOptionRows" key="id" as="option">
+                <menu-item
+                  height="{globalRdoContextRowHeight}"
+                  selected="{option.selected}"
+                  on-press="global_rdo_context_select:{option.id}">{option.rowLabel}</menu-item>
+              </for>
+              <else>
+                <menu-item height="{globalRdoContextRowHeight}" disabled="true">No matching districts</menu-item>
+              </else>
+            </column>
+          </scroll>
+        </dropdown-menu>
+      </if>
+    </stack>
+
+    <if test="{globalRdoContextActive}">
+      <text size="sm" wrap="true" foreground="warning">{globalRdoContextCaption}</text>
+    </if>
+  </column>
+</template>
+
 <template name="global-calendar-column">
   <column width="{globalCalendarLaneWidth}" gap="12">
     <if test="{globalCalendarHeaderStacked}">
       <column gap="10">
         <text><span weight="bold">Compliance Calendar</span></text>
+        <use template="global-rdo-context"/>
         <!-- @include-template multi-select-combobox
           placeholder="Search form codes..."
           label="Filter global compliance forms"
@@ -58,13 +118,16 @@
       </column>
     </if>
     <else>
-      <row cross="center" gap="12">
-        <text grow="1"><span weight="bold">Compliance Calendar</span></text>
-        <!-- @include-template multi-select-combobox
-          placeholder="Search form codes..."
-          label="Filter global compliance forms"
-        -->
-      </row>
+      <column gap="10">
+        <row cross="center" gap="12">
+          <text grow="1"><span weight="bold">Compliance Calendar</span></text>
+          <!-- @include-template multi-select-combobox
+            placeholder="Search form codes..."
+            label="Filter global compliance forms"
+          -->
+        </row>
+        <use template="global-rdo-context"/>
+      </column>
     </else>
 
     <card padding="0">
@@ -172,7 +235,7 @@
 <template name="global-news-column" args="weight=1">
   <column grow="{weight}" gap="12">
     <row cross="center" gap="12">
-      <text grow="1"><span weight="bold">Important News</span></text>
+      <text grow="1"><span weight="bold">Important News — {importantNewsMonthLabel}</span></text>
       <if test="{constrainedLayout}">
         <if test="{importantNewsRefreshing}">
           <button
@@ -257,6 +320,21 @@
           Refresh to check for the latest notices.
         </text>
       </column>
+    </if>
+
+    <if test="{importantNewsEmptyForMonth}">
+      <card>
+        <column padding="20" gap="8" cross="center">
+          <icon name="check" foreground="text_muted" width="24" height="24"/>
+          <text text-alignment="center">
+            <span weight="bold">Nothing new for {importantNewsMonthLabel}</span>
+          </text>
+          <text wrap="true" text-alignment="center" foreground="text_muted">
+            No BIR announcements recorded for {importantNewsMonthLabel}.
+            Deadlines shown follow the standard schedule.
+          </text>
+        </column>
+      </card>
     </if>
 
     <if test="{importantNewsHasRows}">

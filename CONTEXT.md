@@ -158,6 +158,12 @@ An effective-dated, source-linked version of a filing rule used to resolve a
 return's filing unit and coverage.
 _Avoid_: Current rule, consolidated boolean
 
+**Synced Override**:
+An effective-dated deadline change ingested automatically from a published BIR
+issuance and carrying that issuance as its source reference. It is not an
+override a user entered by hand, and a sync never rewrites a manual one.
+_Avoid_: Manual override, calendar edit
+
 **Review Required**:
 A fail-closed state used when the available registration evidence or effective
 rule cannot establish one safe Filing Scope.

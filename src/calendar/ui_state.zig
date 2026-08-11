@@ -18,10 +18,57 @@ pub const max_overrides = 64;
 pub const max_non_working_days = 128;
 pub const max_forms_per_override = 32;
 pub const max_scopes_per_record = 16;
+/// A BIR circular routinely scopes one extension to every revenue district it
+/// covers — 60 codes for RMC 89-2026 — and the feed permits far more, so an
+/// override's region list is bounded by its own entry count rather than by
+/// the handful of scopes a hand-entered record needs.
+pub const max_regions_per_override = 200;
 pub const max_scope_text_bytes = 128;
+/// Longest region scope a synced record may carry (`max_rdo_code_bytes` in
+/// `src/news/feed_json.zig`). A synced scope is always an RDO code, never a
+/// district name, so it stays far shorter than a hand-entered region. The
+/// calendar must not depend on the news boundary, so the bound is restated
+/// here; it exists only to size the storage a synced region list needs.
+pub const max_feed_scope_text_bytes = 8;
+/// Bytes one record's region scopes share. `ScopeList` packs its entries end
+/// to end, so this budget must cover both shapes the list serves: a synced
+/// circular naming every district it covers (`max_regions_per_override`
+/// feed-length codes) and a hand-entered record naming `max_scopes_per_record`
+/// full-length regions. Sizing it from the editor's sixteen-slot joined text
+/// is what previously left a 200-entry list short of storage.
+pub const max_region_scope_bytes = @max(
+    max_regions_per_override * max_feed_scope_text_bytes,
+    max_scopes_per_record * max_scope_text_bytes,
+);
 const max_joined_forms_bytes = max_forms_per_override * 34;
+/// Joined scope text for the editor, which admits `max_scopes_per_record`
+/// entries and no more (`parseList` refuses the rest), plus their separators.
+/// A synced row scoped to hundreds of districts is read-only and is shown
+/// truncated rather than given an editor buffer it can never save from.
 const max_joined_scopes_bytes =
     max_scopes_per_record * (max_scope_text_bytes + 2);
+
+comptime {
+    // Holding synced scopes to RDO-code length keeps every list the record can
+    // store displayable in full, so `setJoinedScopeListBuffer` never has to
+    // truncate what it shows. Both shapes are checked because they saturate the
+    // buffer from opposite directions: a hand-entered record is few but long,
+    // a synced circular is many but short.
+    const joined_manual =
+        max_scopes_per_record * max_scope_text_bytes +
+        (max_scopes_per_record - 1) * 2;
+    const joined_synced =
+        max_regions_per_override * max_feed_scope_text_bytes +
+        (max_regions_per_override - 1) * 2;
+    if (joined_manual > max_joined_scopes_bytes or
+        joined_synced > max_joined_scopes_bytes)
+    {
+        @compileError(
+            "the editor's joined scope buffer is smaller than a scope list " ++
+                "the record admits; widen it or tighten the scope bounds",
+        );
+    }
+}
 
 pub const StateError = error{
     NotAttached,
@@ -35,6 +82,7 @@ pub const StateError = error{
     InvalidKind,
     InvalidMonth,
     IncompleteProjection,
+    SyncedOverrideReadOnly,
 };
 
 fn FixedText(comptime capacity: usize) type {
@@ -64,6 +112,40 @@ const ShortText = FixedText(32);
 const MediumText = FixedText(96);
 const LongText = FixedText(256);
 const ScopeText = FixedText(max_scope_text_bytes);
+
+/// Region scopes that share one byte budget instead of reserving a
+/// full-length slot each. A three-byte RDO code then costs three bytes, so a
+/// circular naming every revenue district spends a fraction of
+/// `max_region_scope_bytes`, and the record stays fail-closed: an entry that
+/// does not fit is refused rather than silently dropped from the scope test.
+pub const ScopeList = struct {
+    storage: [max_region_scope_bytes]u8 = undefined,
+    ends: [max_regions_per_override]u16 = undefined,
+    count: usize = 0,
+
+    pub fn append(self: *ScopeList, value: []const u8) StateError!void {
+        if (value.len > max_scope_text_bytes) return error.FieldTooLong;
+        if (self.count == max_regions_per_override) return error.TooManyScopes;
+        const start = self.usedBytes();
+        if (start + value.len > self.storage.len) return error.TooManyScopes;
+        @memcpy(self.storage[start..][0..value.len], value);
+        self.ends[self.count] = @intCast(start + value.len);
+        self.count += 1;
+    }
+
+    pub fn at(self: *const ScopeList, index: usize) []const u8 {
+        const start = if (index == 0) 0 else self.ends[index - 1];
+        return self.storage[start..self.ends[index]];
+    }
+
+    pub fn isEmpty(self: *const ScopeList) bool {
+        return self.count == 0;
+    }
+
+    fn usedBytes(self: *const ScopeList) usize {
+        return if (self.count == 0) 0 else self.ends[self.count - 1];
+    }
+};
 
 pub const DeadlineRow = struct {
     id: u64,
@@ -218,13 +300,34 @@ pub const OverrideRow = struct {
     expires_at: ?domain.Date = null,
     form_codes: [max_forms_per_override]ShortText = undefined,
     form_count: usize = 0,
-    regions: [max_scopes_per_record]ScopeText = undefined,
-    region_count: usize = 0,
+    regions: ScopeList = .{},
     taxpayer_types: [max_scopes_per_record]ScopeText = undefined,
     taxpayer_type_count: usize = 0,
+    origin: persistence.Origin = .manual,
 
     pub fn key(self: *const OverrideRow) canvas.UiKey {
         return canvas.uiKey(@as(u64, @intCast(self.id)));
+    }
+
+    /// A synced row is owned by the BIR feed: the editor may display it but
+    /// must never rewrite it, or the next sync would silently revert the edit.
+    pub fn syncedFromFeed(self: *const OverrideRow) bool {
+        return self.origin == .synced;
+    }
+
+    pub fn originLabel(self: *const OverrideRow) []const u8 {
+        return switch (self.origin) {
+            .manual => "Added here",
+            .synced => "Synced from BIR",
+        };
+    }
+
+    pub fn editDisabled(self: *const OverrideRow) bool {
+        return self.syncedFromFeed();
+    }
+
+    pub fn removeActionLabel(self: *const OverrideRow) []const u8 {
+        return if (self.syncedFromFeed()) "Dismiss" else "Delete";
     }
 
     pub fn titleLabel(self: *const OverrideRow) []const u8 {
@@ -257,10 +360,10 @@ pub const OverrideRow = struct {
     }
 
     pub fn scopeLabel(self: *const OverrideRow, arena: std.mem.Allocator) []const u8 {
-        const region = if (self.region_count == 0)
+        const region = if (self.regions.isEmpty())
             "All RDOs"
         else
-            joinFixedTexts(arena, self.regions[0..self.region_count], ", ");
+            joinScopeList(arena, &self.regions, ", ");
         const taxpayer = if (self.taxpayer_type_count == 0)
             "All taxpayer types"
         else
@@ -387,9 +490,16 @@ pub const State = struct {
     overrides: [max_overrides]OverrideRow = undefined,
     override_count: usize = 0,
     override_records_truncated: bool = false,
+    /// Stored overrides the last reload could not fit into a fixed-size row.
+    /// They are skipped so one unusable record cannot cost the user every
+    /// other override, and counted so the loss is never silent.
+    override_rows_skipped: usize = 0,
     non_working_days: [max_non_working_days]NonWorkingDayRow = undefined,
     non_working_day_count: usize = 0,
     non_working_day_records_truncated: bool = false,
+    /// Stored non-working days the last reload could not fit into a
+    /// fixed-size row, counted for the same reason as the overrides.
+    non_working_day_rows_skipped: usize = 0,
 
     editing_override_id: ?i64 = null,
     pending_delete_override_id: ?i64 = null,
@@ -447,6 +557,11 @@ pub const State = struct {
         return self.export_timestamp.text();
     }
 
+    /// Rebuilds the whole policy page from SQLite. A row that cannot be
+    /// represented in a fixed-size record is skipped and counted; only
+    /// allocator and store failures abandon the reload, because a page
+    /// missing one override is still a calendar and an abandoned reload —
+    /// no remaining overrides, no non-working days, no recompute — is not.
     pub fn reload(self: *State) !void {
         const allocator = self.allocator orelse return error.NotAttached;
         const store = self.store orelse return error.NotAttached;
@@ -455,8 +570,12 @@ pub const State = struct {
         defer overrides.deinit(allocator);
         self.override_records_truncated = overrides.items.len > max_overrides;
         self.override_count = 0;
+        self.override_rows_skipped = 0;
         for (overrides.items[0..@min(overrides.items.len, max_overrides)]) |item| {
-            try self.copyOverride(item);
+            self.copyOverride(item) catch |err| {
+                if (!isRowRepresentationFailure(err)) return err;
+                self.override_rows_skipped += 1;
+            };
         }
 
         var days = try store.listNonWorkingDays(allocator);
@@ -464,8 +583,12 @@ pub const State = struct {
         self.non_working_day_records_truncated =
             days.items.len > max_non_working_days;
         self.non_working_day_count = 0;
+        self.non_working_day_rows_skipped = 0;
         for (days.items[0..@min(days.items.len, max_non_working_days)]) |item| {
-            try self.copyNonWorkingDay(item);
+            self.copyNonWorkingDay(item) catch |err| {
+                if (!isRowRepresentationFailure(err)) return err;
+                self.non_working_day_rows_skipped += 1;
+            };
         }
 
         try self.recompute();
@@ -492,7 +615,7 @@ pub const State = struct {
         const allocator = self.allocator orelse return error.NotAttached;
 
         var override_form_slices: [max_overrides][max_forms_per_override][]const u8 = undefined;
-        var override_region_slices: [max_overrides][max_scopes_per_record][]const u8 = undefined;
+        var override_region_slices: [max_overrides][max_regions_per_override][]const u8 = undefined;
         var override_taxpayer_slices: [max_overrides][max_scopes_per_record][]const u8 = undefined;
         var override_id_buffers: [max_overrides][24]u8 = undefined;
         var domain_overrides: [max_overrides]domain.DeadlineOverride = undefined;
@@ -507,8 +630,9 @@ pub const State = struct {
             for (row.form_codes[0..row.form_count], 0..) |*code, code_index| {
                 override_form_slices[index][code_index] = code.text();
             }
-            for (row.regions[0..row.region_count], 0..) |*region, scope_index| {
-                override_region_slices[index][scope_index] = region.text();
+            for (0..row.regions.count) |scope_index| {
+                override_region_slices[index][scope_index] =
+                    row.regions.at(scope_index);
             }
             for (
                 row.taxpayer_types[0..row.taxpayer_type_count],
@@ -528,7 +652,7 @@ pub const State = struct {
                 .affected_form_codes = override_form_slices[index][0..row.form_count],
                 .original_deadline = row.original_deadline,
                 .adjusted_deadline = row.adjusted_deadline,
-                .affected_regions = override_region_slices[index][0..row.region_count],
+                .affected_regions = override_region_slices[index][0..row.regions.count],
                 .affected_taxpayer_types = override_taxpayer_slices[index][0..row.taxpayer_type_count],
                 .effective_from = row.effective_from,
                 .effective_until = row.effective_until,
@@ -663,6 +787,12 @@ pub const State = struct {
 
     pub fn saveOverride(self: *State) void {
         const store = self.store orelse return self.setError(error.NotAttached);
+        if (self.editingSyncedOverride()) {
+            // Reachable only through a hand-edited database or a row that the
+            // feed adopted while the editor was open; writing it would demote
+            // the row to `manual` and orphan its feed identity.
+            return self.setError(error.SyncedOverrideReadOnly);
+        }
         if (self.override_input_was_truncated or self.overrideInputsTruncated()) {
             return self.setError(error.FieldTooLong);
         }
@@ -727,6 +857,9 @@ pub const State = struct {
     pub fn editOverride(self: *State, id: i64) void {
         const row = self.findOverride(id) orelse
             return self.setError(error.InvalidFormCode);
+        if (row.syncedFromFeed()) {
+            return self.setError(error.SyncedOverrideReadOnly);
+        }
         self.editing_override_id = id;
         self.pending_delete_override_id = null;
         setEditorBuffer(&self.override_title, row.title.text());
@@ -743,10 +876,7 @@ pub const State = struct {
             &self.override_forms,
             row.form_codes[0..row.form_count],
         );
-        setJoinedBuffer(
-            &self.override_regions,
-            row.regions[0..row.region_count],
-        );
+        setJoinedScopeListBuffer(&self.override_regions, &row.regions);
         setJoinedBuffer(
             &self.override_taxpayer_types,
             row.taxpayer_types[0..row.taxpayer_type_count],
@@ -755,22 +885,38 @@ pub const State = struct {
         self.setNotice(.neutral, "Editing deadline override.");
     }
 
+    /// Removing a manual row deletes it; removing a synced row dismisses it,
+    /// which tombstones its feed identity so the next sync cannot re-add it.
+    /// Both paths need the same second press before anything leaves SQLite.
     pub fn deleteOverride(self: *State, id: i64) void {
+        const target = self.findOverride(id) orelse
+            return self.setError(error.InvalidFormCode);
+        const synced = target.syncedFromFeed();
+
         if (self.pending_delete_override_id != id) {
             self.pending_delete_override_id = id;
-            self.setNotice(
-                .neutral,
-                "Press Delete on this override again to confirm permanent removal.",
-            );
+            self.setNotice(.neutral, if (synced)
+                "Press Dismiss on this override again to confirm. Dismissing a synced BIR override stops future syncs from re-adding it."
+            else
+                "Press Delete on this override again to confirm permanent removal.");
             return;
         }
+
         const store = self.store orelse return self.setError(error.NotAttached);
-        const deleted = store.deleteOverride(id) catch |err| return self.setError(err);
-        if (!deleted) return self.setError(error.InvalidFormCode);
+        if (synced) {
+            store.dismissSyncedOverride(id) catch |err| return self.setError(err);
+        } else {
+            const deleted = store.deleteOverride(id) catch |err|
+                return self.setError(err);
+            if (!deleted) return self.setError(error.InvalidFormCode);
+        }
         self.pending_delete_override_id = null;
         if (self.editing_override_id == id) self.clearOverrideEditor();
         self.reload() catch |err| return self.setError(err);
-        self.setReloadNotice("Deadline override deleted.");
+        self.setReloadNotice(if (synced)
+            "Synced BIR override dismissed. Future syncs will not re-add it."
+        else
+            "Deadline override deleted.");
     }
 
     pub fn clearOverrideEditor(self: *State) void {
@@ -1021,16 +1167,58 @@ pub const State = struct {
     }
 
     fn setReloadNotice(self: *State, success_message: []const u8) void {
+        var skipped_buffer: [160]u8 = undefined;
+        const skipped = self.skippedRowNotice(&skipped_buffer);
+        var message_buffer: [256]u8 = undefined;
         if (self.override_records_truncated or
             self.non_working_day_records_truncated)
         {
-            self.setNotice(
-                .failure,
-                "SQLite exceeds the safe editor page size. The first records are shown; remove records to reveal and recover the remaining rows.",
-            );
+            const truncated = "SQLite exceeds the safe editor page size. The first records are shown; remove records to reveal and recover the remaining rows.";
+            self.setNotice(.failure, std.fmt.bufPrint(
+                &message_buffer,
+                "{s}{s}",
+                .{ truncated, skipped },
+            ) catch truncated);
+            return;
+        }
+        if (skipped.len != 0) {
+            self.setNotice(.failure, std.fmt.bufPrint(
+                &message_buffer,
+                "{s}{s}",
+                .{ success_message, skipped },
+            ) catch skipped);
             return;
         }
         self.setNotice(.success, success_message);
+    }
+
+    /// Renders the sentence every reload notice carries when a stored row was
+    /// skipped, and an empty slice when the page is complete. The count is
+    /// reported the way list truncation already is: a silently shorter page is
+    /// how an earlier region-cap defect hid every override at once.
+    fn skippedRowNotice(self: *const State, buffer: []u8) []const u8 {
+        const overrides = self.override_rows_skipped;
+        const days = self.non_working_day_rows_skipped;
+        if (overrides == 0 and days == 0) return "";
+        const fallback = " Some stored records could not be displayed.";
+        var override_buffer: [40]u8 = undefined;
+        var day_buffer: [48]u8 = undefined;
+        const override_text = if (overrides == 0) "" else std.fmt.bufPrint(
+            &override_buffer,
+            "{d} override{s}",
+            .{ overrides, pluralSuffix(overrides) },
+        ) catch return fallback;
+        const day_text = if (days == 0) "" else std.fmt.bufPrint(
+            &day_buffer,
+            "{d} non-working day{s}",
+            .{ days, pluralSuffix(days) },
+        ) catch return fallback;
+        const joiner = if (overrides != 0 and days != 0) " and " else "";
+        return std.fmt.bufPrint(
+            buffer,
+            " {s}{s}{s} could not be displayed; the stored rows exceed the calendar record limits.",
+            .{ override_text, joiner, day_text },
+        ) catch fallback;
     }
 
     fn copyOverride(self: *State, item: persistence.OwnedOverride) !void {
@@ -1038,7 +1226,7 @@ pub const State = struct {
         if (item.affected_form_codes.len > max_forms_per_override) {
             return error.TooManyForms;
         }
-        if (item.regions.len > max_scopes_per_record or
+        if (item.regions.len > max_regions_per_override or
             item.taxpayer_types.len > max_scopes_per_record)
         {
             return error.TooManyScopes;
@@ -1046,6 +1234,7 @@ pub const State = struct {
 
         var row = OverrideRow{
             .id = item.id,
+            .origin = item.origin,
             .original_deadline = try domain.Date.parseIso(item.original_deadline),
             .adjusted_deadline = try domain.Date.parseIso(item.adjusted_deadline),
             .effective_from = if (item.effective_from) |date|
@@ -1071,10 +1260,7 @@ pub const State = struct {
             try row.form_codes[index].set(canonical);
         }
         row.form_count = item.affected_form_codes.len;
-        for (item.regions, 0..) |region, index| {
-            try row.regions[index].set(region);
-        }
-        row.region_count = item.regions.len;
+        for (item.regions) |region| try row.regions.append(region);
         for (item.taxpayer_types, 0..) |taxpayer_type, index| {
             try row.taxpayer_types[index].set(taxpayer_type);
         }
@@ -1110,6 +1296,12 @@ pub const State = struct {
         self.non_working_day_count += 1;
     }
 
+    fn editingSyncedOverride(self: *const State) bool {
+        const id = self.editing_override_id orelse return false;
+        const row = self.findOverride(id) orelse return false;
+        return row.syncedFromFeed();
+    }
+
     fn findOverride(self: *const State, id: i64) ?*const OverrideRow {
         for (self.overrides[0..self.override_count]) |*row| {
             if (row.id == id) return row;
@@ -1125,15 +1317,36 @@ pub const State = struct {
     }
 };
 
+/// True when a stored row simply does not fit the fixed-size in-memory
+/// record: too many scopes or forms, an overlong field, or a date the row's
+/// own fields cannot express. These are the only failures a reload may skip.
+/// Everything else — allocator exhaustion, SQLite errors, an unusable form
+/// code or non-working-day kind — is a failure of the data source rather than
+/// of the page geometry, and must still abandon the reload.
+fn isRowRepresentationFailure(err: anyerror) bool {
+    return switch (err) {
+        error.TooManyScopes,
+        error.TooManyForms,
+        error.FieldTooLong,
+        error.InvalidIsoDate,
+        => true,
+        else => false,
+    };
+}
+
+fn pluralSuffix(count: usize) []const u8 {
+    return if (count == 1) "" else "s";
+}
+
 fn overrideAppliesToContext(
     row: *const OverrideRow,
     taxpayer_context: ?TaxpayerContext,
 ) bool {
     const context = taxpayer_context orelse
-        return row.region_count == 0 and row.taxpayer_type_count == 0;
+        return row.regions.isEmpty() and row.taxpayer_type_count == 0;
 
-    if (row.region_count != 0 and
-        !scopeMatchesRegionOrRdo(row.regions[0..row.region_count], context))
+    if (!row.regions.isEmpty() and
+        !scopeListMatchesRegionOrRdo(&row.regions, context))
     {
         return false;
     }
@@ -1184,6 +1397,27 @@ fn scopeMatchesValue(
     if (value.len == 0) return false;
     for (scopes) |*scope| {
         if (std.ascii.eqlIgnoreCase(scope.text(), value)) return true;
+    }
+    return false;
+}
+
+fn scopeListMatchesRegionOrRdo(
+    scopes: *const ScopeList,
+    context: TaxpayerContext,
+) bool {
+    return scopeListMatchesValue(scopes, context.region) or
+        scopeListMatchesValue(scopes, context.rdo);
+}
+
+fn scopeListMatchesValue(
+    scopes: *const ScopeList,
+    candidate: ?[]const u8,
+) bool {
+    const raw_value = candidate orelse return false;
+    const value = trimmed(raw_value);
+    if (value.len == 0) return false;
+    for (0..scopes.count) |index| {
+        if (std.ascii.eqlIgnoreCase(scopes.at(index), value)) return true;
     }
     return false;
 }
@@ -1402,6 +1636,49 @@ fn joinFixedTexts(
     return out.items;
 }
 
+fn joinScopeList(
+    arena: std.mem.Allocator,
+    scopes: *const ScopeList,
+    separator: []const u8,
+) []const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    for (0..scopes.count) |index| {
+        if (index != 0) out.appendSlice(arena, separator) catch return "";
+        out.appendSlice(arena, scopes.at(index)) catch return "";
+    }
+    return out.items;
+}
+
+/// The editor buffer is sized for a hand-entered scope list, so a row scoped
+/// to hundreds of districts fills it and stops. Dropping entries is reported
+/// on the buffer's own truncation seam, which is what refuses the save: the
+/// editor must never rewrite a scope list it showed incompletely.
+fn setJoinedScopeListBuffer(buffer: anytype, scopes: *const ScopeList) void {
+    var scratch: [max_joined_scopes_bytes]u8 = undefined;
+    var length: usize = 0;
+    var complete = true;
+    for (0..scopes.count) |index| {
+        if (index != 0) {
+            if (length + 2 > scratch.len) {
+                complete = false;
+                break;
+            }
+            scratch[length] = ',';
+            scratch[length + 1] = ' ';
+            length += 2;
+        }
+        const text = scopes.at(index);
+        if (length + text.len > scratch.len) {
+            complete = false;
+            break;
+        }
+        @memcpy(scratch[length..][0..text.len], text);
+        length += text.len;
+    }
+    setEditorBuffer(buffer, scratch[0..length]);
+    if (!complete) buffer.truncated = true;
+}
+
 fn setJoinedBuffer(buffer: anytype, values: anytype) void {
     var scratch: [max_joined_scopes_bytes]u8 = undefined;
     var length: usize = 0;
@@ -1460,8 +1737,7 @@ fn testOverrideRow(
     try row.source.set("Official test source");
     try row.form_codes[0].set("1701Q");
     row.form_count = 1;
-    for (regions, 0..) |region, index| try row.regions[index].set(region);
-    row.region_count = regions.len;
+    for (regions) |region| try row.regions.append(region);
     for (taxpayer_types, 0..) |taxpayer_type, index| {
         try row.taxpayer_types[index].set(taxpayer_type);
     }
@@ -1482,6 +1758,24 @@ fn testNonWorkingDayRow(
     for (regions, 0..) |region, index| try row.regions[index].set(region);
     row.region_count = regions.len;
     return row;
+}
+
+fn putTestOverride(
+    store: *persistence.Store,
+    title: []const u8,
+    form_code: []const u8,
+    original_deadline: []const u8,
+    adjusted_deadline: []const u8,
+    regions: []const []const u8,
+) !i64 {
+    return store.putOverride(.{
+        .title = title,
+        .source = "Official test source",
+        .original_deadline = original_deadline,
+        .adjusted_deadline = adjusted_deadline,
+        .affected_form_codes = &.{form_code},
+        .regions = regions,
+    });
 }
 
 fn findDatedDeadline(
@@ -1711,6 +2005,51 @@ test "taxpayer recompute applies loaded override scopes case-insensitively" {
     });
     try std.testing.expectEqual(
         try domain.Date.init(2026, 8, 14),
+        findDatedDeadline(&state, "1701Q", original).?.final_deadline,
+    );
+}
+
+test "an override scoped to every district a circular names still resolves" {
+    var codes: [max_regions_per_override][]const u8 = undefined;
+    var buffers: [max_regions_per_override][3]u8 = undefined;
+    for (0..max_regions_per_override) |index| {
+        codes[index] = try std.fmt.bufPrint(
+            &buffers[index],
+            "{d:0>3}",
+            .{index + 1},
+        );
+    }
+
+    var state = State{
+        .allocator = std.testing.allocator,
+        .selected_year = 2026,
+        .selected_month = 5,
+    };
+    state.overrides[0] = try testOverrideRow(
+        1,
+        try domain.Date.init(2026, 5, 20),
+        &codes,
+        &.{},
+    );
+    state.override_count = 1;
+    const original = try domain.Date.init(2026, 5, 15);
+
+    try state.recomputeForTaxpayer(.{ .rdo = codes[max_regions_per_override - 1] });
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 5, 20),
+        findDatedDeadline(&state, "1701Q", original).?.final_deadline,
+    );
+
+    // A district the circular does not name keeps the statutory date, and so
+    // does the nationwide projection.
+    try state.recomputeForTaxpayer(.{ .rdo = "999" });
+    try std.testing.expectEqual(
+        original,
+        findDatedDeadline(&state, "1701Q", original).?.final_deadline,
+    );
+    try state.recompute();
+    try std.testing.expectEqual(
+        original,
         findDatedDeadline(&state, "1701Q", original).?.final_deadline,
     );
 }
@@ -2157,10 +2496,10 @@ test "override temporal metadata and multi-word scopes round trip" {
     try std.testing.expectEqual(NoticeKind.success, state.notice_kind);
     try std.testing.expectEqual(@as(usize, 1), state.override_count);
     const row = state.overrides[0];
-    try std.testing.expectEqual(@as(usize, 2), row.region_count);
+    try std.testing.expectEqual(@as(usize, 2), row.regions.count);
     try std.testing.expect(
-        std.mem.eql(u8, row.regions[0].text(), "Region IV-A") or
-            std.mem.eql(u8, row.regions[1].text(), "Region IV-A"),
+        std.mem.eql(u8, row.regions.at(0), "Region IV-A") or
+            std.mem.eql(u8, row.regions.at(1), "Region IV-A"),
     );
     try std.testing.expectEqualStrings(
         "Mixed income earner",
@@ -2247,4 +2586,448 @@ test "overflow stays recoverable and blocks incomplete export" {
             },
         ),
     );
+}
+
+test "an unrepresentable override is skipped and counted while the reload completes" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    _ = try putTestOverride(
+        &store,
+        "First good extension",
+        "1701Q",
+        "2026-05-15",
+        "2026-05-20",
+        &.{},
+    );
+
+    var code_buffers: [max_regions_per_override + 1][4]u8 = undefined;
+    var codes: [max_regions_per_override + 1][]const u8 = undefined;
+    for (0..codes.len) |index| {
+        codes[index] = try std.fmt.bufPrint(
+            &code_buffers[index],
+            "{d:0>4}",
+            .{index + 1},
+        );
+    }
+    _ = try putTestOverride(
+        &store,
+        "More districts than one row can hold",
+        "1601C",
+        "2026-06-10",
+        "2026-06-17",
+        &codes,
+    );
+
+    _ = try putTestOverride(
+        &store,
+        "Second good extension",
+        "0619E",
+        "2026-06-10",
+        "2026-06-15",
+        &.{},
+    );
+    _ = try store.putNonWorkingDay(.{
+        .day = "2026-04-15",
+        .name = "Nationwide test holiday",
+        .kind = "regular",
+        .source = "Official test source",
+    });
+
+    var state = State{};
+    try state.attach(
+        allocator,
+        &store,
+        "/tmp/ebirforms-tax-calendar.ics",
+        "20260729T010203Z",
+        2026,
+        5,
+    );
+
+    // The unusable row costs exactly itself: both good overrides, the
+    // non-working day, and the recomputed projection all survive it.
+    try std.testing.expectEqual(@as(usize, 2), state.override_count);
+    try std.testing.expectEqual(@as(usize, 1), state.override_rows_skipped);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        state.non_working_day_rows_skipped,
+    );
+    try std.testing.expectEqual(@as(usize, 1), state.non_working_day_count);
+    try std.testing.expect(state.deadline_count > 100);
+    try std.testing.expectEqual(NoticeKind.failure, state.notice_kind);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        state.notice.text(),
+        "1 override could not be displayed",
+    ) != null);
+
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 5, 20),
+        findDatedDeadline(
+            &state,
+            "1701Q",
+            try domain.Date.init(2026, 5, 15),
+        ).?.final_deadline,
+    );
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 6, 15),
+        findDatedDeadline(
+            &state,
+            "0619E",
+            try domain.Date.init(2026, 6, 10),
+        ).?.final_deadline,
+    );
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 6, 10),
+        findDatedDeadline(
+            &state,
+            "1601C",
+            try domain.Date.init(2026, 6, 10),
+        ).?.final_deadline,
+    );
+}
+
+test "an override scoped to two hundred maximum-length districts round trips" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var scope_buffers: [max_regions_per_override][max_feed_scope_text_bytes]u8 =
+        undefined;
+    var scopes: [max_regions_per_override][]const u8 = undefined;
+    for (0..max_regions_per_override) |index| {
+        @memset(&scope_buffers[index], 'd');
+        _ = try std.fmt.bufPrint(
+            &scope_buffers[index],
+            "{d:0>3}",
+            .{index + 1},
+        );
+        scopes[index] = &scope_buffers[index];
+    }
+    _ = try putTestOverride(
+        &store,
+        "Circular scoped to every district",
+        "1701Q",
+        "2026-05-15",
+        "2026-05-20",
+        &scopes,
+    );
+
+    var state = State{};
+    try state.attach(
+        allocator,
+        &store,
+        "/tmp/ebirforms-tax-calendar.ics",
+        "20260729T010203Z",
+        2026,
+        5,
+    );
+    try std.testing.expectEqual(@as(usize, 1), state.override_count);
+    try std.testing.expectEqual(@as(usize, 0), state.override_rows_skipped);
+    try std.testing.expectEqual(
+        max_regions_per_override,
+        state.overrides[0].regions.count,
+    );
+
+    const last = max_regions_per_override - 1;
+    try std.testing.expectEqualStrings(
+        scopes[last],
+        state.overrides[0].regions.at(last),
+    );
+    try state.recomputeForTaxpayer(.{ .rdo = scopes[last] });
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 5, 20),
+        findDatedDeadline(
+            &state,
+            "1701Q",
+            try domain.Date.init(2026, 5, 15),
+        ).?.final_deadline,
+    );
+}
+
+test "sixteen full-length region names still fit one hand-entered record" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var name_buffers: [max_scopes_per_record][max_scope_text_bytes]u8 =
+        undefined;
+    var names: [max_scopes_per_record][]const u8 = undefined;
+    for (0..max_scopes_per_record) |index| {
+        @memset(&name_buffers[index], 'r');
+        _ = try std.fmt.bufPrint(
+            &name_buffers[index],
+            "Region {d:0>2}",
+            .{index + 1},
+        );
+        names[index] = &name_buffers[index];
+    }
+    _ = try putTestOverride(
+        &store,
+        "Region-named extension",
+        "1701Q",
+        "2026-05-15",
+        "2026-05-20",
+        &names,
+    );
+
+    var state = State{};
+    try state.attach(
+        allocator,
+        &store,
+        "/tmp/ebirforms-tax-calendar.ics",
+        "20260729T010203Z",
+        2026,
+        5,
+    );
+    try std.testing.expectEqual(@as(usize, 1), state.override_count);
+    try std.testing.expectEqual(@as(usize, 0), state.override_rows_skipped);
+    try std.testing.expectEqual(
+        max_scopes_per_record,
+        state.overrides[0].regions.count,
+    );
+
+    const last = max_scopes_per_record - 1;
+    try std.testing.expectEqualStrings(
+        names[last],
+        state.overrides[0].regions.at(last),
+    );
+    try state.recomputeForTaxpayer(.{ .region = names[last] });
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 5, 20),
+        findDatedDeadline(
+            &state,
+            "1701Q",
+            try domain.Date.init(2026, 5, 15),
+        ).?.final_deadline,
+    );
+}
+
+test "an override past the shared scope budget is skipped instead of fatal" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var name_buffers: [max_regions_per_override][max_scope_text_bytes]u8 =
+        undefined;
+    var names: [max_regions_per_override][]const u8 = undefined;
+    for (0..max_regions_per_override) |index| {
+        @memset(&name_buffers[index], 'r');
+        _ = try std.fmt.bufPrint(
+            &name_buffers[index],
+            "Region {d:0>3}",
+            .{index + 1},
+        );
+        names[index] = &name_buffers[index];
+    }
+    _ = try putTestOverride(
+        &store,
+        "Two hundred full-length region names",
+        "1701Q",
+        "2026-05-15",
+        "2026-05-20",
+        &names,
+    );
+    _ = try putTestOverride(
+        &store,
+        "Good extension",
+        "0619E",
+        "2026-06-10",
+        "2026-06-15",
+        &.{},
+    );
+
+    var state = State{};
+    try state.attach(
+        allocator,
+        &store,
+        "/tmp/ebirforms-tax-calendar.ics",
+        "20260729T010203Z",
+        2026,
+        5,
+    );
+    try std.testing.expectEqual(@as(usize, 1), state.override_count);
+    try std.testing.expectEqual(@as(usize, 1), state.override_rows_skipped);
+    try std.testing.expect(state.deadline_count > 100);
+    try std.testing.expectEqual(
+        try domain.Date.init(2026, 6, 15),
+        findDatedDeadline(
+            &state,
+            "0619E",
+            try domain.Date.init(2026, 6, 10),
+        ).?.final_deadline,
+    );
+}
+
+test "every scope list the record admits is shown complete and saves back" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    const full_length_scopes = max_scopes_per_record;
+    var name_buffers: [full_length_scopes][max_scope_text_bytes]u8 = undefined;
+    var names: [full_length_scopes][]const u8 = undefined;
+    for (0..full_length_scopes) |index| {
+        @memset(&name_buffers[index], 'r');
+        _ = try std.fmt.bufPrint(
+            &name_buffers[index],
+            "Region {d:0>2}",
+            .{index + 1},
+        );
+        names[index] = &name_buffers[index];
+    }
+    const id = try putTestOverride(
+        &store,
+        "Every full-length region the budget admits",
+        "1701Q",
+        "2026-05-15",
+        "2026-05-20",
+        &names,
+    );
+
+    var state = State{};
+    try state.attach(
+        allocator,
+        &store,
+        "/tmp/ebirforms-tax-calendar.ics",
+        "20260729T010203Z",
+        2026,
+        5,
+    );
+    try std.testing.expectEqual(@as(usize, 0), state.override_rows_skipped);
+    try std.testing.expectEqual(
+        full_length_scopes,
+        state.overrides[0].regions.count,
+    );
+
+    // Scope storage is bounded so that the widest list a record can hold still
+    // fits the editor's joined buffer, so nothing is hidden behind a
+    // truncation the user cannot see and `saveOverride` writes back every
+    // region it displayed.
+    state.editOverride(id);
+    try std.testing.expectEqual(id, state.editing_override_id.?);
+    try std.testing.expect(!state.override_regions.truncated);
+    try std.testing.expectEqual(
+        full_length_scopes * max_scope_text_bytes +
+            (full_length_scopes - 1) * 2,
+        state.override_regions.text().len,
+    );
+
+    state.saveOverride();
+    try std.testing.expect(state.notice_kind != NoticeKind.failure);
+    try state.reload();
+    try std.testing.expectEqual(
+        full_length_scopes,
+        state.overrides[0].regions.count,
+    );
+}
+
+const synced_override_external_ref = "bir:rmc:2026:089/2026-08-10/nonefps";
+
+fn syncMonsoonOverride(store: *persistence.Store) !persistence.SyncSummary {
+    return store.syncOverridesFromFeed(&.{.{
+        .external_ref = synced_override_external_ref,
+        .title = "RMC 89-2026 monsoon extension (due 2026-08-10)",
+        .source_reference = "RMC No. 89-2026",
+        .original_deadline = "2026-08-10",
+        .adjusted_deadline = "2026-08-17",
+        .form_codes = &.{ "0619E", "0619F", "1601C" },
+        .rdo_codes = &.{"039"},
+    }});
+}
+
+test "a synced override is read-only in the editor while a manual one stays editable" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    const manual_id = try store.putOverride(.{
+        .title = "Local correction",
+        .source = "Official fixture",
+        .original_deadline = "2026-08-10",
+        .adjusted_deadline = "2026-08-14",
+        .affected_form_codes = &.{"1601C"},
+    });
+    _ = try syncMonsoonOverride(&store);
+
+    var state = State{};
+    try state.attach(
+        allocator,
+        &store,
+        "/tmp/ebirforms-tax-calendar.ics",
+        "20260810T010203Z",
+        2026,
+        8,
+    );
+    try std.testing.expectEqual(@as(usize, 2), state.override_count);
+
+    const manual = state.findOverride(manual_id).?;
+    try std.testing.expect(!manual.syncedFromFeed());
+    try std.testing.expect(!manual.editDisabled());
+    try std.testing.expectEqualStrings("Added here", manual.originLabel());
+    try std.testing.expectEqualStrings("Delete", manual.removeActionLabel());
+
+    const synced_id = (try store.getOverrideIdByExternalRef(
+        synced_override_external_ref,
+    )).?;
+    const synced = state.findOverride(synced_id).?;
+    try std.testing.expect(synced.syncedFromFeed());
+    try std.testing.expect(synced.editDisabled());
+    try std.testing.expectEqualStrings("Synced from BIR", synced.originLabel());
+    try std.testing.expectEqualStrings("Dismiss", synced.removeActionLabel());
+    try std.testing.expectEqualStrings(
+        "RMC No. 89-2026",
+        synced.sourceLabel(),
+    );
+
+    state.editOverride(synced_id);
+    try std.testing.expectEqual(NoticeKind.failure, state.notice_kind);
+    try std.testing.expect(state.editing_override_id == null);
+
+    state.editOverride(manual_id);
+    try std.testing.expectEqual(manual_id, state.editing_override_id.?);
+    try std.testing.expectEqualStrings(
+        "Local correction",
+        state.override_title.text(),
+    );
+}
+
+test "dismissing a synced override tombstones it against the next sync" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+    _ = try syncMonsoonOverride(&store);
+
+    var state = State{};
+    try state.attach(
+        allocator,
+        &store,
+        "/tmp/ebirforms-tax-calendar.ics",
+        "20260810T010203Z",
+        2026,
+        8,
+    );
+    const synced_id = (try store.getOverrideIdByExternalRef(
+        synced_override_external_ref,
+    )).?;
+
+    state.deleteOverride(synced_id);
+    try std.testing.expectEqual(@as(usize, 1), state.override_count);
+    try std.testing.expectEqual(NoticeKind.neutral, state.notice_kind);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        state.notice.text(),
+        "stops future syncs from re-adding it",
+    ) != null);
+
+    state.deleteOverride(synced_id);
+    try std.testing.expectEqual(@as(usize, 0), state.override_count);
+    try std.testing.expect(try store.isDismissed(synced_override_external_ref));
+
+    const resync = try syncMonsoonOverride(&store);
+    try std.testing.expectEqual(@as(usize, 1), resync.skipped_dismissed);
+    try std.testing.expectEqual(@as(usize, 0), resync.inserted);
+    try state.reload();
+    try std.testing.expectEqual(@as(usize, 0), state.override_count);
 }

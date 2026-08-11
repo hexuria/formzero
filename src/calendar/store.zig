@@ -4,6 +4,13 @@
 //! This module deliberately owns persistence-shaped records rather than the
 //! calendar domain model. Write records borrow caller-owned slices. Read APIs
 //! return owned records/lists and require the same allocator when deinitialized.
+//!
+//! Deadline overrides carry a provenance: `manual` rows are authored in the
+//! app and owned by the user, `synced` rows are projected from the published
+//! BIR feed and owned by `syncOverridesFromFeed`. The two never mix — a synced
+//! row is addressed by its feed-stable `external_ref`, a manual row never has
+//! one, and no sync may read, update, or delete a manual row. Dismissing a
+//! synced row tombstones its reference so later syncs cannot resurrect it.
 
 const std = @import("std");
 const key_custody = @import("../security/key_custody.zig");
@@ -13,8 +20,12 @@ const sqlite = @cImport({
     @cInclude("sqlite3.h");
 });
 
-pub const latest_schema_version: u32 = 2;
+pub const latest_schema_version: u32 = 3;
 pub const max_scope_text_bytes: usize = 128;
+pub const max_external_ref_bytes: usize = 512;
+/// One feed document may carry at most this many override records. The
+/// publisher's own cap is lower; this bounds a hostile or corrupted feed.
+pub const max_sync_records: usize = 128;
 pub const storage_classification =
     repository_opening.legacy_plaintext_repository_classification;
 pub const production_repository_integration_state =
@@ -29,11 +40,33 @@ pub const Error = error{
     InvalidValue,
     SourceRequired,
     AffectedFormRequired,
+    ExternalRefRequired,
+    BatchTooLarge,
     NotFound,
     SchemaTooNew,
     SqliteBusy,
     SqliteConstraint,
     SqliteFailure,
+};
+
+/// Mirrors the `origin` CHECK vocabulary; unknown storage text fails closed
+/// rather than degrading a synced row into an editable one.
+pub const Origin = enum {
+    manual,
+    synced,
+
+    pub fn text(self: Origin) []const u8 {
+        return switch (self) {
+            .manual => "manual",
+            .synced => "synced",
+        };
+    }
+
+    fn parse(value: []const u8) Error!Origin {
+        if (std.mem.eql(u8, value, "manual")) return .manual;
+        if (std.mem.eql(u8, value, "synced")) return .synced;
+        return Error.InvalidValue;
+    }
 };
 
 pub const OverrideWrite = struct {
@@ -50,6 +83,9 @@ pub const OverrideWrite = struct {
     regions: []const []const u8 = &.{},
     /// An empty list means the override applies to every taxpayer type.
     taxpayer_types: []const []const u8 = &.{},
+    origin: Origin = .manual,
+    /// Feed-stable identity. Required for `.synced`, forbidden for `.manual`.
+    external_ref: ?[]const u8 = null,
 };
 
 pub const OwnedOverride = struct {
@@ -64,6 +100,8 @@ pub const OwnedOverride = struct {
     affected_form_codes: [][]u8,
     regions: [][]u8,
     taxpayer_types: [][]u8,
+    origin: Origin,
+    external_ref: ?[]u8,
 
     pub fn deinit(self: *OwnedOverride, allocator: std.mem.Allocator) void {
         allocator.free(self.title);
@@ -76,6 +114,7 @@ pub const OwnedOverride = struct {
         freeStrings(allocator, self.affected_form_codes);
         freeStrings(allocator, self.regions);
         freeStrings(allocator, self.taxpayer_types);
+        freeOptional(allocator, self.external_ref);
         self.* = undefined;
     }
 };
@@ -88,6 +127,26 @@ pub const OverrideList = struct {
         allocator.free(self.items);
         self.* = undefined;
     }
+};
+
+/// One compiled feed override, borrowed for the duration of a single sync.
+/// `rdo_codes` become the row's region scopes verbatim and `source_reference`
+/// becomes its source, so the existing scoped resolver applies them unchanged.
+pub const FeedOverrideRecord = struct {
+    external_ref: []const u8,
+    title: []const u8,
+    source_reference: []const u8,
+    original_deadline: []const u8,
+    adjusted_deadline: []const u8,
+    form_codes: []const []const u8,
+    rdo_codes: []const []const u8,
+};
+
+pub const SyncSummary = struct {
+    inserted: usize = 0,
+    updated: usize = 0,
+    skipped_dismissed: usize = 0,
+    rejected: usize = 0,
 };
 
 pub const NonWorkingDayWrite = struct {
@@ -325,6 +384,10 @@ pub const Store = struct {
             try self.exec(migration_v2);
             try self.exec("PRAGMA user_version = 2;");
         }
+        if (version < 3) {
+            try self.exec(migration_v3);
+            try self.exec("PRAGMA user_version = 3;");
+        }
 
         try self.commit();
         committed = true;
@@ -337,12 +400,24 @@ pub const Store = struct {
         var committed = false;
         errdefer if (!committed) self.rollbackNoFail();
 
+        const id = try self.writeOverride(value);
+
+        try self.commit();
+        committed = true;
+        return id;
+    }
+
+    /// Writes one validated override inside a transaction the caller owns, so
+    /// a whole feed sync commits or rolls back as a unit. Any error leaves the
+    /// transaction dirty; the caller must roll back.
+    fn writeOverride(self: *Store, value: OverrideWrite) !i64 {
         const id = if (value.id) |existing_id| blk: {
             var update = try self.prepare(
                 \\UPDATE calendar_overrides
                 \\SET title = ?, source = ?, original_deadline = ?,
                 \\    adjusted_deadline = ?, effective_from = ?,
                 \\    effective_until = ?, expires_at = ?,
+                \\    origin = ?, external_ref = ?,
                 \\    updated_at = unixepoch()
                 \\WHERE id = ?;
             );
@@ -354,7 +429,9 @@ pub const Store = struct {
             try update.bindOptionalText(5, value.effective_from);
             try update.bindOptionalText(6, value.effective_until);
             try update.bindOptionalText(7, value.expires_at);
-            try update.bindInt64(8, existing_id);
+            try update.bindText(8, value.origin.text());
+            try update.bindOptionalText(9, value.external_ref);
+            try update.bindInt64(10, existing_id);
             try update.expectDone();
             if (sqlite.sqlite3_changes(try self.handle()) == 0) return Error.NotFound;
 
@@ -384,8 +461,9 @@ pub const Store = struct {
             var insert = try self.prepare(
                 \\INSERT INTO calendar_overrides (
                 \\    title, source, original_deadline, adjusted_deadline,
-                \\    effective_from, effective_until, expires_at
-                \\) VALUES (?, ?, ?, ?, ?, ?, ?);
+                \\    effective_from, effective_until, expires_at,
+                \\    origin, external_ref
+                \\) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
             );
             defer insert.deinit();
             try insert.bindText(1, value.title);
@@ -395,6 +473,8 @@ pub const Store = struct {
             try insert.bindOptionalText(5, value.effective_from);
             try insert.bindOptionalText(6, value.effective_until);
             try insert.bindOptionalText(7, value.expires_at);
+            try insert.bindText(8, value.origin.text());
+            try insert.bindOptionalText(9, value.external_ref);
             try insert.expectDone();
             break :blk sqlite.sqlite3_last_insert_rowid(try self.handle());
         };
@@ -436,8 +516,6 @@ pub const Store = struct {
             try add_taxpayer_type.reset();
         }
 
-        try self.commit();
-        committed = true;
         return id;
     }
 
@@ -448,7 +526,8 @@ pub const Store = struct {
     ) !?OwnedOverride {
         var statement = try self.prepare(
             \\SELECT id, title, source, original_deadline, adjusted_deadline,
-            \\       effective_from, effective_until, expires_at
+            \\       effective_from, effective_until, expires_at,
+            \\       origin, external_ref
             \\FROM calendar_overrides
             \\WHERE id = ?;
         );
@@ -466,7 +545,8 @@ pub const Store = struct {
     ) !OverrideList {
         var statement = try self.prepare(
             \\SELECT id, title, source, original_deadline, adjusted_deadline,
-            \\       effective_from, effective_until, expires_at
+            \\       effective_from, effective_until, expires_at,
+            \\       origin, external_ref
             \\FROM calendar_overrides
             \\ORDER BY id;
         );
@@ -496,6 +576,138 @@ pub const Store = struct {
         try statement.bindInt64(1, id);
         try statement.expectDone();
         return sqlite.sqlite3_changes(try self.handle()) != 0;
+    }
+
+    /// Resolves a feed identity to the synced row it owns. Manual rows are
+    /// excluded by the `origin` predicate as well as by their null reference,
+    /// so a hand-edited database cannot hand a user's row to the sync.
+    pub fn getOverrideIdByExternalRef(
+        self: *Store,
+        external_ref: []const u8,
+    ) !?i64 {
+        var statement = try self.prepare(
+            \\SELECT id FROM calendar_overrides
+            \\WHERE external_ref = ? AND origin = 'synced';
+        );
+        defer statement.deinit();
+        try statement.bindText(1, external_ref);
+        return switch (try statement.step()) {
+            .done => null,
+            .row => sqlite.sqlite3_column_int64(statement.raw, 0),
+        };
+    }
+
+    pub fn isDismissed(self: *Store, external_ref: []const u8) !bool {
+        var statement = try self.prepare(
+            \\SELECT 1 FROM calendar_override_dismissals
+            \\WHERE external_ref = ?;
+        );
+        defer statement.deinit();
+        try statement.bindText(1, external_ref);
+        return try statement.step() == .row;
+    }
+
+    /// Removes a synced override and tombstones its feed identity in one
+    /// transaction, so a later sync cannot resurrect what the user dismissed.
+    /// Manual rows are not dismissible — delete them with `deleteOverride`.
+    pub fn dismissSyncedOverride(self: *Store, id: i64) !void {
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        var reference_buffer: [max_external_ref_bytes]u8 = undefined;
+        const external_ref = try self.syncedExternalRef(id, &reference_buffer);
+
+        var tombstone = try self.prepare(
+            \\INSERT INTO calendar_override_dismissals (external_ref)
+            \\VALUES (?)
+            \\ON CONFLICT(external_ref) DO NOTHING;
+        );
+        defer tombstone.deinit();
+        try tombstone.bindText(1, external_ref);
+        try tombstone.expectDone();
+
+        var delete = try self.prepare(
+            "DELETE FROM calendar_overrides WHERE id = ?;",
+        );
+        defer delete.deinit();
+        try delete.bindInt64(1, id);
+        try delete.expectDone();
+        if (sqlite.sqlite3_changes(try self.handle()) == 0) return Error.NotFound;
+
+        try self.commit();
+        committed = true;
+    }
+
+    /// Projects the current feed's override records onto the synced rows in one
+    /// transaction. Synced rows missing from `records` are kept: a feed rolls
+    /// off long before the deadline history it announced stops mattering.
+    pub fn syncOverridesFromFeed(
+        self: *Store,
+        records: []const FeedOverrideRecord,
+    ) !SyncSummary {
+        if (records.len > max_sync_records) return Error.BatchTooLarge;
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        var summary = SyncSummary{};
+        for (records) |record| {
+            const write = OverrideWrite{
+                .title = record.title,
+                .source = record.source_reference,
+                .original_deadline = record.original_deadline,
+                .adjusted_deadline = record.adjusted_deadline,
+                .affected_form_codes = record.form_codes,
+                .regions = record.rdo_codes,
+                .origin = .synced,
+                .external_ref = record.external_ref,
+            };
+            // One unusable record must not cost the operator the rest of the
+            // feed; storage failures still abort, because they leave the
+            // transaction dirty.
+            validateOverride(write) catch {
+                summary.rejected += 1;
+                continue;
+            };
+            if (try self.isDismissed(record.external_ref)) {
+                summary.skipped_dismissed += 1;
+                continue;
+            }
+            if (try self.getOverrideIdByExternalRef(record.external_ref)) |id| {
+                var update = write;
+                update.id = id;
+                _ = try self.writeOverride(update);
+                summary.updated += 1;
+            } else {
+                _ = try self.writeOverride(write);
+                summary.inserted += 1;
+            }
+        }
+
+        try self.commit();
+        committed = true;
+        return summary;
+    }
+
+    fn syncedExternalRef(
+        self: *Store,
+        id: i64,
+        buffer: []u8,
+    ) ![]const u8 {
+        var statement = try self.prepare(
+            \\SELECT external_ref FROM calendar_overrides
+            \\WHERE id = ? AND origin = 'synced' AND external_ref IS NOT NULL;
+        );
+        defer statement.deinit();
+        try statement.bindInt64(1, id);
+        if (try statement.step() != .row) return Error.NotFound;
+        const stored = columnText(statement.raw, 0) orelse
+            return Error.SqliteFailure;
+        if (stored.len > buffer.len) return Error.SqliteFailure;
+        @memcpy(buffer[0..stored.len], stored);
+        return buffer[0..stored.len];
     }
 
     pub fn putNonWorkingDay(self: *Store, value: NonWorkingDayWrite) !i64 {
@@ -842,6 +1054,11 @@ pub const Store = struct {
         errdefer freeOptional(allocator, effective_until);
         const expires_at = try dupOptionalColumn(allocator, row, 7);
         errdefer freeOptional(allocator, expires_at);
+        const origin = try Origin.parse(
+            columnText(row, 8) orelse return Error.SqliteFailure,
+        );
+        const external_ref = try dupOptionalColumn(allocator, row, 9);
+        errdefer freeOptional(allocator, external_ref);
         const forms = try self.loadStrings(
             allocator,
             "SELECT form_code FROM calendar_override_forms WHERE override_id = ? ORDER BY form_code COLLATE NOCASE;",
@@ -873,6 +1090,8 @@ pub const Store = struct {
             .affected_form_codes = forms,
             .regions = regions,
             .taxpayer_types = taxpayer_types,
+            .origin = origin,
+            .external_ref = external_ref,
         };
     }
 
@@ -1174,6 +1393,15 @@ fn validateOverride(value: OverrideWrite) Error!void {
     for (value.taxpayer_types) |taxpayer_type| {
         try requireScopeValue(taxpayer_type);
     }
+    // Provenance and feed identity travel together. A synced row without a
+    // reference could never be re-synced or dismissed, and a manual row
+    // carrying one would be captured by the next sync of that identity.
+    switch (value.origin) {
+        .manual => if (value.external_ref != null) return Error.InvalidValue,
+        .synced => try requireExternalRef(
+            value.external_ref orelse return Error.ExternalRefRequired,
+        ),
+    }
 }
 
 fn validateNonWorkingDay(value: NonWorkingDayWrite) Error!void {
@@ -1215,6 +1443,12 @@ fn requireSource(value: []const u8) Error!void {
 
 fn requireValue(value: []const u8) Error!void {
     if (trimmed(value).len == 0) return Error.InvalidValue;
+}
+
+fn requireExternalRef(value: []const u8) Error!void {
+    const text = trimmed(value);
+    if (text.len == 0) return Error.ExternalRefRequired;
+    if (text.len > max_external_ref_bytes) return Error.InvalidValue;
 }
 
 fn requireScopeValue(value: []const u8) Error!void {
@@ -1401,6 +1635,25 @@ const migration_v2 =
     \\BEGIN
     \\    SELECT RAISE(ABORT, 'invalid override effective range');
     \\END;
+;
+
+/// v2 rows are all user-authored, so the backfilled provenance is `manual`
+/// with no feed identity. The partial unique index is what makes a re-sync an
+/// update instead of a duplicate; the tombstone table outlives the row it
+/// dismisses, which is the only way a dismissal survives the next feed.
+const migration_v3 =
+    \\ALTER TABLE calendar_overrides
+    \\    ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual'
+    \\        CHECK (origin IN ('manual','synced'));
+    \\ALTER TABLE calendar_overrides
+    \\    ADD COLUMN external_ref TEXT
+    \\        CHECK (external_ref IS NULL OR length(trim(external_ref)) > 0);
+    \\CREATE UNIQUE INDEX calendar_overrides_external_ref_idx
+    \\    ON calendar_overrides(external_ref) WHERE external_ref IS NOT NULL;
+    \\CREATE TABLE calendar_override_dismissals (
+    \\    external_ref TEXT PRIMARY KEY CHECK (length(trim(external_ref)) > 0),
+    \\    dismissed_at INTEGER NOT NULL DEFAULT (unixepoch())
+    \\);
 ;
 
 test "migration is idempotent and enables foreign keys" {
@@ -1771,6 +2024,304 @@ test "provider connections and full event metadata upsert and cascade" {
         "SELECT count(*) FROM calendar_event_links WHERE provider = 'google' AND profile_key = '123-456-789' AND ? IS NOT NULL;",
         1,
     ));
+}
+
+test "v3 migration keeps every stored override manual and unreferenced" {
+    const allocator = std.testing.allocator;
+    var store = try openUnmigrated();
+    defer store.close();
+    try store.exec("PRAGMA foreign_keys = ON;");
+    try store.exec(schema_v1);
+    try store.exec(migration_v2);
+    try store.exec("PRAGMA user_version = 2;");
+    try store.exec(
+        \\INSERT INTO calendar_overrides (
+        \\    id, title, source, original_deadline, adjusted_deadline
+        \\) VALUES
+        \\    (7, 'Hand-authored extension', 'RMC 4-2026',
+        \\     '2026-03-15', '2026-03-20'),
+        \\    (8, 'Second extension', 'RMC 5-2026',
+        \\     '2026-04-15', '2026-04-20');
+    );
+    try store.exec(
+        \\INSERT INTO calendar_override_forms (override_id, form_code)
+        \\VALUES (7, '2550Q'), (8, '1701Q');
+    );
+    try store.exec(
+        \\INSERT INTO calendar_override_regions (override_id, region)
+        \\VALUES (7, 'NCR');
+    );
+
+    try std.testing.expectEqual(@as(u32, 2), try store.schemaVersion());
+    try store.migrate();
+    try std.testing.expectEqual(latest_schema_version, try store.schemaVersion());
+    try std.testing.expect(try tableHasColumn(&store, "origin"));
+    try std.testing.expect(try tableHasColumn(&store, "external_ref"));
+
+    var list = try store.listOverrides(allocator);
+    defer list.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), list.items.len);
+    for (list.items) |item| {
+        try std.testing.expectEqual(Origin.manual, item.origin);
+        try std.testing.expect(item.external_ref == null);
+    }
+    try std.testing.expectEqualStrings("2550Q", list.items[0].affected_form_codes[0]);
+    try std.testing.expectEqualStrings("NCR", list.items[0].regions[0]);
+    try std.testing.expect(!try store.isDismissed(feed_reference));
+}
+
+test "migration rejects a database written by a newer build" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    try store.exec("PRAGMA user_version = 99;");
+    try std.testing.expectError(Error.SchemaTooNew, store.migrate());
+}
+
+test "one feed identity may own at most one synced override" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    const forms = [_][]const u8{"1601C"};
+    _ = try store.putOverride(.{
+        .title = "RMC 89-2026 monsoon extension",
+        .source = "RMC No. 89-2026",
+        .original_deadline = "2026-08-10",
+        .adjusted_deadline = "2026-08-17",
+        .affected_form_codes = &forms,
+        .origin = .synced,
+        .external_ref = feed_reference,
+    });
+    try std.testing.expectError(Error.SqliteConstraint, store.putOverride(.{
+        .title = "Duplicate of the same issuance",
+        .source = "RMC No. 89-2026",
+        .original_deadline = "2026-08-10",
+        .adjusted_deadline = "2026-08-17",
+        .affected_form_codes = &forms,
+        .origin = .synced,
+        .external_ref = feed_reference,
+    }));
+    try std.testing.expectError(Error.ExternalRefRequired, store.putOverride(.{
+        .title = "Synced row without an identity",
+        .source = "RMC No. 89-2026",
+        .original_deadline = "2026-08-10",
+        .adjusted_deadline = "2026-08-17",
+        .affected_form_codes = &forms,
+        .origin = .synced,
+    }));
+    try std.testing.expectError(Error.InvalidValue, store.putOverride(.{
+        .title = "Manual row wearing a feed identity",
+        .source = "RMC No. 89-2026",
+        .original_deadline = "2026-08-10",
+        .adjusted_deadline = "2026-08-17",
+        .affected_form_codes = &forms,
+        .external_ref = "bir:rmc:2026:090/2026-08-10/nonefps",
+    }));
+
+    var list = try store.listOverrides(allocator);
+    defer list.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), list.items.len);
+}
+
+test "re-syncing a feed record updates its row instead of duplicating it" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    const forms = [_][]const u8{ "1601C", "0619E" };
+    const rdo_codes = [_][]const u8{ "039", "113" };
+    const first = [_]FeedOverrideRecord{.{
+        .external_ref = feed_reference,
+        .title = "RMC 89-2026 monsoon extension (due 2026-08-10)",
+        .source_reference = "RMC No. 89-2026",
+        .original_deadline = "2026-08-10",
+        .adjusted_deadline = "2026-08-17",
+        .form_codes = &forms,
+        .rdo_codes = &rdo_codes,
+    }};
+    const inserted = try store.syncOverridesFromFeed(&first);
+    try std.testing.expectEqual(@as(usize, 1), inserted.inserted);
+    try std.testing.expectEqual(@as(usize, 0), inserted.updated);
+    try std.testing.expectEqual(@as(usize, 0), inserted.rejected);
+    const id = (try store.getOverrideIdByExternalRef(feed_reference)).?;
+
+    // Models a re-extraction after a parser fix: same identity, corrected
+    // adjusted date, narrowed scope.
+    const revised_forms = [_][]const u8{"1601C"};
+    const revised_rdo_codes = [_][]const u8{"039"};
+    const second = [_]FeedOverrideRecord{.{
+        .external_ref = feed_reference,
+        .title = "RMC 89-2026 monsoon extension (due 2026-08-10)",
+        .source_reference = "RMC No. 89-2026",
+        .original_deadline = "2026-08-10",
+        .adjusted_deadline = "2026-08-18",
+        .form_codes = &revised_forms,
+        .rdo_codes = &revised_rdo_codes,
+    }};
+    const updated = try store.syncOverridesFromFeed(&second);
+    try std.testing.expectEqual(@as(usize, 0), updated.inserted);
+    try std.testing.expectEqual(@as(usize, 1), updated.updated);
+
+    var list = try store.listOverrides(allocator);
+    defer list.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), list.items.len);
+    const row = list.items[0];
+    try std.testing.expectEqual(id, row.id);
+    try std.testing.expectEqual(Origin.synced, row.origin);
+    try std.testing.expectEqualStrings(feed_reference, row.external_ref.?);
+    try std.testing.expectEqualStrings("RMC No. 89-2026", row.source);
+    try std.testing.expectEqualStrings("2026-08-18", row.adjusted_deadline);
+    try std.testing.expectEqual(@as(usize, 1), row.affected_form_codes.len);
+    try std.testing.expectEqualStrings("1601C", row.affected_form_codes[0]);
+    try std.testing.expectEqual(@as(usize, 1), row.regions.len);
+    try std.testing.expectEqualStrings("039", row.regions[0]);
+}
+
+test "a dismissed feed identity stays deleted across later syncs" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    const forms = [_][]const u8{"1601C"};
+    const rdo_codes = [_][]const u8{"039"};
+    const records = [_]FeedOverrideRecord{.{
+        .external_ref = feed_reference,
+        .title = "RMC 89-2026 monsoon extension (due 2026-08-10)",
+        .source_reference = "RMC No. 89-2026",
+        .original_deadline = "2026-08-10",
+        .adjusted_deadline = "2026-08-17",
+        .form_codes = &forms,
+        .rdo_codes = &rdo_codes,
+    }};
+    _ = try store.syncOverridesFromFeed(&records);
+    const id = (try store.getOverrideIdByExternalRef(feed_reference)).?;
+
+    try store.dismissSyncedOverride(id);
+    try std.testing.expect(try store.isDismissed(feed_reference));
+    try std.testing.expect(try store.getOverrideIdByExternalRef(feed_reference) == null);
+    try std.testing.expectError(Error.NotFound, store.dismissSyncedOverride(id));
+    try std.testing.expectEqual(@as(i64, 0), try scalarCount(
+        &store,
+        "SELECT count(*) FROM calendar_override_forms WHERE override_id = ?;",
+        id,
+    ));
+
+    const resynced = try store.syncOverridesFromFeed(&records);
+    try std.testing.expectEqual(@as(usize, 1), resynced.skipped_dismissed);
+    try std.testing.expectEqual(@as(usize, 0), resynced.inserted);
+    var list = try store.listOverrides(allocator);
+    defer list.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), list.items.len);
+}
+
+test "a sync leaves a manual override with the same dates untouched" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    const forms = [_][]const u8{"1601C"};
+    const rdo_codes = [_][]const u8{"039"};
+    const manual_id = try store.putOverride(.{
+        .title = "Locally noted extension",
+        .source = "Branch advisory",
+        .original_deadline = "2026-08-10",
+        .adjusted_deadline = "2026-08-17",
+        .affected_form_codes = &forms,
+        .regions = &rdo_codes,
+    });
+    const records = [_]FeedOverrideRecord{.{
+        .external_ref = feed_reference,
+        .title = "RMC 89-2026 monsoon extension (due 2026-08-10)",
+        .source_reference = "RMC No. 89-2026",
+        .original_deadline = "2026-08-10",
+        .adjusted_deadline = "2026-08-17",
+        .form_codes = &forms,
+        .rdo_codes = &rdo_codes,
+    }};
+    const summary = try store.syncOverridesFromFeed(&records);
+    try std.testing.expectEqual(@as(usize, 1), summary.inserted);
+    try std.testing.expectEqual(@as(usize, 0), summary.updated);
+
+    var manual = (try store.getOverride(allocator, manual_id)).?;
+    defer manual.deinit(allocator);
+    try std.testing.expectEqual(Origin.manual, manual.origin);
+    try std.testing.expect(manual.external_ref == null);
+    try std.testing.expectEqualStrings("Locally noted extension", manual.title);
+    try std.testing.expectEqualStrings("Branch advisory", manual.source);
+    // A manual row has no feed identity to tombstone; deletion stays the
+    // user's own action through deleteOverride.
+    try std.testing.expectError(
+        Error.NotFound,
+        store.dismissSyncedOverride(manual_id),
+    );
+
+    var list = try store.listOverrides(allocator);
+    defer list.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), list.items.len);
+}
+
+test "an unusable feed record is rejected without dropping the rest" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    const forms = [_][]const u8{"1601C"};
+    const rdo_codes = [_][]const u8{"039"};
+    const records = [_]FeedOverrideRecord{
+        .{
+            .external_ref = "bir:rmc:2026:088/2026-08-05/nonefps",
+            .title = "Unsourced extension",
+            .source_reference = "  ",
+            .original_deadline = "2026-08-05",
+            .adjusted_deadline = "2026-08-12",
+            .form_codes = &forms,
+            .rdo_codes = &rdo_codes,
+        },
+        .{
+            .external_ref = "bir:rmc:2026:087/2026-02-29/nonefps",
+            .title = "Impossible original deadline",
+            .source_reference = "RMC No. 87-2026",
+            .original_deadline = "2026-02-29",
+            .adjusted_deadline = "2026-03-05",
+            .form_codes = &forms,
+            .rdo_codes = &rdo_codes,
+        },
+        .{
+            .external_ref = feed_reference,
+            .title = "RMC 89-2026 monsoon extension (due 2026-08-10)",
+            .source_reference = "RMC No. 89-2026",
+            .original_deadline = "2026-08-10",
+            .adjusted_deadline = "2026-08-17",
+            .form_codes = &forms,
+            .rdo_codes = &rdo_codes,
+        },
+    };
+
+    const summary = try store.syncOverridesFromFeed(&records);
+    try std.testing.expectEqual(@as(usize, 2), summary.rejected);
+    try std.testing.expectEqual(@as(usize, 1), summary.inserted);
+
+    var list = try store.listOverrides(allocator);
+    defer list.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), list.items.len);
+    try std.testing.expectEqualStrings(feed_reference, list.items[0].external_ref.?);
+}
+
+const feed_reference = "bir:rmc:2026:089/2026-08-10/nonefps";
+
+fn openUnmigrated() !Store {
+    var raw: ?*sqlite.sqlite3 = null;
+    const flags = sqlite.SQLITE_OPEN_READWRITE |
+        sqlite.SQLITE_OPEN_CREATE |
+        sqlite.SQLITE_OPEN_FULLMUTEX;
+    const rc = sqlite.sqlite3_open_v2(":memory:", &raw, flags, null);
+    if (rc != sqlite.SQLITE_OK or raw == null) {
+        if (raw) |db| _ = sqlite.sqlite3_close_v2(db);
+        return Error.SqliteFailure;
+    }
+    return .{ .db = raw.? };
 }
 
 fn scalarCount(store: *Store, sql_text: []const u8, value: i64) !i64 {

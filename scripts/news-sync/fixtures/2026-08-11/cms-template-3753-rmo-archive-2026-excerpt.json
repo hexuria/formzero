@@ -1,0 +1,42 @@
+{
+ "note": "Excerpt of live capture 2026-08-11 (Revenue Memorandum Orders); content.Content trimmed to header + first 6 data rows.",
+ "meta": {
+  "current_page": 1,
+  "from": 1,
+  "last_page": 1,
+  "links": [
+   {
+    "url": null,
+    "label": "&laquo; Previous",
+    "active": false
+   },
+   {
+    "url": "http://bir-cms-ws.bir.gov.ph/api/pub/templates/3753/datasets?page=1",
+    "label": "1",
+    "active": true
+   },
+   {
+    "url": null,
+    "label": "Next &raquo;",
+    "active": false
+   }
+  ],
+  "path": "http://bir-cms-ws.bir.gov.ph/api/pub/templates/3753/datasets",
+  "per_page": 3000,
+  "to": 1,
+  "total": 1
+ },
+ "data": [
+  {
+   "id": 64294,
+   "dataset_template_id": 3753,
+   "client_website_id": 2,
+   "code": "2026 Revenue Memorandum Orders",
+   "name": "2026 Revenue Memorandum Orders",
+   "content": {
+    "Content": "<table class=\"table-auto text-sm w-full border\" style=\"border-collapse: collapse; border-spacing: 5px; border: 2px solid rgb(0, 0, 0); width: 100%; height: 975px;\" border=\"1\">\n<thead>\n<tr style=\"height: 49px; border-color: #000000; border-style: solid;\">\n<td style=\"text-align: center; vertical-align: middle; width: 22.3164%; padding: 5px; border: 2px solid rgb(0, 0, 0);\">NO. OF ISSUANCE</td>\n<td style=\"text-align: center; vertical-align: middle; padding: 5px; width: 67.2316%; border: 2px solid rgb(0, 0, 0);\">SUBJECT</td>\n<td style=\"text-align: center; vertical-align: middle; width: 11.0169%; padding: 5px; border: 2px solid rgb(0, 0, 0);\">DATE OF ISSUE</td>\n</tr>\n<tr>\n<td style=\"width: 22.3164%; border: 2px solid rgb(0, 0, 0); vertical-align: top;\">RMO No. 19-2026</td>\n<td style=\"width: 67.2316%; border: 2px solid rgb(0, 0, 0);\">\n<div class=\"x_elementToProof\" data-olk-copy-source=\"MessageBody\"><span data-olk-copy-source=\"MessageBody\">Policies, Guidelines, and Procedures for the Availment of a One-Time Abatement of Taxes and/or Penalties for Micro Taxpayers Pursuant to Revenue Regulations No. 004-2026<br></span>Digest | <a href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO No. 19-2026_Redacted.pdf\">Full Text</a> |&nbsp;<a href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO 19-2026 Annex A.pdf\">Annex A</a> | <a title=\"Annex B\" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO_19-2026_ANNEX B.docx\" target=\"_blank\" rel=\"noopener\">Annex B</a> | <a title=\"Annex C\" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO_19-2026_ANNEX C.docx\" target=\"_blank\" rel=\"noopener\">Annex C</a> |&nbsp;<a title=\" Annex D \" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO_19-2026_ANNEX D.docx\" target=\"_blank\" rel=\"noopener\"> Annex D </a>| <a title=\"Annex E\" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO_19-2026_ANNEX E.docx\" target=\"_blank\" rel=\"noopener\">Annex E</a> |&nbsp;<a title=\"Annex F\" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO_19-2026_ANNEX F.docx\" target=\"_blank\" rel=\"noopener\">Annex F</a> | <a title=\"Annex G\" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO_19-2026_ANNEX G.docx\" target=\"_blank\" rel=\"noopener\">Annex G</a> | <a title=\"Annex H&nbsp;\" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO_19-2026_ANNEX H.docx\" target=\"_blank\" rel=\"noopener\">Annex H&nbsp;</a> |&nbsp;<a title=\"Annex I\" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO_19-2026_ANNEX I.docx\" target=\"_blank\" rel=\"noopener\">Annex I</a> |&nbsp;<a title=\" Annex J \" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO_19-2026_ANNEX J.docx\" target=\"_blank\" rel=\"noopener\"> Annex J </a>&nbsp;|&nbsp;<a title=\" Annex J \" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO_19-2026_ANNEX K.docx\" target=\"_blank\" rel=\"noopener\"> Annex K</a> |&nbsp;<a title=\" Annex L\" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO_19-2026_ANNEX L.docx\" target=\"_blank\" rel=\"noopener\"> Annex L</a> |&nbsp;<a title=\" Annex M\" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO_19-2026_ANNEX M.docx\" target=\"_blank\" rel=\"noopener\"> Annex M</a>&nbsp;</div>\n</td>\n<td style=\"width: 11.0169%; border: 2px solid rgb(0, 0, 0); vertical-align: top;\">July 23, 2026</td>\n</tr>\n<tr>\n<td style=\"width: 22.3164%; border: 2px solid rgb(0, 0, 0); vertical-align: top;\">RMO No. 18-2026</td>\n<td style=\"width: 67.2316%; border: 2px solid rgb(0, 0, 0);\">\n<div class=\"x_elementToProof\" data-olk-copy-source=\"MessageBody\">Creation of Alphanumeric Tax Code (ATC) of Selected Revenue Source under Revenue Regulations No. 004-2026<br>Digest | <a title=\"Full Text\" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO No. 18-2026_redacted.pdf\" target=\"_blank\" rel=\"noopener\">Full Text</a>&nbsp;&nbsp;</div>\n</td>\n<td style=\"width: 11.0169%; border: 2px solid rgb(0, 0, 0); vertical-align: top;\">July 23, 2026</td>\n</tr>\n<tr>\n<td style=\"width: 22.3164%; border: 2px solid rgb(0, 0, 0); vertical-align: top;\">RMO No. 17-2026</td>\n<td style=\"width: 67.2316%; border: 2px solid rgb(0, 0, 0);\">\n<div class=\"x_elementToProof\" data-olk-copy-source=\"MessageBody\">Updated Policies and Procedures in Processing One-Time Transaction (ONETT) For Sale and Donation of Real/Personal Properties in Relation to the International Organization for Standardization (ISO) 9001:2015 Quality Management System (QMS)&nbsp;<br>Digest | <a title=\"Full Text\" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO No. 17-2026_Redacted.pdf\" target=\"_blank\" rel=\"noopener\">Full Text</a> | <a title=\"Annexes A-C, Annexes E-J\" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/1. Annexes A-B-C-E-F-G-H-I-J_QUALITY FORMS.xlsx\" target=\"_blank\" rel=\"noopener\">Annexes A-C, Annexes E-J</a> | <a title=\"Annexes D1-D2\" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/2. Annexes D1 to D12_CDR.pdf\" target=\"_blank\" rel=\"noopener\">Annexes D1-D2</a> | <a title=\"Annexes K-P\" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/3. Annexes K to P_PROCESS FLOW.pdf\" target=\"_blank\" rel=\"noopener\">Annexes K-P</a> | <a title=\"Annexes Q-X\" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/4. Annexes Q to X_QUALITY PLAN.XLSX\" target=\"_blank\" rel=\"noopener\">Annexes Q-X</a>&nbsp;&nbsp;</div>\n</td>\n<td style=\"width: 11.0169%; border: 2px solid rgb(0, 0, 0); vertical-align: top;\">July 8, 2026</td>\n</tr>\n<tr>\n<td style=\"width: 22.3164%; border: 2px solid rgb(0, 0, 0); vertical-align: top;\">RMO No. 16-2026</td>\n<td style=\"width: 67.2316%; border: 2px solid rgb(0, 0, 0);\">\n<div class=\"x_elementToProof\" data-olk-copy-source=\"MessageBody\">Supplemental guidelines and procedures in the implementation of Revenue Memorandum Order No. 44-2025, with respect to the processing and payment of Separation and Terminal Leave Benefits claims of officials holding the positions of Regional Director/OIC-Regional Director and Assistant Regional Director/OIC-Assistant Regional Director<br>Digest |&nbsp;<a title=\"Full Text\" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO NO. 16 -2026_redacted-compressed&nbsp;(1).pdf\" target=\"_blank\" rel=\"noopener\">Full Text</a></div>\n</td>\n<td style=\"width: 11.0169%; border: 2px solid rgb(0, 0, 0); vertical-align: top;\">July 7, 2026</td>\n</tr>\n<tr>\n<td style=\"width: 22.3164%; border: 2px solid rgb(0, 0, 0); vertical-align: top;\">RMO No. 15-2026</td>\n<td style=\"width: 67.2316%; border: 2px solid rgb(0, 0, 0);\">Guidelines on the Processing of Freedom of Information Requests<br>Digest | <a title=\"Full Text\" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO No. 15-2026_redacted.pdf\" target=\"_blank\" rel=\"noopener\">Full Text</a>&nbsp; &nbsp;</td>\n<td style=\"width: 11.0169%; border: 2px solid rgb(0, 0, 0); vertical-align: top;\">July 7, 2026</td>\n</tr>\n<tr style=\"height: 22.5px;\">\n<td style=\"width: 22.3164%; border: 2px solid rgb(0, 0, 0); vertical-align: top;\">RMO No. 14-2026</td>\n<td style=\"width: 67.2316%; border: 2px solid rgb(0, 0, 0);\">Partial Revocation of Certain Provisions of Revenue Memorandum Order No. 4-2025<br>Digest |&nbsp;<a title=\"Full Text\" href=\"https://bir-cdn.bir.gov.ph/BIR/pdf/RMO No. 14-2026_redacted.pdf\" target=\"_blank\" rel=\"noopener\">Full Text</a>&nbsp;&nbsp;</td>\n<td style=\"width: 11.0169%; border: 2px solid rgb(0, 0, 0); vertical-align: top;\">July 6, 2026</td>\n</tr>\n<!-- ... 13 further rows trimmed for fixture size; full capture had 20 rows -->\n</tbody>\n</table>"
+   },
+   "is_active": 1
+  }
+ ]
+}
