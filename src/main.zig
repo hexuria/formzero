@@ -8707,7 +8707,7 @@ pub const Model = struct {
         self: *const Model,
         notice: *const news_domain.OwnedNotice,
     ) bool {
-        const issued = news_domain.manilaYearMonth(notice.published_at_unix);
+        const issued = news_domain.manilaCivilDate(notice.published_at_unix);
         const viewed = &self.globalDashboard.calendar;
         return issued.year == viewed.selected_year and
             issued.month == viewed.selected_month;
@@ -10813,8 +10813,10 @@ fn formatNewsTimestamp(
     allocator: std.mem.Allocator,
     timestamp: i64,
 ) []const u8 {
-    const date = utcCalendarTimeFromUnixSeconds(timestamp) orelse
-        return "Unknown date";
+    // Manila, not UTC: the same reading that buckets the notice into a month
+    // has to date the row, or a notice stamped midnight Manila shows the day
+    // before and can contradict the month its own pane is showing.
+    const date = news_domain.manilaCivilDate(timestamp);
     return std.fmt.allocPrint(
         allocator,
         "{s} {d}, {d}",
@@ -23169,7 +23171,7 @@ test "the published BIR feed moves the RDO 039 marker and leaves the nation alon
     const july = model.importantNewsRows(scratch);
     try std.testing.expectEqual(@as(usize, 9), july.len);
     for (july) |row| {
-        const issued = news_domain.manilaYearMonth(
+        const issued = news_domain.manilaCivilDate(
             row.notice.published_at_unix,
         );
         try std.testing.expectEqual(@as(i32, 2026), issued.year);

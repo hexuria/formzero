@@ -144,13 +144,20 @@ pub fn identityEqual(a: NoticeWrite, b: NoticeWrite) bool {
         std.mem.eql(u8, trim(a.external_id), trim(b.external_id));
 }
 
-/// Civil year and month of `unix_seconds` in Philippine Standard Time.
+/// Civil date of `unix_seconds` in Philippine Standard Time.
 ///
 /// PST is a fixed UTC+8 with no daylight saving, so the whole conversion is one
-/// floor division followed by the civil-from-days algorithm. Month bucketing
-/// must never consult the host timezone: two users in different zones have to
-/// see a notice filed under the same Manila month.
-pub fn manilaYearMonth(unix_seconds: i64) struct { year: i32, month: u8 } {
+/// floor division followed by the civil-from-days algorithm. Every surface that
+/// shows or groups a notice by date must use this rather than a UTC calendar,
+/// and never the host timezone: publishers stamp midnight Manila, which is the
+/// previous afternoon in UTC, so a UTC reading is a day early and can file a
+/// notice under the month before the one its own pane is showing. Two users in
+/// different zones also have to see the same notice under the same month.
+pub fn manilaCivilDate(unix_seconds: i64) struct {
+    year: i32,
+    month: u8,
+    day: u8,
+} {
     const days = @divFloor(unix_seconds + manila_utc_offset_seconds, 86_400);
     const shifted_days = days + 719_468;
     const era = @divFloor(shifted_days, 146_097);
@@ -168,7 +175,12 @@ pub fn manilaYearMonth(unix_seconds: i64) struct { year: i32, month: u8 } {
     else
         @as(i64, -9));
     const year = year_of_era + era * 400 + @as(i64, if (month <= 2) 1 else 0);
-    return .{ .year = @intCast(year), .month = @intCast(month) };
+    const day = day_of_year - @divFloor(153 * month_index + 2, 5) + 1;
+    return .{
+        .year = @intCast(year),
+        .month = @intCast(month),
+        .day = @intCast(day),
+    };
 }
 
 pub fn trim(value: []const u8) []const u8 {
@@ -235,48 +247,74 @@ test "owned notice normalizes outer whitespace and preserves identity" {
 
 test "Manila month bucketing follows UTC+8 across year and month boundaries" {
     // The epoch is already 08:00 of 1 January 1970 in Manila.
-    try std.testing.expectEqual(@as(i32, 1970), manilaYearMonth(0).year);
-    try std.testing.expectEqual(@as(u8, 1), manilaYearMonth(0).month);
+    try std.testing.expectEqual(@as(i32, 1970), manilaCivilDate(0).year);
+    try std.testing.expectEqual(@as(u8, 1), manilaCivilDate(0).month);
 
     // 2026-12-31T16:00:00Z is 2027-01-01T00:00:00 in Manila.
     const manila_new_year: i64 = 1_798_732_800;
     try std.testing.expectEqual(
         @as(i32, 2026),
-        manilaYearMonth(manila_new_year - 1).year,
+        manilaCivilDate(manila_new_year - 1).year,
     );
     try std.testing.expectEqual(
         @as(u8, 12),
-        manilaYearMonth(manila_new_year - 1).month,
+        manilaCivilDate(manila_new_year - 1).month,
     );
     try std.testing.expectEqual(
         @as(i32, 2027),
-        manilaYearMonth(manila_new_year).year,
+        manilaCivilDate(manila_new_year).year,
     );
-    try std.testing.expectEqual(@as(u8, 1), manilaYearMonth(manila_new_year).month);
+    try std.testing.expectEqual(@as(u8, 1), manilaCivilDate(manila_new_year).month);
 
     // 2024-02-29T16:00:00Z is 2024-03-01T00:00:00 in Manila: February 2024 is
     // one day longer than February of a common year.
     const manila_march_2024: i64 = 1_709_222_400;
     try std.testing.expectEqual(
         @as(u8, 2),
-        manilaYearMonth(manila_march_2024 - 1).month,
+        manilaCivilDate(manila_march_2024 - 1).month,
     );
     try std.testing.expectEqual(
         @as(u8, 3),
-        manilaYearMonth(manila_march_2024).month,
+        manilaCivilDate(manila_march_2024).month,
+    );
+    try std.testing.expectEqual(
+        @as(u8, 29),
+        manilaCivilDate(manila_march_2024 - 1).day,
+    );
+    try std.testing.expectEqual(
+        @as(u8, 1),
+        manilaCivilDate(manila_march_2024).day,
+    );
+}
+
+test "a notice stamped midnight Manila keeps that day, not the UTC day before" {
+    // The feed publishes midnight Manila, which is 16:00 the previous day in
+    // UTC. Reading it as UTC dated every notice a day early and could file one
+    // under the month before the pane it appears in: RMC 73-2026 is issued
+    // 2026-07-01 in Manila and read as 2026-06-30 in UTC.
+    const manila_july_first: i64 = 1_782_835_200;
+    const civil = manilaCivilDate(manila_july_first);
+    try std.testing.expectEqual(@as(i32, 2026), civil.year);
+    try std.testing.expectEqual(@as(u8, 7), civil.month);
+    try std.testing.expectEqual(@as(u8, 1), civil.day);
+
+    // The label and the bucket are the same reading, so they cannot disagree.
+    const utc_days = @divFloor(manila_july_first, 86_400);
+    try std.testing.expect(
+        utc_days != @divFloor(manila_july_first + manila_utc_offset_seconds, 86_400),
     );
 }
 
 test "Manila month bucketing stays correct before the epoch" {
     // -28800 is exactly 1970-01-01T00:00:00 in Manila; one second earlier is
     // still December 1969 there.
-    try std.testing.expectEqual(@as(i32, 1970), manilaYearMonth(-28_800).year);
-    try std.testing.expectEqual(@as(u8, 1), manilaYearMonth(-28_800).month);
-    try std.testing.expectEqual(@as(i32, 1969), manilaYearMonth(-28_801).year);
-    try std.testing.expectEqual(@as(u8, 12), manilaYearMonth(-28_801).month);
+    try std.testing.expectEqual(@as(i32, 1970), manilaCivilDate(-28_800).year);
+    try std.testing.expectEqual(@as(u8, 1), manilaCivilDate(-28_800).month);
+    try std.testing.expectEqual(@as(i32, 1969), manilaCivilDate(-28_801).year);
+    try std.testing.expectEqual(@as(u8, 12), manilaCivilDate(-28_801).month);
 
     // 1968 was a leap year, so 29 February exists: 1968-02-29T00:00:00+08:00.
     const manila_leap_1968: i64 = -58_089_600;
-    try std.testing.expectEqual(@as(i32, 1968), manilaYearMonth(manila_leap_1968).year);
-    try std.testing.expectEqual(@as(u8, 2), manilaYearMonth(manila_leap_1968).month);
+    try std.testing.expectEqual(@as(i32, 1968), manilaCivilDate(manila_leap_1968).year);
+    try std.testing.expectEqual(@as(u8, 2), manilaCivilDate(manila_leap_1968).month);
 }
