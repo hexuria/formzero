@@ -10,7 +10,7 @@ calls: every task says exactly what to change, how to prove it worked, and what
 to do when it does not. Read §1 (the operating manual) before touching
 anything.
 
-Progress: 7/13 tasks complete.
+Progress: 8/13 tasks complete.
 
 ---
 
@@ -348,41 +348,31 @@ blocker here.
   - Verify: `npx native test` passes with count above baseline.
   - Commit: `feat: prune synced overrides a year past their extension`
 
-- [ ] **C9 — ingest the Advisories tab as notices.**
-  - Files: `scripts/news-sync/cms.ts`, `scripts/news-sync/issuances.ts` (or a
-    sibling `advisories.ts` if cleaner), `scripts/news-sync/sync.ts`,
-    `scripts/news-sync/types.ts` (`IssuanceKind` gains `"ADVISORY"`),
-    `scripts/news-sync/fixtures/2026-08-11/` (+ CAPTURES.md entry), §4.1 kind
-    list in the execution plan, tests.
-  - Step 1 — discover the template id mechanically (the homepage widget's
-    Advisories tab is its own CMS dataset, like New Issuances was template 9):
-    ```sh
-    for id in $(seq 1 60); do
-      name=$(curl -s --max-time 15 -H 'client-website-id: 2' -H 'origin: https://www.bir.gov.ph' \
-        "https://bir-cms-ws.bir.gov.ph/api/pub/templates/$id/datasets?per_page=1" \
-        | python3 -c "import json,sys;\nj=json.load(sys.stdin);\nprint(j['data'][0]['name'] if j.get('data') else '')" 2>/dev/null)
-      [ -n "$name" ] && echo "$id: $name"
-    done
-    ```
-    Find the entry whose name contains `Advisor`. If none exists in 1–60,
-    STOP per the failure protocol — do not guess wider ranges unattended.
-  - Step 2 — capture its dataset response as a fixture (same trimming and
-    CAPTURES.md documentation conventions as the others).
-  - Step 3 — parse it into `IssuanceRecord`s with `kind: "ADVISORY"`,
-    external ids `bir:advisory:<year>:<seq or stable slug>` — derive identity
-    from something stable in the data, never from the title; if the blob
-    carries no stable id or date, use the PDF/anchor URL as identity (the news
-    domain's documented rule) and first-seen dating (it will show in the
-    `dates:` log line — say so in the report).
-  - Step 4 — merge into the notice stream (advisories never classify as
-    extension circulars; assert that), respecting the 240 cap ordering.
-  - Acceptance: offline run gains the fixture's advisories as notices with
-    `kind: "ADVISORY"`; no override records change; validateFeed clean; app
-    side needs no change (`kind` is parsed-and-ignored there — verify by
-    reading `feed_json.zig`, and state that in the report).
-  - Verify: TS suite green above baseline; snapshots restored;
-    `npx native test` still passes (no app change expected — prove it).
-  - Commit: `feat: carry BIR advisories in the news feed`
+- [x] **C9 — ingest the Advisories tab as notices — INVESTIGATED, DECLINED.**
+  The template exists and was found mechanically: **template 2, "Advisories"**
+  (the same scan also names 4 = Programs, 9 = New Issuances, 15 = News, so the
+  homepage's four What's New tabs are templates 2/4/9/15). It was not ingested,
+  because the dataset cannot serve the feature it would feed:
+
+  - **It is abandoned.** All 20 rows are 2023 content — 32 mentions of `2023`
+    across the payload and not one of 2024, 2025 or 2026. The newest is a
+    December 2023 public-auction notice. Nothing has been added in ~2.5 years.
+  - **It carries no date.** Each row is a numeric CMS id, a
+    `URL|Label` pair and an HTML blurb. Dates appear only incidentally inside
+    prose or filenames (`Tax Advisory eSales System 12.13.2023.pdf`), and many
+    rows have none at all.
+
+  Together those are disqualifying rather than merely inconvenient. Undated
+  notices fall back to first-seen dating, so all twenty would be stamped with
+  the run clock and filed under the current month — a 2023 auction notice
+  presented as this month's news, in the very pane whose whole purpose is
+  showing what belongs to the month on screen. Ingesting would make the
+  headline feature actively misleading in exchange for content BIR itself
+  stopped maintaining.
+
+  Revisit only if BIR resumes publishing advisories **and** the dataset gains a
+  date field. The template id and payload shape are recorded here so the next
+  attempt starts from evidence rather than a fresh scan.
 
 ### Phase C-E — reconciliation
 
@@ -445,4 +435,11 @@ production state.
 
 ## 6. Discovered during execution
 
-(append one line per finding; do not fix inline)
+- C9: the homepage's four What's New tabs are CMS templates 2 (Advisories),
+  4 (Programs), 9 (New Issuances) and 15 (News). Only 9 is ingested. Templates
+  4 and 15 were not assessed; if either is ever wanted, check first whether it
+  carries a date field, which template 2 does not.
+- C2: `remoteContentLength` swallows every HEAD failure and returns null, so a
+  403 there degrades to a download attempt rather than being distinguishable.
+  That is safe but means an origin refusing HEAD and GET costs one wasted
+  request before the refusal is recognised.
