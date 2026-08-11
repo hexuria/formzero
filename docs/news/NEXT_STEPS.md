@@ -137,21 +137,44 @@ made it dispatchable. Two runs followed.
 `news-feed is already current; no commit made.` Then watch that the 4×/day cron
 fires at its first UTC slot (04/10/16/22) and makes no commit on a quiet run.
 
-## Backlog (tracked, deliberately not this cycle)
+## Backlog — worked 2026-08-11
 
-1. **Gap 3 — branch Registration Unit RDOs** (per-branch override verdicts;
-   filing-scope design work). Largest real limitation of the feature.
-2. **Gap 2 — context reads the editor buffer**, not the saved revision
-   (fail-closed; cosmetic surprise while mid-edit).
-3. **T7.4 — persist the dashboard RDO selection** (needs an app settings store).
-4. **eFPS group deadlines in the rule engine** — feed already channel-tags
-   them; emission is deliberately off until the engine models eFPS dates.
-5. **Merged-cell recovery** (`pdftotext -tsv` clustering) to lift the 20-of-22
-   review-only blocks — would auto-emit 1606/0620/1600-VT/1701Q extensions.
-6. **Advisories tab, search-API secondary source, template 1135 cross-check**
-   (plan §10), and pre-adding 2027 template IDs each January.
+Branch `gol/news-backlog`, five commits. `just verify` exits 0: Zig **1848/1852**
+(from 1839/1843), TypeScript **218 tests / 215 pass** (from 201/198).
 
-## Order of operations
+- [x] **Saved-revision district.** The calendar took the taxpayer's district
+  from the profile *editor buffer*, so clearing that field mid-edit silently
+  reprojected the calendar unscoped. It now reads the persisted revision.
+  Taxpayer type was checked for the same fault and does not have it — that path
+  already reads the store-loaded row; the test proves it rather than assuming.
+- [x] **T7.4, persisted dashboard context.** New app-owned
+  `preferences.sqlite3`, deliberately separate from the taxpayer and
+  calendar-policy databases. Tri-state so "cleared" persists as a deliberate
+  nationwide choice; an unknown stored district degrades to nationwide without
+  failing startup, and the record is kept so a later reference revision restores
+  the reader's choice. Worth knowing: theme and sidebar preferences still do
+  **not** survive a restart — there was no precedent to reuse.
+- [x] **T10.1, circulars that spell out their offices.** RMC 62-2026 now yields
+  districts 110 and 111 with its office-count invariant passing. It still emits
+  no overrides: no circular-level extended date in its prose, and its page-2 due
+  dates are damaged past recovery. Reading a circular and emitting from it are
+  separate bars; this clears the first.
+- [ ] **T10.2, merged table cells — decision needed.**
+  [MERGED_CELL_INVESTIGATION.md](MERGED_CELL_INVESTIGATION.md). The published
+  feed **under-applies** RMC 89-2026: 2200-M, 2200-C, 0620, 1600-VT/PT, 1606 and
+  the NGAs block share the Aug-10 cell with 1601-C, and 1701Q and 1707-A share
+  the Aug-15 cell with 1702. Recommended fix is manual overrides now; the
+  geometry pass was refused because its failure mode fabricates overrides.
+- [ ] **Branch Registration Unit districts — blocked upstream, not deferred.**
+  [BRANCH_RDO_DESIGN.md](BRANCH_RDO_DESIGN.md). Unit tables exist only at schema
+  v28; a normal launch pins its ceiling to v27, and the only v28 path is an
+  env-gated in-memory fixture preview with no saved profile and no persisted
+  policy. Nothing for a per-unit calendar to read until that vertical ships.
+- [ ] **PDF re-download per run.** Each scheduled run re-fetches all 7
+  extension-circular PDFs (4.2 MB, ~17 MB/day) because `work/` is gitignored and
+  absent on a fresh runner. Costs no correctness — no commits, no feed churn.
+  Fix by recording size/sha in state and doing a HEAD check first.
+- [ ] **eFPS group deadlines.** Not a gap in this feature — the feed already
+  channel-tags those rows. It is a change to how the rule engine models
+  statutory dates, affecting every monthly form, and wants its own scoped work.
 
-All decisions settled; execution order: R1 → R2 → R3 → R4 → merge.
-R3 can start in parallel with R2 once R1 lands.
