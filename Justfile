@@ -38,7 +38,8 @@ check: generate
     {{ npm_command }} run test:app-identity
     {{ npm_command }} run check:tax-catalog
     eval "$(node scripts/app-identity.mjs prepare --format shell)"
-    npx native check "$BUWIZ_APP_ROOT" --strict
+    node scripts/patch-native-sdk-combobox-tab.mjs
+    npx native doctor --manifest "$BUWIZ_MANIFEST" --strict
 
 [windows]
 check: generate
@@ -47,6 +48,7 @@ check: generate
 # Run the headless Native SDK test suite.
 [unix]
 test: generate
+    node scripts/patch-native-sdk-combobox-tab.mjs
     npx native test . --yes -Dplatform=null
 
 [windows]
@@ -56,6 +58,8 @@ test: generate
 # Build a ReleaseFast production binary into zig-out/bin/.
 [macos]
 build: generate
+    node scripts/patch-native-sdk-combobox-tab.mjs
+    node scripts/patch-native-sdk-combobox-tab.mjs
     npx native build . --yes
 
 [windows]
@@ -70,6 +74,8 @@ build: generate
 # Build a ReleaseFast binary with Native automation enabled.
 [macos]
 build-automation: generate
+    node scripts/patch-native-sdk-combobox-tab.mjs
+    node scripts/patch-native-sdk-combobox-tab.mjs
     npx native build . --yes -Dautomation=true
 
 [windows]

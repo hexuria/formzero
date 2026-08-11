@@ -92,6 +92,14 @@
     </if>
   </if>
 
+  <if test="{profileDirtyNavigationVisible}">
+    <column grow="1" padding="16" main="center" cross="center" label="Keep editing" on-press="profile_keep_editing">
+      <dialog width="{profileDirtyNavigationDialogWidth}" on-dismiss="profile_keep_editing">
+        <use template="profile-dirty-navigation-dialog-content"/>
+      </dialog>
+    </column>
+  </if>
+
     <if test="{page == 'aux_lock_screen'}">
       <use template="lock-screen-page"/>
     </if>

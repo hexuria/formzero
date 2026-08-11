@@ -63,6 +63,7 @@
 
 const std = @import("std");
 const profile_field = @import("field.zig");
+const citizenship_reference = @import("citizenship_reference.zig");
 const evolution = @import("evolution.zig");
 const exact_draft = @import("../form_engine/draft.zig");
 const exact_identity = @import("../form_engine/identity.zig");
@@ -7351,10 +7352,10 @@ pub const Store = struct {
         return values.toOwnedSlice(allocator);
     }
 
-    /// Finds taxpayers whose current legal/taxpayer name contains the query,
-    /// or whose canonical TIN contains the query's digits, across the whole
-    /// store. Legacy local labels remain stored only for migration history;
-    /// they are not a display identity or search key.
+    /// Finds taxpayers whose current legal/taxpayer name or opaque stable ID
+    /// contains the query, or whose canonical TIN contains the query's digits,
+    /// across the whole store. Legacy local labels remain stored only for
+    /// migration history; they are not a display identity or search key.
     ///
     /// This exists because the sidebar holds a bounded number of rows: a
     /// taxpayer past that bound must still be findable by typing, otherwise
@@ -7414,6 +7415,7 @@ pub const Store = struct {
             \\          LIKE ? ESCAPE '\'
             \\      OR (? IS NOT NULL AND
             \\          COALESCE(anchor.canonical_tin, r.tin) LIKE ? ESCAPE '\')
+            \\      OR p.id LIKE ? ESCAPE '\'
             \\  )
             \\ORDER BY COALESCE(r.taxpayer_name, r.registered_name)
             \\    COLLATE NOCASE, p.id;
@@ -7423,6 +7425,7 @@ pub const Store = struct {
         try statement.bindText(2, name_pattern);
         try statement.bindOptionalText(3, tin_pattern);
         try statement.bindOptionalText(4, tin_pattern);
+        try statement.bindText(5, name_pattern);
 
         var items: std.ArrayList(OwnedProfileSummary) = .empty;
         errdefer {
@@ -15194,10 +15197,20 @@ fn validateRevision(
     _ = profile_field.Tin.parse(value.identity.tin) catch
         return Error.InvalidValue;
     try requireValue(value.identity.rdo_code);
-    try requireValue(value.contact.registered_address);
-    try validateOptionalValue(value.contact.zip_code);
-    try validateOptionalValue(value.contact.contact_number);
-    try validateOptionalValue(value.contact.email_address);
+    _ = profile_field.RegisteredAddress.parse(value.contact.registered_address) catch
+        return Error.InvalidValue;
+    try validateOptionalProfileField(
+        value.contact.zip_code,
+        profile_field.ZipCode,
+    );
+    try validateOptionalProfileField(
+        value.contact.contact_number,
+        profile_field.ContactNumber,
+    );
+    try validateOptionalProfileField(
+        value.contact.email_address,
+        profile_field.EmailAddress,
+    );
     if (value.accounting_period_basis) |basis| {
         switch (basis) {
             .calendar => if (value.fiscal_year_end_month != null) {
@@ -15217,7 +15230,10 @@ fn validateRevision(
         .individual => |person| try validateIndividual(person),
         .sole_proprietor => |proprietor| {
             try validateIndividual(proprietor.person);
-            try validateOptionalValue(proprietor.trade_name);
+            try validateOptionalProfileField(
+                proprietor.trade_name,
+                profile_field.RegisteredName,
+            );
             if (proprietor.person.classification !=
                 .classification_unknown and
                 proprietor.person.classification != .self_employed)
@@ -15227,8 +15243,12 @@ fn validateRevision(
             _ = try soleProprietorTradeName(proprietor);
         },
         .legal_entity => |entity| {
-            try requireValue(entity.registered_name);
-            try validateOptionalValue(entity.trade_name);
+            _ = profile_field.RegisteredName.parse(entity.registered_name) catch
+                return Error.InvalidValue;
+            try validateOptionalProfileField(
+                entity.trade_name,
+                profile_field.RegisteredName,
+            );
         },
     }
     for (components.business_activities, 0..) |activity, index| {
@@ -15525,11 +15545,35 @@ fn validateRegistrationFactAnchorRef(
 }
 
 fn validateIndividual(value: IndividualWrite) Error!void {
-    try requireValue(value.name);
-    try validateOptionalValue(value.trade_name);
+    _ = profile_field.TaxpayerName.parse(value.name) catch
+        return Error.InvalidValue;
+    try validateOptionalProfileField(
+        value.trade_name,
+        profile_field.RegisteredName,
+    );
     if (value.date_of_birth) |date| try validateDate(date[0..]);
-    try validateOptionalValue(value.citizenship);
+    if (value.citizenship) |citizenship| try validateCitizenship(citizenship);
     try validateOptionalValue(value.foreign_tax_number);
+}
+
+fn validateOptionalProfileField(
+    value: ?[]const u8,
+    comptime Field: type,
+) Error!void {
+    if (value) |text| {
+        _ = Field.parse(text) catch return Error.InvalidValue;
+    }
+}
+
+fn validateCitizenship(value: []const u8) Error!void {
+    const parsed = profile_field.Citizenship.parse(value) catch
+        return Error.InvalidValue;
+    const text = parsed.asSlice();
+    if (citizenship_reference.findByValue(text) == null and
+        citizenship_reference.findByCode(text) == null)
+    {
+        return Error.InvalidValue;
+    }
 }
 
 fn soleProprietorTradeName(
@@ -28644,6 +28688,11 @@ test "legacy local label never replaces legal display identity or search" {
     try std.testing.expectEqual(@as(usize, 1), by_legal_name.items.len);
     try std.testing.expectEqualStrings(profile_id, by_legal_name.items[0].id);
 
+    var by_stable_id = try store.searchProfiles(allocator, profile_id, false);
+    defer by_stable_id.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), by_stable_id.items.len);
+    try std.testing.expectEqualStrings(profile_id, by_stable_id.items[0].id);
+
     try std.testing.expectError(
         Error.InvalidValue,
         store.updateProfileLabel(.{ .profile_id = profile_id, .label = "   " }),
@@ -33456,6 +33505,56 @@ fn openLegacyStoreForTest(version: u32) !Store {
     if (version >= 26) try store.migrateToV26();
     if (version >= 27) try store.migrateToV27();
     return store;
+}
+
+test "revision writes enforce validated contact and citizenship fields" {
+    var revision = testRevision(
+        "profile-validation-boundary",
+        0,
+        "Validation Boundary",
+        "2026-01-01",
+    );
+    // Legacy fixtures retain their stored ISO country code, while new UI
+    // writes use the canonical citizenship value. Both are reference-backed.
+    try validateRevision(revision, .{});
+    revision.subject.sole_proprietor.person.citizenship = "Filipino";
+    try validateRevision(revision, .{});
+
+    revision = testRevision(
+        "profile-invalid-zip",
+        0,
+        "Invalid ZIP",
+        "2026-01-01",
+    );
+    revision.contact.zip_code = "100";
+    try std.testing.expectError(Error.InvalidValue, validateRevision(revision, .{}));
+
+    revision = testRevision(
+        "profile-invalid-phone",
+        0,
+        "Invalid Phone",
+        "2026-01-01",
+    );
+    revision.contact.contact_number = "81234567";
+    try std.testing.expectError(Error.InvalidValue, validateRevision(revision, .{}));
+
+    revision = testRevision(
+        "profile-invalid-email",
+        0,
+        "Invalid Email",
+        "2026-01-01",
+    );
+    revision.contact.email_address = "not-an-email";
+    try std.testing.expectError(Error.InvalidValue, validateRevision(revision, .{}));
+
+    revision = testRevision(
+        "profile-invalid-citizenship",
+        0,
+        "Invalid Citizenship",
+        "2026-01-01",
+    );
+    revision.subject.sole_proprietor.person.citizenship = "Atlantis";
+    try std.testing.expectError(Error.InvalidValue, validateRevision(revision, .{}));
 }
 
 fn testRevision(

@@ -4,6 +4,7 @@
   "type": "module",
   "description": "Native Buwiz tax app with a Zig calendar engine and SQLite policy store.",
   "scripts": {
+    "postinstall": "node scripts/patch-native-sdk-combobox-tab.mjs",
     "generate": "npm run generate:tax-catalog && node scripts/flatten-native.mjs",
     "generate:tax-catalog": "node --experimental-strip-types scripts/tax-catalog/generate.ts",
     "check:tax-catalog": "npm run typecheck:tax-catalog && npm run check:field-ownership-manifests && node --experimental-strip-types scripts/tax-catalog/generate.ts --check",
