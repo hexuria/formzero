@@ -104,7 +104,13 @@ export async function sha256File(target: string): Promise<string> {
   return hash.digest("hex");
 }
 
-async function remoteContentLength(url: string): Promise<number | null> {
+/**
+ * The origin's `Content-Length` for a PDF, from one HEAD request, or null when
+ * the answer cannot be trusted: HEAD unanswered or refused, the header absent,
+ * or the value not a positive integer. Null always means "find out by
+ * downloading" — never "unchanged".
+ */
+export async function remoteContentLength(url: string): Promise<number | null> {
   try {
     const response = await fetch(url, { method: "HEAD", redirect: "follow" });
     if (!response.ok) return null;

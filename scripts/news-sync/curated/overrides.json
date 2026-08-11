@@ -1,0 +1,23 @@
+{
+  "note": "Hand-authored supplements to the extracted override records. Every entry here was read off the source PDF by a human, because the extractor refuses to guess which description blocks share a merged deadline-table cell: word coordinates carry no row-boundary signal, and a guessed boundary fabricates overrides rather than missing them (docs/news/MERGED_CELL_INVESTIGATION.md). An entry supplements one extracted record and inherits that record's rdo_codes; it is dropped, never emitted unscoped, when the record it supplements is absent from the run. Re-check every entry against the printed table if its circular is amended, superseded or re-issued, and delete the entry when the circular no longer applies. Never add an eFPS-group row here: the app models non-eFPS statutory dates (locked decision L10). form_codes must be canonical app codes (scripts/news-sync/form-codes.ts); anything else is dropped and reported.",
+  "entries": [
+    {
+      "notice_external_id": "bir:rmc:2026:089",
+      "original_deadline": "2026-08-10",
+      "adjusted_deadline": "2026-08-17",
+      "channel": "nonefps",
+      "form_codes": ["2200M", "2200C", "0620", "1600VT", "1600PT", "1606"],
+      "reviewed": "One bordered table row of RMC No. 89-2026 spans pages 3-4 and prints its date pair exactly once, on page 3 ('e-FlLlNG & PAYMENT (Online/Manual) August 10,2026 A]ugttst 17,2026'). The same cell also lists BIR Form 2200-M, BIR Form 2200-C, BIR Form 0620, BIR Forms 1600-VT/1600-PT and, continuing on page 4, BIR Form 1606 plus the NGAs block. The extractor publishes only the 1601-C/0619-E/0619-F block, the one that prints the pair on its own line; these six forms carry the same extension.",
+      "reviewed_on": "2026-08-11"
+    },
+    {
+      "notice_external_id": "bir:rmc:2026:089",
+      "original_deadline": "2026-08-15",
+      "adjusted_deadline": "2026-08-17",
+      "channel": "nonefps",
+      "form_codes": ["1701Q", "1707A"],
+      "reviewed": "The bordered table row of RMC No. 89-2026 that spans pages 4-5 prints its date pair exactly once, on page 4 ('eFILING & PAYMENT (Online[vlanual) August 15,2026 August 17,2026', beside BIR Form 1702 - RT/EX/MX). The same cell continues with BIR Form 1707-A (page 4, concluding on page 5) and BIR Form 1701Q with SAWT (page 5), both marked eFPS & Non-eFPS Filers. The eFPS Group A block in the same cell is deliberately excluded: the app models non-eFPS statutory dates (locked decision L10).",
+      "reviewed_on": "2026-08-11"
+    }
+  ]
+}

@@ -246,7 +246,13 @@ Contract rules (enforce in `feed.ts` and again in `feed_json.zig`):
 
 - `external_id` = `bir:<kind-lowercase>:<year>:<number zero-padded to 3>`;
   stable across runs; never derived from title text.
-- `external_ref` = `<notice external_id>/<original_deadline>/<channel>`.
+- `external_ref` = `<notice external_id>/<original_deadline>/<channel>`, or
+  that plus the suffix `-reviewed` for a curated supplement (added
+  2026-08-11; see [MERGED_CELL_INVESTIGATION.md](MERGED_CELL_INVESTIGATION.md)
+  for why one exists and `curated/overrides.json` for the entries). The
+  suffix keeps a human-authored record in its own namespace so it can never
+  collide with or overwrite an extracted one, and lets the review report and
+  any reader tell machine output from human judgement at a glance.
   One override record per (issuance, original date, channel-class) group;
   all form codes of that group are listed in the one record. Re-extraction
   after a fixed parser bug updates the same `external_ref` in place.

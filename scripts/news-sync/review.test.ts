@@ -5,6 +5,7 @@ import { compileFeed } from "./feed.ts";
 import { renderReviewReport, reviewReportPath } from "./review.ts";
 import type {
   CircularExtraction,
+  CuratedOverride,
   ExtensionRow,
   IssuanceRecord,
   RdoMatch,
@@ -122,10 +123,21 @@ const extraction: CircularExtraction = {
   notes: ["prose states 3 offices"],
 };
 
-function report(): string {
+const curatedSupplement: CuratedOverride = {
+  noticeExternalId: rmc89Id,
+  originalDeadline: "2026-08-10",
+  adjustedDeadline: "2026-08-17",
+  channel: "nonefps",
+  formCodes: ["2200M"],
+  reviewed: "same bordered cell as the printed August 10 -> August 17 pair, page 3",
+  reviewedOn: "2026-08-11",
+};
+
+function report(curated: readonly CuratedOverride[] = []): string {
   const { feed, dropped } = compileFeed({
     issuances: [issuance()],
     extractions: [extraction],
+    curated,
     generatedAtUnix: 1_786_742_400,
   });
   return renderReviewReport({
@@ -152,7 +164,8 @@ test("the report carries every required section header", () => {
     "## Office count invariant",
     "## RDO matches",
     "## Extension rows",
-    "## Emitted overrides",
+    "## Emitted overrides (machine-extracted)",
+    "## Curated supplements (human-authored)",
     "## Dropped / needs review",
   ]) {
     assert.ok(markdown.includes(heading), `missing section: ${heading}`);
@@ -254,6 +267,41 @@ test("the emitted-override section prints the record and its full RDO scope", ()
   );
   assert.ok(markdown.includes(`RDO scope for \`${rmc89Id}/2026-08-10/nonefps\` (5 codes):`));
   assert.ok(markdown.includes("007 039 043 43A 43B"));
+});
+
+test("curated records are reported apart from the machine-extracted ones", () => {
+  const markdown = report([curatedSupplement]);
+  const extractedSection = markdown.slice(
+    markdown.indexOf("## Emitted overrides (machine-extracted)"),
+    markdown.indexOf("## Curated supplements (human-authored)"),
+  );
+  const curatedSection = markdown.slice(
+    markdown.indexOf("## Curated supplements (human-authored)"),
+    markdown.indexOf("## Dropped / needs review"),
+  );
+
+  assert.ok(markdown.includes("- Override records emitted: 2 (1 extracted, 1 curated)"));
+  // Neither section may carry the other's record.
+  assert.ok(extractedSection.includes(`\`${rmc89Id}/2026-08-10/nonefps\``));
+  assert.ok(!extractedSection.includes("-reviewed"));
+  assert.ok(
+    curatedSection.includes(
+      `| \`${rmc89Id}/2026-08-10/nonefps-reviewed\` | 2026-08-10 | 2026-08-17 | nonefps | ` +
+        "2200M | 5 |",
+    ),
+  );
+  assert.ok(curatedSection.includes("a human read off the printed table"));
+  assert.ok(
+    curatedSection.includes(`RDO scope for \`${rmc89Id}/2026-08-10/nonefps-reviewed\` (5 codes):`),
+  );
+});
+
+test("a circular with no curated supplement says so under its own heading", () => {
+  const curatedSection = report().slice(
+    report().indexOf("## Curated supplements (human-authored)"),
+    report().indexOf("## Dropped / needs review"),
+  );
+  assert.ok(curatedSection.includes("_No curated supplement is published for this circular._"));
 });
 
 test("every non-emitted row appears under Dropped with its nearest printed pairs", () => {

@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { CANONICAL_FORM_CODES } from "./form-codes.ts";
 import {
   compileFeed,
+  curatedOverridesPath,
   feedContentEquals,
+  isCuratedRef,
+  loadCuratedOverrides,
   manilaMidnightUnix,
   manilaMonthBucket,
   maxNotices,
@@ -20,6 +26,7 @@ import { extractDeadlineRows, parseCircularAnchors } from "./extract-deadline-ta
 import { extractRdos } from "./extract-rdos.ts";
 import type {
   CircularExtraction,
+  CuratedOverride,
   ExtensionRow,
   Feed,
   IssuanceRecord,
@@ -140,6 +147,29 @@ function appendixAExtraction(): CircularExtraction {
         dateAssignment: "same_line",
       }),
     ],
+  });
+}
+
+/** A supplement to the Aug 10 record the Appendix A extraction produces. */
+function curated(overrides: Partial<CuratedOverride> = {}): CuratedOverride {
+  return {
+    noticeExternalId: rmc89Id,
+    originalDeadline: "2026-08-10",
+    adjustedDeadline: "2026-08-17",
+    channel: "nonefps",
+    formCodes: ["2200M", "1606"],
+    reviewed: "the bordered cell on page 3 that prints August 10,2026 -> August 17,2026",
+    reviewedOn: "2026-08-11",
+    ...overrides,
+  };
+}
+
+function compileWithCurated(entries: readonly CuratedOverride[]) {
+  return compileFeed({
+    issuances: [issuance()],
+    extractions: [appendixAExtraction()],
+    curated: entries,
+    generatedAtUnix: 1_786_742_400,
   });
 }
 
@@ -296,6 +326,231 @@ test("compileFeed drops a second pair that would collide on external_ref", () =>
     ["duplicate_external_ref"],
   );
   assert.deepEqual(validateFeed(feed), []);
+});
+
+test("a curated supplement is published beside the record it supplements", () => {
+  const { feed, dropped } = compileWithCurated([curated()]);
+
+  assert.deepEqual(
+    feed.overrides.map((override) => override.external_ref),
+    [
+      `${rmc89Id}/2026-08-10/nonefps`,
+      `${rmc89Id}/2026-08-10/nonefps-reviewed`,
+      `${rmc89Id}/2026-08-15/nonefps`,
+    ],
+  );
+
+  const [extracted, supplement] = feed.overrides;
+  assert.ok(!isCuratedRef(extracted.external_ref));
+  assert.ok(isCuratedRef(supplement.external_ref));
+  assert.deepEqual(supplement.form_codes, ["1606", "2200M"]);
+  // The scope is inherited from the extraction, never declared by hand, so it
+  // follows the extraction if the circular's office list is ever re-read.
+  assert.deepEqual(supplement.rdo_codes, extracted.rdo_codes);
+  assert.deepEqual(supplement.rdo_codes, scopedRdoCodes);
+  assert.equal(supplement.channel, "nonefps");
+  assert.equal(supplement.original_deadline, "2026-08-10");
+  assert.equal(supplement.adjusted_deadline, "2026-08-17");
+  assert.equal(supplement.source_reference, extracted.source_reference);
+  assert.equal(supplement.notice_external_id, rmc89Id);
+  assert.equal(supplement.title, "RMC 89-2026 extension (due 2026-08-10) — curated supplement");
+  // The extracted record is untouched by the supplement.
+  assert.deepEqual(extracted.form_codes, ["0619E", "0619F", "1601C"]);
+
+  assert.deepEqual(validateFeed(feed), []);
+  assert.ok(!dropped.some((entry) => entry.reason.startsWith("curated_")));
+});
+
+test("a curated entry the extraction cannot scope is dropped, never published unscoped", () => {
+  // No extracted record for this date pair: there is no RDO scope to inherit.
+  const { feed, dropped } = compileWithCurated([curated({ originalDeadline: "2026-08-11" })]);
+
+  assert.equal(feed.overrides.length, 2);
+  assert.ok(feed.overrides.every((override) => !isCuratedRef(override.external_ref)));
+  assert.deepEqual(
+    dropped.filter((entry) => entry.reason.startsWith("curated_")).map((entry) => entry.reason),
+    ["curated_no_extracted_record"],
+  );
+  assert.deepEqual(validateFeed(feed), []);
+});
+
+test("a curated entry naming an unknown notice is dropped and the run continues", () => {
+  const { feed, dropped } = compileWithCurated([
+    curated({ noticeExternalId: "bir:rmc:2026:999" }),
+    curated({ formCodes: ["1606"] }),
+  ]);
+
+  assert.deepEqual(
+    feed.overrides.map((override) => override.external_ref),
+    [
+      `${rmc89Id}/2026-08-10/nonefps`,
+      `${rmc89Id}/2026-08-10/nonefps-reviewed`,
+      `${rmc89Id}/2026-08-15/nonefps`,
+    ],
+  );
+  assert.deepEqual(feed.overrides[1].form_codes, ["1606"]);
+  assert.ok(dropped.some((entry) => entry.reason === "curated_unknown_notice"));
+  assert.deepEqual(validateFeed(feed), []);
+});
+
+test("a curated entry's non-canonical form codes are dropped and reported", () => {
+  const { feed, dropped } = compileWithCurated([curated({ formCodes: ["2200M", "1601", "2000Z"] })]);
+
+  assert.deepEqual(feed.overrides[1].form_codes, ["2200M"]);
+  const reported = dropped.find((entry) => entry.reason === "curated_non_canonical_form_code");
+  assert.ok(reported !== undefined);
+  assert.ok(reported.detail.includes("1601"));
+  assert.ok(reported.detail.includes("2000Z"));
+  assert.deepEqual(validateFeed(feed), []);
+
+  // Nothing canonical left: the entry itself goes, and the feed is unaffected.
+  const onlyNoise = compileWithCurated([curated({ formCodes: ["1601", "2000Z"] })]);
+  assert.equal(onlyNoise.feed.overrides.length, 2);
+  assert.ok(
+    onlyNoise.dropped.some((entry) => entry.reason === "curated_no_canonical_form_codes"),
+  );
+  assert.deepEqual(validateFeed(onlyNoise.feed), []);
+});
+
+test("a curated entry that misreads the extended date is dropped, not published", () => {
+  const { feed, dropped } = compileWithCurated([curated({ adjustedDeadline: "2026-08-18" })]);
+
+  assert.equal(feed.overrides.length, 2);
+  assert.deepEqual(
+    dropped.filter((entry) => entry.reason.startsWith("curated_")).map((entry) => entry.reason),
+    ["curated_date_pair_mismatch"],
+  );
+});
+
+test("two curated entries for the same record cannot both be published", () => {
+  const { feed, dropped } = compileWithCurated([curated(), curated({ formCodes: ["1707A"] })]);
+
+  assert.equal(feed.overrides.length, 3);
+  assert.deepEqual(feed.overrides[1].form_codes, ["1606", "2200M"]);
+  assert.ok(dropped.some((entry) => entry.reason === "curated_duplicate_external_ref"));
+  assert.deepEqual(validateFeed(feed), []);
+});
+
+test("validateFeed holds curated records to every rule extracted ones obey", () => {
+  const { feed } = compileWithCurated([curated()]);
+  assert.deepEqual(validateFeed(feed), []);
+
+  const supplement = feed.overrides[1];
+  const broken = (override: Partial<Feed["overrides"][number]>): string[] =>
+    validateFeed({ ...feed, overrides: [{ ...supplement, ...override }] });
+
+  assert.ok(broken({ form_codes: ["2200-M"] }).some((m) => m.includes("non-canonical form code")));
+  assert.ok(broken({ rdo_codes: [] }).some((m) => m.includes("empty rdo_codes scope")));
+  assert.ok(
+    broken({ adjusted_deadline: "2026-08-01" }).some((m) => m.includes("precedes original_deadline")),
+  );
+  assert.ok(
+    broken({ channel: "efps_group_a" }).some((m) => m.includes("non-emittable channel")),
+  );
+  assert.ok(
+    broken({ external_ref: `${rmc89Id}/2026-08-10/nonefps-curated` }).some((m) =>
+      m.includes("does not match its derived identity"),
+    ),
+  );
+  assert.ok(
+    broken({ notice_external_id: "bir:rmc:2026:999" }).some((m) => m.includes("absent from the")),
+  );
+});
+
+test("the committed curated supplement is well formed and names only catalog codes", async () => {
+  const { entries, dropped } = await loadCuratedOverrides();
+
+  assert.deepEqual(dropped, [], "the committed supplement must parse cleanly");
+  assert.ok(entries.length > 0);
+  for (const entry of entries) {
+    assert.equal(entry.channel, "nonefps", "an eFPS-group supplement is forbidden (decision L10)");
+    assert.ok(entry.formCodes.length > 0);
+    for (const code of entry.formCodes) {
+      assert.ok(CANONICAL_FORM_CODES.has(code), `${code} is not a canonical app form code`);
+    }
+    // Each entry has to name the evidence a human checked, and when.
+    assert.ok(entry.reviewed.length > 40, "reviewed must name the printed evidence");
+    assert.match(entry.reviewedOn, /^\d{4}-\d{2}-\d{2}$/u);
+    assert.ok(entry.adjustedDeadline >= entry.originalDeadline);
+  }
+  assert.equal(path.basename(curatedOverridesPath), "overrides.json");
+});
+
+test("loadCuratedOverrides drops damaged entries and survives a missing file", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "news-sync-curated-"));
+  const target = path.join(directory, "overrides.json");
+  await writeFile(
+    target,
+    JSON.stringify({
+      entries: [
+        { ...curated(), notice_external_id: rmc89Id },
+        {
+          notice_external_id: rmc89Id,
+          original_deadline: "2026-08-10",
+          adjusted_deadline: "2026-08-17",
+          channel: "nonefps",
+          form_codes: ["1606"],
+          reviewed: "page 4, same bordered cell",
+          reviewed_on: "2026-08-11",
+        },
+        {
+          notice_external_id: rmc89Id,
+          original_deadline: "2026-08-10",
+          adjusted_deadline: "2026-08-17",
+          channel: "efps_group_a",
+          form_codes: ["1601C"],
+          reviewed: "eFPS Group A cell",
+          reviewed_on: "2026-08-11",
+        },
+        {
+          notice_external_id: rmc89Id,
+          original_deadline: "2026-08-32",
+          adjusted_deadline: "2026-08-17",
+          channel: "nonefps",
+          form_codes: ["1606"],
+          reviewed: "a day that does not exist",
+          reviewed_on: "2026-08-11",
+        },
+        {
+          notice_external_id: rmc89Id,
+          original_deadline: "2026-08-10",
+          adjusted_deadline: "2026-08-17",
+          channel: "nonefps",
+          form_codes: [],
+          reviewed: "no forms at all",
+          reviewed_on: "2026-08-11",
+        },
+        "not an entry",
+      ],
+    }),
+    "utf8",
+  );
+
+  const { entries, dropped } = await loadCuratedOverrides(target);
+  // Only the camelCase-shaped first entry and the well-formed second survive…
+  assert.deepEqual(
+    entries.map((entry) => entry.formCodes),
+    [["1606"]],
+  );
+  assert.deepEqual(
+    dropped.map((entry) => entry.reason),
+    Array.from({ length: 5 }, () => "curated_malformed_entry"),
+  );
+
+  const missing = await loadCuratedOverrides(path.join(directory, "absent.json"));
+  assert.deepEqual(missing.entries, []);
+  assert.deepEqual(
+    missing.dropped.map((entry) => entry.reason),
+    ["curated_file_missing"],
+  );
+
+  await writeFile(target, "{ not json", "utf8");
+  const damaged = await loadCuratedOverrides(target);
+  assert.deepEqual(damaged.entries, []);
+  assert.deepEqual(
+    damaged.dropped.map((entry) => entry.reason),
+    ["curated_file_unreadable"],
+  );
 });
 
 test("notices carry Manila civil dates, titles and month buckets", () => {

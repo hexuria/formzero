@@ -41,6 +41,8 @@ import { extractCircular } from "./extract-rmc-extension.ts";
 import {
   compileFeed,
   feedContentEquals,
+  isCuratedRef,
+  loadCuratedOverrides,
   manilaCivilDate,
   manilaDateIso,
   serializeFeed,
@@ -61,17 +63,21 @@ import {
   loadFixtureLayoutText,
   missingDependencyExitCode,
   pdfToLayoutText,
+  remoteContentLength,
 } from "./pdf.ts";
 import { renderReviewReport, reviewReportPath } from "./review.ts";
 import {
   firstSeenUnix,
   isAlreadyExtracted,
+  isRecordedExtraction,
   loadState,
   markExtracted,
   markSeen,
+  parseCircularExtraction,
+  recordedPdf,
   serializeState,
 } from "./state.ts";
-import type { SeenState } from "./state.ts";
+import type { ExtractionRecord, RecordedPdf, SeenState } from "./state.ts";
 import type {
   CircularExtraction,
   DateSource,
@@ -373,15 +379,12 @@ async function loadCachedExtraction(
     return null;
   }
   if (!isRecord(parsed) || parsed.pdfSha256 !== pdfSha256) return null;
-  const extraction = parsed.extraction;
-  if (!isRecord(extraction) || extraction.externalId !== externalId) return null;
-  if (!Array.isArray(extraction.rows) || !Array.isArray(extraction.rdoCodes)) return null;
-  if (!Array.isArray(extraction.rdos) || !Array.isArray(extraction.notes)) return null;
-  // A cache written before the header-date tier existed has no such field; a
-  // miss re-extracts, which is cheaper than publishing an undefined date.
-  const headerDate = extraction.headerDateIssued;
-  if (headerDate !== null && typeof headerDate !== "string") return null;
-  return extraction as unknown as CircularExtraction;
+  // Validated field by field, like the copy in state/seen.json: a cache written
+  // by an older version of the pipeline misses and re-extracts, which is
+  // cheaper than publishing a half-parsed record.
+  const extraction = parseCircularExtraction(parsed.extraction);
+  if (extraction === null || extraction.externalId !== externalId) return null;
+  return extraction;
 }
 
 async function saveCachedExtraction(paths: SyncPaths, entry: CachedExtraction): Promise<void> {
@@ -452,8 +455,45 @@ function applyFirstSeen(
 type ExtractionOutcome = {
   extraction: CircularExtraction;
   pdfSha256: string;
+  /** Size the origin served the PDF at; null offline, where nothing is fetched. */
+  pdfBytes: number | null;
   reused: boolean;
 };
+
+/**
+ * Decides from persisted state plus one HEAD request that an issuance's PDF is
+ * unchanged, so neither the download nor the extraction has to run again.
+ *
+ * Returns the recorded extraction only when the origin answers HEAD with a
+ * `Content-Length` equal to the size that PDF was last extracted at. Every
+ * other outcome — nothing recorded, no HEAD answer, no header, a different
+ * size — returns null and means "download it". A skip is never assumed from
+ * silence, and never taken without an extraction to publish from.
+ */
+export async function unchangedAtOrigin(
+  externalId: string,
+  url: string,
+  state: SeenState,
+  log: Logger,
+): Promise<RecordedPdf | null> {
+  const recorded = recordedPdf(state, externalId);
+  // Nothing recorded to compare against, so there is nothing to ask the origin.
+  if (recorded === null) return null;
+
+  const remoteBytes = await remoteContentLength(url);
+  if (remoteBytes === null) {
+    log(`extract: ${externalId} origin gave no usable Content-Length on HEAD — downloading`);
+    return null;
+  }
+  if (remoteBytes !== recorded.pdfBytes) {
+    log(
+      `extract: ${externalId} is ${remoteBytes} bytes at the origin but was extracted at ` +
+        `${recorded.pdfBytes} — downloading`,
+    );
+    return null;
+  }
+  return recorded;
+}
 
 /**
  * Resolves one extension circular's layout text and extraction, reusing the
@@ -465,10 +505,12 @@ async function extractOne(
   paths: SyncPaths,
   state: SeenState,
   forced: ReadonlySet<string>,
+  requirePdftotext: () => Promise<void>,
   log: Logger,
 ): Promise<ExtractionOutcome | null> {
   let layoutText: string | null = null;
   let pdfSha256: string;
+  let pdfBytes: number | null = null;
 
   if (options.offline) {
     layoutText = await loadFixtureLayoutText(issuance.externalId);
@@ -484,11 +526,33 @@ async function extractOne(
       log(`extract: ${issuance.externalId} is an extension circular with no PDF link — skipped`);
       return null;
     }
+    // The bandwidth this saves is the whole point: work/ is gitignored, so
+    // without this every scheduled run re-downloads every extension circular.
+    if (!forced.has(issuance.externalId)) {
+      const unchanged = await unchangedAtOrigin(issuance.externalId, issuance.pdfUrl, state, log);
+      if (unchanged !== null) {
+        log(
+          `extract: ${issuance.externalId} unchanged at the origin (HEAD, ` +
+            `${unchanged.pdfBytes} bytes) — skipped the download and reused the recorded ` +
+            "extraction",
+        );
+        return {
+          extraction: unchanged.extraction,
+          pdfSha256: unchanged.pdfSha256,
+          pdfBytes: unchanged.pdfBytes,
+          reused: true,
+        };
+      }
+    }
+    // Fail on a missing poppler before spending a multi-megabyte download on a
+    // run that cannot finish. Nothing above this line needs the binary.
+    await requirePdftotext();
     const downloaded = await downloadPdf(
       issuance.pdfUrl,
       cachePathFor(paths.pdfCacheDir, issuance.externalId, ".pdf"),
     );
     pdfSha256 = downloaded.sha256;
+    pdfBytes = downloaded.bytes;
     log(
       `extract: ${issuance.externalId} PDF ${downloaded.bytes} bytes ` +
         `(${downloaded.cached ? "cached" : "downloaded"}) sha256 ${pdfSha256.slice(0, 12)}…`,
@@ -500,7 +564,7 @@ async function extractOne(
     const cached = await loadCachedExtraction(paths, issuance.externalId, pdfSha256);
     if (cached !== null) {
       log(`extract: ${issuance.externalId} unchanged since the last run — reused extraction`);
-      return { extraction: cached, pdfSha256, reused: true };
+      return { extraction: cached, pdfSha256, pdfBytes, reused: true };
     }
     log(`extract: ${issuance.externalId} unchanged but its work/ cache is gone — re-extracting`);
   }
@@ -516,7 +580,7 @@ async function extractOne(
       `${extraction.rows.length} table block(s)` +
       (extraction.needsManualReview ? " — NEEDS MANUAL REVIEW" : ""),
   );
-  return { extraction, pdfSha256, reused: false };
+  return { extraction, pdfSha256, pdfBytes, reused: false };
 }
 
 /**
@@ -645,22 +709,35 @@ export async function runSync(
   }
 
   const circulars = issuances.filter((issuance) => isDeadlineExtension(issuance.subject));
-  if (circulars.length > 0 && !options.offline) {
-    // Fail fast and loudly rather than after a multi-megabyte download.
-    await ensurePdftotext();
-  }
+  // Checked once, on the first circular that actually needs a download: a run
+  // where every PDF is unchanged does no PDF work at all and needs no poppler.
+  let popplerChecked: Promise<void> | null = null;
+  const requirePdftotext = (): Promise<void> => (popplerChecked ??= ensurePdftotext());
 
   const extractions: CircularExtraction[] = [];
-  const extractedIds = new Map<string, string>();
+  const extracted = new Map<string, ExtractionRecord>();
   for (const issuance of circulars) {
-    const outcome = await extractOne(issuance, options, paths, state, forced, log);
+    const outcome = await extractOne(
+      issuance,
+      options,
+      paths,
+      state,
+      forced,
+      requirePdftotext,
+      log,
+    );
     if (outcome === null) continue;
     extractions.push(outcome.extraction);
     if (outcome.reused) summary.skippedCount += 1;
-    else {
-      summary.extractedCount += 1;
-      extractedIds.set(issuance.externalId, outcome.pdfSha256);
-    }
+    else summary.extractedCount += 1;
+    // Recorded for every outcome, reused or not: state/seen.json is the only
+    // memory that survives a fresh runner, so it has to carry the size and the
+    // extraction even when this run got them from the work/ cache.
+    extracted.set(issuance.externalId, {
+      pdfSha256: outcome.pdfSha256,
+      pdfBytes: outcome.pdfBytes,
+      extraction: outcome.extraction,
+    });
   }
   log(
     `issuances: ${issuances.length} total, ${summary.newCount} new, ` +
@@ -670,11 +747,16 @@ export async function runSync(
 
   const datedIssuances = applyHeaderDates(issuances, extractions, log);
 
+  const curated = await loadCuratedOverrides();
+  log(`curated: ${curated.entries.length} reviewed supplement(s) read from curated/overrides.json`);
+
   const compiled = compileFeed({
     issuances: datedIssuances,
     extractions,
+    curated: curated.entries,
     generatedAtUnix: options.nowUnix,
   });
+  compiled.dropped.push(...curated.dropped);
   const violations = validateFeed(compiled.feed);
   if (violations.length > 0) {
     throw new Error(
@@ -684,6 +766,10 @@ export async function runSync(
   }
   summary.noticeCount = compiled.feed.notices.length;
   summary.overrideCount = compiled.feed.overrides.length;
+  const curatedCount = compiled.feed.overrides.filter((override) =>
+    isCuratedRef(override.external_ref),
+  ).length;
+  log(`overrides: ${summary.overrideCount - curatedCount} extracted, ${curatedCount} curated`);
   summary.firstSeenDatedCount = logDateSources(compiled, log);
 
   const issuanceById = new Map(
@@ -729,8 +815,8 @@ export async function runSync(
 
   const feedRev = nextFeedRev(state);
   for (const issuance of issuances) {
-    const pdfSha256 = extractedIds.get(issuance.externalId);
-    if (pdfSha256 === undefined) {
+    const record = extracted.get(issuance.externalId);
+    if (record === undefined) {
       state = markSeen(state, issuance.externalId, options.nowUnix);
       continue;
     }
@@ -740,11 +826,11 @@ export async function runSync(
     // operator intent and does re-stamp the entry.
     if (
       !forced.has(issuance.externalId) &&
-      isAlreadyExtracted(state, issuance.externalId, pdfSha256)
+      isRecordedExtraction(state, issuance.externalId, record)
     ) {
       continue;
     }
-    state = markExtracted(state, issuance.externalId, pdfSha256, options.nowUnix, feedRev);
+    state = markExtracted(state, issuance.externalId, record, options.nowUnix, feedRev);
   }
   summary.stateChanged = await writeIfChanged(paths.statePath, serializeState(state));
   log(
