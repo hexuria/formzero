@@ -105,6 +105,25 @@ export async function sha256File(target: string): Promise<string> {
 }
 
 /**
+ * The origin cannot hand over a PDF right now: refused, unreachable, or empty.
+ *
+ * Distinct from every other failure the pipeline can hit, because it is the
+ * only one a run may absorb and continue past. bir-cdn has answered 403 to a
+ * URL it served minutes earlier, and one such circular must not stop the whole
+ * feed from publishing. A missing binary or a parser fault is not this, and
+ * must still fail the run.
+ */
+export class PdfUnavailableError extends Error {
+  readonly url: string;
+
+  constructor(url: string, reason: string) {
+    super(`the origin could not supply ${url}: ${reason}`);
+    this.name = "PdfUnavailableError";
+    this.url = url;
+  }
+}
+
+/**
  * The origin's `Content-Length` for a PDF, from one HEAD request, or null when
  * the answer cannot be trusted: HEAD unanswered or refused, the header absent,
  * or the value not a positive integer. Null always means "find out by
@@ -143,12 +162,21 @@ export async function downloadPdf(url: string, destPath: string): Promise<Downlo
     }
   }
 
-  const response = await fetch(url, { redirect: "follow" });
+  let response: Response;
+  try {
+    response = await fetch(url, { redirect: "follow" });
+  } catch (error) {
+    // `fetch` reports a network failure as TypeError; anything else escaping it
+    // is a fault in this pipeline, not the origin, and must not be absorbed as
+    // "the circular is temporarily unavailable".
+    if (!(error instanceof TypeError)) throw error;
+    throw new PdfUnavailableError(url, describe(error));
+  }
   if (!response.ok) {
-    throw new Error(`GET ${url} failed with HTTP ${response.status} ${response.statusText}`);
+    throw new PdfUnavailableError(url, `HTTP ${response.status} ${response.statusText}`);
   }
   const body = Buffer.from(await response.arrayBuffer());
-  if (body.byteLength === 0) throw new Error(`GET ${url} returned an empty body`);
+  if (body.byteLength === 0) throw new PdfUnavailableError(url, "the response body was empty");
 
   await mkdir(path.dirname(destPath), { recursive: true });
   await writeFile(destPath, body);

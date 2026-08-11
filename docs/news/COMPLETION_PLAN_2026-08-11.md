@@ -10,7 +10,7 @@ calls: every task says exactly what to change, how to prove it worked, and what
 to do when it does not. Read §1 (the operating manual) before touching
 anything.
 
-Progress: 0/13 tasks complete.
+Progress: 1/13 tasks complete.
 
 ---
 
@@ -179,6 +179,11 @@ blocker here.
   button. Check whether already satisfied:
   `gh pr view 28 --json state --jq .state` → `MERGED` means tick this and move
   on. All four CI checks pass; there is nothing agent-side left to do first.
+  > BLOCKED 2026-08-11: `gh pr merge 28 --merge` denied by the permission
+  > classifier ("Blocked by classifier"). Not a repo or CI problem — PR is
+  > MERGEABLE/CLEAN with four green checks. Needs the user, or a Bash
+  > permission rule for `gh pr merge`. C1 and C12 wait on this; C2–C10 do not
+  > and are proceeding.
 
 - [ ] **C1 [blocking] — first post-merge publish, verified end to end.**
   - Precondition: C0 ticked (verify with the command above, not by trust).
@@ -204,7 +209,7 @@ blocker here.
 
 ### Phase C-B — pipeline resilience (P1)
 
-- [ ] **C2 [blocking] — a run survives an unfetchable PDF.**
+- [x] **C2 [blocking] — a run survives an unfetchable PDF.**
   - Files: `scripts/news-sync/sync.ts`, `scripts/news-sync/sync.test.ts`,
     `docs/news/NEWS_SYNC_OPERATIONS.md` (failure-triage section).
   - Change: wrap the `extractOne` call in the circular loop (sync.ts ~line

@@ -693,3 +693,89 @@ test("the committed output paths are the ones the plan documents", () => {
   assert.equal(path.basename(defaultPaths.reviewDir), "review");
   assert.equal(path.basename(path.dirname(defaultPaths.pdfCacheDir)), "work");
 });
+
+/** Serves the CMS captures; refuses every PDF request with `status`. */
+function refusingHandler(
+  bodies: ReadonlyMap<string, string>,
+  refused: ReadonlySet<string>,
+  status: number,
+): (method: string, url: string) => Response {
+  return (method, url) => {
+    const body = bodies.get(url);
+    if (body !== undefined) return new Response(body, { status: 200 });
+    if (!refused.has(url)) assert.fail(`unexpected request ${method} ${url}`);
+    return new Response("AccessDenied", { status, statusText: "Forbidden" });
+  };
+}
+
+test("a refused PDF falls back to the recorded extraction and still publishes", async (t) => {
+  const paths = pathsUnder(await scratchRoot());
+  await runSync(offlineOptions(runOneUnix), discard, paths);
+  await recordAsLiveDownload(paths.statePath);
+  const feedBefore = await readFile(paths.feedPath, "utf8");
+
+  // bir-cdn has answered 403 to a URL it served minutes earlier. Both the HEAD
+  // and the GET are refused, which is the shape that used to end the run.
+  installFetchStub(
+    t,
+    refusingHandler(
+      await cmsFixtureBodies(),
+      new Set([rmc89PdfUrl, rr1PdfUrl]),
+      403,
+    ),
+  );
+
+  const run = await runSync(onlineOptions(runTwoUnix), discard, paths);
+
+  assert.equal(run.reusedAfterFetchError, 2);
+  assert.equal(run.unavailableCount, 0);
+  assert.equal(run.extractedCount, 0);
+  // The whole point: RMC 89-2026's extensions still reach the feed.
+  assert.equal(run.overrideCount, 4);
+  assert.equal(run.feedChanged, false);
+  assert.equal(await readFile(paths.feedPath, "utf8"), feedBefore);
+});
+
+test("a refused PDF this run has never read drops that circular and keeps going", async (t) => {
+  const paths = pathsUnder(await scratchRoot());
+  installFetchStub(
+    t,
+    refusingHandler(
+      await cmsFixtureBodies(),
+      new Set([rmc89PdfUrl, rr1PdfUrl]),
+      403,
+    ),
+  );
+
+  // No prior state, so nothing can be reused: the run must still finish and
+  // publish its notices rather than failing outright.
+  const lines: string[] = [];
+  const run = await runSync(onlineOptions(runOneUnix), (line) => lines.push(line), paths);
+
+  assert.equal(run.unavailableCount, 2);
+  assert.equal(run.reusedAfterFetchError, 0);
+  assert.equal(run.overrideCount, 0);
+  assert.ok(run.noticeCount > 0, "notices publish even when every circular is refused");
+
+  // A circular that was never read has no review report of its own, so the run
+  // log is where a reader learns the extension was missed rather than absent.
+  const log = lines.join("\n");
+  assert.match(log, /PDF unavailable/);
+  assert.match(log, /pdf_unavailable/);
+});
+
+test("a failure that is not the origin refusing still ends the run", async (t) => {
+  const paths = pathsUnder(await scratchRoot());
+  const bodies = await cmsFixtureBodies();
+  installFetchStub(t, (_method, url) => {
+    const body = bodies.get(url);
+    if (body !== undefined) return new Response(body, { status: 200 });
+    throw new RangeError("not a network refusal");
+  });
+
+  await assert.rejects(
+    runSync(onlineOptions(runOneUnix), discard, paths),
+    /not a network refusal/,
+    "only PdfUnavailableError is absorbed; every other fault fails the run",
+  );
+});

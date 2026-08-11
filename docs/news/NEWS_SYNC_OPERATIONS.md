@@ -262,6 +262,28 @@ outage.
 
 ## Failure triage
 
+### The origin refuses a PDF (`pdf_unavailable`)
+
+bir-cdn has answered `403 AccessDenied` for a circular's PDF minutes after
+serving the same URL, which looks like hotlink or rate protection rather than
+a withdrawal. A run absorbs this rather than dying on it, and says which it
+did on the greppable summary line:
+
+- `pdf_reused=N` — the origin refused, but the circular's extraction was
+  already recorded in `state/seen.json`, so its overrides still publish. No
+  action needed; the next run usually fetches normally.
+- `pdf_unavailable=N` — the origin refused a circular this pipeline has never
+  read, so it contributes no overrides. The run still publishes every notice
+  and every other circular's overrides. Each one is logged as
+  `drop: pdf_unavailable — …`. If it persists across several runs, fetch the
+  PDF by hand and check whether BIR moved or withdrew it.
+
+Only the origin refusing is absorbed. A missing `pdftotext`, a parser fault,
+or any other error still fails the run, because those break every circular and
+a feed published around them would be quietly wrong rather than merely short.
+
+
+
 Start from the failed workflow run page. The final step prints the last 40
 lines of the sync log and a triage reminder as a `::error` annotation.
 

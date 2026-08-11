@@ -62,6 +62,7 @@ import {
   ensurePdftotext,
   loadFixtureLayoutText,
   missingDependencyExitCode,
+  PdfUnavailableError,
   pdfToLayoutText,
   remoteContentLength,
 } from "./pdf.ts";
@@ -154,6 +155,10 @@ export type SyncSummary = {
   /** Extension circulars whose PDF hash was unchanged, so extraction re-ran nothing. */
   skippedCount: number;
   extractedCount: number;
+  /** Circulars the origin refused whose recorded extraction carried the run. */
+  reusedAfterFetchError: number;
+  /** Circulars the origin refused that this run has never extracted. */
+  unavailableCount: number;
   noticeCount: number;
   overrideCount: number;
   /** Notices whose published date is this pipeline's first sighting, not BIR's. */
@@ -695,6 +700,8 @@ export async function runSync(
     newCount: newIssuances.length,
     skippedCount: 0,
     extractedCount: 0,
+    reusedAfterFetchError: 0,
+    unavailableCount: 0,
     noticeCount: 0,
     overrideCount: 0,
     firstSeenDatedCount: 0,
@@ -716,16 +723,54 @@ export async function runSync(
 
   const extractions: CircularExtraction[] = [];
   const extracted = new Map<string, ExtractionRecord>();
+  // Origin refusals travel with the compiler's own drops so the run log and
+  // the review reports name them in one place.
+  const unavailable: DropRecord[] = [];
   for (const issuance of circulars) {
-    const outcome = await extractOne(
-      issuance,
-      options,
-      paths,
-      state,
-      forced,
-      requirePdftotext,
-      log,
-    );
+    // Only the origin refusing a PDF is absorbed here. A missing binary or a
+    // parser fault still fails the run, because those break every circular and
+    // a feed published around them would be quietly wrong rather than merely
+    // short. This one is survivable: bir-cdn has 403'd a URL it served minutes
+    // earlier, and one such circular must not stop the whole feed publishing.
+    let outcome: ExtractionOutcome | null;
+    try {
+      outcome = await extractOne(
+        issuance,
+        options,
+        paths,
+        state,
+        forced,
+        requirePdftotext,
+        log,
+      );
+    } catch (error) {
+      if (!(error instanceof PdfUnavailableError)) throw error;
+      const recorded = recordedPdf(state, issuance.externalId);
+      if (recorded !== null) {
+        log(
+          `extract: ${issuance.externalId} PDF unavailable (${error.message}) — ` +
+            "reusing the recorded extraction",
+        );
+        summary.reusedAfterFetchError += 1;
+        extractions.push(recorded.extraction);
+        extracted.set(issuance.externalId, {
+          pdfSha256: recorded.pdfSha256,
+          pdfBytes: recorded.pdfBytes,
+          extraction: recorded.extraction,
+        });
+        continue;
+      }
+      log(
+        `extract: ${issuance.externalId} PDF unavailable (${error.message}) — ` +
+          "never extracted, so this circular contributes no overrides",
+      );
+      summary.unavailableCount += 1;
+      unavailable.push({
+        reason: "pdf_unavailable",
+        detail: `${issuance.kind} No. ${issuance.number} — ${error.message}`,
+      });
+      continue;
+    }
     if (outcome === null) continue;
     extractions.push(outcome.extraction);
     if (outcome.reused) summary.skippedCount += 1;
@@ -756,7 +801,7 @@ export async function runSync(
     curated: curated.entries,
     generatedAtUnix: options.nowUnix,
   });
-  compiled.dropped.push(...curated.dropped);
+  compiled.dropped.push(...curated.dropped, ...unavailable);
   const violations = validateFeed(compiled.feed);
   if (violations.length > 0) {
     throw new Error(
@@ -861,7 +906,8 @@ async function main(): Promise<void> {
     `summary new=${summary.newCount} skipped=${summary.skippedCount} ` +
       `extracted=${summary.extractedCount} notices=${summary.noticeCount} ` +
       `overrides=${summary.overrideCount} feed=${summary.feedChanged ? "updated" : "unchanged"} ` +
-      `firstseen_dated=${summary.firstSeenDatedCount}`,
+      `firstseen_dated=${summary.firstSeenDatedCount} ` +
+      `pdf_reused=${summary.reusedAfterFetchError} pdf_unavailable=${summary.unavailableCount}`,
   );
 }
 
