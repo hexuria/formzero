@@ -6,14 +6,18 @@
 
 const std = @import("std");
 
-pub const max_notices: usize = 25;
+pub const max_notices: usize = 120;
 pub const max_feed_bytes: usize = 1024 * 1024;
-pub const max_feed_entries: usize = 100;
+// A single feed may legitimately fill the cache, so one document may carry as
+// many entries as the cache retains.
+pub const max_feed_entries: usize = max_notices;
 pub const max_source_bytes: usize = 96;
 pub const max_external_id_bytes: usize = 512;
 pub const max_title_bytes: usize = 512;
 pub const max_summary_bytes: usize = 4096;
 pub const max_url_bytes: usize = 2048;
+
+pub const manila_utc_offset_seconds: i64 = 8 * 3600;
 
 pub const Error = error{
     EmptySource,
@@ -140,6 +144,33 @@ pub fn identityEqual(a: NoticeWrite, b: NoticeWrite) bool {
         std.mem.eql(u8, trim(a.external_id), trim(b.external_id));
 }
 
+/// Civil year and month of `unix_seconds` in Philippine Standard Time.
+///
+/// PST is a fixed UTC+8 with no daylight saving, so the whole conversion is one
+/// floor division followed by the civil-from-days algorithm. Month bucketing
+/// must never consult the host timezone: two users in different zones have to
+/// see a notice filed under the same Manila month.
+pub fn manilaYearMonth(unix_seconds: i64) struct { year: i32, month: u8 } {
+    const days = @divFloor(unix_seconds + manila_utc_offset_seconds, 86_400);
+    const shifted_days = days + 719_468;
+    const era = @divFloor(shifted_days, 146_097);
+    const day_of_era = shifted_days - era * 146_097;
+    const year_of_era = @divFloor(
+        day_of_era - @divFloor(day_of_era, 1_460) +
+            @divFloor(day_of_era, 36_524) - @divFloor(day_of_era, 146_096),
+        365,
+    );
+    const day_of_year = day_of_era - (365 * year_of_era +
+        @divFloor(year_of_era, 4) - @divFloor(year_of_era, 100));
+    const month_index = @divFloor(5 * day_of_year + 2, 153);
+    const month = month_index + (if (month_index < 10)
+        @as(i64, 3)
+    else
+        @as(i64, -9));
+    const year = year_of_era + era * 400 + @as(i64, if (month <= 2) 1 else 0);
+    return .{ .year = @intCast(year), .month = @intCast(month) };
+}
+
 pub fn trim(value: []const u8) []const u8 {
     return std.mem.trim(u8, value, " \t\r\n");
 }
@@ -200,4 +231,52 @@ test "owned notice normalizes outer whitespace and preserves identity" {
         .published_at_unix = 30,
         .fetched_at_unix = 40,
     }));
+}
+
+test "Manila month bucketing follows UTC+8 across year and month boundaries" {
+    // The epoch is already 08:00 of 1 January 1970 in Manila.
+    try std.testing.expectEqual(@as(i32, 1970), manilaYearMonth(0).year);
+    try std.testing.expectEqual(@as(u8, 1), manilaYearMonth(0).month);
+
+    // 2026-12-31T16:00:00Z is 2027-01-01T00:00:00 in Manila.
+    const manila_new_year: i64 = 1_798_732_800;
+    try std.testing.expectEqual(
+        @as(i32, 2026),
+        manilaYearMonth(manila_new_year - 1).year,
+    );
+    try std.testing.expectEqual(
+        @as(u8, 12),
+        manilaYearMonth(manila_new_year - 1).month,
+    );
+    try std.testing.expectEqual(
+        @as(i32, 2027),
+        manilaYearMonth(manila_new_year).year,
+    );
+    try std.testing.expectEqual(@as(u8, 1), manilaYearMonth(manila_new_year).month);
+
+    // 2024-02-29T16:00:00Z is 2024-03-01T00:00:00 in Manila: February 2024 is
+    // one day longer than February of a common year.
+    const manila_march_2024: i64 = 1_709_222_400;
+    try std.testing.expectEqual(
+        @as(u8, 2),
+        manilaYearMonth(manila_march_2024 - 1).month,
+    );
+    try std.testing.expectEqual(
+        @as(u8, 3),
+        manilaYearMonth(manila_march_2024).month,
+    );
+}
+
+test "Manila month bucketing stays correct before the epoch" {
+    // -28800 is exactly 1970-01-01T00:00:00 in Manila; one second earlier is
+    // still December 1969 there.
+    try std.testing.expectEqual(@as(i32, 1970), manilaYearMonth(-28_800).year);
+    try std.testing.expectEqual(@as(u8, 1), manilaYearMonth(-28_800).month);
+    try std.testing.expectEqual(@as(i32, 1969), manilaYearMonth(-28_801).year);
+    try std.testing.expectEqual(@as(u8, 12), manilaYearMonth(-28_801).month);
+
+    // 1968 was a leap year, so 29 February exists: 1968-02-29T00:00:00+08:00.
+    const manila_leap_1968: i64 = -58_089_600;
+    try std.testing.expectEqual(@as(i32, 1968), manilaYearMonth(manila_leap_1968).year);
+    try std.testing.expectEqual(@as(u8, 2), manilaYearMonth(manila_leap_1968).month);
 }

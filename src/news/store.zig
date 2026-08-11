@@ -3,7 +3,8 @@
 //! This store is intentionally separate from taxpayer/calendar persistence.
 //! The runtime should open `news.sqlite3`; it contains public feed content only
 //! and can be rebuilt from its configured providers. Writes are transactional,
-//! keyed by `(source, external_id)`, and globally pruned to the 25 newest rows.
+//! keyed by `(source, external_id)`, and globally pruned to the newest
+//! `domain.max_notices` rows.
 
 const std = @import("std");
 const domain = @import("domain.zig");
@@ -198,14 +199,14 @@ pub const Store = struct {
         self: *Store,
         allocator: std.mem.Allocator,
     ) !domain.NoticeList {
-        var statement = try self.prepare(
+        var statement = try self.prepare(std.fmt.comptimePrint(
             \\SELECT source, external_id, title, summary, url,
             \\       published_at_unix, fetched_at_unix
             \\FROM news_notices
             \\ORDER BY published_at_unix DESC, fetched_at_unix DESC,
             \\         source ASC, external_id ASC
-            \\LIMIT 25;
-        );
+            \\LIMIT {d};
+        , .{domain.max_notices}));
         defer statement.deinit();
 
         var items: std.ArrayList(domain.OwnedNotice) = .empty;
@@ -248,15 +249,15 @@ pub const Store = struct {
     }
 
     fn prune(self: *Store) !void {
-        try self.exec(
+        try self.exec(std.fmt.comptimePrint(
             \\DELETE FROM news_notices
             \\WHERE id NOT IN (
             \\    SELECT id FROM news_notices
             \\    ORDER BY published_at_unix DESC, fetched_at_unix DESC,
             \\             source ASC, external_id ASC
-            \\    LIMIT 25
+            \\    LIMIT {d}
             \\);
-        );
+        , .{domain.max_notices}));
     }
 
     fn beginImmediate(self: *Store) !void {
@@ -545,15 +546,16 @@ test "batch validates fully before changing the cache" {
     try std.testing.expectEqual(@as(usize, 1), try store.count());
 }
 
-test "repository retains only the 25 newest notices" {
+test "repository retains only the newest notices within the retention bound" {
     const allocator = std.testing.allocator;
     var store = try Store.openMemory(allocator);
     defer store.close();
 
+    const written = domain.max_notices + 5;
     var id_buffer: [32]u8 = undefined;
     var title_buffer: [32]u8 = undefined;
     var index: usize = 0;
-    while (index < 30) : (index += 1) {
+    while (index < written) : (index += 1) {
         const id = try std.fmt.bufPrint(&id_buffer, "notice-{d}", .{index});
         const title = try std.fmt.bufPrint(&title_buffer, "Notice {d}", .{index});
         try store.upsertBatch(&.{.{
@@ -569,8 +571,18 @@ test "repository retains only the 25 newest notices" {
     var notices = try store.listNewest(allocator);
     defer notices.deinit(allocator);
     try std.testing.expectEqual(domain.max_notices, notices.items.len);
-    try std.testing.expectEqualStrings("notice-29", notices.items[0].external_id);
-    try std.testing.expectEqualStrings("notice-5", notices.items[24].external_id);
+
+    const newest = try std.fmt.bufPrint(&id_buffer, "notice-{d}", .{written - 1});
+    try std.testing.expectEqualStrings(newest, notices.items[0].external_id);
+    const oldest_retained = try std.fmt.bufPrint(
+        &title_buffer,
+        "notice-{d}",
+        .{written - domain.max_notices},
+    );
+    try std.testing.expectEqualStrings(
+        oldest_retained,
+        notices.items[domain.max_notices - 1].external_id,
+    );
 }
 
 test "file cache closes and reopens without losing rows" {

@@ -273,10 +273,26 @@
           </row>
           <text wrap="true" foreground="text_muted">{override.scopeLabel}</text>
           <text wrap="true" foreground="text_muted">{override.effectiveLabel}</text>
-          <text wrap="true">Source: {override.sourceLabel}</text>
+          <row gap="8" cross="center">
+            <if test="{override.syncedFromFeed}">
+              <badge variant="secondary">{override.originLabel}</badge>
+            </if>
+            <text grow="1" wrap="true">Source: {override.sourceLabel}</text>
+          </row>
+          <if test="{override.syncedFromFeed}">
+            <text wrap="true" foreground="text_muted">
+              This override arrived with the BIR feed and cannot be edited
+              here. Dismissing it stops future syncs from re-adding it; record
+              a different rule as a separate manual override.
+            </text>
+          </if>
           <row gap="8">
-            <button size="sm" variant="outline" on-press="calendar_edit_override:{override.id}">Edit</button>
-            <button size="sm" variant="ghost" on-press="calendar_delete_override:{override.id}">Delete</button>
+            <button
+              size="sm"
+              variant="outline"
+              disabled="{override.editDisabled}"
+              on-press="calendar_edit_override:{override.id}">Edit</button>
+            <button size="sm" variant="ghost" on-press="calendar_delete_override:{override.id}">{override.removeActionLabel}</button>
           </row>
         </column>
       </card>
