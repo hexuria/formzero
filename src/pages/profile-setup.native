@@ -810,7 +810,7 @@
                       <if test="{profileEffectiveEndYearPickerOpen}">
                         <dropdown-menu anchor="below" anchor-alignment="stretch" on-dismiss="profile_effective_end_year_close_picker">
                           <column padding="4" gap="2">
-                            <menu-item height="44" on-press="profile_effective_end_year_clear">No end year</menu-item>
+                            <menu-item height="44" selected="{profileEffectiveEndYearClearSelected}" on-press="profile_effective_end_year_clear">No end year</menu-item>
                             <for each="profileEffectiveEndYearOptionRows" key="value" as="option">
                               <menu-item height="44" selected="{option.selected}" on-press="profile_effective_end_year_select:{option.value}">{option.value}</menu-item>
                             </for>

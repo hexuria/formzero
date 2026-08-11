@@ -31,7 +31,7 @@ would need a locally rebuilt Native CLI, not another source patch.
 | `on-blur` on `<input>` / `<combobox>` | Yes, with this workspace's patch | The patch adds the `blur` event to the schema, limits it to text-entry widgets, adds `on_blur` to the UI handler model, and dispatches it when focus moves. [2] This is not described in the bundled public element table, which lists `on-input` and `on-submit` only. [1] |
 | `selected` + `expanded` bindings | Yes | `selected` is part of the documented appearance/state attribute vocabulary, and `expanded` is represented in widget semantics. [3] The local patch uses `selected` specifically to show the combobox clear affordance, and uses `expanded` to choose `chevron-up` versus `chevron-down`. [4] |
 | Clear-X on a selected combobox | Yes, with this workspace's patch and an `on-input` clear handler | The patch changes the clear predicate to include selected comboboxes and renders the shared clear button in place of the chevron. The runtime turns that press into `TextInputEvent.clear`, which reaches `on-input`. [4][5] The application must clear its authoritative selection in its `on-input` reducer; clearing only displayed text is not sufficient. |
-| Tab / Shift+Tab into the first / last filtered menu item | Yes, with this workspace's patch | The patch adds an owned-combobox menu-entry lookup. Its runtime changes keep the menu mounted and move focus to the first visible entry on Tab or last visible entry on Shift+Tab. [6] |
+| Tab / Shift+Tab navigates filtered menu items | Yes, with this workspace's patch | Tab or Shift+Tab first enters the combobox-owned result menu, then continues forward or backward through its visible entries without dismissing it. Focus wraps within the result menu; Enter remains the only commit action. [6] |
 | Enter selects the focused result | Yes | The patch deliberately leaves Enter on the normal focused `menu-item` activation path. Its added runtime test opens a combobox, enters its first row with Tab, presses Enter, and asserts that the model closes the menu. [7] Application menu items still need `on-press` handlers that commit the chosen value. |
 | macOS Command+Backspace/Delete clears text-entry widgets | Yes, with this workspace's patch | The patch maps `super` + Backspace/Delete (without Alt/Shift) to `TextInputEvent.clear`; the local SDK test covers both key names and asserts `on-input` receives the edit. [8] This is intentionally macOS-only and is not an application-level command. |
 
@@ -64,8 +64,9 @@ would need a locally rebuilt Native CLI, not another source patch.
 5. Native SDK runtime, clear-X dispatches `.clear` through the normal text edit
    path:
    [`node_modules/@native-sdk/cli/src/runtime/canvas_widget_events.zig:2150-2167`](../../node_modules/@native-sdk/cli/src/runtime/canvas_widget_events.zig#L2150-L2167).
-6. Workspace patch, owned-menu Tab/Shift+Tab behavior:
-   [`scripts/patch-native-sdk-combobox-tab.mjs:229-276`](../../scripts/patch-native-sdk-combobox-tab.mjs#L229-L276).
+6. Workspace patch and regression coverage for owned-menu Tab/Shift+Tab
+   entry and cycling:
+   [`scripts/patch-native-sdk-combobox-tab.mjs`](../../scripts/patch-native-sdk-combobox-tab.mjs).
 7. Native SDK runtime regression test, Tab enters a menu and Enter activates it:
    [`node_modules/@native-sdk/cli/src/runtime/ui_app_tests.zig:2675-2724`](../../node_modules/@native-sdk/cli/src/runtime/ui_app_tests.zig#L2675-L2724).
 8. Workspace patch and installed SDK implementation for Command+Delete:

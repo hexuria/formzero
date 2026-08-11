@@ -74,7 +74,6 @@ test: generate
 [macos]
 build: generate
     node scripts/patch-native-sdk-combobox-tab.mjs
-    node scripts/patch-native-sdk-combobox-tab.mjs
     npx native build . --yes
 
 [windows]
@@ -89,7 +88,6 @@ build: generate
 # Build a ReleaseFast binary with Native automation enabled.
 [macos]
 build-automation: generate
-    node scripts/patch-native-sdk-combobox-tab.mjs
     node scripts/patch-native-sdk-combobox-tab.mjs
     npx native build . --yes -Dautomation=true
 

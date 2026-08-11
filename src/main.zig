@@ -4267,6 +4267,7 @@ pub const Model = struct {
         return self.profileEffectiveYearOptionRows(
             arena,
             self.taxProfiles.effective_start_year.text(),
+            true,
         );
     }
 
@@ -4277,13 +4278,23 @@ pub const Model = struct {
         return self.profileEffectiveYearOptionRows(
             arena,
             self.taxProfiles.effective_end_year.text(),
+            false,
         );
+    }
+
+    pub fn profileEffectiveEndYearClearSelected(self: *const Model) bool {
+        return std.mem.trim(
+            u8,
+            self.taxProfiles.effective_end_year.text(),
+            " \t\r\n",
+        ).len == 0;
     }
 
     fn profileEffectiveYearOptionRows(
         self: *const Model,
         arena: std.mem.Allocator,
         query: []const u8,
+        select_first_when_empty: bool,
     ) []const ProfileYearOptionRow {
         const current = self.taxProfiles.default_tax_year;
         const minimum: i32 = 2020;
@@ -4299,6 +4310,7 @@ pub const Model = struct {
         const trimmed_query = std.mem.trim(u8, query, " \t\r\n");
         var count: usize = 0;
         var contains_typed = false;
+        var has_selected = false;
         var year = current;
         while (year >= minimum) : (year -= 1) {
             var buffer: [16]u8 = undefined;
@@ -4306,10 +4318,12 @@ pub const Model = struct {
                 continue;
             if (trimmed_query.len != 0 and
                 std.mem.indexOf(u8, label, trimmed_query) == null) continue;
+            const selected = std.mem.eql(u8, trimmed_query, label);
             rows[count] = .{
                 .value = year,
-                .selected = std.mem.eql(u8, trimmed_query, label),
+                .selected = selected,
             };
+            has_selected = has_selected or selected;
             if (typed_year) |typed| contains_typed = typed == year;
             count += 1;
         }
@@ -4319,8 +4333,14 @@ pub const Model = struct {
                     .value = typed,
                     .selected = true,
                 };
+                has_selected = true;
                 count += 1;
             }
+        }
+        if (!has_selected and count != 0 and
+            (trimmed_query.len != 0 or select_first_when_empty))
+        {
+            rows[0].selected = true;
         }
         return rows[0..count];
     }
@@ -22531,6 +22551,46 @@ test "profile taxpayer-type combobox filters, provisions, and synchronizes selec
     update(&model, .close_profile_subject_picker);
     try std.testing.expect(!model.profileSubjectPickerOpen());
     try std.testing.expectEqualStrings("Partnership", model.profileSubjectQueryValue());
+}
+
+test "profile year combobox provisions a single active fallback" {
+    var model = Model{ .page = .profile_setup };
+    model.taxProfiles.default_tax_year = 2026;
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    model.taxProfiles.effective_start_year.set("20");
+    const start_rows = model.profileEffectiveStartYearOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 7), start_rows.len);
+    try std.testing.expectEqual(@as(i32, 2026), start_rows[0].value);
+    try std.testing.expect(start_rows[0].selected);
+    for (start_rows[1..]) |row| try std.testing.expect(!row.selected);
+
+    model.taxProfiles.effective_end_year.set("");
+    try std.testing.expect(model.profileEffectiveEndYearClearSelected());
+    const open_end_rows = model.profileEffectiveEndYearOptionRows(
+        arena_state.allocator(),
+    );
+    for (open_end_rows) |row| try std.testing.expect(!row.selected);
+
+    model.taxProfiles.effective_end_year.set("20");
+    try std.testing.expect(!model.profileEffectiveEndYearClearSelected());
+    const filtered_end_rows = model.profileEffectiveEndYearOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expect(filtered_end_rows[0].selected);
+    for (filtered_end_rows[1..]) |row| try std.testing.expect(!row.selected);
+
+    model.taxProfiles.effective_end_year.set("2019");
+    const older_end_rows = model.profileEffectiveEndYearOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), older_end_rows.len);
+    try std.testing.expectEqual(@as(i32, 2019), older_end_rows[0].value);
+    try std.testing.expect(older_end_rows[0].selected);
 }
 
 test "profile combobox clear removes committed selections and collapses menus" {

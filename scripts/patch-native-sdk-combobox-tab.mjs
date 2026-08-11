@@ -294,6 +294,35 @@ if (!viewTree.includes("canvasWidgetOwnedComboboxMenuEntryId")) {
   writeFileSync(viewTreePath, viewTree);
 }
 
+viewTree = readFileSync(viewTreePath, "utf8");
+if (!viewTree.includes("canvasWidgetFocusedInOwnedComboboxMenu")) {
+  const helper = `    /// Whether keyboard focus is on an entry inside a combobox-owned result
+    /// menu. This keeps Tab scoped to the combobox without changing the
+    /// established Tab-dismissal behavior of selects and generic menus.
+    pub fn canvasWidgetFocusedInOwnedComboboxMenu(
+        self: *const RuntimeView,
+        focused_id: canvas.ObjectId,
+    ) bool {
+        const focused_index = self.canvasWidgetNodeIndexById(focused_id) orelse
+            return false;
+        for (self.widget_layout_nodes[0..self.widget_layout_node_count], 0..) |node, node_index| {
+            if (node.widget.kind != .combobox) continue;
+            const surface_index = self.canvasWidgetOwnedMenuSurfaceIndex(
+                node_index,
+            ) orelse continue;
+            if (self.canvasWidgetNodeIndexDescendsFrom(focused_index, surface_index)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+`;
+  const anchor = "    /// The focusable trigger the dismissed anchored surface returns\n";
+  viewTree = replaceOnce(viewTree, anchor, `${helper}${anchor}`, "combobox menu focus helper anchor changed");
+  writeFileSync(viewTreePath, viewTree);
+}
+
 let view = readFileSync(viewPath, "utf8");
 if (!view.includes("canvasWidgetOwnedComboboxMenuEntryId")) {
   const anchor = "    pub const canvasWidgetMenuSurfaceEntryId = CanvasWidgetTreeMethods.canvasWidgetMenuSurfaceEntryId;\n";
@@ -302,8 +331,16 @@ if (!view.includes("canvasWidgetOwnedComboboxMenuEntryId")) {
   writeFileSync(viewPath, view);
 }
 
+view = readFileSync(viewPath, "utf8");
+if (!view.includes("canvasWidgetFocusedInOwnedComboboxMenu")) {
+  const anchor = "    pub const canvasWidgetOwnedComboboxMenuEntryId = CanvasWidgetTreeMethods.canvasWidgetOwnedComboboxMenuEntryId;\n";
+  const exportLine = "    pub const canvasWidgetFocusedInOwnedComboboxMenu = CanvasWidgetTreeMethods.canvasWidgetFocusedInOwnedComboboxMenu;\n";
+  view = replaceOnce(view, anchor, `${anchor}${exportLine}`, "RuntimeView combobox menu focus export anchor changed");
+  writeFileSync(viewPath, view);
+}
+
 let events = readFileSync(eventsPath, "utf8");
-if (!events.includes("A combobox uses Tab/Shift+Tab to enter its visible result")) {
+if (!events.includes("A combobox uses Tab/Shift+Tab to enter its visible result") && !events.includes("A combobox Tab stays within its owned result menu")) {
   const dismissalAnchor = `            if (tab and focused_id == 0) return 0;
 
             const previous_cursor = self.views[index].canvas_widget_cursor;`;
@@ -350,6 +387,30 @@ if (!events.includes("A combobox uses Tab/Shift+Tab to enter its visible result"
                 }
                 const direction: canvas.WidgetFocusDirection = if (input_event.modifiers.shift) .backward else .forward;`;
   events = replaceOnce(events, focusAnchor, focusReplacement, "focus anchor changed");
+  writeFileSync(eventsPath, events);
+}
+
+events = readFileSync(eventsPath, "utf8");
+if (!events.includes("A combobox Tab stays within its owned result menu")) {
+  const legacyGuard = `            // A combobox uses Tab/Shift+Tab to enter its visible result
+            // list, just like ArrowDown/ArrowUp. Keep the anchored menu
+            // mounted so the query and provisional choice survive until
+            // Enter commits a row. A Tab from an already focused row still
+            // follows the ordinary menu-dismissal path below.
+            if (tab and self.views[index].canvasWidgetOwnedComboboxMenuEntryId(
+                focused_id,
+                modifiers.shift,
+            ) != null) return 0;`;
+  const replacement = `            // A combobox Tab stays within its owned result menu until Enter
+            // commits a row, preserving the query and provisional choice.
+            if (tab and (
+                self.views[index].canvasWidgetOwnedComboboxMenuEntryId(
+                    focused_id,
+                    modifiers.shift,
+                ) != null or
+                self.views[index].canvasWidgetFocusedInOwnedComboboxMenu(focused_id)
+            )) return 0;`;
+  events = replaceOnce(events, legacyGuard, replacement, "combobox Tab menu retention anchor changed");
   writeFileSync(eventsPath, events);
 }
 
@@ -566,6 +627,36 @@ if (!uiAppTests.includes("combobox Tab menu entry does not emit an early blur"))
     try std.testing.expectEqual(first_item_id, harness.runtime.views[0].canvas_widget_focused_id);
     // combobox Tab menu entry does not emit an early blur
     try std.testing.expectEqual(@as(u32, 0), app_state.model.blur_count);`, "combobox Tab blur regression assertion anchor changed");
+  writeFileSync(uiAppTestsPath, uiAppTests);
+}
+
+uiAppTests = readFileSync(uiAppTestsPath, "utf8");
+if (!uiAppTests.includes("Repeated Tab and Shift+Tab cycle an open combobox result menu")) {
+  const anchor = `    // Enter remains the normal row-activation path and returns focus to its
+    // combobox trigger when the model closes the menu.`;
+  const regression = `    // Repeated Tab and Shift+Tab cycle an open combobox result menu without
+    // dismissing it, matching the ArrowDown/ArrowUp focus behavior.
+    try comboMirrorKey(harness, app, "tab");
+    try std.testing.expect(app_state.model.open);
+    try std.testing.expectEqual(last_item_id, harness.runtime.views[0].canvas_widget_focused_id);
+
+    try comboMirrorKey(harness, app, "tab");
+    try std.testing.expect(app_state.model.open);
+    try std.testing.expectEqual(first_item_id, harness.runtime.views[0].canvas_widget_focused_id);
+
+    try harness.runtime.dispatchPlatformEvent(app, .{ .gpu_surface_input = .{
+        .window_id = 1,
+        .label = combo_mirror_canvas_label,
+        .kind = .key_down,
+        .key = "tab",
+        .modifiers = .{ .shift = true },
+    } });
+    try std.testing.expect(app_state.model.open);
+    try std.testing.expectEqual(last_item_id, harness.runtime.views[0].canvas_widget_focused_id);
+    try std.testing.expectEqualStrings("glass", app_state.model.query.text());
+
+`;
+  uiAppTests = replaceOnce(uiAppTests, anchor, `${regression}${anchor}`, "repeated combobox Tab regression anchor changed");
   writeFileSync(uiAppTestsPath, uiAppTests);
 }
 
