@@ -152,8 +152,13 @@ Branch `gol/news-backlog`, five commits. `just verify` exits 0: Zig **1848/1852*
   calendar-policy databases. Tri-state so "cleared" persists as a deliberate
   nationwide choice; an unknown stored district degrades to nationwide without
   failing startup, and the record is kept so a later reference revision restores
-  the reader's choice. Worth knowing: theme and sidebar preferences still do
-  **not** survive a restart — there was no precedent to reuse.
+  the reader's choice.
+- [x] **Persisted theme and sidebar width.** Both now reuse the same
+  `preferences.sqlite3` and are restored before the first frame, so no launch
+  flashes the default and then corrects itself. Each is recorded as the caller's
+  own token, so `.system` is a deliberate choice rather than "never chose", and
+  a token this build cannot name opens on the default with the record left
+  intact for a later build that can.
 - [x] **T10.1, circulars that spell out their offices.** RMC 62-2026 now yields
   districts 110 and 111 with its office-count invariant passing. It still emits
   no overrides: no circular-level extended date in its prose, and its page-2 due

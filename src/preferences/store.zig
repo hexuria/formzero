@@ -30,6 +30,11 @@ pub const max_value_bytes = 64;
 /// preference grow with whatever the caller hands over.
 pub const max_rdo_code_bytes = 8;
 
+/// Interface choices are recorded as the caller's own short token
+/// ("dark", "expanded"). Twenty-four bytes absorbs a renamed choice without
+/// letting a stored preference grow with whatever the caller hands over.
+pub const max_choice_token_bytes = 24;
+
 pub const Error = std.mem.Allocator.Error || error{
     Closed,
     InvalidPath,
@@ -37,6 +42,8 @@ pub const Error = std.mem.Allocator.Error || error{
     KeyTooLong,
     EmptyRdoCode,
     RdoCodeTooLong,
+    EmptyChoiceToken,
+    ChoiceTokenTooLong,
     ValueTooLong,
     SchemaTooNew,
     SqliteBusy,
@@ -84,6 +91,40 @@ pub const RdoContextPreference = struct {
 
     pub fn isNationwide(self: *const RdoContextPreference) bool {
         return self.len == 0;
+    }
+};
+
+pub const theme_preference_key = "appearance.theme";
+pub const sidebar_preference_key = "navigation.sidebar";
+
+/// A recorded interface choice, held as the caller's own token.
+///
+/// The vocabulary belongs to the caller, so this store keeps the token
+/// verbatim and never reasons about which tokens exist. A build that cannot
+/// name a recorded token opens on its own default and leaves the record
+/// alone, so a later build that names it again still honours the choice.
+///
+/// Following the system appearance is one such token rather than the absence
+/// of a record: `loadThemePreference` reports never having chosen as `null`,
+/// the same way a cleared district persists as a deliberate nationwide view.
+pub const InterfaceChoice = struct {
+    storage: [max_choice_token_bytes]u8 = undefined,
+    len: usize = 0,
+
+    pub fn named(choice_token: []const u8) Error!InterfaceChoice {
+        const candidate = std.mem.trim(u8, choice_token, " \t\r\n");
+        if (candidate.len == 0) return Error.EmptyChoiceToken;
+        if (candidate.len > max_choice_token_bytes) {
+            return Error.ChoiceTokenTooLong;
+        }
+        var choice = InterfaceChoice{};
+        @memcpy(choice.storage[0..candidate.len], candidate);
+        choice.len = candidate.len;
+        return choice;
+    }
+
+    pub fn token(self: *const InterfaceChoice) []const u8 {
+        return self.storage[0..self.len];
     }
 };
 
@@ -256,6 +297,33 @@ pub const Store = struct {
         preference: RdoContextPreference,
     ) !void {
         return self.set(dashboard_rdo_context_key, preference.code());
+    }
+
+    pub fn loadThemePreference(self: *Store) !?InterfaceChoice {
+        return self.loadChoice(theme_preference_key);
+    }
+
+    pub fn saveThemePreference(
+        self: *Store,
+        choice: InterfaceChoice,
+    ) !void {
+        return self.set(theme_preference_key, choice.token());
+    }
+
+    pub fn loadSidebarPreference(self: *Store) !?InterfaceChoice {
+        return self.loadChoice(sidebar_preference_key);
+    }
+
+    pub fn saveSidebarPreference(
+        self: *Store,
+        choice: InterfaceChoice,
+    ) !void {
+        return self.set(sidebar_preference_key, choice.token());
+    }
+
+    fn loadChoice(self: *Store, key: []const u8) !?InterfaceChoice {
+        const stored = try self.get(key) orelse return null;
+        return try InterfaceChoice.named(stored.text());
     }
 
     fn validateDisposableStore(self: *Store) !void {
@@ -432,6 +500,8 @@ test "an unrecorded preference reads as absent rather than as a default" {
 
     try std.testing.expect(try store.get("never.written") == null);
     try std.testing.expect(try store.loadDashboardRdoContext() == null);
+    try std.testing.expect(try store.loadThemePreference() == null);
+    try std.testing.expect(try store.loadSidebarPreference() == null);
     try std.testing.expectEqual(@as(usize, 0), try store.count());
 }
 
@@ -509,6 +579,93 @@ test "an unusable RDO code is refused instead of being recorded" {
     try std.testing.expectError(
         Error.RdoCodeTooLong,
         RdoContextPreference.district("0" ** (max_rdo_code_bytes + 1)),
+    );
+}
+
+test "a chosen theme and sidebar width survive close and reopen" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var directory_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const store_path = try temporaryStorePath(
+        &tmp,
+        &directory_buffer,
+        &path_buffer,
+    );
+
+    {
+        var store = try Store.openFile(allocator, store_path);
+        defer store.close();
+        try store.saveDashboardRdoContext(
+            try RdoContextPreference.district("039"),
+        );
+        try store.saveThemePreference(try InterfaceChoice.named("light"));
+        try store.saveSidebarPreference(try InterfaceChoice.named("hidden"));
+        // The last choice wins rather than accumulating rows, and each
+        // preference keeps its own row.
+        try store.saveThemePreference(try InterfaceChoice.named("dark"));
+        try store.saveSidebarPreference(try InterfaceChoice.named("rail"));
+        try std.testing.expectEqual(@as(usize, 3), try store.count());
+    }
+
+    var reopened = try Store.openRecoverable(allocator, store_path);
+    defer reopened.close();
+    const theme = (try reopened.loadThemePreference()) orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("dark", theme.token());
+    const sidebar = (try reopened.loadSidebarPreference()) orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("rail", sidebar.token());
+
+    // Interface choices share the file with the dashboard's district without
+    // disturbing it.
+    const district = (try reopened.loadDashboardRdoContext()) orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("039", district.code());
+}
+
+test "following the system appearance is recorded as a choice, not as its absence" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    try store.saveThemePreference(try InterfaceChoice.named("system"));
+    const recorded = (try store.loadThemePreference()) orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("system", recorded.token());
+    try std.testing.expect(try store.loadSidebarPreference() == null);
+}
+
+test "an interface choice this store cannot name is kept verbatim" {
+    const allocator = std.testing.allocator;
+    var store = try Store.openMemory(allocator);
+    defer store.close();
+
+    // The vocabulary belongs to the caller, so a token this store has never
+    // heard of is recorded and returned exactly as it was written.
+    try store.saveThemePreference(try InterfaceChoice.named("high_contrast"));
+    const recorded = (try store.loadThemePreference()) orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("high_contrast", recorded.token());
+
+    // A malformed record is not a choice, so it reads as unusable rather than
+    // as a token the caller might act on.
+    try store.set(sidebar_preference_key, "");
+    try std.testing.expectError(
+        Error.EmptyChoiceToken,
+        store.loadSidebarPreference(),
+    );
+}
+
+test "an unusable interface choice is refused instead of being recorded" {
+    try std.testing.expectError(
+        Error.EmptyChoiceToken,
+        InterfaceChoice.named("   "),
+    );
+    try std.testing.expectError(
+        Error.ChoiceTokenTooLong,
+        InterfaceChoice.named("d" ** (max_choice_token_bytes + 1)),
     );
 }
 

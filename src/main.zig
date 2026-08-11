@@ -13554,14 +13554,25 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .toggle_theme => {
             bumpSidebarActionEpoch(model);
             model.themePreference = if (effectiveColorScheme(model) == .dark) .light else .dark;
+            recordThemePreference(model);
         },
-        .set_theme_system => model.themePreference = .system,
-        .set_theme_light => model.themePreference = .light,
-        .set_theme_dark => model.themePreference = .dark,
+        .set_theme_system => {
+            model.themePreference = .system;
+            recordThemePreference(model);
+        },
+        .set_theme_light => {
+            model.themePreference = .light;
+            recordThemePreference(model);
+        },
+        .set_theme_dark => {
+            model.themePreference = .dark;
+            recordThemePreference(model);
+        },
         .expand_sidebar => {
             if (model.viewportClass == .desktop) {
                 model.sidebarPreference = .expanded;
                 model.sidebarOverlayOpen = false;
+                recordSidebarPreference(model);
             } else {
                 model.sidebarOverlayOpen = true;
             }
@@ -13569,10 +13580,12 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .collapse_sidebar => {
             model.sidebarPreference = .rail;
             model.sidebarOverlayOpen = false;
+            recordSidebarPreference(model);
         },
         .hide_sidebar => {
             model.sidebarPreference = .hidden;
             model.sidebarOverlayOpen = false;
+            recordSidebarPreference(model);
         },
         .open_sidebar_overlay => model.sidebarOverlayOpen = true,
         .close_sidebar_overlay => model.sidebarOverlayOpen = false,
@@ -13584,9 +13597,11 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
                     .rail
                 else
                     .expanded;
+                recordSidebarPreference(model);
             } else {
                 model.sidebarPreference = .hidden;
                 model.sidebarOverlayOpen = false;
+                recordSidebarPreference(model);
             }
         },
         .sidebar_profile_search_changed => |edit| {
@@ -14691,6 +14706,59 @@ fn restoreGlobalRdoContext(model: *Model) void {
     if (rdo_reference.findByCode(recorded.code()) == null) return;
     _ = model.globalDashboard.setRdoContext(recorded.code()) catch return;
     applyGlobalRdoContext(model);
+}
+
+/// Records how the reader wants the application to look. `.system` is written
+/// as the choice it is, so a reader who deliberately follows the desktop
+/// appearance is distinguishable from one who has never chosen. A preference
+/// that fails to record costs one re-selection and must not disturb the
+/// appearance the reader just asked for.
+fn recordThemePreference(model: *Model) void {
+    const store = model.preferencesStore orelse return;
+    const choice = preferences_store.InterfaceChoice.named(
+        @tagName(model.themePreference),
+    ) catch return;
+    store.saveThemePreference(choice) catch {};
+}
+
+/// Records the navigation width the reader chose. The overlay is a transient
+/// disclosure rather than a width, so it is deliberately not recorded.
+fn recordSidebarPreference(model: *Model) void {
+    const store = model.preferencesStore orelse return;
+    const choice = preferences_store.InterfaceChoice.named(
+        @tagName(model.sidebarPreference),
+    ) catch return;
+    store.saveSidebarPreference(choice) catch {};
+}
+
+/// Reopens the shell on the appearance and navigation width the reader last
+/// chose, before the first frame, so no launch shows a default and then
+/// corrects itself.
+///
+/// A recorded token this build no longer names degrades to that preference's
+/// default: the shell cannot render a choice it cannot name. The record is
+/// left in place so a later build that names it again honours the reader's
+/// choice instead of this launch silently discarding it. An unreadable record
+/// degrades the same way, and never keeps the other preference from being
+/// restored.
+fn restoreInterfacePreferences(model: *Model) void {
+    const store = model.preferencesStore orelse return;
+    if (store.loadThemePreference() catch null) |recorded| {
+        if (std.meta.stringToEnum(
+            ThemePreference,
+            recorded.token(),
+        )) |preference| {
+            model.themePreference = preference;
+        }
+    }
+    if (store.loadSidebarPreference() catch null) |recorded| {
+        if (std.meta.stringToEnum(
+            SidebarPreference,
+            recorded.token(),
+        )) |preference| {
+            model.sidebarPreference = preference;
+        }
+    }
 }
 
 fn attachImportantNews(
@@ -18559,6 +18627,7 @@ pub fn main(init: std.process.Init) !void {
     app_state.model.fixturePreviewSession = fixture_preview_requested;
     app_state.model.newsFeedUrl = news_feed_url;
     app_state.model.preferencesStore = &interface_preferences;
+    restoreInterfacePreferences(&app_state.model);
     app_state.model.calendarToday = try calendar_domain.Date.init(
         boot_time.year,
         boot_time.month,
@@ -23177,6 +23246,21 @@ fn relaunchGlobalDashboard(
     return model;
 }
 
+/// Rebuilds the shell the way startup does: a fresh model over the same
+/// preference store, with the recorded interface choices restored before any
+/// frame is produced. The caller owns the returned model.
+fn relaunchShell(
+    allocator: std.mem.Allocator,
+    preferences: ?*preferences_store.Store,
+) !*Model {
+    const model = try allocator.create(Model);
+    errdefer allocator.destroy(model);
+    model.* = .{};
+    model.preferencesStore = preferences;
+    restoreInterfacePreferences(model);
+    return model;
+}
+
 test "the published BIR feed moves the RDO 039 marker and leaves the nation alone" {
     const allocator = std.testing.allocator;
     var news_cache = try news_store.Store.openMemory(allocator);
@@ -23570,6 +23654,183 @@ test "a corrupt or absent preference store still opens the dashboard" {
     try std.testing.expect(!without_store.globalRdoContextActive());
     try std.testing.expect(
         without_store.globalDashboard.calendar.notice_kind != .failure,
+    );
+}
+
+test "a chosen theme and sidebar width reopen before the first frame" {
+    const allocator = std.testing.allocator;
+    var interface_preferences = try preferences_store.Store.openMemory(
+        allocator,
+    );
+    defer interface_preferences.close();
+
+    var model = Model{};
+    model.preferencesStore = &interface_preferences;
+    try std.testing.expectEqual(ThemePreference.system, model.themePreference);
+    try std.testing.expect(model.lightThemeActive());
+    try std.testing.expectEqual(
+        SidebarPreference.expanded,
+        model.sidebarPreference,
+    );
+
+    update(&model, .set_theme_dark);
+    update(&model, .hide_sidebar);
+    try std.testing.expect(model.darkThemeActive());
+
+    // The next launch opens dark with navigation docked away, before any
+    // frame is produced, rather than showing the defaults and correcting
+    // itself.
+    {
+        const relaunched = try relaunchShell(
+            allocator,
+            &interface_preferences,
+        );
+        defer allocator.destroy(relaunched);
+        try std.testing.expectEqual(
+            ThemePreference.dark,
+            relaunched.themePreference,
+        );
+        try std.testing.expect(relaunched.darkThemeActive());
+        try std.testing.expectEqual(
+            SidebarPreference.hidden,
+            relaunched.sidebarPreference,
+        );
+        try std.testing.expect(!relaunched.sidebarRailVisible());
+        try std.testing.expect(relaunched.sidebarLauncherVisible());
+    }
+
+    // Following the system appearance is a choice the next launch honours,
+    // not the absence of one.
+    update(&model, .set_theme_system);
+    update(&model, .collapse_sidebar);
+    const recorded_theme = (try interface_preferences.loadThemePreference()) orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("system", recorded_theme.token());
+    {
+        const relaunched = try relaunchShell(
+            allocator,
+            &interface_preferences,
+        );
+        defer allocator.destroy(relaunched);
+        try std.testing.expectEqual(
+            ThemePreference.system,
+            relaunched.themePreference,
+        );
+        try std.testing.expectEqual(
+            SidebarPreference.rail,
+            relaunched.sidebarPreference,
+        );
+        try std.testing.expect(relaunched.sidebarRailVisible());
+        try std.testing.expect(!relaunched.sidebarLauncherVisible());
+    }
+}
+
+test "an interface choice this build cannot name reopens on the default and is kept" {
+    const allocator = std.testing.allocator;
+    var interface_preferences = try preferences_store.Store.openMemory(
+        allocator,
+    );
+    defer interface_preferences.close();
+
+    // Tokens a later build may name but this one cannot. A choice the shell
+    // cannot render must not reach the first frame.
+    try std.testing.expect(
+        std.meta.stringToEnum(ThemePreference, "midnight") == null,
+    );
+    try std.testing.expect(
+        std.meta.stringToEnum(SidebarPreference, "floating") == null,
+    );
+    try interface_preferences.saveThemePreference(
+        try preferences_store.InterfaceChoice.named("midnight"),
+    );
+    try interface_preferences.saveSidebarPreference(
+        try preferences_store.InterfaceChoice.named("floating"),
+    );
+
+    const relaunched = try relaunchShell(allocator, &interface_preferences);
+    defer allocator.destroy(relaunched);
+    try std.testing.expectEqual(
+        ThemePreference.system,
+        relaunched.themePreference,
+    );
+    try std.testing.expect(relaunched.lightThemeActive());
+    try std.testing.expectEqual(
+        SidebarPreference.expanded,
+        relaunched.sidebarPreference,
+    );
+
+    // Both records are kept, not scrubbed: a later build that names them
+    // restores the reader's choice instead of this launch discarding it.
+    const theme = (try interface_preferences.loadThemePreference()) orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("midnight", theme.token());
+    const sidebar = (try interface_preferences.loadSidebarPreference()) orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("floating", sidebar.token());
+}
+
+test "a corrupt or absent preference store still opens the shell on its defaults" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var directory_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const directory_len = try tmp.dir.realPath(
+        std.testing.io,
+        &directory_buffer,
+    );
+    var path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const store_path = try std.fmt.bufPrint(
+        &path_buffer,
+        "{s}/{s}",
+        .{
+            directory_buffer[0..directory_len],
+            preferences_store.default_filename,
+        },
+    );
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = preferences_store.default_filename,
+        .data = "this is not a database",
+    });
+    var recovered = try preferences_store.Store.openRecoverable(
+        allocator,
+        store_path,
+    );
+    defer recovered.close();
+
+    const corrupted = try relaunchShell(allocator, &recovered);
+    defer allocator.destroy(corrupted);
+    try std.testing.expectEqual(
+        ThemePreference.system,
+        corrupted.themePreference,
+    );
+    try std.testing.expectEqual(
+        SidebarPreference.expanded,
+        corrupted.sidebarPreference,
+    );
+
+    // The recovered session still holds this session's choices.
+    update(corrupted, .set_theme_dark);
+    try std.testing.expect(corrupted.darkThemeActive());
+    const session_theme = (try recovered.loadThemePreference()) orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("dark", session_theme.token());
+
+    // A launch with no preference store at all reaches the same defaults and
+    // still lets the reader change them for the session.
+    const without_store = try relaunchShell(allocator, null);
+    defer allocator.destroy(without_store);
+    try std.testing.expectEqual(
+        ThemePreference.system,
+        without_store.themePreference,
+    );
+    try std.testing.expectEqual(
+        SidebarPreference.expanded,
+        without_store.sidebarPreference,
+    );
+    update(without_store, .hide_sidebar);
+    try std.testing.expectEqual(
+        SidebarPreference.hidden,
+        without_store.sidebarPreference,
     );
 }
 
