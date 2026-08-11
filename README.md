@@ -11,9 +11,11 @@ global form/deadline dashboard, and a functional tax-calendar engine.
 | Area | Status |
 | --- | --- |
 | Navigation, themes, responsive layouts | Functional |
-| Global Dashboard calendar | Functional; complete resolved schedule, never profile-filtered |
+| Global Dashboard calendar | Functional; complete resolved schedule, never profile-filtered, with an optional session-only RDO context view |
+| Important News | Functional; BIR issuances compiled four times a day by the `scripts/news-sync/` pipeline from BIR's own publication API, shown for the calendar month in view, cached in SQLite with the last good copy retained when a refresh fails |
 | Tax deadline calculation | Functional; 20 compiled rule groups |
 | Calendar policy | Persisted in SQLite with sourced holidays and overrides |
+| Synced deadline overrides | Advisory; deadline-extension circulars are extracted deterministically into RDO-scoped overrides that carry their source reference and can be dismissed in the app. Extraction is fail-closed, so a missed extension is far likelier than a wrong date |
 | Calendar export | Functional `.ics` handoff to the default calendar app, scoped to the profile's Forms Set |
 | Tax profiles and Forms Set | Persisted, revisioned, effective-dated, and the sole source of form availability for the taxpayer calendar and its export |
 | Canonical TIN root, Registration Units, and filing scope | Isolated session-only fixture-preview vertical slice: evidence-gated head office/branch lifecycle, fail-closed 2550Q planning, transient scope-provenance validation, and a value-owned read-only preview snapshot; immutable draft/artifact provenance remains deferred, while legacy cutover and the production policy catalog remain blocked |
@@ -31,8 +33,10 @@ deadlines and is not offered by the profile calendar year picker. The `.ics`
 export preserves a compatibility fallback for legacy stores that have not yet
 been configured, but newly saved yearly sets are always authoritative.
 The app does not yet fully model fiscal periods, eFPS groups, every scoped
-policy, filing submission, or official print/file parity. Always confirm
-deadlines and filing requirements with official BIR guidance.
+policy, filing submission, or official print/file parity. Deadline changes
+synced from BIR issuances are machine-extracted from published PDFs and are
+advisory; read the linked issuance before relying on a moved deadline. Always
+confirm deadlines and filing requirements with official BIR guidance.
 
 All bundled taxpayer data is synthetic. `reference/` is intentionally ignored
 because source-app captures may contain private taxpayer data.
@@ -71,6 +75,7 @@ just package   # macOS .app, Linux package, or Windows ARM64 package
 just app       # package, then open/launch it
 just install   # install for the current user on macOS, Linux, or Windows
 just check     # catalog, markup, and manifest checks
+just news-sync-offline  # BIR news pipeline over the committed captures
 just test      # headless Native SDK tests
 just verify    # check, test, build, and whitespace validation
 ```
@@ -137,6 +142,8 @@ deterministic and idempotent.
 - `src/calendar/store.zig` — SQLite schema, policy, and provider mappings
 - `src/calendar/ics.zig` — RFC 5545 calendar generation
 - `src/calendar/ui_state.zig` — calendar state and application adapter
+- `src/news/feed_json.zig` — bounded parser for the compiled BIR feed, covering
+  both the Important News notices and the synced deadline overrides
 - `src/tax_profile/` — reusable facts, immutable revisions, evolution,
   persistence, canonical Taxpayer/Registration Unit evidence, migration
   inventory, and profile UI state
@@ -153,6 +160,9 @@ deterministic and idempotent.
   typed production repository-opening boundaries
 - `scripts/tax-catalog/` — strict TypeScript catalog authoring and deterministic
   Zig/report generation
+- `scripts/news-sync/` — deterministic BIR issuance sync: CMS reads, PDF
+  extraction, feed compilation, and per-circular review reports; operated per
+  the [news sync runbook](docs/news/NEWS_SYNC_OPERATIONS.md)
 - `scripts/flatten-native.mjs` — modular markup generator
 - `app.zon` — product manifest, permissions, assets, and platform target
 
