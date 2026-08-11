@@ -51,6 +51,8 @@ export type DownloadedPdf = {
   bytes: number;
   sha256: string;
   cached: boolean;
+  /** Strong ETag from the response, so the next run can skip on it. */
+  etag: string | null;
 };
 
 /**
@@ -130,15 +132,33 @@ export class PdfUnavailableError extends Error {
  * downloading" — never "unchanged".
  */
 export async function remoteContentLength(url: string): Promise<number | null> {
+  return (await remotePdfIdentity(url)).bytes;
+}
+
+/**
+ * What one HEAD reveals about the PDF at `url`: its `Content-Length`, and its
+ * `ETag` when the origin offers a strong one.
+ *
+ * Size alone cannot see a same-size replacement, which is the one edit that
+ * would leave a stale extraction published. A strong ETag closes that; a weak
+ * one (`W/"…"`) only promises semantic equivalence, which is not the question,
+ * so it is discarded. Either field being null always means "find out by
+ * downloading" — never "unchanged".
+ */
+export async function remotePdfIdentity(
+  url: string,
+): Promise<{ bytes: number | null; etag: string | null }> {
   try {
     const response = await fetch(url, { method: "HEAD", redirect: "follow" });
-    if (!response.ok) return null;
+    if (!response.ok) return { bytes: null, etag: null };
     const header = response.headers.get("content-length");
-    if (header === null) return null;
-    const bytes = Number.parseInt(header, 10);
-    return Number.isSafeInteger(bytes) && bytes > 0 ? bytes : null;
+    const parsed = header === null ? Number.NaN : Number.parseInt(header, 10);
+    const bytes = Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+    const rawEtag = response.headers.get("etag");
+    const etag = rawEtag === null || rawEtag.trimStart().startsWith("W/") ? null : rawEtag.trim();
+    return { bytes, etag };
   } catch {
-    return null;
+    return { bytes: null, etag: null };
   }
 }
 
@@ -151,13 +171,14 @@ export async function remoteContentLength(url: string): Promise<number | null> {
 export async function downloadPdf(url: string, destPath: string): Promise<DownloadedPdf> {
   const existing = await statOrNull(destPath);
   if (existing !== null) {
-    const remoteBytes = await remoteContentLength(url);
-    if (remoteBytes !== null && remoteBytes === existing.size) {
+    const remote = await remotePdfIdentity(url);
+    if (remote.bytes !== null && remote.bytes === existing.size) {
       return {
         path: destPath,
         bytes: existing.size,
         sha256: await sha256File(destPath),
         cached: true,
+        etag: remote.etag,
       };
     }
   }
@@ -181,11 +202,14 @@ export async function downloadPdf(url: string, destPath: string): Promise<Downlo
   await mkdir(path.dirname(destPath), { recursive: true });
   await writeFile(destPath, body);
 
+  const rawEtag = response.headers.get("etag");
   return {
     path: destPath,
     bytes: body.byteLength,
     sha256: createHash("sha256").update(body).digest("hex"),
     cached: false,
+    // The GET already carries it, so recording it costs no extra request.
+    etag: rawEtag === null || rawEtag.trimStart().startsWith("W/") ? null : rawEtag.trim(),
   };
 }
 

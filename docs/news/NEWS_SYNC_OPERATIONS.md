@@ -110,6 +110,16 @@ run that finds nothing new makes no commit at all.
 
 ## Unchanged PDFs are not re-downloaded
 
+A run asks the origin one HEAD per extension circular and skips both the
+download and the re-extraction when the answer matches what published state
+recorded. Size decides on its own only when there is nothing better: a strong
+`ETag` on both sides overrides a matching size, because a replacement document
+of identical length is the one edit a size check cannot see. A weak validator
+(`W/"…"`) promises only semantic equivalence, which is not the question, so it
+is ignored. Anything missing or disagreeing means download — never "assume
+unchanged".
+
+
 Before fetching an extension circular's PDF, a run issues one `HEAD` request and
 compares the origin's `Content-Length` with the size recorded in
 `state/seen.json` for the extraction it already has. When the two agree, the run

@@ -34,6 +34,12 @@ export type SeenIssuance = {
    */
   pdfBytes: number | null;
   /**
+   * Strong `ETag` the origin served that PDF with, or null when it offered
+   * none. Size alone cannot see a same-size replacement; an ETag that has
+   * changed proves the bytes did, whatever the length says.
+   */
+  pdfEtag: string | null;
+  /**
    * What extracting that PDF produced, or null when the issuance was never
    * PDF-extracted. Persisted so a run that skips the download still has the
    * overrides: without it, a skipped download would silently shrink the feed.
@@ -56,6 +62,11 @@ export type SeenIssuance = {
 export type ExtractionRecord = {
   pdfSha256: string | null;
   pdfBytes: number | null;
+  /**
+   * Strong ETag the origin served. Optional: most callers have none, and an
+   * absent field records the same fact as an explicit null.
+   */
+  pdfEtag?: string | null;
   extraction: CircularExtraction | null;
 };
 
@@ -214,7 +225,7 @@ export function parseCircularExtraction(value: unknown): CircularExtraction | nu
 
 function parseIssuance(value: unknown): SeenIssuance | null {
   if (!isRecord(value)) return null;
-  const { pdfSha256, pdfBytes, firstSeenAtUnix, extractedAtUnix, feedRev } = value;
+  const { pdfSha256, pdfBytes, pdfEtag, firstSeenAtUnix, extractedAtUnix, feedRev } = value;
   if (pdfSha256 !== null && typeof pdfSha256 !== "string") return null;
   if (typeof extractedAtUnix !== "number" || !Number.isFinite(extractedAtUnix)) return null;
   if (typeof feedRev !== "number" || !Number.isFinite(feedRev)) return null;
@@ -239,6 +250,7 @@ function parseIssuance(value: unknown): SeenIssuance | null {
   return {
     pdfSha256,
     pdfBytes: size,
+    pdfEtag: typeof pdfEtag === "string" && pdfEtag.length > 0 ? pdfEtag : null,
     extraction,
     firstSeenAtUnix: firstSeen,
     extractedAtUnix,
@@ -325,6 +337,7 @@ export function serializeState(state: SeenState): string {
     issuances[externalId] = {
       pdfSha256: entry.pdfSha256,
       pdfBytes: entry.pdfBytes,
+      ...(entry.pdfEtag === null ? {} : { pdfEtag: entry.pdfEtag }),
       firstSeenAtUnix: entry.firstSeenAtUnix,
       extractedAtUnix: entry.extractedAtUnix,
       feedRev: entry.feedRev,
@@ -372,12 +385,15 @@ export function isRecordedExtraction(
   if (entry === undefined) return false;
   if (!isAlreadyExtracted(state, externalId, record.pdfSha256)) return false;
   if (entry.pdfBytes !== record.pdfBytes) return false;
+  if (entry.pdfEtag !== (record.pdfEtag ?? null)) return false;
   return isDeepStrictEqual(entry.extraction, record.extraction);
 }
 
 export type RecordedPdf = {
   pdfSha256: string;
   pdfBytes: number;
+  /** Null when the origin served no strong ETag at extraction time. */
+  pdfEtag: string | null;
   extraction: CircularExtraction;
 };
 
@@ -391,9 +407,9 @@ export type RecordedPdf = {
 export function recordedPdf(state: SeenState, externalId: string): RecordedPdf | null {
   const entry = state.issuances[externalId];
   if (entry === undefined) return null;
-  const { pdfSha256, pdfBytes, extraction } = entry;
+  const { pdfSha256, pdfBytes, pdfEtag, extraction } = entry;
   if (pdfSha256 === null || pdfBytes === null || extraction === null) return null;
-  return { pdfSha256, pdfBytes, extraction };
+  return { pdfSha256, pdfBytes, pdfEtag, extraction };
 }
 
 /**
@@ -415,6 +431,7 @@ export function markExtracted(
       [externalId]: {
         pdfSha256: record.pdfSha256,
         pdfBytes: record.pdfBytes,
+        pdfEtag: record.pdfEtag ?? null,
         extraction: record.extraction,
         firstSeenAtUnix,
         extractedAtUnix: nowUnix,
@@ -437,6 +454,7 @@ export function markSeen(state: SeenState, externalId: string, nowUnix: number):
       [externalId]: {
         pdfSha256: null,
         pdfBytes: null,
+        pdfEtag: null,
         extraction: null,
         firstSeenAtUnix: nowUnix,
         extractedAtUnix: 0,

@@ -177,6 +177,7 @@ test("markExtracted is pure and overwrites an existing entry", () => {
   assert.deepEqual(after.issuances["bir:rmc:2026:089"], {
     pdfSha256: shaReplaced,
     pdfBytes: null,
+    pdfEtag: null,
     extraction: null,
     // Re-extraction updates the hash and the extraction stamp but never the
     // first sighting.
@@ -208,6 +209,7 @@ test("markSeen records a notice-only issuance once and never moves its stamp", (
   assert.deepEqual(state.issuances["bir:rmo:2026:019"], {
     pdfSha256: null,
     pdfBytes: null,
+    pdfEtag: null,
     extraction: null,
     firstSeenAtUnix: extractedAtUnix,
     extractedAtUnix: 0,
@@ -273,6 +275,7 @@ test("a recorded size and extraction survive a save/load round trip", async () =
   assert.deepEqual(reloaded.issuances["bir:rmc:2026:089"], {
     pdfSha256: shaRmc89,
     pdfBytes: 618_314,
+    pdfEtag: null,
     extraction,
     firstSeenAtUnix: extractedAtUnix,
     extractedAtUnix,
@@ -281,6 +284,7 @@ test("a recorded size and extraction survive a save/load round trip", async () =
   assert.deepEqual(recordedPdf(reloaded, "bir:rmc:2026:089"), {
     pdfSha256: shaRmc89,
     pdfBytes: 618_314,
+    pdfEtag: null,
     extraction,
   });
   // Byte-stable: reloading and re-serializing must not move a single field.

@@ -64,7 +64,7 @@ import {
   missingDependencyExitCode,
   PdfUnavailableError,
   pdfToLayoutText,
-  remoteContentLength,
+  remotePdfIdentity,
 } from "./pdf.ts";
 import { renderReviewReport, reviewReportPath } from "./review.ts";
 import {
@@ -462,6 +462,8 @@ type ExtractionOutcome = {
   pdfSha256: string;
   /** Size the origin served the PDF at; null offline, where nothing is fetched. */
   pdfBytes: number | null;
+  /** Strong ETag the origin served it with, when it offered one. */
+  pdfEtag: string | null;
   reused: boolean;
 };
 
@@ -485,15 +487,25 @@ export async function unchangedAtOrigin(
   // Nothing recorded to compare against, so there is nothing to ask the origin.
   if (recorded === null) return null;
 
-  const remoteBytes = await remoteContentLength(url);
-  if (remoteBytes === null) {
+  const remote = await remotePdfIdentity(url);
+  if (remote.bytes === null) {
     log(`extract: ${externalId} origin gave no usable Content-Length on HEAD — downloading`);
     return null;
   }
-  if (remoteBytes !== recorded.pdfBytes) {
+  if (remote.bytes !== recorded.pdfBytes) {
     log(
-      `extract: ${externalId} is ${remoteBytes} bytes at the origin but was extracted at ` +
+      `extract: ${externalId} is ${remote.bytes} bytes at the origin but was extracted at ` +
         `${recorded.pdfBytes} — downloading`,
+    );
+    return null;
+  }
+  // A matching size is not proof on its own: a replacement of the same length
+  // would read as unchanged. When both sides have a strong ETag it decides,
+  // and a changed one overrides the matching size.
+  if (recorded.pdfEtag !== null && remote.etag !== null && recorded.pdfEtag !== remote.etag) {
+    log(
+      `extract: ${externalId} matches on size but the origin's ETag changed ` +
+        `(${recorded.pdfEtag} -> ${remote.etag}) — downloading`,
     );
     return null;
   }
@@ -516,6 +528,7 @@ async function extractOne(
   let layoutText: string | null = null;
   let pdfSha256: string;
   let pdfBytes: number | null = null;
+  let pdfEtag: string | null = null;
 
   if (options.offline) {
     layoutText = await loadFixtureLayoutText(issuance.externalId);
@@ -545,6 +558,7 @@ async function extractOne(
           extraction: unchanged.extraction,
           pdfSha256: unchanged.pdfSha256,
           pdfBytes: unchanged.pdfBytes,
+          pdfEtag: unchanged.pdfEtag,
           reused: true,
         };
       }
@@ -558,6 +572,7 @@ async function extractOne(
     );
     pdfSha256 = downloaded.sha256;
     pdfBytes = downloaded.bytes;
+    pdfEtag = downloaded.etag;
     log(
       `extract: ${issuance.externalId} PDF ${downloaded.bytes} bytes ` +
         `(${downloaded.cached ? "cached" : "downloaded"}) sha256 ${pdfSha256.slice(0, 12)}…`,
@@ -569,7 +584,7 @@ async function extractOne(
     const cached = await loadCachedExtraction(paths, issuance.externalId, pdfSha256);
     if (cached !== null) {
       log(`extract: ${issuance.externalId} unchanged since the last run — reused extraction`);
-      return { extraction: cached, pdfSha256, pdfBytes, reused: true };
+      return { extraction: cached, pdfSha256, pdfBytes, pdfEtag, reused: true };
     }
     log(`extract: ${issuance.externalId} unchanged but its work/ cache is gone — re-extracting`);
   }
@@ -585,7 +600,7 @@ async function extractOne(
       `${extraction.rows.length} table block(s)` +
       (extraction.needsManualReview ? " — NEEDS MANUAL REVIEW" : ""),
   );
-  return { extraction, pdfSha256, pdfBytes, reused: false };
+  return { extraction, pdfSha256, pdfBytes, pdfEtag, reused: false };
 }
 
 /**
@@ -756,6 +771,7 @@ export async function runSync(
         extracted.set(issuance.externalId, {
           pdfSha256: recorded.pdfSha256,
           pdfBytes: recorded.pdfBytes,
+          pdfEtag: recorded.pdfEtag,
           extraction: recorded.extraction,
         });
         continue;
@@ -781,6 +797,7 @@ export async function runSync(
     extracted.set(issuance.externalId, {
       pdfSha256: outcome.pdfSha256,
       pdfBytes: outcome.pdfBytes,
+      pdfEtag: outcome.pdfEtag,
       extraction: outcome.extraction,
     });
   }

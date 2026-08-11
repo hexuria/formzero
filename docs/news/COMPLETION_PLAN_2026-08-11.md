@@ -10,7 +10,7 @@ calls: every task says exactly what to change, how to prove it worked, and what
 to do when it does not. Read §1 (the operating manual) before touching
 anything.
 
-Progress: 5/13 tasks complete.
+Progress: 6/13 tasks complete.
 
 ---
 
@@ -316,7 +316,7 @@ blocker here.
     are unverified on the audited host.
   - Commit: `chore: give the news pipeline its Windows recipes`
 
-- [ ] **C7 — ETag strengthens the unchanged-PDF check.**
+- [x] **C7 — ETag strengthens the unchanged-PDF check.**
   - Files: `scripts/news-sync/state.ts`, `scripts/news-sync/sync.ts`,
     `scripts/news-sync/pdf.ts` (wherever the HEAD is issued), tests.
   - Change: record the response `ETag` (when present) alongside size/sha; the

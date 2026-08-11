@@ -608,6 +608,7 @@ test("unchangedAtOrigin skips only on a HEAD that matches the recorded size", as
   assert.deepEqual(unchanged, {
     pdfSha256: rmc89PdfSha,
     pdfBytes: rmc89PdfBytes,
+    pdfEtag: null,
     extraction: state.issuances[rmc89Id].extraction,
   });
 
@@ -778,4 +779,54 @@ test("a failure that is not the origin refusing still ends the run", async (t) =
     /not a network refusal/,
     "only PdfUnavailableError is absorbed; every other fault fails the run",
   );
+});
+
+test("a same-size replacement is caught by the ETag the origin serves", async (t) => {
+  const paths = pathsUnder(await scratchRoot());
+  await runSync(offlineOptions(runOneUnix), discard, paths);
+  await recordAsLiveDownload(paths.statePath);
+  let state = await loadState(paths.statePath);
+
+  // Record the circular as having been fetched with a strong ETag, which is
+  // what a live download now stores.
+  const entry = state.issuances[rmc89Id];
+  state = markExtracted(
+    state,
+    rmc89Id,
+    {
+      pdfSha256: rmc89PdfSha,
+      pdfBytes: rmc89PdfBytes,
+      pdfEtag: '"v1-abc"',
+      extraction: entry.extraction,
+    },
+    entry.extractedAtUnix,
+    entry.feedRev,
+  );
+
+  let etag: string | null = '"v1-abc"';
+  installFetchStub(t, (method, url) => {
+    assert.equal(method, "HEAD", `${method} ${url}: the decision may only ever issue a HEAD`);
+    const headers: Record<string, string> = { "content-length": String(rmc89PdfBytes) };
+    if (etag !== null) headers.etag = etag;
+    return new Response(null, { status: 200, headers });
+  });
+  const decide = async (): Promise<unknown> =>
+    await unchangedAtOrigin(rmc89Id, rmc89PdfUrl, state, discard);
+
+  assert.notEqual(await decide(), null, "same size and same ETag is unchanged");
+
+  // The case size alone cannot see: the bytes were replaced with a document of
+  // identical length. Without the ETag this run would publish a stale
+  // extraction and never know.
+  etag = '"v2-def"';
+  assert.equal(await decide(), null, "a changed ETag overrides a matching size");
+
+  // A weak validator promises only semantic equivalence, which is not the
+  // question, so it is ignored and the size rule stands.
+  etag = 'W/"v9-zzz"';
+  assert.notEqual(await decide(), null, "a weak ETag neither confirms nor refutes");
+
+  // An origin that serves no ETag keeps today's behaviour.
+  etag = null;
+  assert.notEqual(await decide(), null, "no ETag falls back to the size rule");
 });
