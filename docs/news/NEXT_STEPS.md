@@ -2,12 +2,13 @@
 
 Branch `gol/important-news-google-search-8efadb` · companion to
 [the execution plan](IMPORTANT_NEWS_SYNC_EXECUTION_PLAN_2026-08-11.md)
-(25/30 tasks done there; this file is the plan for the last 5 plus shipping).
+(29/31 tasks done there; this file tracks shipping and what is left).
 
-**Snapshot:** feature implemented and green — `just verify` passes, Zig
-1830/1834 (baseline 1798/1802, +32), TypeScript 200 tests / 197 pass /
-3 network-gated skips. **Nothing is committed**; the whole change sits in the
-working tree. The app's default feed URL 404s until the first publish (R4).
+**Snapshot 2026-08-11:** implemented, dry-run against the live BIR site, and
+open for review as [PR #26](https://github.com/hexuria/formzero/pull/26).
+`just verify` exits 0 — Zig **1839/1843** (baseline 1798/1802) and TypeScript
+**201 tests / 198 pass / 3 network-gated skips**. Six commits are pushed.
+Only **R4** remains, and it cannot run until the PR merges (see below).
 
 ---
 
@@ -53,19 +54,19 @@ matches production (`BuwizApp.create(page_allocator)`) and no longer depends on
 
 Full specs live in the plan's **Phase 9**; this is the order and the why.
 
-- [ ] **R1.1 = T9.1 — per-row override copy failure.** `reload()` in
+- [x] **R1.1 = T9.1 — per-row override copy failure.** `reload()` in
   [ui_state.zig](../../src/calendar/ui_state.zig) does
   `try self.copyOverride(item)` in a loop, so one unrepresentable row blanks
   *all* calendar policy (skips remaining overrides, never loads non-working
   days, never recomputes). Fix: skip-and-count the bad row, surface it like
   `override_records_truncated`. **Do this first — it is the blast-radius fix
   that makes every other bound a one-row problem.**
-- [ ] **R1.2 = T9.2 — ScopeList byte budget.** Storage is 2,080 bytes (derived
-  from the superseded 16-slot constant) while the list admits 200 entries and
-  the feed permits 6,400 bytes. Fix: derive the budget from what it serves —
-  ≥ max(200 × 33 feed codes, 16 × 130 manual names) = 6,600 bytes — and add
-  two boundary tests (200 max-length feed codes; 16 max-length manual names).
-- [ ] **R1.3 = T9.3 — production RDO path test.** Select a real profile whose
+- [x] **R1.2 = T9.2 — ScopeList byte budget.** Storage was 2,080 bytes
+  (derived from the superseded 16-slot constant) while the list admits 200
+  entries. Landed differently from this brief and better: rather than widening
+  the buffer to 6,600 bytes, synced scopes are bounded at RDO-code length, so
+  the budget is 2,048 bytes — see the note above.
+- [x] **R1.3 = T9.3 — production RDO path test.** Select a real profile whose
   RDO is 039, deliver the feed, assert the profile calendar shows 2026-08-17 —
   through `selectedTaxpayerCalendarContext`, not a literal context. Written
   after R1.1/R1.2 so it also exercises the repaired copy path.
@@ -74,48 +75,66 @@ Gate: `just verify` green; test count strictly above 1830.
 
 </details>
 
-## R2 — commit and open the PR (authorized)
+## R2 — commit and open the PR — **DONE 2026-08-11**
 
-- [ ] **R2.1 Commit in reviewable slices**, `--no-gpg-sign`, each message in
-  repo style:
-  1. `feat(news-sync): BIR issuance pipeline` — scripts/news-sync/, fixtures,
-     workflows, Justfile/package.json/tsconfig/.gitignore/ci.yml
-  2. `feat(news): bounded BIR JSON feed parser` — feed_json.zig, domain/store
-     retention, feed.zig deletion is in slice 4 if inseparable, else here
-  3. `feat(calendar): schema v3 synced-override identity and sync API`
-  4. `feat(app): ingest feed overrides on news refresh` — main.zig wiring
-  5. `feat(app): month-scoped news pane, synced-override UX, RDO context` —
-     fragments + all five regenerated shards together (dev rule), E2E test
-  6. `docs(news): plan, runbook, remaining-work plan, README, CONTEXT`
+Six commits on `gol/important-news-google-search-8efadb`, pushed, opened as
+[PR #26](https://github.com/hexuria/formzero/pull/26) (67 files,
++15,667/−966, mergeable):
 
-  Exact file-to-slice mapping may shift where files are entangled (main.zig
-  spans 2/4/5); the invariant is: shards move with their fragments, and HEAD
-  passes `just verify`. Intermediate slices need only compile-sanity, not the
-  full 8-minute gate.
-- [ ] **R2.2 Push + PR.** Push via the git credential helper (no piped git —
-  verify exit codes); open the PR against `main` with `curl` (gh is broken
-  behind the proxy). PR body links the plan and this file.
+| | Commit |
+| --- | --- |
+| `3be7118` | `feat: add BIR issuance sync pipeline` |
+| `d3fd8fc` | `feat: record synced deadline overrides in the calendar store` |
+| `e27e477` | `feat: apply BIR deadline extensions to the calendar` |
+| `d03a7bf` | `docs: describe the BIR news sync and its remaining work` |
+| `ebbfdd5` | `fix: date Important News notices in Manila time` |
+| `6d7bcb4` | `docs: record the live dry-run against bir.gov.ph` |
 
-## R3 — live dry-run (T8.2, the plan's own sign-off gate)
+The planned six-way split collapsed where `main.zig` spanned three slices —
+a single file cannot be split across commits without interactive staging — so
+the app changes landed as one commit. `gh` turned out to work for both push and
+PR creation; the curl fallback was not needed.
 
-I execute; you eyeball the screenshots. No push required — runs locally.
+## R3 — live dry-run (T8.2) — **DONE 2026-08-11**
 
-- [ ] **R3.1 Live pipeline run:** `npm run news:sync -- all` against the real
-  CMS. Expect ~16+ notices, the two RMC-89 overrides, dates all
-  archive-sourced. Read `review/bir-rmc-2026-089.md` end to end.
-- [ ] **R3.2 App walkthrough:** serve the feed over localhost
-  (`python3 -m http.server` in `scripts/news-sync/feed/`), launch with
-  `BUWIZ_NEWS_FEED_URL=http://localhost:<port>/feed.json just run`, walk the
-  §0 scenario — August pane shows RMC 89-2026, July switch, profile with RDO
-  039 shows the 1601C marker on Aug 17 (Extended), RDO selector Nationwide vs
-  039 — screenshots into `docs/news/screenshots/`.
-- [ ] **R3.3 Tick T8.2** in the plan with a link to the screenshots.
+Results and screenshots: [screenshots/README.md](screenshots/README.md).
+112 issuances, 96 new, every one dated from a yearly-archive row. Nationwide
+August shows 9 deadlines on the 10th; under RDO 039 three of them move to the
+17th. Two findings: notice dates were rendering a day early (fixed, committed)
+and six of seven extension circulars yield no overrides (two are image-only
+scans; RMC 62-2026 is a real miss, tracked as T10.1).
 
-## R4 — first publish and end-to-end-in-production (after R2, ideally after R3)
+## R4 — first publish — **BLOCKED until this PR merges**
 
-- [ ] **R4.1 Dispatch `news-sync.yml`** once via the Actions API
-  (`workflow_dispatch` with `ref` = this branch; fallback: after merge). This
-  creates the orphan `news-feed` branch and publishes `feed.json`.
+GitHub only dispatches a `workflow_dispatch` workflow that already exists on
+the **default branch**, and `news-sync.yml` lives only on this branch, so the
+attempt returns:
+
+```
+HTTP 404: workflow news-sync.yml not found on the default branch
+```
+
+The `schedule:` trigger is gated the same way, so the 4×/day cron will not fire
+before the merge either. Nothing here is broken — this is how GitHub scopes
+workflow triggers — but it does mean **R4 cannot be done before review**, and
+`raw.githubusercontent.com/hexuria/formzero/news-feed/feed.json` returns 404
+until it is. The app degrades to "could not refresh" and keeps its last-good
+SQLite cache, which is the designed behaviour for an unreachable feed.
+
+Deliberately **not** worked around by creating the `news-feed` branch by hand:
+that would publish outside review, and it would send the workflow's first real
+run down its "branch already exists" path, leaving the orphan-creation path
+untested exactly once — on the run that matters.
+
+What was verified locally in the meantime: the pipeline produced a publishable
+feed against the live site (R3), and the workflow's own pre-publish gate passes
+on it (`feed.json: 112 notices, 2 overrides`).
+
+Run immediately after merge:
+
+- [ ] **R4.1 Dispatch `news-sync.yml`** once — `gh workflow run news-sync.yml`
+  (no `--ref` needed once it is on `main`). This creates the orphan
+  `news-feed` branch and publishes `feed.json`.
 - [ ] **R4.2 Verify the loop closed:** raw URL returns HTTP 200 with the
   expected sha; a fresh `just run` with **no** env override fetches it and
   shows "BIR override(s) synced"; a second dispatch makes no commit
