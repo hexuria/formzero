@@ -4,11 +4,14 @@ Branch `gol/important-news-google-search-8efadb` · companion to
 [the execution plan](IMPORTANT_NEWS_SYNC_EXECUTION_PLAN_2026-08-11.md)
 (29/31 tasks done there; this file tracks shipping and what is left).
 
-**Snapshot 2026-08-11:** implemented, dry-run against the live BIR site, and
-open for review as [PR #26](https://github.com/hexuria/formzero/pull/26).
-`just verify` exits 0 — Zig **1839/1843** (baseline 1798/1802) and TypeScript
-**201 tests / 198 pass / 3 network-gated skips**. Six commits are pushed.
-Only **R4** remains, and it cannot run until the PR merges (see below).
+**Snapshot 2026-08-11:** shipped. [PR #26](https://github.com/hexuria/formzero/pull/26)
+merged as `691f363`, the feed is published, and the app reads it from GitHub
+with no override. `just verify` exits 0 — Zig **1839/1843** (baseline
+1798/1802) and TypeScript **201 tests / 198 pass / 3 network-gated skips**.
+
+One follow-up is open: **[PR #27](https://github.com/hexuria/formzero/pull/27)**
+fixes dedupe state not surviving between scheduled runs (found by R4.2).
+Everything else left is backlog.
 
 ---
 
@@ -104,43 +107,35 @@ August shows 9 deadlines on the 10th; under RDO 039 three of them move to the
 and six of seven extension circulars yield no overrides (two are image-only
 scans; RMC 62-2026 is a real miss, tracked as T10.1).
 
-## R4 — first publish — **BLOCKED until this PR merges**
+## R4 — first publish — **DONE 2026-08-11**
 
-GitHub only dispatches a `workflow_dispatch` workflow that already exists on
-the **default branch**, and `news-sync.yml` lives only on this branch, so the
-attempt returns:
+PR #26 merged as `691f363`, which put `news-sync.yml` on the default branch and
+made it dispatchable. Two runs followed.
 
-```
-HTTP 404: workflow news-sync.yml not found on the default branch
-```
+- [x] **R4.1 Publish.** Run
+  [31479402242](https://github.com/hexuria/formzero/actions/runs/31479402242)
+  succeeded through every step and created the orphan `news-feed` branch:
+  `Published 3 new issuance(s)`, `feed.json: 115 notices, 2 overrides`.
+- [x] **R4.2 The loop closed.**
+  `https://raw.githubusercontent.com/hexuria/formzero/news-feed/feed.json`
+  serves HTTP 200 / 57,365 bytes. The app launched with **no**
+  `BUWIZ_NEWS_FEED_URL` fetched it and rendered the three issuances BIR
+  published that morning — RMC 90-2026, RMC 91-2026 and RMO 20-2026, all dated
+  11 August — with no error state. Selecting RDO 039 moved Aug 10 from 9
+  markers to 6 and Aug 17 from 1 to 4, from the published feed rather than a
+  local file (`screenshots/04-published-feed-rdo-039.png`).
+- [x] **R4.3 Idempotence — failed, fixed, needs re-checking.** The second run
+  committed again instead of reporting "already current". The two commits
+  differ only in `generated_at_unix` and `firstSeenAtUnix`: the workflow read
+  its dedupe state from the checkout but wrote it to `news-feed`, so state
+  never round-tripped and every run rediscovered the same issuances. Fixed in
+  **[PR #27](https://github.com/hexuria/formzero/pull/27)**, which restores the
+  published outputs before syncing. Published data was never wrong — dates
+  stayed archive-sourced and both overrides were correct throughout.
 
-The `schedule:` trigger is gated the same way, so the 4×/day cron will not fire
-before the merge either. Nothing here is broken — this is how GitHub scopes
-workflow triggers — but it does mean **R4 cannot be done before review**, and
-`raw.githubusercontent.com/hexuria/formzero/news-feed/feed.json` returns 404
-until it is. The app degrades to "could not refresh" and keeps its last-good
-SQLite cache, which is the designed behaviour for an unreachable feed.
-
-Deliberately **not** worked around by creating the `news-feed` branch by hand:
-that would publish outside review, and it would send the workflow's first real
-run down its "branch already exists" path, leaving the orphan-creation path
-untested exactly once — on the run that matters.
-
-What was verified locally in the meantime: the pipeline produced a publishable
-feed against the live site (R3), and the workflow's own pre-publish gate passes
-on it (`feed.json: 112 notices, 2 overrides`).
-
-Run immediately after merge:
-
-- [ ] **R4.1 Dispatch `news-sync.yml`** once — `gh workflow run news-sync.yml`
-  (no `--ref` needed once it is on `main`). This creates the orphan
-  `news-feed` branch and publishes `feed.json`.
-- [ ] **R4.2 Verify the loop closed:** raw URL returns HTTP 200 with the
-  expected sha; a fresh `just run` with **no** env override fetches it and
-  shows "BIR override(s) synced"; a second dispatch makes no commit
-  (idempotence in production).
-- [ ] **R4.3 Confirm the 4×/day cron fires** after merge (first scheduled slot
-  in UTC 4/10/16/22) and update the runbook if anything surprised us.
+**Still to do:** merge PR #27, dispatch twice, and confirm the second run logs
+`news-feed is already current; no commit made.` Then watch that the 4×/day cron
+fires at its first UTC slot (04/10/16/22) and makes no commit on a quiet run.
 
 ## Backlog (tracked, deliberately not this cycle)
 
