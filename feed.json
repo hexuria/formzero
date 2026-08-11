@@ -1,0 +1,1196 @@
+{
+  "schema_version": 1,
+  "generated_at_unix": 1786441770,
+  "source_label": "BIR",
+  "notices": [
+    {
+      "external_id": "bir:rmo:2026:020",
+      "kind": "RMO",
+      "title": "RMO No. 20-2026",
+      "summary": "Adjustment of Reimbursable Transportation Allowance of BIR Officials and Employees",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2020-2026_redacted.pdf",
+      "published_at_unix": 1786377600,
+      "month_bucket": "2026-08"
+    },
+    {
+      "external_id": "bir:rmc:2026:091",
+      "kind": "RMC",
+      "title": "RMC No. 91-2026",
+      "summary": "Clarification of the Base Amount for the Imposition of the Twenty Percent (20%) Penalty Relative to the Early Withdrawal of Personal Equity and Retirement Account (PERA) Assets, Accounts and Sub-Accounts Classified as Unqualified, and Amending Certain Provisions of Revenue Memorandum Circular (RMC) No. 4-2023",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2091-2026_redacted.pdf",
+      "published_at_unix": 1786377600,
+      "month_bucket": "2026-08"
+    },
+    {
+      "external_id": "bir:rmc:2026:090",
+      "kind": "RMC",
+      "title": "RMC No. 90-2026",
+      "summary": "Clarification on the Certificate of Compliance issued by the Cooperatives and Social Enterprise Authority of the Bangsamoro Autonomous Region in Muslim Mindanao",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2090-2026_redacted.pdf",
+      "published_at_unix": 1786377600,
+      "month_bucket": "2026-08"
+    },
+    {
+      "external_id": "bir:rmc:2026:089",
+      "kind": "RMC",
+      "title": "RMC No. 89-2026",
+      "summary": "Providing Extension of the Deadlines for the Filing of Tax Retums and Payment of Conesponding Taxes Due Thereon, Including Submission of Required Documents for Taxpayers within the Jurisdiction of Revenue District Offices of the Bureau of Intemal Revenue that were Affected by the Continued Heavy Rainfall brought about by Southwest Monsoon",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2089-2026_redacted.pdf",
+      "published_at_unix": 1786291200,
+      "month_bucket": "2026-08"
+    },
+    {
+      "external_id": "bir:rmc:2026:088",
+      "kind": "RMC",
+      "title": "RMC No. 88-2026",
+      "summary": "Circularizing Memorandum Circular (MC) No. 122 dated 05 August 2028 of the Office of the President, Malacañang Palace",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2088-2026_redacted.pdf",
+      "published_at_unix": 1785945600,
+      "month_bucket": "2026-08"
+    },
+    {
+      "external_id": "bir:rmc:2026:087",
+      "kind": "RMC",
+      "title": "RMC No. 87-2026",
+      "summary": "Publishing the Full Text of the May 4, 2026 Letter from the Food and Drug Administration (FDA) of the Department of Health Endorsing the Updated Full List of VAT-Exempt Drugs Under Republic Act (R.A.) No. 10963 (TRAIN Law) and R.A. No. 11534 (CREATE Act)",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2087-2026_redacted.pdf",
+      "published_at_unix": 1785772800,
+      "month_bucket": "2026-08"
+    },
+    {
+      "external_id": "bir:rmc:2026:086",
+      "kind": "RMC",
+      "title": "RMC No. 86-2026",
+      "summary": "Publishing the Updated List of Registered Manufacturers/Importers /Exporters with the Corresponding Products/Brands/Variants of Cigarettes, Heated Tobacco Products, Vapor Products, Novel Tobacco Products, Cigars, Smoking Tobacco Products and Chewing Tobacco Products and Integration of the Requirements for Compliance Purposes",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2086-2026_redacted-compressed.pdf",
+      "published_at_unix": 1785427200,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmc:2026:085",
+      "kind": "RMC",
+      "title": "RMC No. 85-2026",
+      "summary": "Publishing the Updated List of Registered Manufacturers/Importers /Exporters with the Corresponding Products/Brands/Variants of Cigarettes, Heated Tobacco Products, Vapor Products, Novel Tobacco Products, Cigars, Smoking Tobacco Products and Chewing Tobacco Products and Integration of the Requirements for Compliance Purposes",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2085-2026_redacted-compressed.pdf",
+      "published_at_unix": 1785427200,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmo:2026:019",
+      "kind": "RMO",
+      "title": "RMO No. 19-2026",
+      "summary": "Policies, Guidelines, and Procedures for the Availment of a One-Time Abatement of Taxes and/or Penalties for Micro Taxpayers Pursuant to Revenue Regulations No. 004-2026",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2019-2026_Redacted.pdf",
+      "published_at_unix": 1784736000,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmo:2026:018",
+      "kind": "RMO",
+      "title": "RMO No. 18-2026",
+      "summary": "Creation of Alphanumeric Tax Code (ATC) of Selected Revenue Source under Revenue Regulations No. 004-2026",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2018-2026_redacted.pdf",
+      "published_at_unix": 1784736000,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmc:2026:084",
+      "kind": "RMC",
+      "title": "RMC No. 84-2026",
+      "summary": "Clarifying certain provisions of Revenue Regulations No. 004-2026, prescribing the guidelines and procedures for the availment of the one-time abatement of taxes and/or penalties for micro taxpayers",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2084-2026_Redacted.pdf",
+      "published_at_unix": 1784736000,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmc:2026:083",
+      "kind": "RMC",
+      "title": "RMC No. 83-2026",
+      "summary": "Circularizing Executive Order No. 117 (S. 2026): Streamlining the Accreditation System for Donee Institutions and Designating the Department of Social Welfare and Development as the Sole Accrediting Entity for Social Welfare and Development Agencies, Amending Executive Order No. 720 (S. 2008)",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2083-2026.pdf",
+      "published_at_unix": 1784649600,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmc:2026:082",
+      "kind": "RMC",
+      "title": "RMC No. 82-2026",
+      "summary": "Publishing the Full Text of the Resolution No. 2026-1 dated July 02, 2026, Entitled \"Grant of the Performance-Based Bonus (PBB) for the Fiscal Year (FY) 2024\" and Memorandum Circular No. 2026-1 dated July 03, 2026, Entitled \"Guidelines on the Grant of the Performance-Based Bonus (PBB) for the Fiscal Year (FY) 2024\" of the Executive Order (E.O.) No. 61 (s.2024) Technical Working Group",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2082-2026.pdf",
+      "published_at_unix": 1784649600,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmc:2026:081",
+      "kind": "RMC",
+      "title": "RMC No. 81-2026",
+      "summary": "Prescribing Workaround Procedures for Claiming Five-Year Net Operating Loss Carry-Over Incurred in Taxable Years 2020 and 2021 in the Offline eBIRForms Package and Electronic Filing and Payment System",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2081-2026_redacted.pdf",
+      "published_at_unix": 1784649600,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmc:2026:080",
+      "kind": "RMC",
+      "title": "RMC No. 80-2026",
+      "summary": "Circularizing the Memorandum of Agreement (MOA) Between the Bureau of Internal Revenue (BIR) and its Multi-Sectoral Partners",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2080-2026_redacted.pdf",
+      "published_at_unix": 1784563200,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmc:2026:079",
+      "kind": "RMC",
+      "title": "RMC No. 79-2026",
+      "summary": "Clarifying the Provisions of Revenue Regulations No. 24-2025 on the Imposition of Creditable Withholding Tax on Top Withholding Agents",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2079-2026_redacted.pdf",
+      "published_at_unix": 1784476800,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmc:2026:078",
+      "kind": "RMC",
+      "title": "RMC No. 78-2026",
+      "summary": "Circularizing the Full Text of the Memorandum of Agreement (MOA) Between the Bureau of Internal Revenue (BIR) and the Philippine Chinese Charitable Association, Inc. Owner and Operator of the Chinese General Hospital and Medical Center",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2078-2026_redacted.pdf",
+      "published_at_unix": 1783872000,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmc:2026:077",
+      "kind": "RMC",
+      "title": "RMC No. 77-2026",
+      "summary": "Lost Triplicate Copy of Used/Filled-Up but Unissued BIR Form No. 0402 - Authority to Cancel Assessment",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2077-2026_redacted.pdf",
+      "published_at_unix": 1783872000,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmc:2026:076",
+      "kind": "RMC",
+      "title": "RMC No. 76-2026",
+      "summary": "Availability of the BIR Electronic Tax Clearance System (eTCS) for Taxpayer-Applicants Registered under Revenue Region (RR) No. 1 - Ilocos Region, RR No. 2 - Cordillera Administrative Region, RR No. 3 - Cagayan Valley, RR No. 4 - Central Luzon, RR No. 5 - CaMaNaVa and Bulacan, RR No. 6 - City of Manila and Palawan, RR No. 9A - CaBaMiRo, RR No. 9B - LaQueMar, RR No. 10 - Bicol Region, RR No. 11 - Western Visayas Region, RR No. 12 - Negros Island Region, RR No. 13 - Central Visayas Region, RR No. 14 - Eastern Visayas Region, RR No. 15 - Zamboanga Peninsula and Tawi-Tawi, RR No. 16 - Northern Mindanao, RR No. 17 - Caraga Region, RR No. 18 - South Central Mindanao and RR No. 19 - Davao Region",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2076-2026_redacted.pdf",
+      "published_at_unix": 1783526400,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmo:2026:017",
+      "kind": "RMO",
+      "title": "RMO No. 17-2026",
+      "summary": "Updated Policies and Procedures in Processing One-Time Transaction (ONETT) For Sale and Donation of Real/Personal Properties in Relation to the International Organization for Standardization (ISO) 9001:2015 Quality Management System (QMS)",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2017-2026_Redacted.pdf",
+      "published_at_unix": 1783440000,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmc:2026:075",
+      "kind": "RMC",
+      "title": "RMC No. 75-2026",
+      "summary": "Frequently Asked Questions Relative to the Application for One-Time Transaction (ONETT) Computation Sheet (OCS) and Electronic Certificate Authorizing Registration (eCAR) of Properties",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2075-2026_Redacted.pdf",
+      "published_at_unix": 1783440000,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmo:2026:016",
+      "kind": "RMO",
+      "title": "RMO No. 16-2026",
+      "summary": "Supplemental guidelines and procedures in the implementation of Revenue Memorandum Order No. 44-2025, with respect to the processing and payment of Separation and Terminal Leave Benefits claims of officials holding the positions of Regional Director/OIC-Regional Director and Assistant Regional Director/OIC-Assistant Regional Director",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20NO.%2016%20-2026_redacted-compressed%20(1).pdf",
+      "published_at_unix": 1783353600,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmo:2026:015",
+      "kind": "RMO",
+      "title": "RMO No. 15-2026",
+      "summary": "Guidelines on the Processing of Freedom of Information Requests",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2015-2026_redacted.pdf",
+      "published_at_unix": 1783353600,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmo:2026:014",
+      "kind": "RMO",
+      "title": "RMO No. 14-2026",
+      "summary": "Partial Revocation of Certain Provisions of Revenue Memorandum Order No. 4-2025",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2014-2026_redacted.pdf",
+      "published_at_unix": 1783267200,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmc:2026:074",
+      "kind": "RMC",
+      "title": "RMC No. 74-2026",
+      "summary": "Circularizing the Additional List of Personal Equity and Retirement Account (PERA) Unit Investment Trust Funds (UITFs) Duly Approved by the Bangko Sentral ng Pilipinas (BSP)",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2074_redacted.pdf",
+      "published_at_unix": 1783267200,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmc:2026:073",
+      "kind": "RMC",
+      "title": "RMC No. 73-2026",
+      "summary": "Tax treatment of activities undertaken pursuant to the Letter of Agreement on narcotics control and law enforcement between the government of the Republic of the Philippines and the government of the United States of America",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20NO%2073-2026_redacted.pdf",
+      "published_at_unix": 1782835200,
+      "month_bucket": "2026-07"
+    },
+    {
+      "external_id": "bir:rmc:2026:072",
+      "kind": "RMC",
+      "title": "RMC No. 72-2026",
+      "summary": "Clarifying the Tax Treatment of Transfers of Proprietary Club Shares held under Nominee or Trust Agreements, Dispensing with Prior Confirmatory Ruling Subject to Post-Audit Verification",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2072-2026_redacted.pdf",
+      "published_at_unix": 1782748800,
+      "month_bucket": "2026-06"
+    },
+    {
+      "external_id": "bir:rmo:2026:013",
+      "kind": "RMO",
+      "title": "RMO No. 13-2026",
+      "summary": "Amending the Provisions of Revenue Memorandum Order No. 36-2016 on the Policies and Procedures in the Reconciliation of Internal Revenue Collections",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2013-2026_redacted.pdf",
+      "published_at_unix": 1782230400,
+      "month_bucket": "2026-06"
+    },
+    {
+      "external_id": "bir:rmc:2026:071",
+      "kind": "RMC",
+      "title": "RMC No. 71-2026",
+      "summary": "Clarification on the Extension of the Validity of Certificates of Compliance (COC) for Purposes of the Evaluation and Processing of Applications for Certificate of Tax Exemption (CTE) for Cooperatives Pursuant to the Cooperative Development Authority Memorandum Circular No. 2026-07, Series of 2026",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2071-2026_redacted.pdf",
+      "published_at_unix": 1782230400,
+      "month_bucket": "2026-06"
+    },
+    {
+      "external_id": "bir:rr:2026:004",
+      "kind": "RR",
+      "title": "RR No. 4-2026",
+      "summary": "Prescribing guidelines and procedures for the availment of a one-time abatement of taxes and/or penalties for Micro Taxpayers",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RR%20No.%204-2026_Redacted.pdf",
+      "published_at_unix": 1782057600,
+      "month_bucket": "2026-06"
+    },
+    {
+      "external_id": "bir:rmc:2026:070",
+      "kind": "RMC",
+      "title": "RMC No. 70-2026",
+      "summary": "Missing Triplicate Copy of Unused/Unissued BIR Form No. 0423 - Apprehension Slip",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2070-2026_redacted.pdf",
+      "published_at_unix": 1782057600,
+      "month_bucket": "2026-06"
+    },
+    {
+      "external_id": "bir:rmc:2026:069",
+      "kind": "RMC",
+      "title": "RMC No. 69-2026",
+      "summary": "Lost Three (3) Sets of Unused/Unissued BIR Form No. 0535 - Taxpayer Information Sheet",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2069-2026_redacted.pdf",
+      "published_at_unix": 1782057600,
+      "month_bucket": "2026-06"
+    },
+    {
+      "external_id": "bir:rmc:2026:068",
+      "kind": "RMC",
+      "title": "RMC No. 68-2026",
+      "summary": "Missing One (1) Set of Unused/Unissued BIR Form No. 2313-R - Electronic Certificate Authorizing Registration for Transaction Involving Transfer of Real Properties",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2068-2026_redacted.pdf",
+      "published_at_unix": 1782057600,
+      "month_bucket": "2026-06"
+    },
+    {
+      "external_id": "bir:rmc:2026:067",
+      "kind": "RMC",
+      "title": "RMC No. 67-2026",
+      "summary": "Lost Several BIR Form No. 0535 - Taxpayer Information Sheet",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2067-2026_redacted.pdf",
+      "published_at_unix": 1782057600,
+      "month_bucket": "2026-06"
+    },
+    {
+      "external_id": "bir:rmc:2026:066",
+      "kind": "RMC",
+      "title": "RMC No. 66-2026",
+      "summary": "Lost Five (5) Sets of Unused/Unissued BIR Form No. 0535 - Taxpayer Information Sheet",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2066-2026_redacted.pdf",
+      "published_at_unix": 1782057600,
+      "month_bucket": "2026-06"
+    },
+    {
+      "external_id": "bir:rmc:2026:065",
+      "kind": "RMC",
+      "title": "RMC No. 65-2026",
+      "summary": "Lost Two (2) Sets of Unused/Unissued BIR Form No. 0423 - Apprrehension Slip",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2065-2026_redacted.pdf",
+      "published_at_unix": 1782057600,
+      "month_bucket": "2026-06"
+    },
+    {
+      "external_id": "bir:rmc:2026:064",
+      "kind": "RMC",
+      "title": "RMC No. 64-2026",
+      "summary": "Supplemental Guidelines on the Generation of Registration Seal Badge via the Online Registration and Update System (ORUS) for Taxpayers with No Updates on Certificate of Registration (COR) Pursuant to Revenue Memorandum Circular No. 38-2026",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%2064-2026.pdf",
+      "published_at_unix": 1781712000,
+      "month_bucket": "2026-06"
+    },
+    {
+      "external_id": "bir:rmc:2026:063",
+      "kind": "RMC",
+      "title": "RMC No. 63-2026",
+      "summary": "Publishing the Full Text of NCSC Public Advisory No. 1, Series of 2026 dated May 18, 2026 signed by the Chairperson and Chief Executive Officer of National Commission of Senior Citizens Re: Acceptance of the Digital National Senior Citizen ID as Valid Proof of Identity in all Transactions\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2063-2026.pdf",
+      "published_at_unix": 1780934400,
+      "month_bucket": "2026-06"
+    },
+    {
+      "external_id": "bir:rmc:2026:062",
+      "kind": "RMC",
+      "title": "RMC No. 62-2026",
+      "summary": "Extends the deadlines for the filing of tax returns and payment of the corresponding taxes due thereon, including submission of required documents for taxpayers affected by the recent earthquake in Revenue Region No. 18 - South Central Mindanao",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2062-2026_compressed.pdf",
+      "published_at_unix": 1780934400,
+      "month_bucket": "2026-06"
+    },
+    {
+      "external_id": "bir:rmc:2026:061",
+      "kind": "RMC",
+      "title": "RMC No. 61-2026",
+      "summary": "Circularizing Memorandum Circular No. 117 dated March 31, 2026 issued by the Office of the President, relative to the playing of the Official Music Videos of Lupang Hinirang and the ASEAN 2026 Theme Song \"One Vision, One Ocean\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2061-2026.pdf",
+      "published_at_unix": 1780934400,
+      "month_bucket": "2026-06"
+    },
+    {
+      "external_id": "bir:rmo:2026:012",
+      "kind": "RMO",
+      "title": "RMO No. 12-2026",
+      "summary": "Designation of Official Spokesperson",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2012-2026.pdf",
+      "published_at_unix": 1780848000,
+      "month_bucket": "2026-06"
+    },
+    {
+      "external_id": "bir:rmc:2026:060",
+      "kind": "RMC",
+      "title": "RMC No. 60-2026",
+      "summary": "Amendment of Revenue Memorandum Circular No. 116-2024 re: Inclusion of Lifeline Subsidy and Green Energy Auction Allowance as Government Mandated Charges Not Subject to Output Tax and Creditable Withholding Tax on VAT and Income",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2060%20-%202026.pdf",
+      "published_at_unix": 1780502400,
+      "month_bucket": "2026-06"
+    },
+    {
+      "external_id": "bir:rmc:2026:059",
+      "kind": "RMC",
+      "title": "RMC No. 59-2026",
+      "summary": "Further clarifying the provisions of Revenue Regulations No. 3-2025 to implement Republic Act No. 12023, titled \"An Act Amending Sections 105, 108, 109, 110, 113, 114, 115, 128, 236 and 288 and Adding New Sections 108-A and 108-B of the National Internal Revenue Code of 1997, as amended,\" imposing the Value-Added Tax on Digital Services",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2059-2026.pdf",
+      "published_at_unix": 1780329600,
+      "month_bucket": "2026-06"
+    },
+    {
+      "external_id": "bir:rmc:2026:058",
+      "kind": "RMC",
+      "title": "RMC No. 58-2026",
+      "summary": "Circularizing the procedures for the filing and payment of Quarterly Royalty under Republic Act No. 12253, otherwise known as the \"Enhanced Fiscal Regime for Large-Scale Metallic Mining Act\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2058-2026.pdf",
+      "published_at_unix": 1779897600,
+      "month_bucket": "2026-05"
+    },
+    {
+      "external_id": "bir:rmc:2026:057",
+      "kind": "RMC",
+      "title": "RMC No. 57-2026",
+      "summary": "Clarifies the inclusion of jackpot prizes from casino and other gambling activities within the statutory definition of \"winnings\" subject to final tax pursuant to Sections 24(B)(1), 25(A)(1) and 25(B) of the National Internal Revenue Code of 1997, as Amended.",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2057-2026%20(2).pdf",
+      "published_at_unix": 1779724800,
+      "month_bucket": "2026-05"
+    },
+    {
+      "external_id": "bir:rmc:2026:056",
+      "kind": "RMC",
+      "title": "RMC No. 56-2026",
+      "summary": "Circularizing the full text of Republic Act No. 12316, \"An Act Authorizing the President to Suspend or Reduce Excise Tax on Petroleum Products, Amending for the Purpose Section 148 of the National Internal Revenue Code of 1997, as Amended\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No._56-2026.pdf",
+      "published_at_unix": 1779724800,
+      "month_bucket": "2026-05"
+    },
+    {
+      "external_id": "bir:rmc:2026:055",
+      "kind": "RMC",
+      "title": "RMC No. 55-2026",
+      "summary": "Obligation of Electronic Marketplace Operators and Digital Financial Services Providers on the submission of the prescribed Alphabetical List of Employees/Payees",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2055-2026.pdf",
+      "published_at_unix": 1779724800,
+      "month_bucket": "2026-05"
+    },
+    {
+      "external_id": "bir:rmc:2026:054",
+      "kind": "RMC",
+      "title": "RMC No. 54-2026",
+      "summary": "Clarification on the Personal Equity Retirement Account (PERA) eligibility of securities covered by the Securities and Exchange Commission (SEC) notice on the Philippine Stock Exchange (PSE) bi-annual rebalancing",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2054-2026.pdf",
+      "published_at_unix": 1779724800,
+      "month_bucket": "2026-05"
+    },
+    {
+      "external_id": "bir:rmc:2026:053",
+      "kind": "RMC",
+      "title": "RMC No. 53-2026",
+      "summary": "Announcing the Availability of the Taxpayer Portal and its Pilot Implementation to Large Taxpayers Service",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2053-2026.pdf",
+      "published_at_unix": 1779724800,
+      "month_bucket": "2026-05"
+    },
+    {
+      "external_id": "bir:rmc:2026:052",
+      "kind": "RMC",
+      "title": "RMC No. 52-2026",
+      "summary": "Circularizing Republic Act No. 12021, Entitled \"An Act Providing for the Magna Carta of Filipino Seafarers\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%2052-2026%20(1).pdf",
+      "published_at_unix": 1779292800,
+      "month_bucket": "2026-05"
+    },
+    {
+      "external_id": "bir:rmc:2026:051",
+      "kind": "RMC",
+      "title": "RMC No. 51-2026",
+      "summary": "Publishing the Full Text of Civil Service Commission Resolution Number 2600005 dated January 06, 2026 re: Guidelines on the Development of Agency Competency-Based Human Resource Management System",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2051-2026(1).pdf",
+      "published_at_unix": 1779292800,
+      "month_bucket": "2026-05"
+    },
+    {
+      "external_id": "bir:rmc:2026:050",
+      "kind": "RMC",
+      "title": "RMC No. 50-2026",
+      "summary": "Publishing the Full Text of Civil Service Commission Resolution Number 2501089 dated October 08, 2025 re: Guidelines on the Conduct of Mid-Term and Full Term Review of Awardees of the Program to Institutionalize Meritocracy and Excellence in Human Resource Management (PRIME-HRM)",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2050%202026(1).pdf",
+      "published_at_unix": 1779292800,
+      "month_bucket": "2026-05"
+    },
+    {
+      "external_id": "bir:rmc:2026:049",
+      "kind": "RMC",
+      "title": "RMC No. 49-2026",
+      "summary": "Circularizing Republic Act No. 12231, entitled \"An Act Optimizing the National Government for Efficient Public Service Delivery\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2049-2026(1).pdf",
+      "published_at_unix": 1779292800,
+      "month_bucket": "2026-05"
+    },
+    {
+      "external_id": "bir:rmc:2026:048",
+      "kind": "RMC",
+      "title": "RMC No. 48-2026",
+      "summary": "Lost Two (2) Pads of Used/Filled-Up but Unissued BIR Form No. 2302 - Tax Subsidy Availment Certificate",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20048-2026.pdf",
+      "published_at_unix": 1779292800,
+      "month_bucket": "2026-05"
+    },
+    {
+      "external_id": "bir:rmc:2026:047",
+      "kind": "RMC",
+      "title": "RMC No. 47-2026",
+      "summary": "Prescribing Simplified and Streamlined Guidelines and Procedures in the Closure and/or Cancellation of Business Registration with the Bureau of Internal Revenue",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2047-2026.pdf",
+      "published_at_unix": 1779120000,
+      "month_bucket": "2026-05"
+    },
+    {
+      "external_id": "bir:rmc:2026:046",
+      "kind": "RMC",
+      "title": "RMC No. 46-2026",
+      "summary": "Prescribes the Procedures and Deadline on the Submission of 2025 Audited Financial Statements and Other Attachments Through the Electronic Audited Financial Statements Systems / Submission Facility.",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2046-2026.pdf",
+      "published_at_unix": 1779033600,
+      "month_bucket": "2026-05"
+    },
+    {
+      "external_id": "bir:rmc:2026:045",
+      "kind": "RMC",
+      "title": "RMC No. 45-2026",
+      "summary": "Publishing the Full Text of Memorandum Circular No. 118 Dated April 13, 2026 issued by the Office of the President re: \"Directing all Government Agencies and Instrumentalities and Encouraging Local Government Units and the Private Sector, to Participate in the Celebration of the 128th Anniversary of the Proclamation of Philippine Independence\".",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2045-2026.pdf",
+      "published_at_unix": 1778601600,
+      "month_bucket": "2026-05"
+    },
+    {
+      "external_id": "bir:rmc:2026:044",
+      "kind": "RMC",
+      "title": "RMC No. 44-2026",
+      "summary": "Circularizing Department of Finance (DOF) Department Order No. 018-2025, entitled \"Guidelines for Accreditation of Value Added Tax (VAT) Refund System Operators Pursuant to Republic Act No. 12079 Otherwise Known as 'An Act Creating a VAT Refund Mechanism for Non-Resident Tourists, Adding a New Section 112-A to the National Internal Revenue Code of 1997, As Amended, For the Purpose'\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2044-2026.pdf",
+      "published_at_unix": 1778601600,
+      "month_bucket": "2026-05"
+    },
+    {
+      "external_id": "bir:rmc:2026:043",
+      "kind": "RMC",
+      "title": "RMC No. 43-2026",
+      "summary": "Circularizing Republic Act No. 12022, Entitled \"An Act Defining the Crimes of Agricultural Economic Sabotage Prescribing Penalties Therefor, Vesting Jurisdiction Over Such Offenses with the Court of Tax Appeals Providing Mechanisms for its Implementation and Enforcement, Repealing for the Purpose Republic Act No. 10845 or the 'Anti-Agricultural Smuggling Act of 2016' \"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2043-2026.pdf",
+      "published_at_unix": 1778601600,
+      "month_bucket": "2026-05"
+    },
+    {
+      "external_id": "bir:rmo:2026:011",
+      "kind": "RMO",
+      "title": "RMO No. 11-2026",
+      "summary": "Updated Cost to Collect Threshold for Accounts Receivable/Delinquent Accounts (AR/DA) for Collection Enforcement Prioritization",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2011-2026.pdf",
+      "published_at_unix": 1778515200,
+      "month_bucket": "2026-05"
+    },
+    {
+      "external_id": "bir:rmc:2026:042",
+      "kind": "RMC",
+      "title": "RMC No. 42-2026",
+      "summary": "Clarification on the Submission of the Certificate of Entitlement to Tax Incentives as Attachment to the Annual Income Tax Return",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2042-2026.pdf",
+      "published_at_unix": 1778083200,
+      "month_bucket": "2026-05"
+    },
+    {
+      "external_id": "bir:rmc:2026:041",
+      "kind": "RMC",
+      "title": "RMC No. 41-2026",
+      "summary": "Publishing the Updated List of Registered Manufacturers/Importers/ Exporters with the Corresponding Product Brands/Variants of Cigarettes, Heated Tobacco Products, Vapor Products, Novel Tobacco Products, Cigars, Smoking Tobacco Products and Chewing Tobacco Products with the Corresponding Products/Brands/Variants and Integration of the Requirements for Compliance Purposes",
+      "url": "https://apc01.safelinks.protection.outlook.com/?url=https%3A%2F%2Fbir-cdn.bir.gov.ph%2FBIR%2Fpdf%2FRMC%2520No.%252041-2026.pdf&data=05%7C02%7Cmaezel.obogne%40bir.gov.ph%7Ccd54ad54a6b14b86128608dea9870328%7C9d24fc3f2a034a4283ee9770c238f8c2%7C0%7C0%7C639134594496705797%7CUnknown%7CTWFpbGZsb3d8eyJFbXB0eU1hcGkiOnRydWUsIlYiOiIwLjAuMDAwMCIsIlAiOiJXaW4zMiIsIkFOIjoiTWFpbCIsIldUIjoyfQ%3D%3D%7C0%7C%7C%7C&sdata=1NPf6bwY81XHlCYfMrMezG8k1pr7SLEoNxHiPHG%2B%2FZE%3D&reserved=0",
+      "published_at_unix": 1777478400,
+      "month_bucket": "2026-04"
+    },
+    {
+      "external_id": "bir:rmc:2026:040",
+      "kind": "RMC",
+      "title": "RMC No. 40-2026",
+      "summary": "Circularizing the Memorandum of Agreement (MOA) between the Commission on Elections (COMELEC) and Bureau of Internal Revenue (BIR) dated May 6, 2025",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2040-2026.pdf",
+      "published_at_unix": 1777478400,
+      "month_bucket": "2026-04"
+    },
+    {
+      "external_id": "bir:rmc:2026:039",
+      "kind": "RMC",
+      "title": "RMC No. 39-2026",
+      "summary": "Clarification on the Deadline for the Submission of Required Attachments to 2025 Annual Income Tax Returns",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2039-2026.pdf",
+      "published_at_unix": 1777478400,
+      "month_bucket": "2026-04"
+    },
+    {
+      "external_id": "bir:rmc:2026:038",
+      "kind": "RMC",
+      "title": "RMC No. 38-2026",
+      "summary": "Prescribing the Issuance and Posting of the BIR Registration Seal Badge on Online Websites, E-Commerce or E-Marketplace Seller/Merchant's Page and Other Platforms, and Announcing the Availability of QR Code in the BIR Certificate of Registration",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20NO.%2038-2026.pdf",
+      "published_at_unix": 1777392000,
+      "month_bucket": "2026-04"
+    },
+    {
+      "external_id": "bir:rmc:2026:037",
+      "kind": "RMC",
+      "title": "RMC No. 37-2026",
+      "summary": "Amending Pertinent Provisions of Revenue Memorandum Circular No. 20-2026 to Include Electronic Filing of BIR Form No. 1701-MS Through the BIR Offline eBIRForms Package 7.9.6",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2037-2026.pdf",
+      "published_at_unix": 1777305600,
+      "month_bucket": "2026-04"
+    },
+    {
+      "external_id": "bir:rmc:2026:036",
+      "kind": "RMC",
+      "title": "RMC No. 36-2026",
+      "summary": "Availability of Offline Electronic Bureau of Internal Revenue Forms (eBIRForms) Package Version 7.9.6.0",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2036-2026.pdf",
+      "published_at_unix": 1777305600,
+      "month_bucket": "2026-04"
+    },
+    {
+      "external_id": "bir:rmc:2026:035",
+      "kind": "RMC",
+      "title": "RMC No. 35-2026",
+      "summary": "Clarifying the Deadline of Filing of Request for Reconsideration of the Full or Partial Denial of the Claim for VAT/Excise Tax Refund Within the National Office Pursuant to Revenue Regulations No. 8-2025 and Request for Reconsideration of the Final Decision on Disputed Assessment Pursuant to Revenue Regulations No. 12-99, as Amended, in Light of Memorandum Circular No. 114 Dated March 6, 2026",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2035-2026.pdf",
+      "published_at_unix": 1777305600,
+      "month_bucket": "2026-04"
+    },
+    {
+      "external_id": "bir:rmc:2026:034",
+      "kind": "RMC",
+      "title": "RMC No. 34-2026",
+      "summary": "Availability of the BIR Digital TIN ID through the Department of Information and Communications Technology (DICT) eGovPH Mobile App",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20NO.%2034-2026.pdf",
+      "published_at_unix": 1777305600,
+      "month_bucket": "2026-04"
+    },
+    {
+      "external_id": "bir:rmc:2026:033",
+      "kind": "RMC",
+      "title": "RMC No. 33-2026",
+      "summary": "Provides clarification on the filing and payment of Estate Tax under the Estate Tax Amnesty",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20NO.%2033-2026.pdf",
+      "published_at_unix": 1777219200,
+      "month_bucket": "2026-04"
+    },
+    {
+      "external_id": "bir:rmo:2026:010",
+      "kind": "RMO",
+      "title": "RMO No. 10-2026",
+      "summary": "Amending pertinent provision of Revenue Memorandum Order (RMO) No. 14-2013 to include Office Code for the Office of the Deputy Commissioner, Strategic Reforms Group.",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20NO%2010-2026.pdf",
+      "published_at_unix": 1776614400,
+      "month_bucket": "2026-04"
+    },
+    {
+      "external_id": "bir:rmc:2026:032",
+      "kind": "RMC",
+      "title": "RMC No. 32-2026",
+      "summary": "Circularizing Joint Administrative Order No. 001-2025 entitled \"GUIDELINES ON THE TREATMENT OF DONATIONS TO THE NATIONAL DAIRY AUTHORITY (NDA)\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2032-2026.pdf",
+      "published_at_unix": 1776614400,
+      "month_bucket": "2026-04"
+    },
+    {
+      "external_id": "bir:rr:2026:003",
+      "kind": "RR",
+      "title": "RR No. 3-2026",
+      "summary": "Implementing Executive Order No. 114, Series of 2026 \"Temporarily Suspending the Excise Taxes on Specific Petroleum Products Pursuant to Section 148 of Republic Act No. 8424 or the National Internal Revenue Code of 1997, As Amended\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RR%20No.%20003-2026.pdf",
+      "published_at_unix": 1776355200,
+      "month_bucket": "2026-04"
+    },
+    {
+      "external_id": "bir:rmc:2026:031",
+      "kind": "RMC",
+      "title": "RMC No. 31-2026",
+      "summary": "Circularizing Executive Order No. 114, Series of 2026, Entitled \"Temporarily Suspending the Excise Taxes on Specific Petroleum Products Pursuant to Section 148 of Republic Act No. 8424, or the National Internal Revenue Code of 1997, As Amended\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2031-2026.pdf",
+      "published_at_unix": 1776355200,
+      "month_bucket": "2026-04"
+    },
+    {
+      "external_id": "bir:rmc:2026:030",
+      "kind": "RMC",
+      "title": "RMC No. 30-2026",
+      "summary": "Extension of the deadline for the Filing of 2025 Annual Income Tax Returns and Payment of the Corresponding Taxes Due Thereon Including Submission of Required Attachments",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2030-2026.pdf",
+      "published_at_unix": 1776096000,
+      "month_bucket": "2026-04"
+    },
+    {
+      "external_id": "bir:rmc:2026:029",
+      "kind": "RMC",
+      "title": "RMC No. 29-2026",
+      "summary": "Publishing the Full Text of Memorandum Circular No, 114 Dated March 9, 2026 Signed by the Acting Executive Secretary, Ralph G. Recto, Office of the President Re: \"Directing All Government Agencies and Instrumentalities to Strictly Adopt Energy Conservation Protocols\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2029-2026.pdf",
+      "published_at_unix": 1776009600,
+      "month_bucket": "2026-04"
+    },
+    {
+      "external_id": "bir:rmc:2026:028",
+      "kind": "RMC",
+      "title": "RMC No. 28-2026",
+      "summary": "Publishing the Full Text of Department Order No. 014-2026 Dated March 9, 2026 Signed by the Secretary of Finance, Frederick D. Go, Re: Guidelines on Energy Efficiency and Conservation in the Department of Finance",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2028-2026.pdf",
+      "published_at_unix": 1776009600,
+      "month_bucket": "2026-04"
+    },
+    {
+      "external_id": "bir:rmc:2026:027",
+      "kind": "RMC",
+      "title": "RMC No. 27-2026",
+      "summary": "Publishing the Full Text of the February 6, 2026 letter from the Food and Drug Administration (FDA) of the Department of Health Endorsing the updated full list of VAT-exempt drugs under Republic Act (R.A.) No. 10963 (TRAIN Law) and R.A. No. 11534 (CREATE Act)",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2027-2026.pdf",
+      "published_at_unix": 1775577600,
+      "month_bucket": "2026-04"
+    },
+    {
+      "external_id": "bir:rmc:2026:026",
+      "kind": "RMC",
+      "title": "RMC No. 26-2026",
+      "summary": "Circularizing Anti-Red Tape Authority (ARTA) Advisory No. 2026-007, Series of 2026, entitled \"Reiteration on the Deadline of Submission of the Compliances under R.A. 11032, or the Ease of Doing Business and Efficient Government Service Delivery Act of 2018, and its Implementing Rules and Regulations (IRR)\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2026-2026.pdf",
+      "published_at_unix": 1775404800,
+      "month_bucket": "2026-04"
+    },
+    {
+      "external_id": "bir:rmo:2026:009",
+      "kind": "RMO",
+      "title": "RMO No. 9-2026",
+      "summary": "Prescribing the Allocation of the CY 2026 BIR Collection Goal by Implementing Office",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%209-2026.pdf",
+      "published_at_unix": 1774886400,
+      "month_bucket": "2026-03"
+    },
+    {
+      "external_id": "bir:rmc:2026:025",
+      "kind": "RMC",
+      "title": "RMC No. 25-2026",
+      "summary": "Circularizing Memorandum Circular No. 116 Dated 31 March 2026 of the Office of the President Relative to the Prescribed Work Arrangements on 01 April 2026",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2025-2026.pdf",
+      "published_at_unix": 1774886400,
+      "month_bucket": "2026-03"
+    },
+    {
+      "external_id": "bir:rmc:2026:024",
+      "kind": "RMC",
+      "title": "RMC No. 24-2026",
+      "summary": "Clarifying the Application of Revenue Memorandum Circular Nos. 5- 2024 and 38-2024 on the Tax Treatment of Cross-Border Services",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2024-2026.pdf",
+      "published_at_unix": 1774800000,
+      "month_bucket": "2026-03"
+    },
+    {
+      "external_id": "bir:rmc:2026:023",
+      "kind": "RMC",
+      "title": "RMC No. 23-2026",
+      "summary": "Clarifying the Provisions of Revenue Regulations No. 13-2025, the Consolidated Provisions to Simplify and Streamline the Procedures and Requirements Relative to the Availment of the Tax Exemptions and Incentives Granted to the Participating Private Entities under Republic Act No. 8525 (Adopt-a-School Act of 1998), Republic Act No. 12063 (Enterprise-Based Education and Training (EBET) Framework Act), and the Tax Code",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2023-2026.pdf",
+      "published_at_unix": 1774800000,
+      "month_bucket": "2026-03"
+    },
+    {
+      "external_id": "bir:rmc:2026:022",
+      "kind": "RMC",
+      "title": "RMC No. 22-2026",
+      "summary": "Circularizing the Frequently Asked Questions on the 2026 Omnibus Rules on the Statement of Assets, Liabilities and Net Work (SALN)",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2022-2026.pdf",
+      "published_at_unix": 1774800000,
+      "month_bucket": "2026-03"
+    },
+    {
+      "external_id": "bir:rmc:2026:021",
+      "kind": "RMC",
+      "title": "RMC No. 21-2026",
+      "summary": "Tax Treatment of Development Assistance Activities Carried Out by the Foreign Assistance Section of the United States Embassy in the Philippines",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2021-2026.pdf",
+      "published_at_unix": 1773849600,
+      "month_bucket": "2026-03"
+    },
+    {
+      "external_id": "bir:rr:2026:002",
+      "kind": "RR",
+      "title": "RR No. 2-2026",
+      "summary": "Guidelines in the Availment of the Fiscal Incentives Under Section 38 of Republic Act No. 12120, Otherwise Known as the \"Philippine Natural Gas Industry Development Act\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RR%20No.%202-2026.pdf",
+      "published_at_unix": 1773676800,
+      "month_bucket": "2026-03"
+    },
+    {
+      "external_id": "bir:rmc:2026:020",
+      "kind": "RMC",
+      "title": "RMC No. 20-2026",
+      "summary": "Guidelines in the Filing of Annual Income Tax Returns and Payment of Corresponding Taxes Due Thereon for Calendar Year 2025",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%2020-2026.pdf",
+      "published_at_unix": 1773590400,
+      "month_bucket": "2026-03"
+    },
+    {
+      "external_id": "bir:rmo:2026:008",
+      "kind": "RMO",
+      "title": "RMO No. 8-2026",
+      "summary": "Amending Revenue Memorandum Order No. 37-2023 on the Guidelines and Procedures in the Processing of Customer Satisfaction Survey for Frontline Services under Client Support Service",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20NO.%208-2026.pdf",
+      "published_at_unix": 1773244800,
+      "month_bucket": "2026-03"
+    },
+    {
+      "external_id": "bir:rmc:2026:019",
+      "kind": "RMC",
+      "title": "RMC No. 19-2026",
+      "summary": "Circularizing the Implementing Rules and Regulations of Republic Act No. 11650, otherwise known as the \"Instituting a Policy of Inclusion and Services for Learners with Disabilities in Support of Inclusive Education Act\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20NO.%2019-2026.pdf",
+      "published_at_unix": 1773158400,
+      "month_bucket": "2026-03"
+    },
+    {
+      "external_id": "bir:rmo:2026:007",
+      "kind": "RMO",
+      "title": "RMO No. 7-2026",
+      "summary": "Adoption of Energy Efficiency and Conservation Measures Pursuant to Memorandum Circular No. 114 Dated March 6, 2026 of the Office of the President (OP), Malacañang Palace",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%207-2026.pdf",
+      "published_at_unix": 1772985600,
+      "month_bucket": "2026-03"
+    },
+    {
+      "external_id": "bir:rmc:2026:018",
+      "kind": "RMC",
+      "title": "RMC No. 18-2026",
+      "summary": "Damaged Various Copies of Used/Issued Accountable Forms",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2018-2026.pdf",
+      "published_at_unix": 1772985600,
+      "month_bucket": "2026-03"
+    },
+    {
+      "external_id": "bir:rmc:2026:017",
+      "kind": "RMC",
+      "title": "RMC No. 17-2026",
+      "summary": "Lost Five (5) Pads of Unused/Unissued BIR Form No. AF51 - Accountable Form No. 51",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2017-2026.pdf",
+      "published_at_unix": 1772985600,
+      "month_bucket": "2026-03"
+    },
+    {
+      "external_id": "bir:rmc:2026:016",
+      "kind": "RMC",
+      "title": "RMC No. 16-2026",
+      "summary": "Lost Thirty-Two (32) Sets of Unused/Unissued BIR Form No. 0423 - Apprehension Slip",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2016-2026.pdf",
+      "published_at_unix": 1772985600,
+      "month_bucket": "2026-03"
+    },
+    {
+      "external_id": "bir:rmc:2026:015",
+      "kind": "RMC",
+      "title": "RMC No. 15-2026",
+      "summary": "Lost Original and Duplicate Copies of Used/Filled-Up but Unissued BIR Form No. 1966 - Electronic Letter of Authority",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2015-2026.pdf",
+      "published_at_unix": 1772985600,
+      "month_bucket": "2026-03"
+    },
+    {
+      "external_id": "bir:rmo:2026:006",
+      "kind": "RMO",
+      "title": "RMO No. 6-2026",
+      "summary": "Amendments and Supplemental Guidelines Governing the Implementation of Revenue Memorandum Order (RMO) No. 1-2026",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%206-2026.pdf",
+      "published_at_unix": 1772553600,
+      "month_bucket": "2026-03"
+    },
+    {
+      "external_id": "bir:rmc:2026:014",
+      "kind": "RMC",
+      "title": "RMC No. 14-2026",
+      "summary": "Clarifying Revenue Memorandum Circular No. 8-2026 on the Lifting of the Suspension of Tax Audit and Field Operations, Revenue Memorandum Order (RMO) No. 1-2026, and RMO No. 6-2026 on the Implementation of Revised Audit Policies, Procedures, and Safeguards",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2014-2026.pdf",
+      "published_at_unix": 1772553600,
+      "month_bucket": "2026-03"
+    },
+    {
+      "external_id": "bir:rmo:2026:005",
+      "kind": "RMO",
+      "title": "RMO No. 5-2026",
+      "summary": "Revised Policies, Guidelines and Procedures in the Filing and Submission of Statement of Assets, Liabilities and Net Worth (SALN)",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20NO.%205-2026.pdf",
+      "published_at_unix": 1772380800,
+      "month_bucket": "2026-03"
+    },
+    {
+      "external_id": "bir:rmc:2026:013",
+      "kind": "RMC",
+      "title": "RMC No. 13-2026",
+      "summary": "Circularizing Republic Act No. 12312, titled \"An Act Banning and Declaring Illegal Offshore Gaming Operations in the Philippines and Other Operations Related thereto, Repealing for the Purpose Republic Act Numbered Eleven Thousand Five Hundred Ninety, Otherwise Known as 'An Act Taxing Philippine Offshore Gaming Operations', and for Other Purposes\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2013-2026.pdf",
+      "published_at_unix": 1772121600,
+      "month_bucket": "2026-02"
+    },
+    {
+      "external_id": "bir:rmo:2026:004",
+      "kind": "RMO",
+      "title": "RMO No. 4-2026",
+      "summary": "Implementing Guidelines on the Availment of Wellness Leave for BIR Officials and Employees Pursuant to Civil Service Commission (CSC) Resolution No. 2501292 dated November 13, 2025",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%204-2026.pdf",
+      "published_at_unix": 1771430400,
+      "month_bucket": "2026-02"
+    },
+    {
+      "external_id": "bir:rr:2026:001",
+      "kind": "RR",
+      "title": "RR No. 1-2026",
+      "summary": "Amending Sections 3, 4, and 7 of RR No. 9-2025 to clarify filing and payment rules for VAT on local sales, provide optional value-added tax (VAT) registration for certain Registered Business Enterprises (RBEs), extend the deadline for system reconfiguration, and exclude certain enterprises and activities from the coverage of VAT on local sales of RBEs under Section 295(D) of the NIRC of 1997 (Tax Code), as Amended by Section 18 of Republic Act No. 12066.",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RR%20No.%201-2026.pdf",
+      "published_at_unix": 1771171200,
+      "month_bucket": "2026-02"
+    },
+    {
+      "external_id": "bir:rmc:2026:012",
+      "kind": "RMC",
+      "title": "RMC No. 12-2026",
+      "summary": "Provides extension of deadlines for the filing of tax returns and payment of the corresponding taxes due thereon, including submission of required documents for taxpayers under the jurisdiction of Revenue District Office No. 101 — Lanao del Norte that were affected by Tropical Storm \"Basyang\".",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2012-2026.pdf",
+      "published_at_unix": 1770912000,
+      "month_bucket": "2026-02"
+    },
+    {
+      "external_id": "bir:rmc:2026:011",
+      "kind": "RMC",
+      "title": "RMC No. 11-2026",
+      "summary": "Missing triplicate copy of unused/unissued BIR Form No. AF51 — Accountable Form No. 51.",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2011-2026.pdf",
+      "published_at_unix": 1770566400,
+      "month_bucket": "2026-02"
+    },
+    {
+      "external_id": "bir:rmo:2026:003",
+      "kind": "RMO",
+      "title": "RMO No. 3-2026",
+      "summary": "Further Amending Revenue Memorandum Order No. 14-2025, as Amended, Prescribing the Revised Allocation of the CY 2025 BIR Collection Goal by Implementing Office",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%203-2026_compressed.pdf",
+      "published_at_unix": 1770134400,
+      "month_bucket": "2026-02"
+    },
+    {
+      "external_id": "bir:rmc:2026:010",
+      "kind": "RMC",
+      "title": "RMC No. 10-2026",
+      "summary": "Clarifying the Tax Treatment, Documentation Requirements, and Filing of Return and Payment of Donor's Tax for Donations Consisting Purely of Cash",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2010-2026.pdf",
+      "published_at_unix": 1770134400,
+      "month_bucket": "2026-02"
+    },
+    {
+      "external_id": "bir:rmc:2026:009",
+      "kind": "RMC",
+      "title": "RMC No. 9-2026",
+      "summary": "Observance of the Month of February as \"Tax Awareness Month\" Per Proclamation No. 486 S. 2024",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%209-2026.pdf",
+      "published_at_unix": 1769961600,
+      "month_bucket": "2026-02"
+    },
+    {
+      "external_id": "bir:rmo:2026:002",
+      "kind": "RMO",
+      "title": "RMO No. 2-2026",
+      "summary": "Designation of Official Spokesperson",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%202-2026.pdf",
+      "published_at_unix": 1769529600,
+      "month_bucket": "2026-01"
+    },
+    {
+      "external_id": "bir:rmo:2026:001",
+      "kind": "RMO",
+      "title": "RMO No. 1-2026",
+      "summary": "Prescribing Revised Policies, Controls, and Procedures for Tax Audit and Assessment Following the Lifting of the Suspension Imposed Under Revenue Memorandum Circular No. 107-2025",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%201-2026.pdf",
+      "published_at_unix": 1769443200,
+      "month_bucket": "2026-01"
+    },
+    {
+      "external_id": "bir:rmc:2026:008",
+      "kind": "RMC",
+      "title": "RMC No. 8-2026",
+      "summary": "Resumption of All Tax Audit and Field Operations of the Bureau of Internal Revenue that were Suspended Under Revenue Memorandum Circular No. 107-2025",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%208-2026%20(1).pdf",
+      "published_at_unix": 1769443200,
+      "month_bucket": "2026-01"
+    },
+    {
+      "external_id": "bir:rmc:2026:007",
+      "kind": "RMC",
+      "title": "RMC No. 7-2026",
+      "summary": "Revised People's Freedom of Information (FOI) Manual of the Bureau of Internal Revenue and Updated List of FOI Receiving Officers",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%207-2026.pdf",
+      "published_at_unix": 1769443200,
+      "month_bucket": "2026-01"
+    },
+    {
+      "external_id": "bir:rmc:2026:006",
+      "kind": "RMC",
+      "title": "RMC No. 6-2026",
+      "summary": "Providing Extension of Deadlines for Filing of Tax Return and Payment of VAT due of Nonresident Digital Service Providers",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%206-2026.pdf",
+      "published_at_unix": 1769356800,
+      "month_bucket": "2026-01"
+    },
+    {
+      "external_id": "bir:rmc:2026:005",
+      "kind": "RMC",
+      "title": "RMC No. 5-2026",
+      "summary": "Letter of Authority (LOA) Verifier through REVIE",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%205-2026.pdf",
+      "published_at_unix": 1769097600,
+      "month_bucket": "2026-01"
+    },
+    {
+      "external_id": "bir:rmc:2026:004",
+      "kind": "RMC",
+      "title": "RMC No. 4-2026",
+      "summary": "Clarification on the Mandatory Registration of Permanently Bound Loose-Leaf Books of Accounts and Computerized Books of Accounts Through the Online Registration and Update System (ORUS), and Extension of Registration Deadlines",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%204-2026.pdf",
+      "published_at_unix": 1768406400,
+      "month_bucket": "2026-01"
+    },
+    {
+      "external_id": "bir:rmc:2026:003",
+      "kind": "RMC",
+      "title": "RMC No. 3-2026",
+      "summary": "Circularizing Additional List of Personal Equity Retirement Account (PERA) Unit Investment Trust Funds (UITFs) Duly Approved by the Bangko Sentral ng Pilipinas (BSP)",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%203-2026.pdf",
+      "published_at_unix": 1768147200,
+      "month_bucket": "2026-01"
+    },
+    {
+      "external_id": "bir:rmc:2026:002",
+      "kind": "RMC",
+      "title": "RMC No. 2-2026",
+      "summary": "Circularizing Memorandum Circular (MC) No. 111 dated December 18, 2025 of the Office of the President, Malacañang Palace",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%202-2026.pdf",
+      "published_at_unix": 1768147200,
+      "month_bucket": "2026-01"
+    },
+    {
+      "external_id": "bir:rmc:2026:001",
+      "kind": "RMC",
+      "title": "RMC No. 1-2026",
+      "summary": "Publishing the Full Text of the Data Sharing Agreement between the Bureau of Internal Revenue and the Fiscal Incentives Review Board",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%201-2026.pdf",
+      "published_at_unix": 1767542400,
+      "month_bucket": "2026-01"
+    }
+  ],
+  "overrides": [
+    {
+      "external_ref": "bir:rmc:2026:089/2026-08-10/nonefps",
+      "title": "RMC 89-2026 extension (due 2026-08-10)",
+      "source_reference": "RMC No. 89-2026",
+      "original_deadline": "2026-08-10",
+      "adjusted_deadline": "2026-08-17",
+      "form_codes": [
+        "0619E",
+        "0619F",
+        "1601C"
+      ],
+      "rdo_codes": [
+        "002",
+        "003",
+        "004",
+        "005",
+        "006",
+        "007",
+        "008",
+        "009",
+        "010",
+        "012",
+        "018",
+        "019",
+        "020",
+        "024",
+        "026",
+        "027",
+        "028",
+        "029",
+        "030",
+        "031",
+        "032",
+        "033",
+        "034",
+        "037",
+        "038",
+        "039",
+        "040",
+        "041",
+        "042",
+        "043",
+        "044",
+        "045",
+        "046",
+        "047",
+        "048",
+        "049",
+        "050",
+        "051",
+        "052",
+        "058",
+        "059",
+        "063",
+        "116",
+        "121",
+        "124",
+        "125",
+        "126",
+        "17A",
+        "17B",
+        "21A",
+        "21B",
+        "21C",
+        "25A",
+        "25B",
+        "43A",
+        "43B",
+        "53A",
+        "53B",
+        "54A",
+        "54B"
+      ],
+      "channel": "nonefps",
+      "notice_external_id": "bir:rmc:2026:089"
+    },
+    {
+      "external_ref": "bir:rmc:2026:089/2026-08-15/nonefps",
+      "title": "RMC 89-2026 extension (due 2026-08-15)",
+      "source_reference": "RMC No. 89-2026",
+      "original_deadline": "2026-08-15",
+      "adjusted_deadline": "2026-08-17",
+      "form_codes": [
+        "1702EX",
+        "1702MX",
+        "1702RT"
+      ],
+      "rdo_codes": [
+        "002",
+        "003",
+        "004",
+        "005",
+        "006",
+        "007",
+        "008",
+        "009",
+        "010",
+        "012",
+        "018",
+        "019",
+        "020",
+        "024",
+        "026",
+        "027",
+        "028",
+        "029",
+        "030",
+        "031",
+        "032",
+        "033",
+        "034",
+        "037",
+        "038",
+        "039",
+        "040",
+        "041",
+        "042",
+        "043",
+        "044",
+        "045",
+        "046",
+        "047",
+        "048",
+        "049",
+        "050",
+        "051",
+        "052",
+        "058",
+        "059",
+        "063",
+        "116",
+        "121",
+        "124",
+        "125",
+        "126",
+        "17A",
+        "17B",
+        "21A",
+        "21B",
+        "21C",
+        "25A",
+        "25B",
+        "43A",
+        "43B",
+        "53A",
+        "53B",
+        "54A",
+        "54B"
+      ],
+      "channel": "nonefps",
+      "notice_external_id": "bir:rmc:2026:089"
+    }
+  ]
+}
