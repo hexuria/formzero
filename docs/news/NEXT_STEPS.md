@@ -177,4 +177,3 @@ Branch `gol/news-backlog`, five commits. `just verify` exits 0: Zig **1848/1852*
 - [ ] **eFPS group deadlines.** Not a gap in this feature — the feed already
   channel-tags those rows. It is a change to how the rule engine models
   statutory dates, affecting every monthly form, and wants its own scoped work.
-
