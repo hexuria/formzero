@@ -563,9 +563,6 @@ async function extractOne(
         };
       }
     }
-    // Fail on a missing poppler before spending a multi-megabyte download on a
-    // run that cannot finish. Nothing above this line needs the binary.
-    await requirePdftotext();
     const downloaded = await downloadPdf(
       issuance.pdfUrl,
       cachePathFor(paths.pdfCacheDir, issuance.externalId, ".pdf"),
@@ -590,6 +587,12 @@ async function extractOne(
   }
 
   if (layoutText === null) {
+    // Demanded here rather than before the download, because this is the first
+    // line that actually needs the binary. A circular the origin refuses never
+    // reaches it, so a run whose PDFs are all unavailable finishes and
+    // publishes on a machine without poppler instead of dying on a dependency
+    // it had no use for.
+    await requirePdftotext();
     const cachedPdf = cachePathFor(paths.pdfCacheDir, issuance.externalId, ".pdf");
     layoutText = await pdfToLayoutText(cachedPdf);
   }
