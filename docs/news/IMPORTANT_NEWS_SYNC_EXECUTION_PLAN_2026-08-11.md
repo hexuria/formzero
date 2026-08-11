@@ -11,7 +11,7 @@ by an implementation agent without further research. Every claim about live
 BIR endpoints below was verified by direct probing on 2026-08-11; the captured
 evidence is committed under `scripts/news-sync/fixtures/2026-08-11/`.
 
-Progress: 29/31 tasks complete (see §6 checkboxes).
+Progress: 32/32 tasks complete (see §6 checkboxes).
 
 **Start here for remaining work:** [NEXT_STEPS.md](NEXT_STEPS.md) — the
 remaining-work plan: phases R1–R4 (defect fixes → commit/PR → live dry-run →
@@ -246,7 +246,13 @@ Contract rules (enforce in `feed.ts` and again in `feed_json.zig`):
 
 - `external_id` = `bir:<kind-lowercase>:<year>:<number zero-padded to 3>`;
   stable across runs; never derived from title text.
-- `external_ref` = `<notice external_id>/<original_deadline>/<channel>`.
+- `external_ref` = `<notice external_id>/<original_deadline>/<channel>`, or
+  that plus the suffix `-reviewed` for a curated supplement (added
+  2026-08-11; see [MERGED_CELL_INVESTIGATION.md](MERGED_CELL_INVESTIGATION.md)
+  for why one exists and `curated/overrides.json` for the entries). The
+  suffix keeps a human-authored record in its own namespace so it can never
+  collide with or overwrite an extracted one, and lets the review report and
+  any reader tell machine output from human judgement at a glance.
   One override record per (issuance, original date, channel-class) group;
   all form codes of that group are listed in the one record. Re-extraction
   after a fixed parser bug updates the same `external_ref` in place.
@@ -261,7 +267,9 @@ Contract rules (enforce in `feed.ts` and again in `feed_json.zig`):
   efps_and_nonefps | registration | submission | unknown`. v1 compiler emits
   override records only for `nonefps` and `efps_and_nonefps`; other channels
   stay review-report-only (locked decision L10).
-- `notices` sorted by `published_at_unix` descending; ≤ 120 entries; summary
+- `notices` sorted by `published_at_unix` descending; ≤ 240 entries (raised
+  from 120 on 2026-08-11: the live feed reached 115 within eight months and
+  would have started truncating whole months); summary
   ≤ 4096 bytes (matches [domain.zig](../../src/news/domain.zig) bounds);
   `month_bucket` = issue date's `YYYY-MM` in Asia/Manila (app recomputes and
   trusts its own computation; the field exists for humans and diffing).
@@ -748,7 +756,7 @@ CREATE TABLE calendar_override_dismissals (
   syncs from re-adding it.”
 - Fragment + `just generate`; ui_state tests for the read-only gating.
 
-### Phase 7 — app: month-scoped news pane + RDO context — 3/4 complete
+### Phase 7 — app: month-scoped news pane + RDO context — 4/4 complete
 
 - [x] **T7.1 Manila month bucketing** — `feat(news): month bucket helper`
 - Add `pub fn manilaYearMonth(unix: i64) struct { year: i32, month: u8 }`
@@ -786,8 +794,13 @@ CREATE TABLE calendar_override_dismissals (
 - Tests: selecting `039` applies the Phase 6 synced override to the global
   projection; “Nationwide” restores the unscoped schedule.
 
-- [ ] **T7.4 (deferred, tracked)** persistence of the selector — needs an app
-settings store; explicitly out of v1. Recorded in §10.
+- [x] **T7.4** persistence of the selector — `feat: remember the dashboard's district context across launches`
+- Deferred at plan time for want of a settings store, then delivered
+  2026-08-11: the dashboard's district choice now lives in an app-owned
+  `preferences.sqlite3`, restored before the first frame, tri-state so a
+  cleared context persists as a deliberate "nationwide" rather than decaying
+  to "never chose", and degrading to nationwide on a code the reference no
+  longer knows while keeping the record.
 
 ### Phase 8 — end-to-end proof, docs, cleanup — 3/3 complete
 
@@ -859,13 +872,13 @@ data; both are the same class as the 16-slot region cap that nearly shipped
 - Acceptance: the test fails if `selectedTaxpayerCalendarContext` stops
   passing the profile's RDO.
 
-### Phase 10 — found by the live dry-run — 0/1 complete
+### Phase 10 — found by the live dry-run — 2/2 complete
 
 Added 2026-08-11 from the T8.2 walkthrough (see
 [screenshots/README.md](screenshots/README.md)). The notice-date defect that
 run also found was fixed in the same pass and needs no task.
 
-- [ ] **T10.1 extractor misses circulars that spell out their offices** — `feat(news-sync): widen RDO and table-header matching`
+- [x] **T10.1 extractor misses circulars that spell out their offices** — `feat(news-sync): widen RDO and table-header matching`
 - Problem: of the seven 2026 extension circulars, only RMC 89-2026 produced
   overrides. Two are image-only scans (documented D3 limit, flagged correctly).
   RMC 62-2026 is a genuine miss: it has a clean text layer but names its
@@ -881,6 +894,26 @@ run also found was fixed in the same pass and needs no task.
 - Acceptance: RMC 62-2026 yields RDO codes 110 and 111, its office-count
   invariant passes, and its deadline rows extract; RMC 89-2026's golden output
   is unchanged.
+
+- [x] **T10.2 merged deadline-table cells** — resolved 2026-08-11 by curated supplement; see [MERGED_CELL_INVESTIGATION.md](MERGED_CELL_INVESTIGATION.md)
+- Outcome: the missing forms ship as a human-reviewed curated supplement in
+  `scripts/news-sync/curated/overrides.json`, merged into the feed under a
+  `-reviewed` reference namespace. The geometry pass stays unbuilt for the
+  reasons below.
+- Investigated 2026-08-11; no code shipped. The plan's own `-tsv` upgrade path
+  (§5.6 step 5) rests on a false premise: RMC 89-2026's table has 8 bordered
+  rows, not 22, and a row prints its pair once against an arbitrary paragraph,
+  so word coordinates carry no row-boundary signal — measured true boundaries
+  (15.5–16.3 pt) sit strictly inside the intra-row paragraph gaps (13.5–40.4 pt).
+- Consequence worth acting on: the published feed **under-applies** RMC 89-2026.
+  2200-M, 2200-C, 0620, 1600-VT/PT, 1606 and the NGAs block share the Aug-10
+  cell with 1601C, and 1701Q and 1707-A share the Aug-15 cell with 1702. They
+  are named in the review report but absent from the feed. Error is in the safe
+  direction (an earlier date is shown), but the gap is real.
+- Options, with recommendation: enter the missing rows as manual overrides now;
+  or ship raster rule detection with an implausibility guard; or accept
+  correct-by-omission. See the investigation for why raster detection alone was
+  refused — its failure mode fabricates overrides silently.
 
 ---
 

@@ -12,6 +12,7 @@ import {
   loadFixtureLayoutText,
   minimumCharactersPerPage,
   missingDependencyExitCode,
+  remotePdfIdentity,
   pdfToLayoutText,
   sha256File,
 } from "./pdf.ts";
@@ -100,3 +101,30 @@ test(
     );
   },
 );
+
+test("the HEAD asks for identity encoding, or the CDN hides what it is asked for", async (t) => {
+  // Production regression. Node's fetch negotiates gzip by default; bir-cdn
+  // answers a compressed HEAD by dropping Content-Length and weakening its
+  // ETag to `W/"…"`. Both signals `remotePdfIdentity` exists to read then come
+  // back unusable, `unchangedAtOrigin` can never say "unchanged", and every
+  // scheduled run re-downloads every circular — which is exactly what the
+  // first two production runs did.
+  const seen: Array<string | null> = [];
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    seen.push(headers.get("accept-encoding"));
+    void input;
+    return new Response(null, {
+      status: 200,
+      headers: { "content-length": "1970851", etag: '"abc"' },
+    });
+  }) as typeof globalThis.fetch;
+
+  const identity = await remotePdfIdentity("https://example.test/a.pdf");
+  assert.deepEqual(seen, ["identity"]);
+  assert.deepEqual(identity, { bytes: 1970851, etag: '"abc"' });
+});

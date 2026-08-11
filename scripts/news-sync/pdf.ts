@@ -43,6 +43,7 @@ const installHint =
 /** Offline layout-text fixtures, keyed by issuance external id. */
 const fixtureLayoutText: ReadonlyMap<string, string> = new Map([
   ["bir:rmc:2026:089", "fixtures/2026-08-11/rmc-89-2026-pdftotext-layout.txt"],
+  ["bir:rmc:2026:062", "fixtures/2026-08-11/rmc-62-2026-pdftotext-layout.txt"],
 ]);
 
 export type DownloadedPdf = {
@@ -50,6 +51,8 @@ export type DownloadedPdf = {
   bytes: number;
   sha256: string;
   cached: boolean;
+  /** Strong ETag from the response, so the next run can skip on it. */
+  etag: string | null;
 };
 
 /**
@@ -103,16 +106,69 @@ export async function sha256File(target: string): Promise<string> {
   return hash.digest("hex");
 }
 
-async function remoteContentLength(url: string): Promise<number | null> {
+/**
+ * The origin cannot hand over a PDF right now: refused, unreachable, or empty.
+ *
+ * Distinct from every other failure the pipeline can hit, because it is the
+ * only one a run may absorb and continue past. bir-cdn has answered 403 to a
+ * URL it served minutes earlier, and one such circular must not stop the whole
+ * feed from publishing. A missing binary or a parser fault is not this, and
+ * must still fail the run.
+ */
+export class PdfUnavailableError extends Error {
+  readonly url: string;
+
+  constructor(url: string, reason: string) {
+    super(`the origin could not supply ${url}: ${reason}`);
+    this.name = "PdfUnavailableError";
+    this.url = url;
+  }
+}
+
+/**
+ * The origin's `Content-Length` for a PDF, from one HEAD request, or null when
+ * the answer cannot be trusted: HEAD unanswered or refused, the header absent,
+ * or the value not a positive integer. Null always means "find out by
+ * downloading" — never "unchanged".
+ */
+export async function remoteContentLength(url: string): Promise<number | null> {
+  return (await remotePdfIdentity(url)).bytes;
+}
+
+/**
+ * What one HEAD reveals about the PDF at `url`: its `Content-Length`, and its
+ * `ETag` when the origin offers a strong one.
+ *
+ * Size alone cannot see a same-size replacement, which is the one edit that
+ * would leave a stale extraction published. A strong ETag closes that; a weak
+ * one (`W/"…"`) only promises semantic equivalence, which is not the question,
+ * so it is discarded. Either field being null always means "find out by
+ * downloading" — never "unchanged".
+ */
+export async function remotePdfIdentity(
+  url: string,
+): Promise<{ bytes: number | null; etag: string | null }> {
   try {
-    const response = await fetch(url, { method: "HEAD", redirect: "follow" });
-    if (!response.ok) return null;
+    const response = await fetch(url, {
+      method: "HEAD",
+      redirect: "follow",
+      // Ask for the stored bytes, not a compressed rendering of them. Node's
+      // fetch negotiates gzip by default, and bir-cdn answers that by dropping
+      // Content-Length entirely and weakening its ETag -- so both signals this
+      // function exists to read come back unusable and every run re-downloads
+      // every circular. `curl -I` sees the real values only because it does not
+      // negotiate encoding.
+      headers: { "accept-encoding": "identity" },
+    });
+    if (!response.ok) return { bytes: null, etag: null };
     const header = response.headers.get("content-length");
-    if (header === null) return null;
-    const bytes = Number.parseInt(header, 10);
-    return Number.isSafeInteger(bytes) && bytes > 0 ? bytes : null;
+    const parsed = header === null ? Number.NaN : Number.parseInt(header, 10);
+    const bytes = Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+    const rawEtag = response.headers.get("etag");
+    const etag = rawEtag === null || rawEtag.trimStart().startsWith("W/") ? null : rawEtag.trim();
+    return { bytes, etag };
   } catch {
-    return null;
+    return { bytes: null, etag: null };
   }
 }
 
@@ -125,32 +181,45 @@ async function remoteContentLength(url: string): Promise<number | null> {
 export async function downloadPdf(url: string, destPath: string): Promise<DownloadedPdf> {
   const existing = await statOrNull(destPath);
   if (existing !== null) {
-    const remoteBytes = await remoteContentLength(url);
-    if (remoteBytes !== null && remoteBytes === existing.size) {
+    const remote = await remotePdfIdentity(url);
+    if (remote.bytes !== null && remote.bytes === existing.size) {
       return {
         path: destPath,
         bytes: existing.size,
         sha256: await sha256File(destPath),
         cached: true,
+        etag: remote.etag,
       };
     }
   }
 
-  const response = await fetch(url, { redirect: "follow" });
+  let response: Response;
+  try {
+    response = await fetch(url, { redirect: "follow" });
+  } catch (error) {
+    // `fetch` reports a network failure as TypeError; anything else escaping it
+    // is a fault in this pipeline, not the origin, and must not be absorbed as
+    // "the circular is temporarily unavailable".
+    if (!(error instanceof TypeError)) throw error;
+    throw new PdfUnavailableError(url, describe(error));
+  }
   if (!response.ok) {
-    throw new Error(`GET ${url} failed with HTTP ${response.status} ${response.statusText}`);
+    throw new PdfUnavailableError(url, `HTTP ${response.status} ${response.statusText}`);
   }
   const body = Buffer.from(await response.arrayBuffer());
-  if (body.byteLength === 0) throw new Error(`GET ${url} returned an empty body`);
+  if (body.byteLength === 0) throw new PdfUnavailableError(url, "the response body was empty");
 
   await mkdir(path.dirname(destPath), { recursive: true });
   await writeFile(destPath, body);
 
+  const rawEtag = response.headers.get("etag");
   return {
     path: destPath,
     bytes: body.byteLength,
     sha256: createHash("sha256").update(body).digest("hex"),
     cached: false,
+    // The GET already carries it, so recording it costs no extra request.
+    etag: rawEtag === null || rawEtag.trimStart().startsWith("W/") ? null : rawEtag.trim(),
   };
 }
 
