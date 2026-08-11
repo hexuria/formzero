@@ -19087,6 +19087,10 @@ fn setRequiredIndividualProfileFieldsForTest(
     state: *profile_ui.State,
     effective_start_year: i32,
 ) void {
+    // Match the UI's required, affirmative taxpayer-type choice rather than
+    // relying on State's implementation default of Individual.
+    state.setSubjectKind(.individual);
+    state.setAccountingPeriodBasis(.calendar);
     state.zip_code.set("1100");
     state.phone.set("09171234567");
     state.email.set("fixture@example.ph");
@@ -22493,8 +22497,11 @@ test "profile taxpayer-type combobox filters, provisions, and synchronizes selec
         .viewportWidth = 390,
     };
     syncProfileSubjectControl(&model);
-    try std.testing.expectEqualStrings("Individual", model.profileSubjectKindLabel());
-    try std.testing.expectEqualStrings("Individual", model.profileSubjectQueryValue());
+    try std.testing.expectEqualStrings(
+        "Choose taxpayer type",
+        model.profileSubjectKindLabel(),
+    );
+    try std.testing.expectEqualStrings("", model.profileSubjectQueryValue());
     try std.testing.expect(!model.profileSubjectPickerOpen());
 
     update(&model, .toggle_profile_subject_picker);
@@ -22511,8 +22518,8 @@ test "profile taxpayer-type combobox filters, provisions, and synchronizes selec
     const filtered_rows = model.profileSubjectKindOptionRows(arena_state.allocator());
     try std.testing.expectEqual(@as(usize, 1), filtered_rows.len);
     try std.testing.expectEqualStrings("Partnership", filtered_rows[0].label);
-    // The committed Individual is not in the filtered list, so the first
-    // row is deliberately the provisional keyboard target.
+    // No taxpayer type is committed yet, so the first filtered row is the
+    // provisional keyboard target.
     try std.testing.expect(filtered_rows[0].selected);
 
     update(&model, .{ .profile_subject_select = filtered_rows[0].id });

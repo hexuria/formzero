@@ -2516,15 +2516,16 @@ pub const State = struct {
         {
             return error.NewProfileTinMustHaveFourteenDigits;
         }
+        // Let Save reveal the same field-level RDO (and other required-field)
+        // feedback as focus loss before parsing the validated identity.
+        try self.validateProfileFieldsForSave();
+
+        // Preserve the reference and parser checks at the domain boundary
+        // after the UI-level validation has made its feedback visible.
         if (rdo_reference.findByCode(trimmed(self.rdo.text())) == null) {
             return error.InvalidRdoSelection;
         }
         const rdo = try fields.RdoCode.parse(trimmed(self.rdo.text()));
-
-        // Keep identity errors useful even while the rest of a new profile is
-        // incomplete. Once TIN and RDO are valid, the complete required-field
-        // gate remains authoritative for the rest of the save.
-        try self.validateProfileFieldsForSave();
 
         const address = try fields.RegisteredAddress.parse(
             trimmed(self.registered_address.text()),
@@ -5302,6 +5303,10 @@ fn workspaceFixture(
 }
 
 fn setRequiredIndividualDetailsForTest(state: *State) void {
+    // New profiles must explicitly affirm the legal taxpayer type; the enum's
+    // internal Individual default is deliberately not treated as a selection.
+    state.setSubjectKind(.individual);
+    state.setAccountingPeriodBasis(.calendar);
     setRequiredContactDetailsForTest(state);
     state.birth_date.set("1990-01-02");
     state.citizenship.set("Filipino");
@@ -5480,6 +5485,31 @@ test "registered address validation becomes visible on blur and on save" {
     try std.testing.expect(state.profileFieldErrorVisible(.registered_address));
     try std.testing.expect(
         state.profile_field_touched[@intFromEnum(ProfileField.email_address)],
+    );
+}
+
+test "RDO validation becomes visible on save" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try state.attach(allocator, &store, "2026-08-11", 2026);
+    state.setSubjectKind(.corporation);
+    state.setAccountingPeriodBasis(.calendar);
+    state.tin.set("123-456-789-00000");
+    state.display_name.set("RDO Validation Profile Inc.");
+    state.registered_address.set("Quezon City");
+    state.zip_code.set("1100");
+    state.phone.set("0281234567");
+    state.email.set("records@example.ph");
+
+    try std.testing.expect(!state.profileFieldErrorVisible(.rdo_code));
+    try std.testing.expect(!state.save());
+    try std.testing.expect(state.profileFieldErrorVisible(.rdo_code));
+    try std.testing.expectEqualStrings(
+        "RDO is required.",
+        state.profileFieldValidationMessage(.rdo_code).?,
     );
 }
 
@@ -6035,6 +6065,7 @@ test "legal-entity trade name loads and cancel restores it exactly" {
     setRequiredContactDetailsForTest(&state);
     state.selectEffectiveStartYear(2020);
     state.setSubjectKind(.corporation);
+    state.setAccountingPeriodBasis(.calendar);
     try std.testing.expect(state.save());
 
     try std.testing.expect(state.subjectKindSelected(.corporation));
