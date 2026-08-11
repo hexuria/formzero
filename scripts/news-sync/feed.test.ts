@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -14,6 +16,8 @@ import {
   truncateUtf8,
   validateFeed,
 } from "./feed.ts";
+import { extractDeadlineRows, parseCircularAnchors } from "./extract-deadline-table.ts";
+import { extractRdos } from "./extract-rdos.ts";
 import type {
   CircularExtraction,
   ExtensionRow,
@@ -680,5 +684,32 @@ test("validateFeed refuses an rdo code longer than the app can store", () => {
   assert.ok(
     validateFeed(widened).some((message) => message.includes("8-byte cap")),
     "a district name published as a scope must fail at publish time",
+  );
+});
+
+test("RMC 62-2026 scopes two offices but emits no override", () => {
+  // Plan T10.1's end state. The extractor now reads the circular — two RDOs
+  // and a 27-block deadline table — but only one block prints a trustworthy
+  // date pair, and it is a `submission` row with no form code. Reading a
+  // circular and emitting from it are separate bars, and this one clears only
+  // the first: the extension shows up in the review report, not in the feed.
+  const layoutText = readFileSync(
+    path.join(import.meta.dirname, "fixtures", "2026-08-11", "rmc-62-2026-pdftotext-layout.txt"),
+    "utf8",
+  );
+  const { rdoCodes } = extractRdos(layoutText);
+  const rows = extractDeadlineRows(layoutText, parseCircularAnchors(layoutText));
+  const scope = { hasRdoScope: rdoCodes.length > 0 };
+
+  assert.deepEqual(rdoCodes, ["110", "111"]);
+  assert.ok(scope.hasRdoScope);
+  assert.equal(
+    rows.filter((row) => rowDropReason(row, scope) === null).length,
+    0,
+    "no RMC 62-2026 row may become an override",
+  );
+  assert.deepEqual(
+    [...new Set(rows.map((row) => rowDropReason(row, scope)))].toSorted(),
+    ["channel_not_emittable", "window_row"],
   );
 });

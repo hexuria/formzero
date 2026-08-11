@@ -308,3 +308,128 @@ test("golden: the closing prose and signature block are not table rows", () => {
 test("extractDeadlineRows returns nothing when the text has no table header", () => {
   assert.deepEqual(extractDeadlineRows("just prose, no table", anchors), []);
 });
+
+// ---------------------------------------------------------------------------
+// RMC No. 62-2026 — the second extraction fixture (plan T10.1). Its header
+// OCR'd to `I)ue Date` / `E:rtended Due Date`, so before the tolerant probe no
+// header was located, no column geometry derived, and the whole table skipped.
+
+const rmc62LayoutText = readFileSync(
+  path.join(import.meta.dirname, "fixtures", "2026-08-11", "rmc-62-2026-pdftotext-layout.txt"),
+  "utf8",
+);
+const rmc62Anchors = parseCircularAnchors(rmc62LayoutText);
+const rmc62Rows = extractDeadlineRows(rmc62LayoutText, rmc62Anchors);
+
+test("RMC 62-2026's OCR-damaged table header still yields column geometry", () => {
+  const header = rmc62LayoutText
+    .split("\n")
+    .find((line) => line.includes("I)ue Date"));
+  assert.ok(header, "the fixture must still carry the damaged header");
+  assert.deepEqual(columnGeometry(header), { dueColumn: 78, extendedColumn: 95 });
+});
+
+test("RMC 62-2026's deadline table is located and its blocks extracted", () => {
+  assert.equal(rmc62Rows.length, 27);
+  assert.ok(rmc62Rows.some((row) => row.formCodesCanonical.includes("1601C")));
+  assert.ok(rmc62Rows.some((row) => row.formCodesCanonical.includes("2550Q")));
+
+  // The table ends at the ONETT row; the closing prose and the signature are
+  // not rows.
+  assert.ok(rmc62Rows.at(-1)?.rawDescription.includes("One-Time Transactions"));
+  for (const row of rmc62Rows) {
+    assert.ok(!row.rawDescription.includes("shall not be subjected to the imposition"));
+    assert.ok(!row.rawDescription.includes("CHARLITO"));
+  }
+});
+
+test("RMC 62-2026 prints exactly one trustworthy date pair", () => {
+  // Only page 1's row sits under the page-1 header; from page 2 on, the printed
+  // columns shift out from under it, so no other block may claim a pair.
+  const paired = rmc62Rows.filter((row) => row.dateAssignment === "same_line");
+  assert.equal(paired.length, 1);
+
+  const [row] = paired;
+  assert.equal(row.channel, "submission");
+  assert.equal(row.originalDate, "2026-06-08"); // `lune 8,2026`
+  assert.equal(row.extendedDate, "2026-06-30"); // `Jt:Lne 30,2026`
+  assert.ok(row.rawDescription.includes("Transcript Sheets of Official Register Books"));
+  // A submission row is not an emittable channel, and this one names no form
+  // code, so RMC 62-2026 produces no override even with the table now readable.
+  assert.deepEqual(row.formCodesCanonical, []);
+});
+
+test("RMC 62-2026 has no circular-level extended date to fall back on", () => {
+  // Its prose says "hereby exrtend_i:nri the deadline" with no `until <date>`,
+  // so a damaged Extended column cannot borrow one — the row goes to review.
+  assert.equal(rmc62Anchors.globalExtendedDate, null);
+  for (const row of rmc62Rows) {
+    if (row.dateAssignment === "window") assert.equal(row.extendedDate, null);
+  }
+});
+
+/** A synthetic table line: `description` at column 0, cells at their columns. */
+function tableLine(description: string, cells: ReadonlyArray<[number, string]>): string {
+  let line = description;
+  for (const [column, text] of cells) {
+    line = line.padEnd(column, " ") + text;
+  }
+  return line;
+}
+
+const SYNTHETIC_HEADER = "  BIR Forms/Returns          Due Date                    Extended Due Date";
+const SYNTHETIC_GEOMETRY = columnGeometry(SYNTHETIC_HEADER);
+
+test("close-set header columns cannot let one literal fill both", () => {
+  // RMC 62-2026's labels are 17 characters apart, so their +/-10 windows
+  // overlap. A single date printed in the overlap belongs to one cell, not to
+  // a whole row, and lending it to both would invent an original == extended
+  // pair — a real risk, since those columns land 9 apart on its later pages.
+  const header = "   BIR Forms/Returns      Due Date       Extended Due Date";
+  const geometry = columnGeometry(header);
+  assert.ok(geometry);
+  assert.ok(geometry.extendedColumn - geometry.dueColumn < 2 * 10);
+
+  const overlap = geometry.dueColumn + 9;
+  assert.ok(Math.abs(overlap - geometry.extendedColumn) <= 10, "must sit in both windows");
+
+  const lines = [header, tableLine("BIR Form 1601-C", [[overlap, "June 30,2026"]])];
+  const [row] = extractDeadlineRows(lines.join("\n"), {
+    globalExtendedDate: "2026-06-30",
+    window: null,
+  });
+  assert.ok(row);
+  assert.equal(row.dateAssignment, "window");
+  assert.equal(row.originalDate, null);
+});
+
+test("an empty Extended column is a merged cell, not a damaged one", () => {
+  // Plan 5.6.5: v1 never reconstructs a merged cell. The global-extended
+  // fallback applies only when something unreadable is actually printed there.
+  assert.ok(SYNTHETIC_GEOMETRY);
+  const { dueColumn, extendedColumn } = SYNTHETIC_GEOMETRY;
+  const anchorsWithGlobal = { globalExtendedDate: "2026-08-17", window: null };
+
+  const blank = [
+    SYNTHETIC_HEADER,
+    tableLine("BIR Form 1601-C", [[dueColumn, "August 10,2026"]]),
+  ].join("\n");
+  const [blankRow] = extractDeadlineRows(blank, anchorsWithGlobal);
+  assert.ok(blankRow);
+  assert.equal(blankRow.dateAssignment, "window");
+  assert.equal(blankRow.originalDate, null);
+
+  const damaged = [
+    SYNTHETIC_HEADER,
+    tableLine("BIR Form 1601-C", [
+      [dueColumn, "August 10,2026"],
+      [extendedColumn, "Angttst 1'? ,2026"],
+    ]),
+  ].join("\n");
+  const [damagedRow] = extractDeadlineRows(damaged, anchorsWithGlobal);
+  assert.ok(damagedRow);
+  assert.equal(damagedRow.dateAssignment, "same_line");
+  assert.equal(damagedRow.originalDate, "2026-08-10");
+  assert.equal(damagedRow.extendedDate, "2026-08-17");
+  assert.ok(damagedRow.notes.some((note) => note.includes("Extended Due Date column unreadable")));
+});

@@ -43,6 +43,7 @@ const installHint =
 /** Offline layout-text fixtures, keyed by issuance external id. */
 const fixtureLayoutText: ReadonlyMap<string, string> = new Map([
   ["bir:rmc:2026:089", "fixtures/2026-08-11/rmc-89-2026-pdftotext-layout.txt"],
+  ["bir:rmc:2026:062", "fixtures/2026-08-11/rmc-62-2026-pdftotext-layout.txt"],
 ]);
 
 export type DownloadedPdf = {

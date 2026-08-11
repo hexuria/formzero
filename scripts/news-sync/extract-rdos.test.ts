@@ -174,3 +174,78 @@ test("an unresolvable code falls back to a unique reference name match", () => {
   assert.equal(rdos[0]?.confidence, "review");
   assert.deepEqual(rdoCodes, ["084"]);
 });
+
+// ---------------------------------------------------------------------------
+// RMC No. 62-2026 — the second extraction fixture (plan T10.1). One fixture
+// taught this module one circular's habits: RMC 89-2026 tabulates its offices
+// as `RDO No. 39`, while RMC 62-2026 spells them out in a numbered list and
+// prints the plural `Revenue District Offices (RDOs)` in the lead-in prose.
+
+const rmc62LayoutText = readFileSync(
+  path.join(here, "fixtures", "2026-08-11", "rmc-62-2026-pdftotext-layout.txt"),
+  "utf8",
+);
+
+test("RMC 62-2026 reads its spelled-out, OCR-damaged office list", () => {
+  const { rdos, rdoCodes } = extractRdos(rmc62LayoutText);
+
+  // `Revenue District Office No. 1 10` and `... No. l l l`, both with the code
+  // broken into separate digit-ish runs.
+  assert.deepEqual(rdoCodes, ["110", "111"]);
+  assert.equal(rdos.length, 2);
+  assert.deepEqual(
+    rdos.map((match) => match.code),
+    ["110", "111"],
+  );
+});
+
+test("RMC 62-2026's office-count invariant holds", () => {
+  const { rdos, statedOfficeCount } = extractRdos(rmc62LayoutText);
+  const matched = new Set(rdos.map((match) => match.code).filter((code) => code !== null));
+
+  assert.equal(statedOfficeCount, 2);
+  assert.equal(matched.size, 2);
+  assert.equal(statedOfficeCount, matched.size);
+});
+
+test("RMC 62-2026's offices carry the confidence their names earn", () => {
+  const { rdos } = extractRdos(rmc62LayoutText);
+
+  const generalSantos = rdos.find((match) => match.code === "110");
+  assert.ok(generalSantos);
+  assert.equal(generalSantos.referenceName, "General Santos City");
+  assert.equal(generalSantos.matchedBy, "code+name");
+  assert.equal(generalSantos.confidence, "high");
+
+  // The circular labels 111 by province ("South Cotabato"), the reference by
+  // city ("Koronadal City"). Kept on the code, flagged for a human.
+  const koronadal = rdos.find((match) => match.code === "111");
+  assert.ok(koronadal);
+  assert.equal(koronadal.referenceName, "Koronadal City");
+  assert.equal(koronadal.matchedBy, "code");
+  assert.equal(koronadal.confidence, "review");
+  assert.ok(koronadal.notes.some((note) => note.includes("South Cotabato")));
+});
+
+test("the plural `Revenue District Offices (RDOs)` prose is not an office", () => {
+  // The sentence that introduces RMC 62-2026's list. Matching it would invent
+  // an office and break the count invariant it is printed right above.
+  const prose =
+    "required attachments and to provide ample time for taxpayers and BIR " +
+    "Personnel uncler the following\nRevenue District Offices (RDOs) to comply " +
+    "with the statutory tax rleadlines:\n";
+  assert.deepEqual(extractRdos(prose).rdos, []);
+
+  // Nor does the region heading in the same circular's subject line.
+  assert.deepEqual(
+    extractRdos("Revenue Region No. I8 - South Central Mindanao\n").rdos,
+    [],
+  );
+});
+
+test("RMC 62-2026's scan region stops at its OCR-damaged table header", () => {
+  const region = scanRegion(rmc62LayoutText);
+  assert.ok(region.includes("Revenue District Office No. l l l"));
+  assert.ok(!region.includes("I)ue Date"));
+  assert.ok(!region.includes("SUBMISSION"));
+});

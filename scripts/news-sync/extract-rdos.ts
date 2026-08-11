@@ -12,6 +12,7 @@
 // drops the office — dropping it would silently deny the extension to every
 // filer registered there.
 
+import { DUE_DATE_LABEL, EXTENDED_DUE_DATE_LABEL } from "./extract-deadline-table.ts";
 import { findRdoByCode, letteredVariants, normalizeRdoCode, rdoEntries } from "./rdo.ts";
 import type { RdoMatch } from "./types.ts";
 
@@ -29,17 +30,25 @@ const DIGITISH = "0-9OolI|SBTZG";
  * `RDO No. <code> - <name>` with every separator optional: the OCR loses the
  * space in `RDONo.3l`, turns the period into a hyphen in `RDO No- 34`, and
  * splits the number in `RDO No. I 16`.
+ *
+ * Circulars are inconsistent about the label: RMC 89-2026 tabulates
+ * `RDO No. 39`, RMC 62-2026 spells out `Revenue District Office No. 1 10` in a
+ * numbered list. Only the *singular* spelled-out form counts — the plural
+ * `Revenue District Offices (RDOs)` is the prose lead-in to the list, not an
+ * office, and must not match.
+ *
+ * The code itself may be broken into up to three digit-ish runs
+ * (`1 10` -> 110, `l l l` -> 111); each extra run must be space-separated, so
+ * the hyphen that introduces the office name always stops the capture.
  */
 const RDO_PATTERN = new RegExp(
-  String.raw`\bRDO\s*N[o0O]\s*[.,\-:]?\s*` +
-    String.raw`([${DIGITISH}]{1,4}(?:\s+[${DIGITISH}]{1,3})?[A-Ca-c]?)` +
+  String.raw`\b(?:RDO|Revenue\s+District\s+Office)\s*N[o0O]\s*[.,\-:]?\s*` +
+    String.raw`([${DIGITISH}]{1,4}(?:\s+[${DIGITISH}]{1,3}){0,2}[A-Ca-c]?)` +
     String.raw`\s*[-–—:]?\s*([^\n]{0,60})`,
   "giu",
 );
 
 const TABLE_HEADER_PATTERN = /BIR\s+Forms?\s*\/?\s*Returns/iu;
-const DUE_DATE_PATTERN = /Due\s+Date/iu;
-const EXTENDED_PATTERN = /Extended/iu;
 
 /** `RDO 037` — the reference's stand-in for an office it has no name for. */
 const PLACEHOLDER_NAME_PATTERN = /^rdo\s*[0-9]{1,3}[a-c]?$/iu;
@@ -62,7 +71,8 @@ export function scanRegion(layoutText: string): string {
   const lines = layoutText.split(/\r?\n/u);
   const headerIndex = lines.findIndex(
     (line) =>
-      TABLE_HEADER_PATTERN.test(line) || (DUE_DATE_PATTERN.test(line) && EXTENDED_PATTERN.test(line)),
+      TABLE_HEADER_PATTERN.test(line) ||
+      (DUE_DATE_LABEL.test(line) && EXTENDED_DUE_DATE_LABEL.test(line)),
   );
   return (headerIndex === -1 ? lines : lines.slice(0, headerIndex)).join("\n");
 }

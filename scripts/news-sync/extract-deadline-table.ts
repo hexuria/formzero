@@ -17,7 +17,7 @@
 //      the documented v2 `pdftotext -tsv` upgrade.
 
 import { canonicalFormCode } from "./form-codes.ts";
-import { normalizeDigits, parseNoisyDate } from "./ocr-normalize.ts";
+import { normalizeDigits, ocrTolerantPhrase, parseNoisyDate } from "./ocr-normalize.ts";
 import type { Channel, Confidence, DateAssignment, ExtensionRow } from "./types.ts";
 
 export type CircularAnchors = {
@@ -69,7 +69,19 @@ const DATE_CANDIDATE_PATTERN = new RegExp(
 const DATE_SLICE_LENGTH = 34;
 
 const HEADER_LINE_PATTERN = /BIR\s*Forms?\s*\/?\s*Returns?/iu;
-const DUE_DATE_LABEL = /Due\s+Date/iu;
+
+/**
+ * The two column labels, tolerant of one OCR-destroyed letter per word — the
+ * whole table hangs off finding them, and RMC 62-2026 prints them as
+ * `I)ue Date` and `E:rtended Due Date`. Without the tolerance the header is
+ * never located, no column geometry is derived, and the circular yields no
+ * rows at all.
+ */
+export const DUE_DATE_LABEL = new RegExp(ocrTolerantPhrase("Due Date"), "iu");
+export const EXTENDED_DUE_DATE_LABEL = new RegExp(
+  ocrTolerantPhrase("Extended Due Date"),
+  "iu",
+);
 
 /**
  * The circular's closing prose. Only consulted after the last printed date
@@ -232,7 +244,7 @@ function parseWindowAnchor(layoutText: string): { from: string; to: string } | n
 
 /** Character columns of the "Due Date" / "Extended Due Date" headers. */
 export function columnGeometry(headerLine: string): ColumnGeometry | null {
-  const extendedColumn = headerLine.search(/Extended\s+Due\s+Date/iu);
+  const extendedColumn = headerLine.search(EXTENDED_DUE_DATE_LABEL);
   if (extendedColumn < 0) return null;
   const dueColumn = headerLine.slice(0, extendedColumn).search(DUE_DATE_LABEL);
   if (dueColumn < 0) return null;
@@ -455,12 +467,20 @@ function datePairOnLine(
   if (due === null || due.iso === null) return null;
 
   const extended = candidateAt(candidates, geometry.extendedColumn);
+
+  // An empty Extended column is a merged cell, not a damaged one, and §5.6.5
+  // forbids reconstructing merged cells in v1. It also stops a single literal
+  // sitting between two close-set header labels from being read as a whole
+  // row: RMC 62-2026's labels are 17 characters apart, so their ±10 windows
+  // overlap, and its later pages shift the printed columns out from under the
+  // page-1 header entirely. Either way the row belongs in the review report.
+  if (extended === null || extended === due) return null;
+
   const notes = [...due.notes];
 
-  if (extended === null || extended.iso === null) {
-    const printed = extended === null ? "(blank)" : extended.text;
+  if (extended.iso === null) {
     notes.push(
-      `Extended Due Date column unreadable (${printed}); ` +
+      `Extended Due Date column unreadable (${extended.text}); ` +
         `used the circular's global extended date ${anchors.globalExtendedDate ?? "(none)"}`,
     );
     return {

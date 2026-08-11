@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { fuzzyMonth, levenshtein, normalizeDigits, parseNoisyDate } from "./ocr-normalize.ts";
+import {
+  fuzzyMonth,
+  levenshtein,
+  normalizeDigits,
+  ocrTolerantPhrase,
+  ocrTolerantWord,
+  parseNoisyDate,
+} from "./ocr-normalize.ts";
 
 // Every case below is real text from
 // fixtures/2026-08-11/rmc-89-2026-pdftotext-layout.txt or the OCR-noise table
@@ -102,4 +109,46 @@ test("levenshtein measures plain edit distance", () => {
   assert.equal(levenshtein("angttst", "august"), 3);
   assert.equal(levenshtein("", "august"), 6);
   assert.equal(levenshtein("august", ""), 6);
+});
+
+// `ocrTolerantWord` exists because RMC 62-2026's table header OCR'd to
+// `I)ue Date` / `E:rtended Due Date` — the same damage class the channel-header
+// regexes already absorb, applied to the labels the column geometry hangs off.
+
+test("ocrTolerantWord matches the clean spelling first", () => {
+  const pattern = new RegExp(ocrTolerantWord("Extended"), "iu");
+  assert.equal("Extended Due Date".search(pattern), 0);
+  assert.equal(pattern.exec("Extended")?.[0], "Extended");
+});
+
+test("ocrTolerantWord absorbs one letter lost to punctuation or a lookalike", () => {
+  const due = new RegExp(ocrTolerantWord("Due"), "iu");
+  const extended = new RegExp(ocrTolerantWord("Extended"), "iu");
+
+  assert.ok(due.test("I)ue Date")); // RMC 62-2026: D -> I + )
+  assert.ok(extended.test("E:rtended Due Date")); // RMC 62-2026: x -> : + r
+  assert.ok(extended.test("Ext.nded")); // e -> ., the same class
+  assert.ok(extended.test("Exlended")); // t -> l, a stroke lookalike
+});
+
+test("ocrTolerantWord holds every other letter exactly", () => {
+  const extended = new RegExp(`^${ocrTolerantWord("Extended")}$`, "iu");
+
+  assert.ok(!extended.test("Extend")); // a letter missing, not damaged
+  assert.ok(!extended.test("E:rtend:d")); // two damaged letters
+  assert.ok(!extended.test("Extendedly")); // anchored, so no partial credit
+  assert.ok(!extended.test("Extended Due")); // debris never spans whitespace
+});
+
+test("ocrTolerantPhrase tolerates each word independently", () => {
+  const label = new RegExp(ocrTolerantPhrase("Extended Due Date"), "iu");
+
+  assert.ok(label.test("E:rtended Due Date"));
+  assert.ok(label.test("Extended   I)ue Date")); // both words damaged, one letter each
+  assert.ok(!label.test("Extended Due")); // the phrase still needs all three words
+});
+
+test("ocrTolerantWord refuses a pattern it cannot escape safely", () => {
+  assert.throws(() => ocrTolerantWord("Due Date"), /plain alphabetic word/u);
+  assert.throws(() => ocrTolerantWord("2550Q"), /plain alphabetic word/u);
 });
