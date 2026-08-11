@@ -18,7 +18,7 @@ const calendar_ui = @import("calendar/ui_state.zig");
 const period_name = @import("domain/period_name.zig");
 const global_dashboard_ui = @import("global_dashboard/ui_state.zig");
 const news_domain = @import("news/domain.zig");
-const news_feed = @import("news/feed.zig");
+const news_feed_json = @import("news/feed_json.zig");
 const news_store = @import("news/store.zig");
 const news_ui = @import("news/ui_state.zig");
 const profile_ui = @import("tax_profile/ui_state.zig");
@@ -192,7 +192,11 @@ const global_calendar_two_column_day_max_height: f32 = 64;
 const global_calendar_stacked_day_max_height: f32 = 56;
 const profile_calendar_day_max_height: f32 = 72;
 const compact_global_form_picker_width: f32 = 180;
+const compact_global_rdo_context_width: f32 = 220;
 const max_visible_global_form_rows: usize = 8;
+const global_rdo_context_nationwide_label = "Nationwide";
+const global_rdo_context_fallback_caption =
+    "Showing one district's policy view, not the nationwide schedule.";
 
 const app_permissions = [_][]const u8{
     native_sdk.security.permission_command,
@@ -1583,6 +1587,9 @@ pub const Model = struct {
     newsStore: ?*news_store.Store = null,
     newsAllocator: ?std.mem.Allocator = null,
     newsNotices: ?news_domain.NoticeList = null,
+    // Resolved once at startup; the environment override lives as long as the
+    // process, so the slice is safe to hold for the session.
+    newsFeedUrl: []const u8 = important_news_feed_url,
     taxProfiles: profile_ui.State = .{},
     registrationLedger: ?registration_ledger.TaxpayerRegistrationLedger = null,
     registrationMutationGate: RegistrationMutationGate = .{},
@@ -1692,6 +1699,8 @@ pub const Model = struct {
     profileTinFocusActive: bool = false,
     profileRdoPickerVisible: bool = false,
     profileRdoQuery: canvas.TextBuffer(128) = .{},
+    globalRdoContextPickerVisible: bool = false,
+    globalRdoContextQuery: canvas.TextBuffer(128) = .{},
     calendarToday: calendar_domain.Date = .{
         .year = 2026,
         .month = 1,
@@ -1723,6 +1732,7 @@ pub const Model = struct {
         "newsStore",
         "newsAllocator",
         "newsNotices",
+        "newsFeedUrl",
         "calendarToday",
         "profileSubjectPickerVisible",
         "profileClassificationPickerVisible",
@@ -1733,6 +1743,8 @@ pub const Model = struct {
         "profileTinFocusActive",
         "profileRdoPickerVisible",
         "profileRdoQuery",
+        "globalRdoContextPickerVisible",
+        "globalRdoContextQuery",
         "profileCompletionTarget",
         "profileCompletionFormIndex",
         "pendingProfileFormLaunch",
@@ -8563,6 +8575,115 @@ pub const Model = struct {
         ) catch "Deadlines";
     }
 
+    pub fn globalRdoContextPickerOpen(self: *const Model) bool {
+        return self.globalRdoContextPickerVisible;
+    }
+
+    pub fn globalRdoContextQueryValue(self: *const Model) []const u8 {
+        return self.globalRdoContextQuery.text();
+    }
+
+    pub fn globalRdoContextActive(self: *const Model) bool {
+        return self.globalDashboard.hasRdoContext();
+    }
+
+    /// The nationwide row of the picker is selected exactly when no district
+    /// narrows the projection.
+    pub fn globalRdoContextNationwide(self: *const Model) bool {
+        return !self.globalDashboard.hasRdoContext();
+    }
+
+    pub fn globalRdoContextLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const code = self.globalDashboard.rdoContext() orelse
+            return global_rdo_context_nationwide_label;
+        const entry = rdo_reference.findByCode(code) orelse return code;
+        return std.fmt.allocPrint(
+            arena,
+            "{s} - {s}",
+            .{ entry.code, entry.name },
+        ) catch entry.code;
+    }
+
+    /// A district projection is not the nationwide schedule this page
+    /// otherwise guarantees, so the caption must stay visible for as long as
+    /// the context is active.
+    pub fn globalRdoContextCaption(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        const code = self.globalDashboard.rdoContext() orelse return "";
+        const entry = rdo_reference.findByCode(code) orelse {
+            return std.fmt.allocPrint(
+                arena,
+                "Showing RDO {s} policy view, not the nationwide schedule.",
+                .{code},
+            ) catch global_rdo_context_fallback_caption;
+        };
+        return std.fmt.allocPrint(
+            arena,
+            "Showing RDO {s} - {s} policy view, not the nationwide schedule.",
+            .{ entry.code, entry.name },
+        ) catch global_rdo_context_fallback_caption;
+    }
+
+    pub fn globalRdoContextPickerWidth(self: *const Model) f32 {
+        if (self.constrainedLayout() or self.globalCalendarHeaderStacked()) {
+            return self.globalCalendarLaneWidth();
+        }
+        return compact_global_rdo_context_width;
+    }
+
+    pub fn globalRdoContextRowHeight(self: *const Model) f32 {
+        return self.dashboardControlHeight();
+    }
+
+    /// The RDO catalog search answers with at most `default_result_limit`
+    /// rows, so the menu keeps a fixed height instead of tracking a count.
+    pub fn globalRdoContextOptionsHeight(self: *const Model) f32 {
+        return self.globalRdoContextRowHeight() *
+            @as(f32, @floatFromInt(rdo_reference.default_result_limit));
+    }
+
+    pub fn globalRdoContextMenuHeight(self: *const Model) f32 {
+        const row_height = self.globalRdoContextRowHeight();
+        // The search field, the nationwide row, and two separators stay
+        // outside the scrolling district region.
+        return self.globalRdoContextOptionsHeight() + row_height * 2 + 2;
+    }
+
+    pub fn globalRdoContextOptionRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const ProfileRdoOptionRow {
+        const matches = rdo_reference.search(self.globalRdoContextQuery.text());
+        const rows = arena.alloc(ProfileRdoOptionRow, matches.len) catch
+            return &.{};
+        const active = self.globalDashboard.rdoContext() orelse "";
+        for (matches.items(), 0..) |candidate, row_index| {
+            var entry_index: usize = 0;
+            for (&rdo_reference.entries, 0..) |*entry, index| {
+                if (entry == candidate) {
+                    entry_index = index;
+                    break;
+                }
+            }
+            rows[row_index] = .{
+                .id = entry_index,
+                .code = candidate.code,
+                .name = candidate.name,
+                .selected = std.mem.eql(u8, candidate.code, active),
+            };
+        }
+        return rows;
+    }
+
+    /// The news pane is a companion to the Global Dashboard calendar, so it
+    /// only ever shows the notices issued in the month on screen. Row ids stay
+    /// the position in the full cache so a month switch cannot reuse a key for
+    /// a different notice.
     pub fn importantNewsRows(
         self: *const Model,
         arena: std.mem.Allocator,
@@ -8573,10 +8694,49 @@ pub const Model = struct {
             return &.{};
         const rows = arena.alloc(ImportantNewsRow, notices.len) catch
             return &.{};
+        var count: usize = 0;
         for (notices, 0..) |*notice, index| {
-            rows[index] = .{ .id = index, .notice = notice };
+            if (!self.noticeIsInViewedMonth(notice)) continue;
+            rows[count] = .{ .id = index, .notice = notice };
+            count += 1;
         }
-        return rows;
+        return rows[0..count];
+    }
+
+    fn noticeIsInViewedMonth(
+        self: *const Model,
+        notice: *const news_domain.OwnedNotice,
+    ) bool {
+        const issued = news_domain.manilaCivilDate(notice.published_at_unix);
+        const viewed = &self.globalDashboard.calendar;
+        return issued.year == viewed.selected_year and
+            issued.month == viewed.selected_month;
+    }
+
+    fn importantNewsMonthNoticeCount(self: *const Model) usize {
+        const notices = if (self.newsNotices) |*list|
+            list.items
+        else
+            return 0;
+        var count: usize = 0;
+        for (notices) |*notice| {
+            if (self.noticeIsInViewedMonth(notice)) count += 1;
+        }
+        return count;
+    }
+
+    pub fn importantNewsMonthLabel(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "{s} {d}",
+            .{
+                fullMonthName(self.globalDashboard.calendar.selected_month),
+                self.globalDashboard.calendar.selected_year,
+            },
+        ) catch fullMonthName(self.globalDashboard.calendar.selected_month);
     }
 
     pub fn importantNewsRefreshing(self: *const Model) bool {
@@ -8588,15 +8748,24 @@ pub const Model = struct {
     }
 
     pub fn importantNewsHasRows(self: *const Model) bool {
-        return self.news.hasCachedNotices();
+        return self.importantNewsMonthNoticeCount() != 0;
     }
 
     pub fn importantNewsLoadingEmpty(self: *const Model) bool {
         return self.news.isRefreshing() and !self.news.hasCachedNotices();
     }
 
+    /// The cache has never produced a notice: the pane invites a refresh.
     pub fn importantNewsEmpty(self: *const Model) bool {
         return self.news.phase == .empty;
+    }
+
+    /// The cache holds notices but none were issued in the viewed month. This
+    /// is reassurance, not an error, and must stay distinct from the
+    /// never-fetched state that asks the reader to refresh.
+    pub fn importantNewsEmptyForMonth(self: *const Model) bool {
+        return self.news.hasCachedNotices() and
+            self.importantNewsMonthNoticeCount() == 0;
     }
 
     pub fn importantNewsErrorVisible(self: *const Model) bool {
@@ -10644,8 +10813,10 @@ fn formatNewsTimestamp(
     allocator: std.mem.Allocator,
     timestamp: i64,
 ) []const u8 {
-    const date = utcCalendarTimeFromUnixSeconds(timestamp) orelse
-        return "Unknown date";
+    // Manila, not UTC: the same reading that buckets the notice into a month
+    // has to date the row, or a notice stamped midnight Manila shows the day
+    // before and can contradict the month its own pane is showing.
+    const date = news_domain.manilaCivilDate(timestamp);
     return std.fmt.allocPrint(
         allocator,
         "{s} {d}, {d}",
@@ -11048,6 +11219,11 @@ pub const Msg = union(enum) {
     global_calendar_previous_month,
     global_calendar_next_month,
     global_calendar_select_day: u8,
+    global_rdo_context_open,
+    global_rdo_context_close,
+    global_rdo_context_query: canvas.TextInputEvent,
+    global_rdo_context_select: usize,
+    global_rdo_context_clear,
     profile_calendar_select_day: u8,
     profile_deadline_toggle_actions: u64,
     profile_deadline_close_actions,
@@ -13178,13 +13354,27 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .global_calendar_previous_month => {
             model.globalDashboard.previousMonth();
+            applyGlobalRdoContext(model);
         },
         .global_calendar_next_month => {
             model.globalDashboard.nextMonth();
+            applyGlobalRdoContext(model);
         },
         .global_calendar_select_day => |day| {
             _ = model.globalDashboard.toggleDay(day);
         },
+        .global_rdo_context_open => {
+            model.globalRdoContextQuery.clear();
+            model.globalRdoContextPickerVisible = true;
+        },
+        .global_rdo_context_close => closeGlobalRdoContextPicker(model),
+        .global_rdo_context_query => |edit| {
+            model.globalRdoContextQuery.apply(edit);
+        },
+        .global_rdo_context_select => |entry_index| {
+            selectGlobalRdoContext(model, entry_index);
+        },
+        .global_rdo_context_clear => clearGlobalRdoContext(model),
         .profile_calendar_select_day => |day| {
             model.toggleProfileCalendarDay(day);
         },
@@ -14420,7 +14610,45 @@ fn refreshSelectedProfileCalendar(model: *Model) void {
 
 fn refreshGlobalCalendar(model: *Model) void {
     model.globalDashboard.calendar.refresh();
+    applyGlobalRdoContext(model);
     _ = model.globalDashboard.reconcileSelectedDay();
+}
+
+/// Re-projects the dashboard through its session RDO context so RDO-scoped
+/// policy is visible on the page the user asked to narrow. Nationwide is the
+/// calendar's own unscoped projection and needs no second pass, which keeps
+/// the default dashboard exactly the schedule it has always been.
+fn applyGlobalRdoContext(model: *Model) void {
+    const calendar = &model.globalDashboard.calendar;
+    const code = model.globalDashboard.rdoContext() orelse return;
+    calendar.recomputeForTaxpayer(.{ .rdo = code }) catch |err|
+        calendar.setError(err);
+}
+
+fn closeGlobalRdoContextPicker(model: *Model) void {
+    model.globalRdoContextPickerVisible = false;
+    model.globalRdoContextQuery.clear();
+}
+
+fn selectGlobalRdoContext(model: *Model, entry_index: usize) void {
+    if (entry_index >= rdo_reference.entries.len) return;
+    const changed = model.globalDashboard.setRdoContext(
+        rdo_reference.entries[entry_index].code,
+    ) catch |err| {
+        model.globalDashboard.calendar.setError(err);
+        return;
+    };
+    closeGlobalRdoContextPicker(model);
+    if (!changed) return;
+    applyGlobalRdoContext(model);
+}
+
+fn clearGlobalRdoContext(model: *Model) void {
+    const changed = model.globalDashboard.clearRdoContext();
+    closeGlobalRdoContextPicker(model);
+    if (!changed) return;
+    const calendar = &model.globalDashboard.calendar;
+    calendar.recompute() catch |err| calendar.setError(err);
 }
 
 fn attachImportantNews(
@@ -14462,12 +14690,30 @@ fn refreshImportantNews(model: *Model, maybe_fx: ?*Effects) void {
     }
     fx.fetch(.{
         .key = important_news_fetch_key,
-        .url = important_news_feed_url,
+        .url = model.newsFeedUrl,
         .timeout_ms = 15_000,
         .on_response = Effects.responseMsg(.important_news_response),
     });
 }
 
+/// Resolves the feed address for one launch. A blank override is a
+/// configuration mistake rather than a request for the shipped default, and an
+/// address the effect layer would reject is refused here where it can be named.
+fn resolveImportantNewsFeedUrl(configured: ?[]const u8) ![]const u8 {
+    const value = configured orelse return important_news_feed_url;
+    const trimmed = std.mem.trim(u8, value, &std.ascii.whitespace);
+    if (trimmed.len == 0) return error.EmptyNewsFeedUrlOverride;
+    if (trimmed.len > native_sdk.max_effect_url_bytes) {
+        return error.NewsFeedUrlOverrideTooLong;
+    }
+    return trimmed;
+}
+
+/// Applies one feed response. The document carries two independent payloads:
+/// the notices that back the Important News pane, and the deadline overrides
+/// that move calendar markers. Only the notice half can fail the refresh —
+/// override ingestion runs after the notices are committed and degrades on its
+/// own, because a calendar problem must never hide published news.
 fn receiveImportantNews(
     model: *Model,
     response: native_sdk.EffectResponse,
@@ -14498,7 +14744,7 @@ fn receiveImportantNews(
         failImportantNews(model, generation, "The news cache is unavailable.");
         return;
     };
-    var parsed = news_feed.parse(
+    var parsed = news_feed_json.parse(
         allocator,
         important_news_source,
         response.body,
@@ -14508,7 +14754,7 @@ fn receiveImportantNews(
         return;
     };
     defer parsed.deinit(allocator);
-    store.upsertOwnedBatch(parsed.items) catch {
+    store.upsertOwnedBatch(parsed.notices.items) catch {
         failImportantNews(model, generation, "The refreshed news could not be saved.");
         return;
     };
@@ -14529,6 +14775,76 @@ fn receiveImportantNews(
     }
     if (model.newsNotices) |*old| old.deinit(allocator);
     model.newsNotices = newest;
+    ingestImportantNewsOverrides(model, parsed.overrides.items);
+}
+
+/// Upserts the feed's deadline overrides into the calendar policy store and
+/// replays the reload the override editor performs, so a marker moved by a
+/// synced rule appears without restarting the app. Every failure is reported
+/// on the calendar surface only: the notices are already committed and shown.
+fn ingestImportantNewsOverrides(
+    model: *Model,
+    records: []const news_feed_json.OverrideRecord,
+) void {
+    if (records.len == 0) return;
+    // Headless and fixture contexts refresh news without a policy store.
+    const store = model.calendar.store orelse return;
+
+    var mapped: [news_feed_json.max_overrides]calendar_ui.persistence.FeedOverrideRecord =
+        undefined;
+    if (records.len > mapped.len) {
+        return model.calendar.setError(error.TooManyOverrides);
+    }
+    for (records, 0..) |record, index| {
+        mapped[index] = .{
+            .external_ref = record.external_ref,
+            .title = record.title,
+            .source_reference = record.source_reference,
+            .original_deadline = record.original_deadline,
+            .adjusted_deadline = record.adjusted_deadline,
+            .form_codes = record.form_codes,
+            .rdo_codes = record.rdo_codes,
+        };
+    }
+    const summary = store.syncOverridesFromFeed(mapped[0..records.len]) catch |err| {
+        return model.calendar.setError(err);
+    };
+
+    model.calendar.refresh();
+    refreshGlobalCalendar(model);
+    refreshSelectedProfileCalendar(model);
+    appendSyncedOverrideCounts(model, summary);
+}
+
+/// Extends the reload notice the editor already produced with the sync tally.
+/// A non-success notice is left alone: the truncation warning it carries is
+/// more urgent than the count.
+fn appendSyncedOverrideCounts(
+    model: *Model,
+    summary: calendar_ui.persistence.SyncSummary,
+) void {
+    if (model.calendar.notice_kind != .success) return;
+    var rejected_buffer: [48]u8 = undefined;
+    const rejected = if (summary.rejected == 0)
+        ""
+    else
+        std.fmt.bufPrint(
+            &rejected_buffer,
+            " {d} rejected.",
+            .{summary.rejected},
+        ) catch "";
+    var buffer: [256]u8 = undefined;
+    const text = std.fmt.bufPrint(
+        &buffer,
+        "{s} {d} BIR override{s} synced.{s}",
+        .{
+            model.calendar.notice.text(),
+            summary.inserted + summary.updated,
+            if (summary.inserted + summary.updated == 1) "" else "s",
+            rejected,
+        },
+    ) catch return;
+    model.calendar.setNotice(.success, text);
 }
 
 fn failImportantNews(
@@ -17436,8 +17752,14 @@ fn nominalWidthForClass(viewport_class: ViewportClass) f32 {
 
 const Effects = native_sdk.Effects(Msg);
 const important_news_fetch_key: u64 = 20_260_000;
-const important_news_feed_url = "https://www.officialgazette.gov.ph/feed/";
-const important_news_source = "Official Gazette";
+// The compiled BIR feed published by the sync pipeline. `BUWIZ_NEWS_FEED_URL`
+// replaces it for one launch so a staging branch or a locally served feed can
+// be exercised without a rebuild; the effect layer accepts http(s) only, so a
+// local file must be served over http://localhost rather than named file://.
+const important_news_feed_url =
+    "https://raw.githubusercontent.com/hexuria/formzero/news-feed/feed.json";
+const important_news_feed_url_env = "BUWIZ_NEWS_FEED_URL";
+const important_news_source = "BIR";
 const calendar_export_file_key: u64 = 20_260_001;
 const calendar_open_file_key: u64 = 20_260_002;
 const profile_notice_timer_key_base: u64 = 20_260_100;
@@ -18019,6 +18341,9 @@ pub fn main(init: std.process.Init) !void {
         );
         return error.LegacyDataDirectoryForbiddenForBranchBuild;
     }
+    const news_feed_url = try resolveImportantNewsFeedUrl(
+        init.environ_map.get(important_news_feed_url_env),
+    );
     const explicit_data_dir = buwiz_data_dir orelse
         (if (app_identity.is_main) legacy_data_dir else null);
     const data_dir_was_explicit = explicit_data_dir != null;
@@ -18174,6 +18499,7 @@ pub fn main(init: std.process.Init) !void {
     app_state.model.registrationEvidenceDataDirectory =
         if (fixture_directory) |*directory| directory.dir else data_directory;
     app_state.model.fixturePreviewSession = fixture_preview_requested;
+    app_state.model.newsFeedUrl = news_feed_url;
     app_state.model.calendarToday = try calendar_domain.Date.init(
         boot_time.year,
         boot_time.month,
@@ -22265,12 +22591,53 @@ test "calendar export toast is safe while busy and dismisses when terminal" {
     try std.testing.expectEqual(@as(usize, 0), fx.pendingTimerCount());
 }
 
-test "important news refresh persists RSS and retains cache on failure" {
+// Shapes copied from the compiled feed at scripts/news-sync/feed/feed.json;
+// only the notice list and the 58-office RDO scope are trimmed.
+const important_news_feed_fixture =
+    \\{
+    \\  "schema_version": 1,
+    \\  "generated_at_unix": 1786752000,
+    \\  "source_label": "BIR",
+    \\  "notices": [
+    \\    {
+    \\      "external_id": "bir:rmc:2026:089",
+    \\      "kind": "RMC",
+    \\      "title": "RMC No. 89-2026",
+    \\      "summary": "Providing Extension of the Deadlines for the Filing of Tax Returns and Payment of Corresponding Taxes Due Thereon.",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2089-2026_redacted.pdf",
+    \\      "published_at_unix": 1786291200,
+    \\      "month_bucket": "2026-08"
+    \\    }
+    \\  ],
+    \\  "overrides": [
+    \\    {
+    \\      "external_ref": "bir:rmc:2026:089/2026-08-10/nonefps",
+    \\      "title": "RMC 89-2026 extension (due 2026-08-10)",
+    \\      "source_reference": "RMC No. 89-2026",
+    \\      "original_deadline": "2026-08-10",
+    \\      "adjusted_deadline": "2026-08-17",
+    \\      "form_codes": ["0619E", "0619F", "1601C"],
+    \\      "rdo_codes": ["039"],
+    \\      "channel": "nonefps",
+    \\      "notice_external_id": "bir:rmc:2026:089"
+    \\    }
+    \\  ]
+    \\}
+;
+
+const important_news_feed_external_ref =
+    "bir:rmc:2026:089/2026-08-10/nonefps";
+
+test "important news refresh persists the BIR feed and retains cache on failure" {
     const allocator = std.testing.allocator;
     var store = try news_store.Store.openMemory(allocator);
     defer store.close();
 
     var model = Model{};
+    // The pane is month-scoped, so the viewed month has to be the fixture's
+    // issue month for its rows to be visible at all.
+    model.globalDashboard.calendar.selected_year = 2026;
+    model.globalDashboard.calendar.selected_month = 8;
     try attachImportantNews(&model, allocator, &store);
     defer deinitImportantNews(&model);
 
@@ -22287,24 +22654,22 @@ test "important news refresh persists RSS and retains cache on failure" {
         fx.pendingFetchAt(0).?.url,
     );
 
-    const rss =
-        \\<?xml version="1.0"?>
-        \\<rss version="2.0"><channel><item>
-        \\<guid>notice-1382</guid>
-        \\<title>Proclamation No. 1382, s. 2026</title>
-        \\<description>Public holiday announcement.</description>
-        \\<link>https://www.officialgazette.gov.ph/example/</link>
-        \\<pubDate>Thu, 30 Jul 2026 02:11:31 +0000</pubDate>
-        \\</item></channel></rss>
-    ;
-    try fx.feedResponse(important_news_fetch_key, 200, rss);
+    try fx.feedResponse(
+        important_news_fetch_key,
+        200,
+        important_news_feed_fixture,
+    );
     updateWithEffects(&model, fx.takeMsg().?, fx);
     try std.testing.expect(!model.importantNewsRefreshing());
     try std.testing.expect(model.importantNewsHasRows());
     try std.testing.expectEqual(@as(usize, 1), try store.count());
     try std.testing.expectEqualStrings(
-        "Proclamation No. 1382, s. 2026",
+        "RMC No. 89-2026",
         model.newsNotices.?.items[0].title,
+    );
+    try std.testing.expectEqualStrings(
+        important_news_source,
+        model.newsNotices.?.items[0].source,
     );
 
     updateWithEffects(&model, .refresh_important_news, fx);
@@ -22315,6 +22680,785 @@ test "important news refresh persists RSS and retains cache on failure" {
     try std.testing.expectEqual(@as(usize, 1), try store.count());
     update(&model, .dismiss_important_news_error);
     try std.testing.expect(!model.importantNewsErrorVisible());
+}
+
+// Three notices lifted verbatim from the compiled feed: RMC 89 and 88 were
+// issued in August 2026 and RMC 86 in July 2026, so one feed exercises both
+// sides of the month filter.
+const important_news_two_month_fixture =
+    \\{
+    \\  "schema_version": 1,
+    \\  "generated_at_unix": 1786752000,
+    \\  "source_label": "BIR",
+    \\  "notices": [
+    \\    {
+    \\      "external_id": "bir:rmc:2026:089",
+    \\      "kind": "RMC",
+    \\      "title": "RMC No. 89-2026",
+    \\      "summary": "Providing Extension of the Deadlines for the Filing of Tax Returns and Payment of Corresponding Taxes Due Thereon.",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2089-2026_redacted.pdf",
+    \\      "published_at_unix": 1786291200,
+    \\      "month_bucket": "2026-08"
+    \\    },
+    \\    {
+    \\      "external_id": "bir:rmc:2026:088",
+    \\      "kind": "RMC",
+    \\      "title": "RMC No. 88-2026",
+    \\      "summary": "Circularizing Memorandum Circular (MC) No. 122 of the Office of the President.",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2088-2026_redacted.pdf",
+    \\      "published_at_unix": 1785945600,
+    \\      "month_bucket": "2026-08"
+    \\    },
+    \\    {
+    \\      "external_id": "bir:rmc:2026:086",
+    \\      "kind": "RMC",
+    \\      "title": "RMC No. 86-2026",
+    \\      "summary": "Publishing the Updated List of Registered Manufacturers, Importers and Exporters of tobacco products.",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2086-2026_redacted-compressed.pdf",
+    \\      "published_at_unix": 1785427200,
+    \\      "month_bucket": "2026-07"
+    \\    }
+    \\  ],
+    \\  "overrides": []
+    \\}
+;
+
+test "the news pane shows only notices issued in the viewed calendar month" {
+    const allocator = std.testing.allocator;
+    var store = try news_store.Store.openMemory(allocator);
+    defer store.close();
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+
+    var model = Model{};
+    model.globalDashboard.calendar.selected_year = 2026;
+    model.globalDashboard.calendar.selected_month = 8;
+    try attachImportantNews(&model, allocator, &store);
+    defer deinitImportantNews(&model);
+
+    // Nothing has ever been fetched: the invitation to refresh is the right
+    // message, not the month reassurance.
+    try std.testing.expect(model.importantNewsEmpty());
+    try std.testing.expect(!model.importantNewsEmptyForMonth());
+
+    const fx = try allocator.create(Effects);
+    defer allocator.destroy(fx);
+    fx.* = .{ .allocator = allocator, .executor = .fake };
+    defer fx.deinit();
+
+    updateWithEffects(&model, .refresh_important_news, fx);
+    try fx.feedResponse(
+        important_news_fetch_key,
+        200,
+        important_news_two_month_fixture,
+    );
+    updateWithEffects(&model, fx.takeMsg().?, fx);
+    try std.testing.expectEqual(@as(usize, 3), model.newsNotices.?.items.len);
+
+    const august = model.importantNewsRows(scratch);
+    try std.testing.expectEqual(@as(usize, 2), august.len);
+    try std.testing.expectEqualStrings("RMC No. 89-2026", august[0].notice.title);
+    try std.testing.expectEqualStrings("RMC No. 88-2026", august[1].notice.title);
+    try std.testing.expectEqualStrings(
+        "August 2026",
+        model.importantNewsMonthLabel(scratch),
+    );
+    try std.testing.expect(model.importantNewsHasRows());
+    try std.testing.expect(!model.importantNewsEmptyForMonth());
+    try std.testing.expect(!model.importantNewsEmpty());
+
+    model.globalDashboard.calendar.selected_month = 7;
+    const july = model.importantNewsRows(scratch);
+    try std.testing.expectEqual(@as(usize, 1), july.len);
+    try std.testing.expectEqualStrings("RMC No. 86-2026", july[0].notice.title);
+    try std.testing.expectEqualStrings(
+        "July 2026",
+        model.importantNewsMonthLabel(scratch),
+    );
+    try std.testing.expect(model.importantNewsHasRows());
+
+    // June holds no notices, so the pane reassures instead of asking for a
+    // refresh the cache has already served.
+    model.globalDashboard.calendar.selected_month = 6;
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        model.importantNewsRows(scratch).len,
+    );
+    try std.testing.expect(!model.importantNewsHasRows());
+    try std.testing.expect(model.importantNewsEmptyForMonth());
+    try std.testing.expect(!model.importantNewsEmpty());
+    try std.testing.expectEqualStrings(
+        "June 2026",
+        model.importantNewsMonthLabel(scratch),
+    );
+}
+
+test "a refreshed feed writes its overrides into the calendar policy store" {
+    const allocator = std.testing.allocator;
+    var news_cache = try news_store.Store.openMemory(allocator);
+    defer news_cache.close();
+    var calendar_store = try calendar_ui.persistence.Store.openMemory(
+        allocator,
+    );
+    defer calendar_store.close();
+
+    var model = Model{};
+    // The three calendar surfaces share one store exactly as startup wires
+    // them, so the refresh exercises the real reload fan-out.
+    try model.calendar.attach(
+        allocator,
+        &calendar_store,
+        "/tmp/buwiz-news-override-test.ics",
+        "20260810T010203Z",
+        2026,
+        8,
+    );
+    try model.globalDashboard.calendar.attach(
+        allocator,
+        &calendar_store,
+        "/tmp/buwiz-news-override-test.ics",
+        "20260810T010203Z",
+        2026,
+        8,
+    );
+    try model.profileCalendar.attach(
+        allocator,
+        &calendar_store,
+        "/tmp/buwiz-news-override-test.ics",
+        "20260810T010203Z",
+        2026,
+        8,
+    );
+    try attachImportantNews(&model, allocator, &news_cache);
+    defer deinitImportantNews(&model);
+
+    const fx = try allocator.create(Effects);
+    defer allocator.destroy(fx);
+    fx.* = .{ .allocator = allocator, .executor = .fake };
+    defer fx.deinit();
+
+    updateWithEffects(&model, .refresh_important_news, fx);
+    try fx.feedResponse(
+        important_news_fetch_key,
+        200,
+        important_news_feed_fixture,
+    );
+    updateWithEffects(&model, fx.takeMsg().?, fx);
+
+    const stored = try calendar_store.getOverrideIdByExternalRef(
+        important_news_feed_external_ref,
+    );
+    try std.testing.expect(stored != null);
+    try std.testing.expectEqual(@as(usize, 1), model.calendar.override_count);
+    try std.testing.expectEqualStrings(
+        "RMC No. 89-2026",
+        model.calendar.overrides[0].source.text(),
+    );
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        model.calendar.notice.text(),
+        "1 BIR override synced.",
+    ));
+
+    // A second delivery of the same feed updates the one row in place; a
+    // re-synced override must never accumulate duplicates.
+    updateWithEffects(&model, .refresh_important_news, fx);
+    try fx.feedResponse(
+        important_news_fetch_key,
+        200,
+        important_news_feed_fixture,
+    );
+    updateWithEffects(&model, fx.takeMsg().?, fx);
+    try std.testing.expectEqual(
+        stored,
+        try calendar_store.getOverrideIdByExternalRef(
+            important_news_feed_external_ref,
+        ),
+    );
+    try std.testing.expectEqual(@as(usize, 1), model.calendar.override_count);
+    try std.testing.expect(model.importantNewsHasRows());
+}
+
+// The compiled feed published at scripts/news-sync/feed/feed.json, with its
+// arrays folded onto single lines. Every value is the published feed's own:
+// 16 notices spread over four months, and both non-eFPS override rows of RMC
+// No. 89-2026 with the 60 revenue districts each one is scoped to.
+const published_news_feed =
+    \\{
+    \\  "schema_version": 1,
+    \\  "generated_at_unix": 1786752000,
+    \\  "source_label": "BIR",
+    \\  "notices": [
+    \\    {
+    \\      "external_id": "bir:rmc:2026:089",
+    \\      "kind": "RMC",
+    \\      "title": "RMC No. 89-2026",
+    \\      "summary": "Providing Extension of the Deadlines for the Filing of Tax Retums and Payment of Conesponding Taxes Due Thereon, Including Submission of Required Documents for Taxpayers within the Jurisdiction of Revenue District Offices of the Bureau of Intemal Revenue that were Affected by the Continued Heavy Rainfall brought about by Southwest Monsoon",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2089-2026_redacted.pdf",
+    \\      "published_at_unix": 1786291200,
+    \\      "month_bucket": "2026-08"
+    \\    },
+    \\    {
+    \\      "external_id": "bir:rmc:2026:088",
+    \\      "kind": "RMC",
+    \\      "title": "RMC No. 88-2026",
+    \\      "summary": "Circularizing Memorandum Circular (MC) No. 122 dated 05 August 2028 of the Office of the President, Malacañang Palace",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2088-2026_redacted.pdf",
+    \\      "published_at_unix": 1785945600,
+    \\      "month_bucket": "2026-08"
+    \\    },
+    \\    {
+    \\      "external_id": "bir:rmc:2026:087",
+    \\      "kind": "RMC",
+    \\      "title": "RMC No. 87-2026",
+    \\      "summary": "Publishing the Full Text of the May 4, 2026 Letter from the Food and Drug Administration (FDA) of the Department of Health Endorsing the Updated Full List of VAT-Exempt Drugs Under Republic Act (R.A.) No. 10963 (TRAIN Law) and R.A. No. 11534 (CREATE Act)",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2087-2026_redacted.pdf",
+    \\      "published_at_unix": 1785772800,
+    \\      "month_bucket": "2026-08"
+    \\    },
+    \\    {
+    \\      "external_id": "bir:rmc:2026:086",
+    \\      "kind": "RMC",
+    \\      "title": "RMC No. 86-2026",
+    \\      "summary": "Publishing the Updated List of Registered Manufacturers/Importers /Exporters with the Corresponding Products/Brands/Variants of Cigarettes, Heated Tobacco Products, Vapor Products, Novel Tobacco Products, Cigars, Smoking Tobacco Products and Chewing Tobacco Products and Integration of the Requirements for Compliance Purposes",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2086-2026_redacted-compressed.pdf",
+    \\      "published_at_unix": 1785427200,
+    \\      "month_bucket": "2026-07"
+    \\    },
+    \\    {
+    \\      "external_id": "bir:rmc:2026:085",
+    \\      "kind": "RMC",
+    \\      "title": "RMC No. 85-2026",
+    \\      "summary": "Publishing the Updated List of Registered Manufacturers/Importers /Exporters with the Corresponding Products/Brands/Variants of Cigarettes, Heated Tobacco Products, Vapor Products, Novel Tobacco Products, Cigars, Smoking Tobacco Products and Chewing Tobacco Products and Integration of the Requirements for Compliance Purposes",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2085-2026_redacted-compressed.pdf",
+    \\      "published_at_unix": 1785427200,
+    \\      "month_bucket": "2026-07"
+    \\    },
+    \\    {
+    \\      "external_id": "bir:rmo:2026:019",
+    \\      "kind": "RMO",
+    \\      "title": "RMO No. 19-2026",
+    \\      "summary": "Policies, Guidelines, and Procedures for the Availment of a One-Time Abatement of Taxes and/or Penalties for Micro Taxpayers Pursuant to Revenue Regulations No. 004-2026",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2019-2026_Redacted.pdf",
+    \\      "published_at_unix": 1784736000,
+    \\      "month_bucket": "2026-07"
+    \\    },
+    \\    {
+    \\      "external_id": "bir:rmo:2026:018",
+    \\      "kind": "RMO",
+    \\      "title": "RMO No. 18-2026",
+    \\      "summary": "Creation of Alphanumeric Tax Code (ATC) of Selected Revenue Source under Revenue Regulations No. 004-2026",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2018-2026_redacted.pdf",
+    \\      "published_at_unix": 1784736000,
+    \\      "month_bucket": "2026-07"
+    \\    },
+    \\    {
+    \\      "external_id": "bir:rmc:2026:084",
+    \\      "kind": "RMC",
+    \\      "title": "RMC No. 84-2026",
+    \\      "summary": "Clarifying certain provisions of Revenue Regulations No. 004-2026, prescribing the guidelines and procedures for the availment of the one-time abatement of taxes and/or penalties for micro taxpayers",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2084-2026_Redacted.pdf",
+    \\      "published_at_unix": 1784736000,
+    \\      "month_bucket": "2026-07"
+    \\    },
+    \\    {
+    \\      "external_id": "bir:rmo:2026:017",
+    \\      "kind": "RMO",
+    \\      "title": "RMO No. 17-2026",
+    \\      "summary": "Updated Policies and Procedures in Processing One-Time Transaction (ONETT) For Sale and Donation of Real/Personal Properties in Relation to the International Organization for Standardization (ISO) 9001:2015 Quality Management System (QMS)",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2017-2026_Redacted.pdf",
+    \\      "published_at_unix": 1783440000,
+    \\      "month_bucket": "2026-07"
+    \\    },
+    \\    {
+    \\      "external_id": "bir:rmo:2026:016",
+    \\      "kind": "RMO",
+    \\      "title": "RMO No. 16-2026",
+    \\      "summary": "Supplemental guidelines and procedures in the implementation of Revenue Memorandum Order No. 44-2025, with respect to the processing and payment of Separation and Terminal Leave Benefits claims of officials holding the positions of Regional Director/OIC-Regional Director and Assistant Regional Director/OIC-Assistant Regional Director",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20NO.%2016%20-2026_redacted-compressed%20(1).pdf",
+    \\      "published_at_unix": 1783353600,
+    \\      "month_bucket": "2026-07"
+    \\    },
+    \\    {
+    \\      "external_id": "bir:rmo:2026:015",
+    \\      "kind": "RMO",
+    \\      "title": "RMO No. 15-2026",
+    \\      "summary": "Guidelines on the Processing of Freedom of Information Requests",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2015-2026_redacted.pdf",
+    \\      "published_at_unix": 1783353600,
+    \\      "month_bucket": "2026-07"
+    \\    },
+    \\    {
+    \\      "external_id": "bir:rmo:2026:014",
+    \\      "kind": "RMO",
+    \\      "title": "RMO No. 14-2026",
+    \\      "summary": "Partial Revocation of Certain Provisions of Revenue Memorandum Order No. 4-2025",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2014-2026_redacted.pdf",
+    \\      "published_at_unix": 1783267200,
+    \\      "month_bucket": "2026-07"
+    \\    },
+    \\    {
+    \\      "external_id": "bir:rr:2026:004",
+    \\      "kind": "RR",
+    \\      "title": "RR No. 4-2026",
+    \\      "summary": "Prescribing guidelines and procedures for the availment of a one-time abatement of taxes and/or penalties for Micro Taxpayers",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RR%20No.%204-2026_Redacted.pdf",
+    \\      "published_at_unix": 1782057600,
+    \\      "month_bucket": "2026-06"
+    \\    },
+    \\    {
+    \\      "external_id": "bir:rr:2026:003",
+    \\      "kind": "RR",
+    \\      "title": "RR No. 3-2026",
+    \\      "summary": "Implementing Executive Order No. 114, Series of 2026 \"Temporarily Suspending the Excise Taxes on Specific Petroleum Products Pursuant to Section 148 of Republic Act No. 8424 or the National Internal Revenue Code of 1997, As Amended\"",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RR%20No.%20003-2026.pdf",
+    \\      "published_at_unix": 1776355200,
+    \\      "month_bucket": "2026-04"
+    \\    },
+    \\    {
+    \\      "external_id": "bir:rr:2026:002",
+    \\      "kind": "RR",
+    \\      "title": "RR No. 2-2026",
+    \\      "summary": "Guidelines in the Availment of the Fiscal Incentives Under Section 38 of Republic Act No. 12120, Otherwise Known as the \"Philippine Natural Gas Industry Development Act\"",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RR%20No.%202-2026.pdf",
+    \\      "published_at_unix": 1773676800,
+    \\      "month_bucket": "2026-03"
+    \\    },
+    \\    {
+    \\      "external_id": "bir:rr:2026:001",
+    \\      "kind": "RR",
+    \\      "title": "RR No. 1-2026",
+    \\      "summary": "Amending Sections 3, 4, and 7 of RR No. 9-2025 to clarify filing and payment rules for VAT on local sales, provide optional value-added tax (VAT) registration for certain Registered Business Enterprises (RBEs), extend the deadline for system reconfiguration, and exclude certain enterprises and activities from the coverage of VAT on local sales of RBEs under Section 295(D) of the NIRC of 1997 (Tax Code), as Amended by Section 18 of Republic Act No. 12066.",
+    \\      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RR%20No.%201-2026.pdf",
+    \\      "published_at_unix": 1771171200,
+    \\      "month_bucket": "2026-02"
+    \\    }
+    \\  ],
+    \\  "overrides": [
+    \\    {
+    \\      "external_ref": "bir:rmc:2026:089/2026-08-10/nonefps",
+    \\      "title": "RMC 89-2026 extension (due 2026-08-10)",
+    \\      "source_reference": "RMC No. 89-2026",
+    \\      "original_deadline": "2026-08-10",
+    \\      "adjusted_deadline": "2026-08-17",
+    \\      "form_codes": ["0619E", "0619F", "1601C"],
+    \\      "rdo_codes": ["002", "003", "004", "005", "006", "007", "008", "009", "010", "012", "018", "019", "020", "024", "026", "027", "028", "029", "030", "031", "032", "033", "034", "037", "038", "039", "040", "041", "042", "043", "044", "045", "046", "047", "048", "049", "050", "051", "052", "058", "059", "063", "116", "121", "124", "125", "126", "17A", "17B", "21A", "21B", "21C", "25A", "25B", "43A", "43B", "53A", "53B", "54A", "54B"],
+    \\      "channel": "nonefps",
+    \\      "notice_external_id": "bir:rmc:2026:089"
+    \\    },
+    \\    {
+    \\      "external_ref": "bir:rmc:2026:089/2026-08-15/nonefps",
+    \\      "title": "RMC 89-2026 extension (due 2026-08-15)",
+    \\      "source_reference": "RMC No. 89-2026",
+    \\      "original_deadline": "2026-08-15",
+    \\      "adjusted_deadline": "2026-08-17",
+    \\      "form_codes": ["1702EX", "1702MX", "1702RT"],
+    \\      "rdo_codes": ["002", "003", "004", "005", "006", "007", "008", "009", "010", "012", "018", "019", "020", "024", "026", "027", "028", "029", "030", "031", "032", "033", "034", "037", "038", "039", "040", "041", "042", "043", "044", "045", "046", "047", "048", "049", "050", "051", "052", "058", "059", "063", "116", "121", "124", "125", "126", "17A", "17B", "21A", "21B", "21C", "25A", "25B", "43A", "43B", "53A", "53B", "54A", "54B"],
+    \\      "channel": "nonefps",
+    \\      "notice_external_id": "bir:rmc:2026:089"
+    \\    }
+    \\  ]
+    \\}
+;
+
+const published_feed_august_override_ref =
+    "bir:rmc:2026:089/2026-08-10/nonefps";
+
+/// Locates one resolved obligation by the statutory date the feed's override
+/// keys on, so a test can compare the same deadline across projections.
+fn resolvedDeadlineFor(
+    state: *const calendar_ui.State,
+    form_code: []const u8,
+    statutory_iso: []const u8,
+) ?calendar_ui.DeadlineRow {
+    const statutory = calendar_domain.Date.parseIso(statutory_iso) catch
+        return null;
+    for (state.deadlines[0..state.deadline_count]) |row| {
+        if (!std.mem.eql(u8, row.form_code, form_code)) continue;
+        if (calendar_domain.Date.compare(
+            row.original_deadline,
+            statutory,
+        ) != .eq) continue;
+        return row;
+    }
+    return null;
+}
+
+fn rdoReferenceIndex(code: []const u8) ?usize {
+    for (&rdo_reference.entries, 0..) |*entry, index| {
+        if (std.mem.eql(u8, entry.code, code)) return index;
+    }
+    return null;
+}
+
+test "the published BIR feed moves the RDO 039 marker and leaves the nation alone" {
+    const allocator = std.testing.allocator;
+    var news_cache = try news_store.Store.openMemory(allocator);
+    defer news_cache.close();
+    var calendar_store = try calendar_ui.persistence.Store.openMemory(
+        allocator,
+    );
+    defer calendar_store.close();
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+
+    var model = Model{};
+    // The three calendar surfaces share one store exactly as startup wires
+    // them, so a synced override reaches every projection it should.
+    try model.calendar.attach(
+        allocator,
+        &calendar_store,
+        "/tmp/buwiz-news-e2e-test.ics",
+        "20260811T010203Z",
+        2026,
+        8,
+    );
+    try model.globalDashboard.calendar.attach(
+        allocator,
+        &calendar_store,
+        "/tmp/buwiz-news-e2e-test.ics",
+        "20260811T010203Z",
+        2026,
+        8,
+    );
+    try model.profileCalendar.attach(
+        allocator,
+        &calendar_store,
+        "/tmp/buwiz-news-e2e-test.ics",
+        "20260811T010203Z",
+        2026,
+        8,
+    );
+    try attachImportantNews(&model, allocator, &news_cache);
+    defer deinitImportantNews(&model);
+
+    const fx = try allocator.create(Effects);
+    defer allocator.destroy(fx);
+    fx.* = .{ .allocator = allocator, .executor = .fake };
+    defer fx.deinit();
+
+    updateWithEffects(&model, .refresh_important_news, fx);
+    try std.testing.expectEqualStrings(
+        important_news_feed_url,
+        fx.pendingFetchAt(0).?.url,
+    );
+    try fx.feedResponse(important_news_fetch_key, 200, published_news_feed);
+    updateWithEffects(&model, fx.takeMsg().?, fx);
+    try std.testing.expect(!model.importantNewsErrorVisible());
+    try std.testing.expectEqual(
+        @as(usize, 16),
+        model.newsNotices.?.items.len,
+    );
+
+    // The extension circular is the newest August notice, and July's nine
+    // issuances stay out of the August pane.
+    const august = model.importantNewsRows(scratch);
+    try std.testing.expectEqual(@as(usize, 3), august.len);
+    try std.testing.expectEqualStrings(
+        "RMC No. 89-2026",
+        august[0].notice.title,
+    );
+    try std.testing.expectEqualStrings(
+        "August 2026",
+        model.importantNewsMonthLabel(scratch),
+    );
+
+    model.globalDashboard.calendar.selected_month = 7;
+    const july = model.importantNewsRows(scratch);
+    try std.testing.expectEqual(@as(usize, 9), july.len);
+    for (july) |row| {
+        const issued = news_domain.manilaCivilDate(
+            row.notice.published_at_unix,
+        );
+        try std.testing.expectEqual(@as(i32, 2026), issued.year);
+        try std.testing.expectEqual(@as(u8, 7), issued.month);
+    }
+    model.globalDashboard.calendar.selected_month = 8;
+
+    // Both non-eFPS override rows of RMC 89-2026 reached the policy store.
+    try std.testing.expect(try calendar_store.getOverrideIdByExternalRef(
+        published_feed_august_override_ref,
+    ) != null);
+    try std.testing.expectEqual(@as(usize, 2), model.calendar.override_count);
+    try std.testing.expectEqualStrings(
+        "RMC No. 89-2026",
+        model.calendar.overrides[0].source.text(),
+    );
+    try std.testing.expect(model.calendar.overrides[0].syncedFromFeed());
+
+    // A taxpayer registered in RDO 039 is inside the circular's 60 offices,
+    // so their July 1601C remittance moves to the extended date. This is the
+    // call `syncSelectedProfileCalendar` makes with the profile's own RDO.
+    try model.profileCalendar.recomputeForTaxpayer(.{ .rdo = "039" });
+    const extended = resolvedDeadlineFor(
+        &model.profileCalendar,
+        "1601C",
+        "2026-08-10",
+    ) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(
+        try calendar_domain.Date.init(2026, 8, 17),
+        extended.final_deadline,
+    );
+    try std.testing.expectEqual(
+        calendar_domain.DeadlineStatus.extended,
+        extended.status,
+    );
+    try std.testing.expectEqualStrings("Extended", extended.statusLabel());
+    try std.testing.expectEqualStrings(
+        "RMC No. 89-2026",
+        extended.source.text(),
+    );
+
+    // RDO 113 is not in the circular, so the same obligation is untouched.
+    try model.profileCalendar.recomputeForTaxpayer(.{ .rdo = "113" });
+    const unaffected = resolvedDeadlineFor(
+        &model.profileCalendar,
+        "1601C",
+        "2026-08-10",
+    ) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(
+        try calendar_domain.Date.init(2026, 8, 10),
+        unaffected.final_deadline,
+    );
+    try std.testing.expectEqual(
+        calendar_domain.DeadlineStatus.normal,
+        unaffected.status,
+    );
+
+    // The dashboard's default is the nationwide schedule: a district-scoped
+    // extension must not move a marker the whole country would read.
+    const nationwide = resolvedDeadlineFor(
+        &model.globalDashboard.calendar,
+        "1601C",
+        "2026-08-10",
+    ) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(
+        try calendar_domain.Date.init(2026, 8, 10),
+        nationwide.final_deadline,
+    );
+    try std.testing.expect(!model.globalRdoContextActive());
+    try std.testing.expectEqualStrings(
+        "Nationwide",
+        model.globalRdoContextLabel(scratch),
+    );
+
+    // Choosing the RDO context re-projects that same dashboard, and says so.
+    const rdo_039 = rdoReferenceIndex("039") orelse
+        return error.TestUnexpectedResult;
+    update(&model, .{ .global_rdo_context_select = rdo_039 });
+    try std.testing.expect(model.globalRdoContextActive());
+    try std.testing.expect(!model.globalRdoContextPickerOpen());
+    try std.testing.expectEqualStrings(
+        "039 - South Quezon City",
+        model.globalRdoContextLabel(scratch),
+    );
+    try std.testing.expectEqualStrings(
+        "Showing RDO 039 - South Quezon City policy view, not the nationwide schedule.",
+        model.globalRdoContextCaption(scratch),
+    );
+    const scoped_dashboard = resolvedDeadlineFor(
+        &model.globalDashboard.calendar,
+        "1601C",
+        "2026-08-10",
+    ) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(
+        try calendar_domain.Date.init(2026, 8, 17),
+        scoped_dashboard.final_deadline,
+    );
+    try std.testing.expectEqual(
+        calendar_domain.DeadlineStatus.extended,
+        scoped_dashboard.status,
+    );
+
+    // A district outside the circular reads the ordinary schedule again.
+    const rdo_113 = rdoReferenceIndex("113") orelse
+        return error.TestUnexpectedResult;
+    update(&model, .{ .global_rdo_context_select = rdo_113 });
+    const other_district = resolvedDeadlineFor(
+        &model.globalDashboard.calendar,
+        "1601C",
+        "2026-08-10",
+    ) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(
+        try calendar_domain.Date.init(2026, 8, 10),
+        other_district.final_deadline,
+    );
+
+    update(&model, .global_rdo_context_clear);
+    try std.testing.expect(!model.globalRdoContextActive());
+    try std.testing.expectEqualStrings(
+        "",
+        model.globalRdoContextCaption(scratch),
+    );
+    const restored = resolvedDeadlineFor(
+        &model.globalDashboard.calendar,
+        "1601C",
+        "2026-08-10",
+    ) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(
+        try calendar_domain.Date.init(2026, 8, 10),
+        restored.final_deadline,
+    );
+}
+
+test "the selected profile's registered RDO decides which synced override it sees" {
+    const allocator = std.testing.allocator;
+    var news_cache = try news_store.Store.openMemory(allocator);
+    defer news_cache.close();
+    var calendar_store = try calendar_ui.persistence.Store.openMemory(
+        allocator,
+    );
+    defer calendar_store.close();
+    var profiles = try profile_store.Store.openMemory(allocator);
+    defer profiles.close();
+    try addTestProfileWithRdo(
+        &profiles,
+        "44444444444444444444444444444444",
+        "District Filer",
+        "123-456-789-000",
+        .individual,
+        "039",
+    );
+
+    var model = Model{};
+    try model.calendar.attach(
+        allocator,
+        &calendar_store,
+        "/tmp/buwiz-profile-rdo-test.ics",
+        "20260811T010203Z",
+        2026,
+        8,
+    );
+    try model.globalDashboard.calendar.attach(
+        allocator,
+        &calendar_store,
+        "/tmp/buwiz-profile-rdo-test.ics",
+        "20260811T010203Z",
+        2026,
+        8,
+    );
+    try model.profileCalendar.attach(
+        allocator,
+        &calendar_store,
+        "/tmp/buwiz-profile-rdo-test.ics",
+        "20260811T010203Z",
+        2026,
+        8,
+    );
+    try model.taxProfiles.attach(allocator, &profiles, "2026-08-11", 2026);
+    try attachImportantNews(&model, allocator, &news_cache);
+    defer deinitImportantNews(&model);
+
+    // The taxpayer is chosen the way the sidebar chooses one, so the calendar
+    // context comes from the stored profile instead of a literal RDO code.
+    update(&model, .{
+        .select_taxpayer = profileSlotNamed(&model, "District Filer").?,
+    });
+    try std.testing.expect(model.hasSelectedTaxpayer());
+    try std.testing.expectEqualStrings("039", model.selectedTaxpayerRdo());
+
+    const fx = try allocator.create(Effects);
+    defer allocator.destroy(fx);
+    fx.* = .{ .allocator = allocator, .executor = .fake };
+    defer fx.deinit();
+
+    updateWithEffects(&model, .refresh_important_news, fx);
+    try fx.feedResponse(important_news_fetch_key, 200, published_news_feed);
+    updateWithEffects(&model, fx.takeMsg().?, fx);
+    try std.testing.expect(!model.importantNewsErrorVisible());
+    try std.testing.expect(try calendar_store.getOverrideIdByExternalRef(
+        published_feed_august_override_ref,
+    ) != null);
+
+    // RDO 039 is one of the circular's offices, and the refresh the ingest
+    // performs is what puts the extended date on the profile's own calendar.
+    const extended = resolvedDeadlineFor(
+        &model.profileCalendar,
+        "1601C",
+        "2026-08-10",
+    ) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(
+        try calendar_domain.Date.init(2026, 8, 17),
+        extended.final_deadline,
+    );
+    try std.testing.expectEqual(
+        calendar_domain.DeadlineStatus.extended,
+        extended.status,
+    );
+    try std.testing.expectEqualStrings(
+        "RMC No. 89-2026",
+        extended.source.text(),
+    );
+
+    // Re-registering the same taxpayer in a district the circular does not
+    // name returns the obligation to its statutory date, through the profile
+    // editor rather than a hand-supplied context.
+    update(&model, .edit_tax_profile);
+    try std.testing.expect(model.taxProfiles.profileEditing());
+    update(&model, .{
+        .profile_rdo_select = rdoReferenceIndex("113") orelse
+            return error.TestUnexpectedResult,
+    });
+    update(&model, .save_profile);
+    try std.testing.expect(model.taxProfiles.profileViewing());
+    try std.testing.expectEqualStrings("113", model.selectedTaxpayerRdo());
+
+    const unaffected = resolvedDeadlineFor(
+        &model.profileCalendar,
+        "1601C",
+        "2026-08-10",
+    ) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(
+        try calendar_domain.Date.init(2026, 8, 10),
+        unaffected.final_deadline,
+    );
+    try std.testing.expectEqual(
+        calendar_domain.DeadlineStatus.normal,
+        unaffected.status,
+    );
+}
+
+test "the calendar's scope budget still covers everything the feed admits" {
+    // The calendar restates these bounds instead of importing the news
+    // boundary, so this application seam is the only place that can catch the
+    // two drifting apart — the exact shape of the region-cap defect.
+    try std.testing.expect(
+        news_feed_json.max_rdo_codes <= calendar_ui.max_regions_per_override,
+    );
+    try std.testing.expect(
+        news_feed_json.max_rdo_code_bytes <=
+            calendar_ui.max_feed_scope_text_bytes,
+    );
+    try std.testing.expect(
+        news_feed_json.max_rdo_codes * news_feed_json.max_rdo_code_bytes <=
+            calendar_ui.max_region_scope_bytes,
+    );
+}
+
+test "the news feed address falls back to the published feed and refuses a blank override" {
+    try std.testing.expectEqualStrings(
+        important_news_feed_url,
+        try resolveImportantNewsFeedUrl(null),
+    );
+    try std.testing.expectEqualStrings(
+        "http://127.0.0.1:8080/feed.json",
+        try resolveImportantNewsFeedUrl("  http://127.0.0.1:8080/feed.json  "),
+    );
+    try std.testing.expectError(
+        error.EmptyNewsFeedUrlOverride,
+        resolveImportantNewsFeedUrl("   "),
+    );
+    try std.testing.expectError(
+        error.NewsFeedUrlOverrideTooLong,
+        resolveImportantNewsFeedUrl(
+            "https://example.test/" ++
+                "x" ** (native_sdk.max_effect_url_bytes + 1),
+        ),
+    );
 }
 
 test "important news display text is compact and UTF-8 safe" {
@@ -25173,7 +26317,11 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
         "2026-01-01",
         "2026-12-31",
     );
-    var model = Model{};
+    // The Model is too large for a test stack frame once the whole
+    // markup tree is built on top of it; production allocates it too.
+    const model = try allocator.create(Model);
+    defer allocator.destroy(model);
+    model.* = .{};
     try model.calendar.attach(
         allocator,
         &calendar_store,
@@ -25204,7 +26352,7 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
         .form_revision = "2018-01-ENCS",
     }});
     try profile_store_fixture.replaceFormSet(profile_id, 2025, &.{});
-    refreshSelectedProfileFormSet(&model);
+    refreshSelectedProfileFormSet(model);
     try std.testing.expect(model.profileCalendarIncludesForm("2551Q"));
     try std.testing.expect(!model.profileCalendarIncludesForm("1701Q"));
 
@@ -25255,8 +26403,8 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
         model.profileOverdueDeadlineRows(arena).len,
     );
     for ([_]f32{ 700, 1920 }) |width| {
-        update(&model, .{ .viewport_width_changed = width });
-        try expectAppMarkupBuilds(&model);
+        update(model, .{ .viewport_width_changed = width });
+        try expectAppMarkupBuilds(model);
     }
     model.calendarToday = try matching_deadline.?.final_deadline.addDays(1);
     try std.testing.expectEqual(
@@ -25267,8 +26415,8 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
     try std.testing.expectEqual(@as(usize, 1), new_overdue_rows.len);
     try std.testing.expectEqualStrings("New", new_overdue_rows[0].filingStatus());
     for ([_]f32{ 700, 1920 }) |width| {
-        update(&model, .{ .viewport_width_changed = width });
-        try expectAppMarkupBuilds(&model);
+        update(model, .{ .viewport_width_changed = width });
+        try expectAppMarkupBuilds(model);
     }
     const selected_month = model.profileCalendar.selected_month;
     model.profileCalendar.selected_month = if (selected_month == 1) 2 else 1;
@@ -25344,7 +26492,7 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
         model.profileActionRequiredRows(arena).len,
     );
     const action_row = model.profileActionRequiredRows(arena)[0];
-    update(&model, .{
+    update(model, .{
         .profile_deadline_run_action = action_row.primaryActionDispatchId(),
     });
     try std.testing.expectEqual(Page.form_2551q, model.page);
@@ -25352,7 +26500,7 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
         @as(?u8, 2),
         model.formProfiles.filingPeriod().?.quarter(),
     );
-    navigate(&model, .taxpayer_dashboard);
+    navigate(model, .taxpayer_dashboard);
 
     // A clicked day narrows the month schedule only. It cannot hide a saved draft from
     // Action Required or move a deadline into Overdue.
@@ -25400,7 +26548,7 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
     // lane and marker without changing the Forms Set or export projection.
     const form_index = formCatalogIndex("2551Q").?;
     const export_count = model.profileCalendarForExport().deadline_count;
-    update(&model, .{
+    update(model, .{
         .profile_calendar_forms_toggle_option = form_index,
     });
     try std.testing.expectEqualStrings(
@@ -25422,7 +26570,7 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
         export_count,
         model.profileCalendarForExport().deadline_count,
     );
-    update(&model, .{
+    update(model, .{
         .profile_calendar_forms_toggle_option = form_index,
     });
     try std.testing.expectEqualStrings(
@@ -25457,13 +26605,13 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
     try std.testing.expectEqualStrings("Draft", lifecycle_rows[0].filingStatus());
     try std.testing.expectEqualStrings("Submit Form", lifecycle_rows[0].primaryActionLabel());
     const stale_submit_dispatch = lifecycle_rows[0].primaryActionDispatchId();
-    invalidateProfileDeadlineProjection(&model);
-    update(&model, .{
+    invalidateProfileDeadlineProjection(model);
+    update(model, .{
         .profile_deadline_run_action = stale_submit_dispatch,
     });
     try std.testing.expect(!model.profileDeadlineStubDialogOpen());
     lifecycle_rows = model.profileActionRequiredRows(arena);
-    update(&model, .{
+    update(model, .{
         .profile_deadline_run_action = lifecycle_rows[0].primaryActionDispatchId(),
     });
     try std.testing.expect(model.profileDeadlineStubDialogOpen());
@@ -25475,7 +26623,7 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
         defer persisted.deinit(allocator);
         try std.testing.expectEqualStrings("prepared", persisted.lifecycle);
     }
-    update(&model, .profile_deadline_close_dialog);
+    update(model, .profile_deadline_close_dialog);
 
     try profile_store_fixture.transitionDraft(
         original_draft_id.asSlice(),
@@ -25489,7 +26637,7 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
     try std.testing.expectEqualStrings("Review Submission", lifecycle_rows[0].primaryActionLabel());
     try std.testing.expectEqualStrings("Print Form", lifecycle_rows[0].secondaryActionOneLabel());
     model.profileCalendarSelectedDate = null;
-    update(&model, .{
+    update(model, .{
         .profile_deadline_toggle_actions = lifecycle_rows[0].actionMenuId(),
     });
     try std.testing.expect(
@@ -25498,7 +26646,7 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
     try std.testing.expect(
         !model.profileMonthlyDeadlineRows(arena)[0].actionMenuOpen(),
     );
-    update(&model, .profile_deadline_close_actions);
+    update(model, .profile_deadline_close_actions);
 
     try profile_store_fixture.transitionDraft(
         original_draft_id.asSlice(),
@@ -25511,7 +26659,7 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
     try std.testing.expectEqualStrings("Sent", lifecycle_rows[0].filingStatus());
     try std.testing.expectEqualStrings("Check Confirmation", lifecycle_rows[0].primaryActionLabel());
     try std.testing.expectEqualStrings("Print Form", lifecycle_rows[0].secondaryActionOneLabel());
-    update(&model, .{
+    update(model, .{
         .profile_deadline_run_action = lifecycle_rows[0].primaryActionDispatchId(),
     });
     try std.testing.expect(model.profileDeadlineStubDialogOpen());
@@ -25523,7 +26671,7 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
         defer persisted.deinit(allocator);
         try std.testing.expectEqualStrings("submitted", persisted.lifecycle);
     }
-    update(&model, .profile_deadline_close_dialog);
+    update(model, .profile_deadline_close_dialog);
 
     try profile_store_fixture.transitionDraft(
         original_draft_id.asSlice(),
@@ -25536,7 +26684,7 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
     try std.testing.expectEqualStrings("Confirmed", lifecycle_rows[0].filingStatus());
     try std.testing.expectEqualStrings("Upload Receipt", lifecycle_rows[0].primaryActionLabel());
     try std.testing.expectEqualStrings("Print Form", lifecycle_rows[0].secondaryActionOneLabel());
-    update(&model, .{
+    update(model, .{
         .profile_deadline_run_action = lifecycle_rows[0].primaryActionDispatchId(),
     });
     try std.testing.expect(model.profileDeadlineStubDialogOpen());
@@ -25548,7 +26696,7 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
         defer persisted.deinit(allocator);
         try std.testing.expectEqualStrings("confirmed", persisted.lifecycle);
     }
-    update(&model, .profile_deadline_close_dialog);
+    update(model, .profile_deadline_close_dialog);
 
     model.calendarToday = try matching_deadline.?.final_deadline.addDays(1);
     try std.testing.expectEqual(
@@ -25583,7 +26731,7 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
     try std.testing.expectEqual(@as(usize, 1), paid_month_rows.len);
     try std.testing.expectEqualStrings("Paid", paid_month_rows[0].filingStatus());
     try std.testing.expectEqualStrings("Print Form", paid_month_rows[0].primaryActionLabel());
-    update(&model, .{
+    update(model, .{
         .profile_deadline_run_action = paid_month_rows[0].primaryActionDispatchId(),
     });
     try std.testing.expect(model.profileDeadlineStubDialogOpen());
@@ -25595,7 +26743,7 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
         defer persisted.deinit(allocator);
         try std.testing.expectEqualStrings("paid", persisted.lifecycle);
     }
-    update(&model, .profile_deadline_close_dialog);
+    update(model, .profile_deadline_close_dialog);
     try std.testing.expectEqual(ProfileDeadlineTiming.closed, paid_month_rows[0].timing);
     try std.testing.expectEqual(
         @as(usize, 1),
@@ -25664,7 +26812,7 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
         "Continue Draft",
         amended_rows[0].primaryActionLabel(),
     );
-    update(&model, .{
+    update(model, .{
         .profile_deadline_run_action = amended_rows[0].primaryActionDispatchId(),
     });
     try std.testing.expectEqual(Page.form_2551q, model.page);
@@ -25672,10 +26820,10 @@ test "profile calendar lanes use injected date and persisted filer lifecycle" {
         amendment_id.asSlice(),
         model.formProfiles.draftId().?.asSlice(),
     );
-    navigate(&model, .taxpayer_dashboard);
+    navigate(model, .taxpayer_dashboard);
 
     try profile_store_fixture.replaceFormSet(profile_id, 2026, &.{});
-    refreshSelectedProfileFormSet(&model);
+    refreshSelectedProfileFormSet(model);
     try std.testing.expect(!model.profileCalendarIncludesForm("2551Q"));
     try std.testing.expectEqual(
         @as(usize, 0),
@@ -26721,7 +27869,11 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
     var store = try profile_store.Store.openMemory(allocator);
     defer store.close();
 
-    var model = Model{ .page = .profile_setup };
+    // The Model is too large for a test stack frame once the whole
+    // markup tree is built on top of it; production allocates it too.
+    const model = try allocator.create(Model);
+    defer allocator.destroy(model);
+    model.* = .{ .page = .profile_setup };
     try model.taxProfiles.attachForGlobalDashboard(
         allocator,
         &store,
@@ -26749,7 +27901,7 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
     );
     model.registrationEditor.setValue(.evidence_captured_on, "2026-01-02");
 
-    update(&model, .show_profile_reg_filing);
+    update(model, .show_profile_reg_filing);
     try std.testing.expect(model.regCanonicalEmpty());
     try std.testing.expectEqualStrings(
         "Taxpayer Registration Workspace",
@@ -26766,7 +27918,7 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
     ) != null);
 
     model.registrationEditor.setValue(.taxpayer_tin_root, "123456789");
-    update(&model, .reg_create_taxpayer);
+    update(model, .reg_create_taxpayer);
     try std.testing.expect(model.registrationCanonicalReady());
     try std.testing.expectEqualStrings(
         "",
@@ -26791,7 +27943,7 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
         model.regSuggestedBranchLabel(arena_state.allocator()),
     );
     try std.testing.expect((try appMarkupWidgetWrapsByText(
-        &model,
+        model,
         model.regSuggestedBranchLabel(arena_state.allocator()),
     )).?);
 
@@ -26845,28 +27997,28 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
     const ecor_text = "eCOR";
     const bir_record_text = "Other BIR record";
     try std.testing.expect(try appMarkupHasWidgetText(
-        &model,
+        model,
         .toggle_button,
         cor_text,
     ));
     try std.testing.expect(try appMarkupHasWidgetText(
-        &model,
+        model,
         .toggle_button,
         ecor_text,
     ));
     try std.testing.expect(try appMarkupHasWidgetText(
-        &model,
+        model,
         .toggle_button,
         bir_record_text,
     ));
-    try std.testing.expect(try appMarkupHasSemanticsPrefix(&model, cor_label));
-    try std.testing.expect(try appMarkupHasSemanticsPrefix(&model, ecor_label));
+    try std.testing.expect(try appMarkupHasSemanticsPrefix(model, cor_label));
+    try std.testing.expect(try appMarkupHasSemanticsPrefix(model, ecor_label));
     try std.testing.expect(try appMarkupHasSemanticsPrefix(
-        &model,
+        model,
         bir_record_label,
     ));
     try std.testing.expect(try appMarkupHasWidgetKindAndSemanticsLabel(
-        &model,
+        model,
         .toggle_group,
         "Evidence source choices",
     ));
@@ -26874,27 +28026,27 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
     // Exercise the semantic toggle action used by accessibility automation,
     // not just direct Msg dispatch. The source-backed selection is exclusive.
     try std.testing.expect(try dispatchAppWidgetToggleByText(
-        &model,
+        model,
         .toggle_button,
         bir_record_text,
     ));
     try std.testing.expect((try appMarkupWidgetSelectedByText(
-        &model,
+        model,
         .toggle_button,
         bir_record_text,
     )).?);
     try std.testing.expect(!(try appMarkupWidgetSelectedByText(
-        &model,
+        model,
         .toggle_button,
         cor_text,
     )).?);
     try std.testing.expect(!(try appMarkupWidgetSelectedByText(
-        &model,
+        model,
         .toggle_button,
         ecor_text,
     )).?);
     try std.testing.expect(try dispatchAppWidgetToggleByText(
-        &model,
+        model,
         .toggle_button,
         ecor_text,
     ));
@@ -26903,17 +28055,17 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
         model.registrationEditor.evidenceSourceLabel(),
     );
     try std.testing.expect(!(try appMarkupWidgetSelectedByText(
-        &model,
+        model,
         .toggle_button,
         cor_text,
     )).?);
     try std.testing.expect((try appMarkupWidgetSelectedByText(
-        &model,
+        model,
         .toggle_button,
         ecor_text,
     )).?);
     try std.testing.expect(!(try appMarkupWidgetSelectedByText(
-        &model,
+        model,
         .toggle_button,
         bir_record_text,
     )).?);
@@ -26931,7 +28083,7 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
         model.regEvidenceFormHelp(),
     );
     try std.testing.expect(try appMarkupHasWidgetText(
-        &model,
+        model,
         .text,
         registration_workspace.ActionStatus.invalid_contact_number.label(),
     ));
@@ -26941,7 +28093,7 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
     // A missing selected evidence file invalidates that review. Recreating a file at
     // the same path cannot bypass the explicit re-selection requirement.
     try tmp.dir.deleteFile(std.testing.io, "registration.pdf");
-    update(&model, .reg_confirm_selected_unit);
+    update(model, .reg_confirm_selected_unit);
     try std.testing.expect(model.registrationActionFailed());
     try std.testing.expect(model.regSelectedRegistrationUnitReviewable());
     try std.testing.expect(model.regEvidenceFileProblemVisible());
@@ -26950,7 +28102,7 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
         .sub_path = "registration.pdf",
         .data = "%PDF-1.4 replacement registration evidence",
     });
-    update(&model, .reg_confirm_selected_unit);
+    update(model, .reg_confirm_selected_unit);
     try std.testing.expect(model.registrationActionFailed());
     try std.testing.expect(model.regSelectedRegistrationUnitReviewable());
 
@@ -26964,7 +28116,7 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
         .sha256 = &replacement_fingerprint.sha256,
         .byte_size = replacement_fingerprint.byte_size,
     });
-    update(&model, .reg_confirm_selected_unit);
+    update(model, .reg_confirm_selected_unit);
 
     try std.testing.expectEqual(
         registration_workspace.ActionStatus.unit_confirmed,
@@ -26987,31 +28139,31 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
         model.regConfirmEffectiveInputValue(),
     );
     try std.testing.expect(!try appMarkupHasSemanticsPrefix(
-        &model,
+        model,
         "Exact BIR Branch Code",
     ));
     try std.testing.expect(try appMarkupHasSemanticsPrefix(
-        &model,
+        model,
         "Taxpayer TIN shown on reviewed evidence",
     ));
     try std.testing.expectEqualStrings("", model.regConfirmTinInputValue());
     try std.testing.expect(try dispatchAppWidgetToggleByText(
-        &model,
+        model,
         .toggle_button,
         cor_text,
     ));
     try std.testing.expect((try appMarkupWidgetSelectedByText(
-        &model,
+        model,
         .toggle_button,
         cor_text,
     )).?);
     try std.testing.expect(!(try appMarkupWidgetSelectedByText(
-        &model,
+        model,
         .toggle_button,
         ecor_text,
     )).?);
     try std.testing.expect(!(try appMarkupWidgetSelectedByText(
-        &model,
+        model,
         .toggle_button,
         bir_record_text,
     )).?);
@@ -27024,17 +28176,17 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
     try std.testing.expect(model.regConfirmDisabled());
     model.registrationEditor.setValue(.confirmation_tin_root, "123456789");
     try std.testing.expect(model.regConfirmDisabled());
-    update(&model, .reg_toggle_vat_registration);
+    update(model, .reg_toggle_vat_registration);
     try std.testing.expect(model.regVatRegistrationConfirmed());
     try std.testing.expect(!model.regConfirmDisabled());
-    update(&model, .reg_confirm_selected_unit);
+    update(model, .reg_confirm_selected_unit);
     try std.testing.expect(model.registrationActionSucceeded());
     try std.testing.expect(!model.regVatRegistrationRepairVisible());
     try std.testing.expect(!model.regRegistrationEvidenceActionVisible());
     try std.testing.expect(model.regConfirmationActionVisible());
-    try std.testing.expect(try appMarkupHasWidgetText(&model, .alert, "Saved"));
+    try std.testing.expect(try appMarkupHasWidgetText(model, .alert, "Saved"));
     try std.testing.expect(try appMarkupHasWidgetText(
-        &model,
+        model,
         .text,
         model.regActionLabel(),
     ));
@@ -27132,12 +28284,12 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
     try std.testing.expectEqual(@as(usize, 1), model.regSourceRecordRows().len);
     try std.testing.expect(model.regSourceWorkspaceReviewRequired());
     try std.testing.expect(try appMarkupHasWidgetText(
-        &model,
+        model,
         .text,
         "Source records for this Registration Unit",
     ));
     try std.testing.expect(try appMarkupHasWidgetText(
-        &model,
+        model,
         .text,
         "Entered · reference fixture-import-row-42",
     ));
@@ -27146,7 +28298,7 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
     try std.testing.expect(!model.regResolved2550QPreviewDisabled());
     try std.testing.expect(model.regResolved2550QPreviewOpenerAutofocus());
     try std.testing.expect((try appMarkupWidgetAutofocusByText(
-        &model,
+        model,
         .button,
         "Open resolved 2550Q preview",
     )).?);
@@ -27156,13 +28308,13 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
         model.regPolicyEvidenceRows()[0].displayName(),
     );
     try std.testing.expect(try appMarkupHasWidgetText(
-        &model,
+        model,
         .text,
         "BIR Form 2550Q April 2024 instructions",
     ));
 
     model.registrationWorkspace.policy_catalog_missing = true;
-    update(&model, .reg_open_resolved_2550q_preview);
+    update(model, .reg_open_resolved_2550q_preview);
     try std.testing.expectEqual(Page.profile_setup, model.page);
     model.registrationWorkspace.policy_catalog_missing = false;
 
@@ -27173,16 +28325,16 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
             "2551Q",
             "2018-01-ENCS",
         );
-    update(&model, .reg_open_resolved_2550q_preview);
+    update(model, .reg_open_resolved_2550q_preview);
     try std.testing.expectEqual(Page.profile_setup, model.page);
     model.registrationWorkspace.resolved_preview_snapshot.?.projection_context.form_revision =
         resolved_form;
 
-    update(&model, .reg_open_resolved_2550q_preview);
+    update(model, .reg_open_resolved_2550q_preview);
     try std.testing.expectEqual(Page.form_2550q, model.page);
     try std.testing.expect(model.resolved2550QPreviewActive());
     try std.testing.expect((try appMarkupWidgetAutofocusByText(
-        &model,
+        model,
         .button,
         "Back",
     )).?);
@@ -27238,7 +28390,7 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
         model.preview2550QScope(arena_state.allocator()),
     );
     try std.testing.expect((try appMarkupWidgetWrapsByText(
-        &model,
+        model,
         model.preview2550QScope(arena_state.allocator()),
     )).?);
     try std.testing.expectEqual(
@@ -27260,7 +28412,7 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
         "Review Required",
     ) != null);
     try std.testing.expect(try appMarkupHasWidgetText(
-        &model,
+        model,
         .text,
         "Captured source-record filter",
     ));
@@ -27271,7 +28423,7 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
         ),
     );
     try std.testing.expect(try appMarkupHasWidgetKindAndSemanticsLabel(
-        &model,
+        model,
         .text,
         model.preview2550QSourceRecords()[0].accessibleLabel(
             arena_state.allocator(),
@@ -27300,7 +28452,7 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
         .{registration_evidence[0].evidenceId()},
     );
     try std.testing.expect(try appMarkupHasWidgetText(
-        &model,
+        model,
         .text,
         registration_evidence_id_label,
     ));
@@ -27335,38 +28487,38 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
         model.preview2550QReadiness(arena_state.allocator()),
         "no immutable draft scope was retained",
     ) != null);
-    try expectAppMarkupBuilds(&model);
+    try expectAppMarkupBuilds(model);
     try std.testing.expect(try appMarkupHasWidgetText(
-        &model,
+        model,
         .badge,
         "Preview only",
     ));
     try std.testing.expect(try appMarkupHasWidgetText(
-        &model,
+        model,
         .badge,
         "Not fileable",
     ));
     try std.testing.expect(try appMarkupHasWidgetText(
-        &model,
+        model,
         .text,
         "BIR Form 2550Q April 2024 instructions",
     ));
     try std.testing.expect(try appMarkupHasWidgetText(
-        &model,
+        model,
         .text,
         "Branches file one consolidated return at the principal place or head office covering all branches.",
     ));
     try std.testing.expectEqual(
         @as(?bool, true),
-        try appMarkupWidgetDisabledByText(&model, .button, "Print Preview"),
+        try appMarkupWidgetDisabledByText(model, .button, "Print Preview"),
     );
-    update(&model, .show_aux_html_print_preview);
+    update(model, .show_aux_html_print_preview);
     try std.testing.expectEqual(Page.form_2550q, model.page);
     try std.testing.expect(model.resolved2550QPreviewActive());
     const validated_preview_snapshot = model.resolved2550QPreview.?;
     try std.testing.expectEqual(
         @as(?bool, true),
-        try appMarkupWidgetDisabledBySemanticsLabel(&model, "Year-end month"),
+        try appMarkupWidgetDisabledBySemanticsLabel(model, "Year-end month"),
     );
     var ordinary_2550q = Model{ .page = .form_2550q };
     try std.testing.expectEqual(
@@ -27383,44 +28535,44 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
     try std.testing.expect(model.resolved2550QPreviewContext() == null);
     model.page = .form_2550q;
 
-    update(&model, .show_screen_gallery);
+    update(model, .show_screen_gallery);
     try std.testing.expectEqual(Page.screen_gallery, model.page);
     try std.testing.expect(model.resolved2550QPreview == null);
-    update(&model, .show_profile_setup);
+    update(model, .show_profile_setup);
     model.profileSetupSection = .reg_filing;
-    update(&model, .{ .profile_setup_scrolled = .{ .offset_y = 805.5 } });
+    update(model, .{ .profile_setup_scrolled = .{ .offset_y = 805.5 } });
     try std.testing.expectEqual(@as(f32, 805.5), model.profileSetupScrollOffset);
     const opener_id_before_preview = (try appMarkupWidgetIdByText(
-        &model,
+        model,
         .button,
         "Open resolved 2550Q preview",
     )).?;
-    update(&model, .reg_open_resolved_2550q_preview);
+    update(model, .reg_open_resolved_2550q_preview);
     try std.testing.expectEqual(Page.form_2550q, model.page);
     try std.testing.expect(model.resolved2550QPreviewActive());
 
-    update(&model, .reg_close_resolved_2550q_preview);
+    update(model, .reg_close_resolved_2550q_preview);
     try std.testing.expectEqual(Page.profile_setup, model.page);
     try std.testing.expect(model.profileRegistrationFilingActive());
     try std.testing.expectEqual(@as(f32, 805.5), model.profileSetupScrollOffset);
     const opener_id_after_preview = (try appMarkupWidgetIdByText(
-        &model,
+        model,
         .button,
         "Open resolved 2550Q preview",
     )).?;
     try std.testing.expect(opener_id_before_preview != opener_id_after_preview);
     try std.testing.expect(model.regResolved2550QPreviewOpenerAutofocus());
     try std.testing.expect((try appMarkupWidgetAutofocusByText(
-        &model,
+        model,
         .button,
         "Open resolved 2550Q preview",
     )).?);
-    update(&model, .set_theme_light);
+    update(model, .set_theme_light);
     try std.testing.expect(model.regResolved2550QPreviewOpenerAutofocus());
 
     model.registrationEditor.setValue(.branch_code, "00001");
     model.registrationEditor.setValue(.branch_effective_from, "2026-02-01");
-    update(&model, .reg_create_branch);
+    update(model, .reg_create_branch);
     try std.testing.expectEqual(@as(usize, 2), model.regUnitRows().len);
     const created_branch_index = model.registrationWorkspace
         .selected_registration_unit_index.?;
@@ -27428,21 +28580,21 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
         "00001 candidate",
         model.registrationWorkspace.selectedRegistrationUnit().?.codeLabel(),
     );
-    update(&model, .{ .reg_select_registration_unit = 0 });
+    update(model, .{ .reg_select_registration_unit = 0 });
     try model.registrationEditor.attachEvidence(.{
         .path = "/draft/must-not-cross-unit.pdf",
         .display_name = "must-not-cross-unit.pdf",
         .sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         .byte_size = 4096,
     });
-    update(&model, .{ .reg_select_registration_unit = created_branch_index });
+    update(model, .{ .reg_select_registration_unit = created_branch_index });
     try std.testing.expect(model.profileDirtyNavigationVisible());
     try std.testing.expectEqual(@as(?usize, 0), model.registrationWorkspace.selected_registration_unit_index);
     try std.testing.expectEqualStrings(
         "must-not-cross-unit.pdf",
         model.registrationEvidenceNameInputValue(),
     );
-    update(&model, .profile_discard_navigation);
+    update(model, .profile_discard_navigation);
     try std.testing.expect(model.regSelectedRegistrationUnitReviewable());
     try std.testing.expectEqualStrings("", model.registrationEvidenceNameInputValue());
     try std.testing.expectEqualStrings("", model.registrationEvidenceDigestInputValue());
@@ -27460,22 +28612,22 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
         model.regConfirmEffectiveInputValue(),
     );
 
-    try expectAppMarkupBuilds(&model);
+    try expectAppMarkupBuilds(model);
     try std.testing.expect(try appMarkupHasSemanticsPrefix(
-        &model,
+        model,
         "Registration Unit, Head office, code 00000, Confirmed active, RDO 123",
     ));
     try std.testing.expect(!try appMarkupHasSemanticsPrefix(
-        &model,
+        model,
         "Selected Source Unit",
     ));
     try std.testing.expect(try appMarkupHasWidgetText(
-        &model,
+        model,
         .badge,
         "Reviewed fixture policy",
     ));
     try std.testing.expect(try appMarkupHasWidgetText(
-        &model,
+        model,
         .button,
         "Add Taxpayer",
     ));
@@ -27488,7 +28640,7 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
         .taxpayer_effective_from,
         "2026-01-01",
     );
-    update(&model, .reg_create_taxpayer);
+    update(model, .reg_create_taxpayer);
     try std.testing.expectEqual(@as(usize, 2), model.regTaxpayerRows().len);
     try std.testing.expectEqualStrings(
         "***-***-321",
@@ -27506,7 +28658,7 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
         .byte_size = 512,
     });
 
-    update(&model, .{ .reg_select_taxpayer = other_taxpayer });
+    update(model, .{ .reg_select_taxpayer = other_taxpayer });
     try std.testing.expectEqual(
         @as(?usize, selected_taxpayer),
         model.registrationWorkspace.selected_taxpayer_index,
@@ -27520,15 +28672,15 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
         model.registrationEvidenceNameInputValue(),
     );
 
-    update(&model, .profile_keep_editing);
+    update(model, .profile_keep_editing);
     try std.testing.expect(!model.profileDirtyNavigationVisible());
     try std.testing.expectEqualStrings(
         "taxpayer-owned-draft.pdf",
         model.registrationEvidenceNameInputValue(),
     );
 
-    update(&model, .{ .reg_select_taxpayer = other_taxpayer });
-    update(&model, .profile_discard_navigation);
+    update(model, .{ .reg_select_taxpayer = other_taxpayer });
+    update(model, .profile_discard_navigation);
     try std.testing.expectEqual(
         @as(?usize, other_taxpayer),
         model.registrationWorkspace.selected_taxpayer_index,
@@ -27545,7 +28697,7 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
 
     // Return to the pending-evidence Taxpayer so the write-gate assertions
     // exercise visible controls; confirmed units intentionally hide them.
-    update(&model, .{ .reg_select_taxpayer = selected_taxpayer });
+    update(model, .{ .reg_select_taxpayer = selected_taxpayer });
     try std.testing.expect(model.regSelectedRegistrationUnitReviewable());
 
     // Simulate a validated preview surviving until a stale legacy writer
@@ -27569,7 +28721,7 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
         "987-654-320-00000",
         .individual,
     );
-    try std.testing.expect(!guardRegistrationFixtureAccess(&model));
+    try std.testing.expect(!guardRegistrationFixtureAccess(model));
     try std.testing.expectEqual(
         RegistrationMutationGateReason.legacy_profiles_present,
         model.registrationMutationGate.reason,
@@ -27586,33 +28738,33 @@ test "registration workspace creates canonical taxpayer and persists reviewed RD
 
     model.registrationMutationGate = .{};
     try std.testing.expect(try appMarkupHasWidgetText(
-        &model,
+        model,
         .badge,
         "Read-only",
     ));
     try std.testing.expect((try appMarkupWidgetDisabledBySemanticsLabel(
-        &model,
+        model,
         "Candidate Branch Code",
     )) == null);
     try std.testing.expect((try appMarkupWidgetDisabledByText(
-        &model,
+        model,
         .button,
         "Use suggestion",
     )) == null);
     try std.testing.expect((try appMarkupWidgetDisabledBySemanticsLabel(
-        &model,
+        model,
         "Reviewed evidence effective from",
     )) == null);
     try std.testing.expect((try appMarkupWidgetDisabledBySemanticsLabel(
-        &model,
+        model,
         "Taxpayer effective from",
     )) == null);
     try std.testing.expect((try appMarkupWidgetDisabledBySemanticsLabel(
-        &model,
+        model,
         "Branch candidate effective from",
     )) == null);
     try std.testing.expect((try appMarkupWidgetDisabledBySemanticsLabel(
-        &model,
+        model,
         "Choose reviewed registration evidence file",
     )) == null);
 }

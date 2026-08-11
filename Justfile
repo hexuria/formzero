@@ -30,6 +30,14 @@ deps:
 generate:
     {{ npm_command }} run generate
 
+# Run the BIR news-sync pipeline against the live CMS and publish outputs.
+news-sync:
+    {{ npm_command }} run news:sync -- all
+
+# Run the same pipeline against the committed captures; touches no network.
+news-sync-offline:
+    {{ npm_command }} run news:sync -- all --offline
+
 # Validate catalog ownership and Native markup/app manifest.
 [unix]
 check: generate
@@ -37,6 +45,8 @@ check: generate
     set -euo pipefail
     {{ npm_command }} run test:app-identity
     {{ npm_command }} run check:tax-catalog
+    {{ npm_command }} run typecheck:news-sync
+    {{ npm_command }} run test:news-sync
     eval "$(node scripts/app-identity.mjs prepare --format shell)"
     npx native check "$BUWIZ_APP_ROOT" --strict
 

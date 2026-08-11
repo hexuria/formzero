@@ -1,0 +1,676 @@
+{
+  "issuances": {
+    "bir:rmc:2026:001": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:002": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:003": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:004": {
+      "pdfSha256": "913ea748a51bfb699aa5f138b7a4fb950b62b20c68ffac2bc9b1c71b976869d3",
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 1786431188,
+      "feedRev": 2
+    },
+    "bir:rmc:2026:005": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:006": {
+      "pdfSha256": "2653da7f83af069e31910dd964bcd6302eceb2806a4b13830af60877ece94227",
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 1786431188,
+      "feedRev": 2
+    },
+    "bir:rmc:2026:007": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:008": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:009": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:010": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:011": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:012": {
+      "pdfSha256": "6339e1c390cc403a7a298b007c4d33744b022a8714a5a68cd3f7ade5c64dc81b",
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 1786431188,
+      "feedRev": 2
+    },
+    "bir:rmc:2026:013": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:014": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:015": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:016": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:017": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:018": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:019": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:020": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:021": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:022": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:023": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:024": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:025": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:026": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:027": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:028": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:029": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:030": {
+      "pdfSha256": "6fd7552bfe1a94edd91ef6c799c704f7d67a20f67fdd4f0e3a48a8d3c901b9f4",
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 1786431188,
+      "feedRev": 2
+    },
+    "bir:rmc:2026:031": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:032": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:033": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:034": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:035": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:036": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:037": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:038": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:039": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:040": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:041": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:042": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:043": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:044": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:045": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:046": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:047": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:048": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:049": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:050": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:051": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:052": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:053": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:054": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:055": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:056": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:057": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:058": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:059": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:060": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:061": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:062": {
+      "pdfSha256": "cac44987509fca12da96e7f2fbbd83d22eecf0f88198b4319c8dfd2a24a49ecb",
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 1786431188,
+      "feedRev": 2
+    },
+    "bir:rmc:2026:063": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:064": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:065": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:066": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:067": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:068": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:069": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:070": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:071": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:072": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:073": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:074": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:075": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:076": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:077": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:078": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:079": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:080": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:081": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:082": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:083": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:084": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:085": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:086": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:087": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:088": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:089": {
+      "pdfSha256": "59bba7e9a114cbf7714903fa06513d00fb8113083ecba96dfa01f138cc5134e9",
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 1786431188,
+      "feedRev": 2
+    },
+    "bir:rmo:2026:001": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:002": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:003": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:004": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:005": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:006": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:007": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:008": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:009": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:010": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:011": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:012": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:013": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786431188,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:014": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:015": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:016": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:017": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:018": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:019": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rr:2026:001": {
+      "pdfSha256": "8d9d5fa0e9a374efa4aa2238820991265b85f8b69eb9ca740d12e973b59d8e1d",
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 1786431188,
+      "feedRev": 2
+    },
+    "bir:rr:2026:002": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rr:2026:003": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rr:2026:004": {
+      "pdfSha256": null,
+      "firstSeenAtUnix": 1786752000,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    }
+  }
+}
