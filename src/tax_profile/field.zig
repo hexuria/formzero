@@ -423,20 +423,45 @@ pub fn parseBirthDate(raw: []const u8, current_year: u16) BirthDateError!Date {
         return Date.parseIso(value) catch error.InvalidBirthDate;
     }
 
-    const first_slash = std.mem.indexOfScalar(u8, value, '/') orelse
-        return error.InvalidBirthDate;
-    const second_slash = std.mem.indexOfScalarPos(
-        u8,
-        value,
-        first_slash + 1,
-        '/',
-    ) orelse return error.InvalidBirthDate;
-    if (std.mem.indexOfScalarPos(u8, value, second_slash + 1, '/') != null) {
-        return error.InvalidBirthDate;
-    }
-    const month_text = value[0..first_slash];
-    const day_text = value[first_slash + 1 .. second_slash];
-    const year_text = value[second_slash + 1 ..];
+    const parts = blk: {
+        var digits_only = value.len != 0;
+        for (value) |byte| {
+            if (!std.ascii.isDigit(byte)) {
+                digits_only = false;
+                break;
+            }
+        }
+        if (digits_only) {
+            break :blk switch (value.len) {
+                // MDDYY, MMDDYY, MDDYYYY, and MMDDYYYY respectively.
+                5 => [_][]const u8{ value[0..1], value[1..3], value[3..5] },
+                6 => [_][]const u8{ value[0..2], value[2..4], value[4..6] },
+                7 => [_][]const u8{ value[0..1], value[1..3], value[3..7] },
+                8 => [_][]const u8{ value[0..2], value[2..4], value[4..8] },
+                else => return error.InvalidBirthDate,
+            };
+        }
+
+        const first_slash = std.mem.indexOfScalar(u8, value, '/') orelse
+            return error.InvalidBirthDate;
+        const second_slash = std.mem.indexOfScalarPos(
+            u8,
+            value,
+            first_slash + 1,
+            '/',
+        ) orelse return error.InvalidBirthDate;
+        if (std.mem.indexOfScalarPos(u8, value, second_slash + 1, '/') != null) {
+            return error.InvalidBirthDate;
+        }
+        break :blk [_][]const u8{
+            value[0..first_slash],
+            value[first_slash + 1 .. second_slash],
+            value[second_slash + 1 ..],
+        };
+    };
+    const month_text = parts[0];
+    const day_text = parts[1];
+    const year_text = parts[2];
     if (month_text.len == 0 or month_text.len > 2 or
         day_text.len == 0 or day_text.len > 2 or
         (year_text.len != 2 and year_text.len != 4))
@@ -692,6 +717,34 @@ test "birth date accepts Filipino entry formats and resolves two digit years" {
     try std.testing.expectEqualStrings(
         "2026-01-01",
         current_century.writeIso(&current_century_iso),
+    );
+
+    const compact_short = try parseBirthDate("81788", 2026);
+    var compact_short_iso: [10]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "1988-08-17",
+        compact_short.writeIso(&compact_short_iso),
+    );
+
+    const compact_full = try parseBirthDate("08171988", 2026);
+    var compact_full_iso: [10]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "1988-08-17",
+        compact_full.writeIso(&compact_full_iso),
+    );
+
+    const compact_padded_short = try parseBirthDate("081788", 2026);
+    var compact_padded_short_iso: [10]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "1988-08-17",
+        compact_padded_short.writeIso(&compact_padded_short_iso),
+    );
+
+    const compact_unpadded_full = try parseBirthDate("8171988", 2026);
+    var compact_unpadded_full_iso: [10]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "1988-08-17",
+        compact_unpadded_full.writeIso(&compact_unpadded_full_iso),
     );
 
     try std.testing.expectError(

@@ -1520,6 +1520,12 @@ pub const ProfileSubjectKindOptionRow = struct {
     selected: bool,
 };
 
+pub const ProfileClassificationOptionRow = struct {
+    id: usize,
+    label: []const u8,
+    selected: bool,
+};
+
 pub const ProfileCitizenshipOptionRow = struct {
     id: usize,
     label: []const u8,
@@ -1727,6 +1733,12 @@ pub const Model = struct {
     profileRdoPickerVisible: bool = false,
     profileRdoQuery: canvas.TextBuffer(128) = .{},
     profileSubjectQuery: canvas.TextBuffer(64) = .{},
+    /// Presentation-only birth-date text. The Tax Profile state keeps the
+    /// canonical ISO value used by persistence and form projections; this
+    /// buffer is allowed to show the friendlier long label while blurred.
+    profileBirthDateDisplay: canvas.TextBuffer(32) = .{},
+    profileBirthDateFocused: bool = false,
+    profileClassificationQuery: canvas.TextBuffer(64) = .{},
     profileCitizenshipPickerVisible: bool = false,
     profileCitizenshipQuery: canvas.TextBuffer(192) = .{},
     profileEffectiveStartYearPickerVisible: bool = false,
@@ -1778,6 +1790,9 @@ pub const Model = struct {
         "profileRdoPickerVisible",
         "profileRdoQuery",
         "profileSubjectQuery",
+        "profileBirthDateDisplay",
+        "profileBirthDateFocused",
+        "profileClassificationQuery",
         "profileCitizenshipPickerVisible",
         "profileCitizenshipQuery",
         "profileEffectiveStartYearPickerVisible",
@@ -3860,6 +3875,66 @@ pub const Model = struct {
         return self.profileClassificationPickerVisible;
     }
 
+    pub fn profileClassificationQueryValue(self: *const Model) []const u8 {
+        return self.profileClassificationQuery.text();
+    }
+
+    pub fn profileClassificationCommittedSelection(self: *const Model) bool {
+        return self.taxProfiles.naturalPersonClassification() !=
+            .classification_unknown;
+    }
+
+    pub fn profileClassificationErrorVisible(self: *const Model) bool {
+        return self.profileFieldErrorVisible(.tax_classification);
+    }
+
+    pub fn profileClassificationValidationMessage(self: *const Model) []const u8 {
+        return self.profileFieldValidationMessage(.tax_classification);
+    }
+
+    pub fn profileClassificationOptionRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const ProfileClassificationOptionRow {
+        const query = std.mem.trim(
+            u8,
+            self.profileClassificationQuery.text(),
+            " \t\r\n",
+        );
+        var matched: [profile_classification_choices.len]profile_model.NaturalPersonClassification = undefined;
+        var count: usize = 0;
+        for (profile_classification_choices) |classification| {
+            if (query.len != 0 and !containsAsciiInsensitive(
+                profileClassificationOptionLabel(classification),
+                query,
+            )) continue;
+            matched[count] = classification;
+            count += 1;
+        }
+        const rows = arena.alloc(ProfileClassificationOptionRow, count) catch
+            return &.{};
+        const committed = self.taxProfiles.naturalPersonClassification();
+        const committed_selection = committed != .classification_unknown;
+        var committed_match_visible = false;
+        for (matched[0..count]) |classification| {
+            if (committed_selection and classification == committed) {
+                committed_match_visible = true;
+                break;
+            }
+        }
+        for (matched[0..count], 0..) |classification, index| {
+            rows[index] = .{
+                .id = profileClassificationOptionId(classification),
+                .label = profileClassificationOptionLabel(classification),
+                .selected = if (committed_match_visible)
+                    classification == committed
+                else
+                    index == 0,
+            };
+        }
+        return rows;
+    }
+
     pub fn profileEoptPickerOpen(self: *const Model) bool {
         return self.profileEoptPickerVisible;
     }
@@ -4465,18 +4540,6 @@ pub const Model = struct {
         return self.profileFieldValidationMessage(.birth_date);
     }
 
-    pub fn profileBirthDateInterpreted(self: *const Model) bool {
-        return self.taxProfiles.birth_date.text().len != 0 and
-            self.taxProfiles.profileFieldValidationMessage(.birth_date) == null;
-    }
-
-    pub fn profileBirthDateInterpretation(
-        self: *const Model,
-        arena: std.mem.Allocator,
-    ) []const u8 {
-        return friendlyDateLabel(arena, self.taxProfiles.birth_date.text());
-    }
-
     pub fn profileCitizenshipErrorVisible(self: *const Model) bool {
         return self.profileFieldErrorVisible(.citizenship);
     }
@@ -4527,8 +4590,23 @@ pub const Model = struct {
         return self.taxProfiles.email.text();
     }
 
-    pub fn profileBirthDateValue(self: *const Model) []const u8 {
-        return self.taxProfiles.birth_date.text();
+    pub fn profileBirthDateValue(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (self.profileBirthDateFocused) {
+            return self.taxProfiles.birth_date.text();
+        }
+        if (self.profileBirthDateDisplay.text().len != 0) {
+            return self.profileBirthDateDisplay.text();
+        }
+        const canonical = self.taxProfiles.birth_date.text();
+        if (canonical.len == 0 or
+            self.taxProfiles.profileFieldValidationMessage(.birth_date) != null)
+        {
+            return canonical;
+        }
+        return friendlyDateLabel(arena, canonical);
     }
 
     pub fn profileCitizenshipValue(self: *const Model) []const u8 {
@@ -4604,8 +4682,11 @@ pub const Model = struct {
         return recordedProfileValue(self.profileEmailValue());
     }
 
-    pub fn profileBirthDateDisplayValue(self: *const Model) []const u8 {
-        return recordedProfileValue(self.profileBirthDateValue());
+    pub fn profileBirthDateDisplayValue(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return recordedProfileValue(self.profileBirthDateValue(arena));
     }
 
     pub fn profileCitizenshipDisplayValue(self: *const Model) []const u8 {
@@ -10708,6 +10789,19 @@ fn friendlyDateLabel(arena: std.mem.Allocator, iso: []const u8) []const u8 {
     ) catch iso;
 }
 
+fn friendlyDateLabelBuffer(output: []u8, iso: []const u8) []const u8 {
+    if (iso.len != 10) return iso;
+    const year = std.fmt.parseInt(u16, iso[0..4], 10) catch return iso;
+    const month = std.fmt.parseInt(u8, iso[5..7], 10) catch return iso;
+    const day = std.fmt.parseInt(u8, iso[8..10], 10) catch return iso;
+    if (month < 1 or month > 12) return iso;
+    return std.fmt.bufPrint(
+        output,
+        "{s} {d}, {d}",
+        .{ month_names[month - 1], day, year },
+    ) catch iso;
+}
+
 fn recordedProfileValue(value: []const u8) []const u8 {
     return if (std.mem.trim(u8, value, " \t\r\n").len == 0)
         "Not recorded"
@@ -10761,6 +10855,12 @@ const profile_subject_kind_choices = [_]profile_model.SubjectKind{
     .other_legal_entity,
 };
 
+const profile_classification_choices = [_]profile_model.NaturalPersonClassification{
+    .pure_compensation,
+    .self_employed,
+    .mixed_income,
+};
+
 fn profileSubjectKindChoice(kind: profile_model.SubjectKind) profile_model.SubjectKind {
     // Sole proprietor is a compatibility input that the editor normalizes to
     // an individual with a self-employed classification. Never show it as a
@@ -10785,6 +10885,26 @@ fn profileSubjectKindOptionLabel(kind: profile_model.SubjectKind) []const u8 {
         .estate => "Estate",
         .trust => "Trust",
         .other_legal_entity => "Other legal entity",
+    };
+}
+
+fn profileClassificationOptionId(
+    classification: profile_model.NaturalPersonClassification,
+) usize {
+    for (profile_classification_choices, 0..) |candidate, index| {
+        if (candidate == classification) return index;
+    }
+    return 0;
+}
+
+fn profileClassificationOptionLabel(
+    classification: profile_model.NaturalPersonClassification,
+) []const u8 {
+    return switch (classification) {
+        .classification_unknown => "Not yet recorded",
+        .pure_compensation => "Purely Compensation",
+        .self_employed => "Self-Employed / Professional",
+        .mixed_income => "Mixed Income",
     };
 }
 
@@ -10816,6 +10936,38 @@ fn syncProfileSubjectControl(model: *Model) void {
     ));
 }
 
+fn syncProfileClassificationControl(model: *Model) void {
+    model.profileClassificationPickerVisible = false;
+    const classification = model.taxProfiles.naturalPersonClassification();
+    if (classification == .classification_unknown) {
+        model.profileClassificationQuery.clear();
+        return;
+    }
+    model.profileClassificationQuery.set(
+        profileClassificationOptionLabel(classification),
+    );
+}
+
+fn syncProfileBirthDateControl(model: *Model) void {
+    model.profileBirthDateFocused = false;
+    model.profileBirthDateDisplay.clear();
+    const canonical = model.taxProfiles.birth_date.text();
+    if (canonical.len == 0 or
+        model.taxProfiles.profileFieldValidationMessage(.birth_date) != null)
+    {
+        model.profileBirthDateDisplay.set(canonical);
+        return;
+    }
+    var friendly_buffer: [32]u8 = undefined;
+    const friendly = friendlyDateLabelBuffer(&friendly_buffer, canonical);
+    model.profileBirthDateDisplay.set(friendly);
+}
+
+fn focusProfileBirthDateControl(model: *Model) void {
+    model.profileBirthDateFocused = true;
+    model.profileBirthDateDisplay.clear();
+}
+
 fn applyProfileSubjectQuery(
     model: *Model,
     edit: canvas.TextInputEvent,
@@ -10830,11 +10982,43 @@ fn applyProfileSubjectQuery(
     model.profileSubjectPickerVisible = true;
 }
 
+fn applyProfileClassificationQuery(
+    model: *Model,
+    edit: canvas.TextInputEvent,
+) void {
+    if (edit == .clear) {
+        model.taxProfiles.setNaturalPersonClassification(.classification_unknown);
+        model.profileClassificationQuery.clear();
+        model.profileClassificationPickerVisible = false;
+        return;
+    }
+    model.profileClassificationQuery.apply(edit);
+    model.profileClassificationPickerVisible = true;
+    const selected = model.taxProfiles.naturalPersonClassification();
+    if (selected == .classification_unknown) return;
+    if (!std.mem.eql(
+        u8,
+        model.profileClassificationQuery.text(),
+        profileClassificationOptionLabel(selected),
+    )) {
+        model.taxProfiles.setNaturalPersonClassification(.classification_unknown);
+    }
+}
+
 fn selectProfileSubjectKind(model: *Model, choice_index: usize) void {
     if (model.taxProfiles.branchMode() or
         choice_index >= profile_subject_kind_choices.len) return;
     model.taxProfiles.setSubjectKind(profile_subject_kind_choices[choice_index]);
     syncProfileSubjectControl(model);
+    syncProfileClassificationControl(model);
+}
+
+fn selectProfileClassification(model: *Model, choice_index: usize) void {
+    if (choice_index >= profile_classification_choices.len) return;
+    model.taxProfiles.setNaturalPersonClassification(
+        profile_classification_choices[choice_index],
+    );
+    syncProfileClassificationControl(model);
 }
 
 fn syncProfileRdoControl(model: *Model) void {
@@ -10852,6 +11036,8 @@ fn syncProfileIdentityControls(model: *Model) void {
     syncProfileTinControl(model);
     syncProfileRdoControl(model);
     syncProfileSubjectControl(model);
+    syncProfileClassificationControl(model);
+    syncProfileBirthDateControl(model);
     syncProfileCitizenshipControl(model);
 }
 
@@ -11670,9 +11856,9 @@ pub const Msg = union(enum) {
     profile_subject_query_input: canvas.TextInputEvent,
     profile_subject_blurred,
     profile_subject_select: usize,
-    profile_classification_pure_compensation,
-    profile_classification_self_employed,
-    profile_classification_mixed_income,
+    profile_classification_query_input: canvas.TextInputEvent,
+    profile_classification_blurred,
+    profile_classification_select: usize,
     toggle_profile_subject_picker,
     close_profile_subject_picker,
     toggle_profile_classification_picker,
@@ -11711,6 +11897,7 @@ pub const Msg = union(enum) {
     profile_email_input: canvas.TextInputEvent,
     profile_email_blurred,
     profile_birth_date_input: canvas.TextInputEvent,
+    profile_birth_date_focused,
     profile_birth_date_blurred,
     profile_citizenship_toggle_picker,
     profile_citizenship_close_picker,
@@ -13163,13 +13350,27 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             selectProfileSubjectKind(model, choice_index);
         },
         .toggle_profile_classification_picker => {
-            model.profileClassificationPickerVisible =
-                !model.profileClassificationPickerVisible;
+            if (model.profileClassificationPickerVisible) {
+                syncProfileClassificationControl(model);
+            } else {
+                model.profileClassificationQuery.clear();
+                model.profileClassificationPickerVisible = true;
+            }
             model.profileSubjectPickerVisible = false;
             model.profileEoptPickerVisible = false;
         },
         .close_profile_classification_picker => {
-            model.profileClassificationPickerVisible = false;
+            syncProfileClassificationControl(model);
+        },
+        .profile_classification_query_input => |edit| {
+            applyProfileClassificationQuery(model, edit);
+        },
+        .profile_classification_blurred => {
+            syncProfileClassificationControl(model);
+            model.taxProfiles.revealProfileFieldValidation(.tax_classification);
+        },
+        .profile_classification_select => |choice_index| {
+            selectProfileClassification(model, choice_index);
         },
         .toggle_profile_eopt_picker => {
             model.profileEoptPickerVisible = !model.profileEoptPickerVisible;
@@ -13178,20 +13379,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .close_profile_eopt_picker => {
             model.profileEoptPickerVisible = false;
-        },
-        .profile_classification_pure_compensation => {
-            model.taxProfiles.setNaturalPersonClassification(
-                .pure_compensation,
-            );
-            model.profileClassificationPickerVisible = false;
-        },
-        .profile_classification_self_employed => {
-            model.taxProfiles.setNaturalPersonClassification(.self_employed);
-            model.profileClassificationPickerVisible = false;
-        },
-        .profile_classification_mixed_income => {
-            model.taxProfiles.setNaturalPersonClassification(.mixed_income);
-            model.profileClassificationPickerVisible = false;
         },
         .profile_eopt_micro => selectCompleteProfileEopt(model, .micro),
         .profile_eopt_small => selectCompleteProfileEopt(model, .small),
@@ -13762,11 +13949,16 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.taxProfiles.revealProfileFieldValidation(.email_address);
         },
         .profile_birth_date_input => |edit| {
+            focusProfileBirthDateControl(model);
             model.taxProfiles.birth_date.apply(edit);
             model.taxProfiles.captureInputTruncation();
-            model.taxProfiles.normalizeBirthDateInput();
+        },
+        .profile_birth_date_focused => {
+            focusProfileBirthDateControl(model);
         },
         .profile_birth_date_blurred => {
+            model.taxProfiles.normalizeBirthDateInput();
+            syncProfileBirthDateControl(model);
             model.taxProfiles.revealProfileFieldValidation(.birth_date);
         },
         .profile_citizenship_toggle_picker => {
@@ -23037,6 +23229,63 @@ test "profile taxpayer-type combobox filters, provisions, and synchronizes selec
     try std.testing.expectEqualStrings("Partnership", model.profileSubjectQueryValue());
 }
 
+test "profile tax-classification combobox filters, provisions, and synchronizes selection" {
+    var model = Model{ .page = .profile_setup };
+    model.taxProfiles.setSubjectKind(.individual);
+    syncProfileClassificationControl(&model);
+
+    try std.testing.expectEqualStrings(
+        "",
+        model.profileClassificationQueryValue(),
+    );
+    try std.testing.expect(!model.profileClassificationPickerOpen());
+    try std.testing.expect(!model.profileClassificationCommittedSelection());
+
+    update(&model, .toggle_profile_classification_picker);
+    try std.testing.expect(model.profileClassificationPickerOpen());
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const initial_rows = model.profileClassificationOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 3), initial_rows.len);
+    try std.testing.expect(initial_rows[0].selected);
+
+    applyProfileClassificationQuery(&model, .{ .insert_text = "mixed" });
+    const filtered_rows = model.profileClassificationOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), filtered_rows.len);
+    try std.testing.expectEqualStrings("Mixed Income", filtered_rows[0].label);
+    // With no committed selection, the first filtered row is the provisional
+    // Tab/Enter target just as it is for Taxpayer Type and RDO.
+    try std.testing.expect(filtered_rows[0].selected);
+
+    update(&model, .{ .profile_classification_select = filtered_rows[0].id });
+    try std.testing.expect(!model.profileClassificationPickerOpen());
+    try std.testing.expect(model.profileClassificationCommittedSelection());
+    try std.testing.expectEqualStrings(
+        "Mixed Income",
+        model.profileClassificationQueryValue(),
+    );
+
+    update(&model, .{ .profile_classification_query_input = .clear });
+    try std.testing.expect(!model.profileClassificationCommittedSelection());
+    try std.testing.expectEqualStrings("", model.profileClassificationQueryValue());
+    try std.testing.expect(!model.profileClassificationPickerOpen());
+
+    update(&model, .toggle_profile_classification_picker);
+    update(&model, .profile_classification_blurred);
+    try std.testing.expect(!model.profileClassificationPickerOpen());
+    try std.testing.expectEqualStrings("", model.profileClassificationQueryValue());
+    try std.testing.expect(model.profileClassificationErrorVisible());
+    try std.testing.expectEqualStrings(
+        "Tax Classification is required for an individual taxpayer.",
+        model.profileClassificationValidationMessage(),
+    );
+}
+
 test "profile year combobox provisions a single active fallback" {
     var model = Model{ .page = .profile_setup };
     model.taxProfiles.default_tax_year = 2026;
@@ -23153,6 +23402,42 @@ test "profile required-field blur messages reach every text-entry validator" {
     model.taxProfiles.selectEffectiveEndYear(2025);
     update(&model, .profile_effective_end_year_blurred);
     try std.testing.expect(model.profileEffectiveEndErrorVisible());
+}
+
+test "profile birth date shows friendly text on blur and ISO when focused" {
+    var model = Model{ .page = .profile_setup };
+    try model.taxProfiles.default_effective_from.set("2026-08-12");
+    model.taxProfiles.setSubjectKind(.individual);
+    model.taxProfiles.setNaturalPersonClassification(.pure_compensation);
+
+    update(&model, .profile_birth_date_focused);
+    update(&model, .{ .profile_birth_date_input = .{ .insert_text = "81788" } });
+    try std.testing.expectEqualStrings("81788", model.taxProfiles.birth_date.text());
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    try std.testing.expectEqualStrings(
+        "81788",
+        model.profileBirthDateValue(arena_state.allocator()),
+    );
+
+    update(&model, .profile_birth_date_blurred);
+    try std.testing.expectEqualStrings("1988-08-17", model.taxProfiles.birth_date.text());
+    try std.testing.expectEqualStrings(
+        "August 17, 1988",
+        model.profileBirthDateValue(arena_state.allocator()),
+    );
+
+    update(&model, .profile_birth_date_focused);
+    try std.testing.expectEqualStrings(
+        "1988-08-17",
+        model.profileBirthDateValue(arena_state.allocator()),
+    );
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup,
+        "Interpreted as {profileBirthDateInterpretation}",
+    ) == null);
 }
 
 test "compact profile settings tab opens inline" {

@@ -141,6 +141,7 @@ pub const EffectiveDateMode = enum {
 pub const ProfileField = enum {
     rdo_code,
     taxpayer_type,
+    tax_classification,
     taxpayer_name,
     registered_address,
     zip_code,
@@ -829,6 +830,11 @@ pub const State = struct {
             },
             .taxpayer_type => if (!self.subject_kind_selected)
                 "Taxpayer Type is required."
+            else
+                null,
+            .tax_classification => if (self.naturalPersonFieldsVisible() and
+                self.natural_person_classification == .classification_unknown)
+                "Tax Classification is required for an individual taxpayer."
             else
                 null,
             .taxpayer_name => blk: {

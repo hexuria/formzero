@@ -570,25 +570,34 @@
               <column gap="8">
                 <text>Tax Classification</text>
                 <text wrap="true" foreground="text_muted">{profileClassificationHelp}</text>
-                <if test="{profileClassificationUnknownSelected}">
-                  <text wrap="true" foreground="warning">Choose a Tax Classification before saving this profile.</text>
-                </if>
                 <stack>
-                  <select
+                  <combobox
                     height="44"
+                    text="{profileClassificationQueryValue}"
+                    placeholder="Search tax classification"
                     label="Tax Classification"
-                    on-press="toggle_profile_classification_picker">{profileNaturalPersonClassificationLabel}</select>
+                    selected="{profileClassificationCommittedSelection}"
+                    expanded="{profileClassificationPickerOpen}"
+                    on-input="profile_classification_query_input"
+                    on-press="toggle_profile_classification_picker"
+                    on-blur="profile_classification_blurred"/>
                   <if test="{profileClassificationPickerOpen}">
                     <dropdown-menu
                       anchor="below"
                       anchor-alignment="stretch"
                       on-dismiss="close_profile_classification_picker">
-                      <menu-item height="44" selected="{profilePureCompensationSelected}" on-press="profile_classification_pure_compensation">Purely Compensation</menu-item>
-                      <menu-item height="44" selected="{profileSelfEmployedSelected}" on-press="profile_classification_self_employed">Self-Employed / Professional</menu-item>
-                      <menu-item height="44" selected="{profileMixedIncomeSelected}" on-press="profile_classification_mixed_income">Mixed Income</menu-item>
+                      <column padding="4" gap="2">
+                        <for each="profileClassificationOptionRows" key="id" as="option">
+                          <menu-item height="44" selected="{option.selected}" on-press="profile_classification_select:{option.id}">{option.label}</menu-item>
+                        </for>
+                        <else><menu-item height="44" disabled="true">No matching classifications</menu-item></else>
+                      </column>
                     </dropdown-menu>
                   </if>
                 </stack>
+                <if test="{profileClassificationErrorVisible}">
+                  <text wrap="true" foreground="destructive">{profileClassificationValidationMessage}</text>
+                </if>
               </column>
             </if>
 
@@ -730,8 +739,7 @@
             <grid columns="{profileReadColumns}" gap="12">
               <use template="profile-field" label="Birth date">
                 <column gap="6">
-                  <input height="44" text="{profileBirthDateValue}" placeholder="M/D/YY, MM/DD/YYYY, or YYYY-MM-DD" label="Birth date" disabled="{profilePersonalFieldsDisabled}" autofocus="{profileBirthDateAutofocus}" on-input="profile_birth_date_input" on-blur="profile_birth_date_blurred"/>
-                  <if test="{profileBirthDateInterpreted}"><text size="sm" foreground="text_muted">Interpreted as {profileBirthDateInterpretation}</text></if>
+                  <input height="44" text="{profileBirthDateValue}" placeholder="81788, 08/17/1988, or 1988-08-17" label="Birth date" disabled="{profilePersonalFieldsDisabled}" autofocus="{profileBirthDateAutofocus}" on-input="profile_birth_date_input" on-focus="profile_birth_date_focused" on-blur="profile_birth_date_blurred"/>
                   <if test="{profileBirthDateErrorVisible}"><text wrap="true" foreground="destructive">{profileBirthDateValidationMessage}</text></if>
                 </column>
               </use>

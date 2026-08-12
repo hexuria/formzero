@@ -90,6 +90,202 @@ if (!ui.includes("on_blur: ?Msg")) {
   writeFileSync(uiPath, ui);
 }
 
+function applyFocusPatch() {
+// `on-focus` has the same deliberately small contract as `on-blur`: it is a
+// commit/presentation hook for text-entry controls, not a general focus
+// observer for every button or menu row in the canvas. Keep it separate from
+// the blur insertion above so a cold 0.6.1 install is first brought to the
+// existing patch baseline, then receives this additive event.
+schema = readFileSync(schemaPath, "utf8");
+if (!schema.includes('.name = "focus", .dead_on_non_hit_target = true')) {
+  const anchor = '    .{ .code = 14, .name = "blur", .dead_on_non_hit_target = true },\n';
+  const replacement = `${anchor}    // Text-entry focus arrived through a real pointer or keyboard transition.\n    .{ .code = 15, .name = "focus", .dead_on_non_hit_target = true },\n`;
+  schema = replaceOnce(schema, anchor, replacement, "focus schema anchor changed");
+  writeFileSync(schemaPath, schema);
+}
+
+markup = readFileSync(markupPath, "utf8");
+if (!markup.includes("pub const on_focus_element_message")) {
+  const anchor = 'pub const on_blur_element_message = "on-blur is only supported on text-entry controls (input, text-field, search-field, combobox, textarea) - it dispatches when keyboard focus moves away through a pointer or keyboard focus transition";\n';
+  const replacement = `${anchor}pub const on_focus_element_message = "on-focus is only supported on text-entry controls (input, text-field, search-field, combobox, textarea) - it dispatches when keyboard focus arrives through a pointer or keyboard focus transition";\n`;
+  markup = replaceOnce(markup, anchor, replacement, "focus markup message anchor changed");
+  const validationAnchor = `                    } else if (std.mem.eql(u8, attribute.name, "on-blur")) {\n                        if (!blurEventElement(node.name)) {\n                            return attrError(node, attribute, on_blur_element_message);\n                        }\n                    } else if (nameInList(node.name, &known_non_hit_target_element_names) and deadHandlerOnNonHitTarget(attribute.name)) {`;
+  const validationReplacement = `                    } else if (std.mem.eql(u8, attribute.name, "on-blur")) {\n                        if (!blurEventElement(node.name)) {\n                            return attrError(node, attribute, on_blur_element_message);\n                        }\n                    } else if (std.mem.eql(u8, attribute.name, "on-focus")) {\n                        if (!blurEventElement(node.name)) {\n                            return attrError(node, attribute, on_focus_element_message);\n                        }\n                    } else if (nameInList(node.name, &known_non_hit_target_element_names) and deadHandlerOnNonHitTarget(attribute.name)) {`;
+  markup = replaceOnce(markup, validationAnchor, validationReplacement, "focus markup validation anchor changed");
+  writeFileSync(markupPath, markup);
+}
+
+ui = readFileSync(uiPath, "utf8");
+if (!ui.includes("on_focus: ?Msg")) {
+  ui = replaceOnce(ui, "    input,\n    blur,\n    scroll,", "    input,\n    blur,\n    focus,\n    scroll,", "focus handler event anchor changed");
+  ui = replaceOnce(ui, "            /// Void Msg dispatched when this text-entry widget loses canvas focus through a user pointer or keyboard transition.\n            on_blur: ?Msg = null,\n            /// Message constructor for value changes", "            /// Void Msg dispatched when this text-entry widget loses canvas focus through a user pointer or keyboard transition.\n            on_blur: ?Msg = null,\n            /// Void Msg dispatched when this text-entry widget gains canvas focus through a user pointer or keyboard transition.\n            on_focus: ?Msg = null,\n            /// Message constructor for value changes", "focus element options anchor changed");
+  ui = replaceOnce(ui, "            on_input: ?InputMsgFn = null,\n            on_blur: ?Msg = null,\n            on_value: ?ValueMsgFn = null,", "            on_input: ?InputMsgFn = null,\n            on_blur: ?Msg = null,\n            on_focus: ?Msg = null,\n            on_value: ?ValueMsgFn = null,", "focus node anchor changed");
+  ui = replaceOnce(ui, "                .on_input = options.on_input,\n                .on_blur = options.on_blur,\n                .on_value = options.on_value,", "                .on_input = options.on_input,\n                .on_blur = options.on_blur,\n                .on_focus = options.on_focus,\n                .on_value = options.on_value,", "focus node construction anchor changed");
+  ui = replaceOnce(ui, "            appendHandler(handlers, handler_len, widget.id, .blur, node.on_blur);\n            if (node.on_value) |make| {", "            appendHandler(handlers, handler_len, widget.id, .blur, node.on_blur);\n            appendHandler(handlers, handler_len, widget.id, .focus, node.on_focus);\n            if (node.on_value) |make| {", "focus handler registration anchor changed");
+  ui = replaceOnce(ui, "            if (node.on_blur != null) total += 1;\n            if (node.on_value != null) total += 1;", "            if (node.on_blur != null) total += 1;\n            if (node.on_focus != null) total += 1;\n            if (node.on_value != null) total += 1;", "focus handler count anchor changed");
+  writeFileSync(uiPath, ui);
+}
+
+let focusMarkupContract = readFileSync(markupContractPath, "utf8");
+if (!focusMarkupContract.includes('std.mem.eql(u8, event, "focus") and !markup.blurEventElement')) {
+  const anchor = `        if (std.mem.eql(u8, event, "blur") and !markup.blurEventElement(node.name)) {\n            return self.failAttr(node, attribute, markup.on_blur_element_message);\n        }\n        if (std.mem.eql(u8, event, "input")) {`;
+  const replacement = `        if (std.mem.eql(u8, event, "blur") and !markup.blurEventElement(node.name)) {\n            return self.failAttr(node, attribute, markup.on_blur_element_message);\n        }\n        if (std.mem.eql(u8, event, "focus") and !markup.blurEventElement(node.name)) {\n            return self.failAttr(node, attribute, markup.on_focus_element_message);\n        }\n        if (std.mem.eql(u8, event, "input")) {`;
+  focusMarkupContract = replaceOnce(focusMarkupContract, anchor, replacement, "focus contract anchor changed");
+  writeFileSync(markupContractPath, focusMarkupContract);
+}
+
+let focusMarkupCompiled = readFileSync(markupCompiledPath, "utf8");
+if (!focusMarkupCompiled.includes('event, "focus"')) {
+  const anchor = `            if (comptime std.mem.eql(u8, event, "blur")) {\n                comptime {\n                    if (!markup.blurEventElement(node.name)) fail(node, markup.on_blur_element_message);\n                }\n            }\n            if (comptime std.mem.eql(u8, event, "scroll")) {`;
+  const replacement = `            if (comptime std.mem.eql(u8, event, "blur")) {\n                comptime {\n                    if (!markup.blurEventElement(node.name)) fail(node, markup.on_blur_element_message);\n                }\n            }\n            if (comptime std.mem.eql(u8, event, "focus")) {\n                comptime {\n                    if (!markup.blurEventElement(node.name)) fail(node, markup.on_focus_element_message);\n                }\n            }\n            if (comptime std.mem.eql(u8, event, "scroll")) {`;
+  focusMarkupCompiled = replaceOnce(focusMarkupCompiled, anchor, replacement, "compiled focus decoder anchor changed");
+  focusMarkupCompiled = replaceOnce(focusMarkupCompiled, `            } else if (comptime std.mem.eql(u8, event, "blur")) {\n                options.on_blur = msg;\n            } else if (comptime std.mem.eql(u8, event, "submit")) {`, `            } else if (comptime std.mem.eql(u8, event, "blur")) {\n                options.on_blur = msg;\n            } else if (comptime std.mem.eql(u8, event, "focus")) {\n                options.on_focus = msg;\n            } else if (comptime std.mem.eql(u8, event, "submit")) {`, "compiled focus handler anchor changed");
+  writeFileSync(markupCompiledPath, focusMarkupCompiled);
+}
+
+let focusMarkupView = readFileSync(markupViewPath, "utf8");
+if (!focusMarkupView.includes('event, "focus"')) {
+  const anchor = `            if (std.mem.eql(u8, event, "blur") and !markup.blurEventElement(node.name)) {\n                return self.failVoid(node, markup.on_blur_element_message);\n            }\n            if (std.mem.eql(u8, event, "scroll")) {`;
+  const replacement = `            if (std.mem.eql(u8, event, "blur") and !markup.blurEventElement(node.name)) {\n                return self.failVoid(node, markup.on_blur_element_message);\n            }\n            if (std.mem.eql(u8, event, "focus") and !markup.blurEventElement(node.name)) {\n                return self.failVoid(node, markup.on_focus_element_message);\n            }\n            if (std.mem.eql(u8, event, "scroll")) {`;
+  focusMarkupView = replaceOnce(focusMarkupView, anchor, replacement, "runtime focus decoder anchor changed");
+  focusMarkupView = replaceOnce(focusMarkupView, `            } else if (std.mem.eql(u8, event, "blur")) {\n                options.on_blur = msg;\n            } else if (std.mem.eql(u8, event, "submit")) {`, `            } else if (std.mem.eql(u8, event, "blur")) {\n                options.on_blur = msg;\n            } else if (std.mem.eql(u8, event, "focus")) {\n                options.on_focus = msg;\n            } else if (std.mem.eql(u8, event, "submit")) {`, "runtime focus handler anchor changed");
+  writeFileSync(markupViewPath, focusMarkupView);
+}
+
+let focusRuntimeApi = readFileSync(runtimeApiPath, "utf8");
+if (!focusRuntimeApi.includes("focused_id: canvas.ObjectId = 0")) {
+  focusRuntimeApi = replaceOnce(focusRuntimeApi, `    blurred_id: canvas.ObjectId = 0,\n};\n\npub const CanvasWidgetKeyboardEvent = struct {`, `    blurred_id: canvas.ObjectId = 0,\n    /// The editable text widget that gained canvas focus before this pointer event was dispatched.\n    /// 0 means focus was unchanged, the new target was not text-entry, or this was not a focus gesture.\n    focused_id: canvas.ObjectId = 0,\n};\n\npub const CanvasWidgetKeyboardEvent = struct {`, "pointer focus payload anchor changed");
+  focusRuntimeApi = replaceOnce(focusRuntimeApi, `    blurred_id: canvas.ObjectId = 0,\n    /// True when this event is dispatched OUTSIDE a gpu-surface input`, `    blurred_id: canvas.ObjectId = 0,\n    /// The editable text widget that gained canvas focus before this keyboard event was routed.\n    focused_id: canvas.ObjectId = 0,\n    /// True when this event is dispatched OUTSIDE a gpu-surface input`, "keyboard focus payload anchor changed");
+  writeFileSync(runtimeApiPath, focusRuntimeApi);
+}
+
+let focusCanvasEvents = readFileSync(eventsPath, "utf8");
+if (!focusCanvasEvents.includes("FocusTransition = struct")) {
+  const transitionAnchor = "pub fn RuntimeCanvasWidgetEvents(comptime Runtime: type) type {\n    return struct {";
+  const transitionReplacement = `pub fn RuntimeCanvasWidgetEvents(comptime Runtime: type) type {\n    return struct {\n        const FocusTransition = struct {\n            blurred_id: canvas.ObjectId = 0,\n            focused_id: canvas.ObjectId = 0,\n        };`;
+  focusCanvasEvents = replaceOnce(focusCanvasEvents, transitionAnchor, transitionReplacement, "focus transition type anchor changed");
+  focusCanvasEvents = replaceOnce(focusCanvasEvents, `        /// Returns the old focused id only when an editable text widget lost\n        /// focus through this real pointer-down transition. Unmount, window\n        /// deactivation, and programmatic focus remain deliberately outside\n        /// the on-blur contract.\n        pub fn updateCanvasWidgetFocusFromPointer(self: *Runtime, pointer_event: CanvasWidgetPointerEvent) anyerror!canvas.ObjectId {\n            if (pointer_event.pointer.phase != .down) return 0;\n            const index = runtimeFindViewIndex(self, pointer_event.window_id, pointer_event.view_label) orelse return 0;\n            if (self.views[index].kind != .gpu_surface) return 0;`, `        /// Reports only editable text controls crossed by a real pointer-down\n        /// focus transition. Unmount, window deactivation, and programmatic\n        /// focus deliberately remain outside the blur/focus event contract.\n        pub fn updateCanvasWidgetFocusFromPointer(self: *Runtime, pointer_event: CanvasWidgetPointerEvent) anyerror!FocusTransition {\n            if (pointer_event.pointer.phase != .down) return .{};\n            const index = runtimeFindViewIndex(self, pointer_event.window_id, pointer_event.view_label) orelse return .{};\n            if (self.views[index].kind != .gpu_surface) return .{};`, "pointer focus transition signature anchor changed");
+  focusCanvasEvents = replaceOnce(focusCanvasEvents, `            if (previous_focus_id == next_focus_id and self.views[index].canvas_widget_focus_visible_id == next_focus_visible_id) return 0;\n            var blurred_id: canvas.ObjectId = 0;`, `            if (previous_focus_id == next_focus_id and self.views[index].canvas_widget_focus_visible_id == next_focus_visible_id) return .{};\n            var transition: FocusTransition = .{};`, "pointer focus transition state anchor changed");
+  focusCanvasEvents = replaceOnce(focusCanvasEvents, `                        blurred_id = previous_focus_id;`, `                        transition.blurred_id = previous_focus_id;`, "pointer focus blur assignment anchor changed");
+  focusCanvasEvents = replaceOnce(focusCanvasEvents, `            const previous_state = self.views[index].canvasWidgetRenderState();\n            self.views[index].canvas_widget_focused_id = next_focus_id;`, `            if (next_focus_id != 0) {\n                if (self.views[index].widgetLayoutTree().focusTargetById(next_focus_id)) |next| {\n                    if (canvas_widget_runtime.canvasWidgetEditableTextKind(next.kind)) {\n                        transition.focused_id = next_focus_id;\n                    }\n                }\n            }\n            const previous_state = self.views[index].canvasWidgetRenderState();\n            self.views[index].canvas_widget_focused_id = next_focus_id;`, "pointer focus arrival assignment anchor changed");
+  focusCanvasEvents = replaceOnce(focusCanvasEvents, `            try invalidateForCanvasWidgetRenderStateChange(self, index, previous_state, self.views[index].canvasWidgetRenderState());\n            return blurred_id;`, `            try invalidateForCanvasWidgetRenderStateChange(self, index, previous_state, self.views[index].canvasWidgetRenderState());\n            return transition;`, "pointer focus transition return anchor changed");
+  focusCanvasEvents = replaceOnce(focusCanvasEvents, `        pub fn updateCanvasWidgetFocusFromKeyboardInput(self: *Runtime, input_event: GpuSurfaceInputEvent, blurred_id: *canvas.ObjectId) anyerror!bool {\n            blurred_id.* = 0;`, `        pub fn updateCanvasWidgetFocusFromKeyboardInput(self: *Runtime, input_event: GpuSurfaceInputEvent, blurred_id: *canvas.ObjectId, focused_id: *canvas.ObjectId) anyerror!bool {\n            blurred_id.* = 0;\n            focused_id.* = 0;`, "keyboard focus transition signature anchor changed");
+  focusCanvasEvents = focusCanvasEvents.replaceAll("entry_id,\n                            blurred_id,", "entry_id,\n                            blurred_id,\n                            focused_out,");
+  focusCanvasEvents = focusCanvasEvents.replaceAll("target.id, blurred_id)", "target.id, blurred_id, focused_out)");
+  focusCanvasEvents = replaceOnce(focusCanvasEvents, `            target_id: canvas.ObjectId,\n            blurred_id: *canvas.ObjectId,\n        ) anyerror!bool {\n            try setCanvasWidgetFocusFromKeyboard(self, view_index, target_id);`, `            target_id: canvas.ObjectId,\n            blurred_id: *canvas.ObjectId,\n            focused_id: *canvas.ObjectId,\n        ) anyerror!bool {\n            try setCanvasWidgetFocusFromKeyboard(self, view_index, target_id);`, "keyboard focus moved helper signature anchor changed");
+  focusCanvasEvents = replaceOnce(focusCanvasEvents, `            if (moved and previous != 0 and !moved_into_owned_combobox_menu) {\n                if (self.views[view_index].widgetLayoutTree().focusTargetById(previous)) |old_target| {\n                    if (canvas_widget_runtime.canvasWidgetEditableTextKind(old_target.kind)) {\n                        blurred_id.* = previous;\n                    }\n                }\n            }\n            return moved;`, `            if (moved and previous != 0 and !moved_into_owned_combobox_menu) {\n                if (self.views[view_index].widgetLayoutTree().focusTargetById(previous)) |old_target| {\n                    if (canvas_widget_runtime.canvasWidgetEditableTextKind(old_target.kind)) {\n                        blurred_id.* = previous;\n                    }\n                }\n            }\n            if (moved and !moved_into_owned_combobox_menu) {\n                if (self.views[view_index].widgetLayoutTree().focusTargetById(target_id)) |next_target| {\n                    if (canvas_widget_runtime.canvasWidgetEditableTextKind(next_target.kind)) {\n                        focused_id.* = target_id;\n                    }\n                }\n            }\n            return moved;`, "keyboard focus arrival assignment anchor changed");
+  writeFileSync(eventsPath, focusCanvasEvents);
+}
+
+let focusGpuSurfaceEvents = readFileSync(gpuSurfaceEventsPath, "utf8");
+if (!focusGpuSurfaceEvents.includes("pointer_event.focused_id = transition.focused_id")) {
+  focusGpuSurfaceEvents = replaceOnce(focusGpuSurfaceEvents, "                    pointer_event.blurred_id = try CanvasWidgetEventMethods().updateCanvasWidgetFocusFromPointer(self, pointer_event.*);", "                    const transition = try CanvasWidgetEventMethods().updateCanvasWidgetFocusFromPointer(self, pointer_event.*);\n                    pointer_event.blurred_id = transition.blurred_id;\n                    pointer_event.focused_id = transition.focused_id;", "pointer focus event plumbing anchor changed");
+  focusGpuSurfaceEvents = replaceOnce(focusGpuSurfaceEvents, "            var widget_blurred_id: canvas.ObjectId = 0;\n            const widget_focus_moved = if (widget_surface_dismissed or targetless_composition_owns_keys or terminal_key_lifetime_suppressed)\n                false\n            else\n                try CanvasWidgetEventMethods().updateCanvasWidgetFocusFromKeyboardInput(self, input_event, &widget_blurred_id);", "            var widget_blurred_id: canvas.ObjectId = 0;\n            var widget_focused_id: canvas.ObjectId = 0;\n            const widget_focus_moved = if (widget_surface_dismissed or targetless_composition_owns_keys or terminal_key_lifetime_suppressed)\n                false\n            else\n                try CanvasWidgetEventMethods().updateCanvasWidgetFocusFromKeyboardInput(self, input_event, &widget_blurred_id, &widget_focused_id);", "keyboard focus event plumbing anchor changed");
+  focusGpuSurfaceEvents = replaceOnce(focusGpuSurfaceEvents, "                keyboard_event.keyboard.focus_moved = widget_focus_moved;\n                keyboard_event.blurred_id = widget_blurred_id;", "                keyboard_event.keyboard.focus_moved = widget_focus_moved;\n                keyboard_event.blurred_id = widget_blurred_id;\n                keyboard_event.focused_id = widget_focused_id;", "keyboard focus assignment anchor changed");
+  writeFileSync(gpuSurfaceEventsPath, focusGpuSurfaceEvents);
+}
+
+let focusUiApp = readFileSync(uiAppPath, "utf8");
+if (!focusUiApp.includes("pointer_event.focused_id")) {
+  focusUiApp = replaceOnce(focusUiApp, `            if (pointer_event.blurred_id != 0) {\n                if (tree.msgFor(pointer_event.blurred_id, .blur)) |msg| {\n                    try self.dispatch(runtime, pointer_event.window_id, msg);\n                }\n            }\n            const terminal_selected`, `            if (pointer_event.blurred_id != 0) {\n                if (tree.msgFor(pointer_event.blurred_id, .blur)) |msg| {\n                    try self.dispatch(runtime, pointer_event.window_id, msg);\n                }\n            }\n            if (pointer_event.focused_id != 0) {\n                if (tree.msgFor(pointer_event.focused_id, .focus)) |msg| {\n                    try self.dispatch(runtime, pointer_event.window_id, msg);\n                }\n            }\n            const terminal_selected`, "ui-app pointer focus dispatch anchor changed");
+  focusUiApp = replaceOnce(focusUiApp, `            if (keyboard_event.blurred_id != 0) {\n                if (tree.msgFor(keyboard_event.blurred_id, .blur)) |msg| {\n                    try self.dispatch(runtime, keyboard_event.window_id, msg);\n                }\n            }\n            // Key precedence`, `            if (keyboard_event.blurred_id != 0) {\n                if (tree.msgFor(keyboard_event.blurred_id, .blur)) |msg| {\n                    try self.dispatch(runtime, keyboard_event.window_id, msg);\n                }\n            }\n            if (keyboard_event.focused_id != 0) {\n                if (tree.msgFor(keyboard_event.focused_id, .focus)) |msg| {\n                    try self.dispatch(runtime, keyboard_event.window_id, msg);\n                }\n            }\n            // Key precedence`, "ui-app keyboard focus dispatch anchor changed");
+  writeFileSync(uiAppPath, focusUiApp);
+}
+
+// Keep this generic regression beside the existing combobox fixture. It
+// proves the public on-focus contract rather than a Tax Profile-specific
+// presentation policy: automation focus is silent, real Tab/pointer moves
+// dispatch blur before focus, re-clicking the focused field is silent, and
+// entering a combobox-owned menu remains an internal transition.
+let focusUiAppTests = readFileSync(uiAppTestsPath, "utf8");
+if (!focusUiAppTests.includes("text-entry on-focus dispatches after blur on real transitions")) {
+  focusUiAppTests = replaceOnce(focusUiAppTests, "    blur_count: u32 = 0,\n};", "    blur_count: u32 = 0,\n    focus_count: u32 = 0,\n    focus_after_blur: bool = false,\n};", "focus test model anchor changed");
+  focusUiAppTests = replaceOnce(focusUiAppTests, "    blurred,\n};", "    blurred,\n    focused,\n};", "focus test message anchor changed");
+  focusUiAppTests = replaceOnce(focusUiAppTests, "        .blurred => model.blur_count += 1,\n    }", "        .blurred => model.blur_count += 1,\n        .focused => {\n            model.focus_count += 1;\n            model.focus_after_blur = model.blur_count > 0;\n        },\n    }", "focus test update anchor changed");
+  focusUiAppTests = replaceOnce(focusUiAppTests, "        .on_blur = .blurred,\n    }, .{});", "        .on_blur = .blurred,\n        .on_focus = .focused,\n    }, .{});", "combobox focus binding anchor changed");
+  focusUiAppTests = replaceOnce(focusUiAppTests, "            .on_blur = .blurred,\n        }, .{}),", "            .on_blur = .blurred,\n            .on_focus = .focused,\n        }, .{}),", "text-field focus binding anchor changed");
+  const regression = `test "text-entry on-focus dispatches after blur on real transitions" {
+    const harness = try core.TestHarness().create(std.testing.allocator, .{
+        .size = geometry.SizeF.init(400, 300),
+    });
+    defer harness.destroy(std.testing.allocator);
+    harness.null_platform.gpu_surfaces = true;
+
+    const app_state = try std.testing.allocator.create(ComboMirrorApp);
+    defer std.testing.allocator.destroy(app_state);
+    app_state.* = ComboMirrorApp.init(std.heap.page_allocator, .{}, .{
+        .name = "ui-app-text-entry-focus",
+        .scene = combo_mirror_scene,
+        .canvas_label = combo_mirror_canvas_label,
+        .update = comboMirrorUpdate,
+        .view = comboMirrorView,
+    });
+    defer app_state.deinit();
+    const app = app_state.app();
+    try harness.start(app);
+    try harness.runtime.dispatchPlatformEvent(app, .{ .gpu_surface_frame = .{
+        .label = combo_mirror_canvas_label,
+        .size = geometry.SizeF.init(400, 300),
+        .scale_factor = 1,
+        .frame_index = 1,
+        .timestamp_ns = 1_000_000,
+        .nonblank = true,
+    } });
+
+    const combo_id = findWidgetIdByKind(app_state.tree.?.root, .combobox).?;
+    const note_id = findWidgetIdByKind(app_state.tree.?.root, .text_field).?;
+    // Programmatic / automation focus remains outside the user-event contract.
+    try core.testing.dispatchAutomationWidgetAction(&harness.runtime, app, .{
+        .view_label = combo_mirror_canvas_label,
+        .id = combo_id,
+        .action = .focus,
+    });
+    try std.testing.expectEqual(@as(u32, 0), app_state.model.focus_count);
+
+    try comboMirrorKey(harness, app, "tab");
+    try std.testing.expectEqual(note_id, harness.runtime.views[0].canvas_widget_focused_id);
+    try std.testing.expectEqual(@as(u32, 1), app_state.model.blur_count);
+    try std.testing.expectEqual(@as(u32, 1), app_state.model.focus_count);
+    try std.testing.expect(app_state.model.focus_after_blur);
+
+    const note_frame = (try harness.runtime.canvasWidgetLayout(1, combo_mirror_canvas_label)).findById(note_id).?.frame;
+    try harness.runtime.dispatchPlatformEvent(app, .{ .gpu_surface_input = .{
+        .window_id = 1,
+        .label = combo_mirror_canvas_label,
+        .kind = .pointer_down,
+        .x = note_frame.x + 4,
+        .y = note_frame.y + note_frame.height * 0.5,
+        .timestamp_ns = 2_000_000,
+    } });
+    try std.testing.expectEqual(@as(u32, 1), app_state.model.focus_count);
+
+    const combo_frame = (try harness.runtime.canvasWidgetLayout(1, combo_mirror_canvas_label)).findById(combo_id).?.frame;
+    try harness.runtime.dispatchPlatformEvent(app, .{ .gpu_surface_input = .{
+        .window_id = 1,
+        .label = combo_mirror_canvas_label,
+        .kind = .pointer_down,
+        .x = combo_frame.x + 4,
+        .y = combo_frame.y + combo_frame.height * 0.5,
+        .timestamp_ns = 3_000_000,
+    } });
+    try std.testing.expectEqual(@as(u32, 2), app_state.model.blur_count);
+    try std.testing.expectEqual(@as(u32, 2), app_state.model.focus_count);
+
+    // Tab into the owned result menu is not field departure/arrival.
+    try comboMirrorKey(harness, app, "arrowdown");
+    try std.testing.expect(app_state.model.open);
+    try comboMirrorKey(harness, app, "tab");
+    try std.testing.expectEqual(@as(u32, 2), app_state.model.blur_count);
+    try std.testing.expectEqual(@as(u32, 2), app_state.model.focus_count);
+}
+
+`;
+  const anchor = 'test "a closed combobox\'s open arrows move neither the retained caret nor the model mirror" {';
+  focusUiAppTests = replaceOnce(focusUiAppTests, anchor, `${regression}${anchor}`, "focus regression test anchor changed");
+  writeFileSync(uiAppTestsPath, focusUiAppTests);
+}
+}
+
 let markupContract = readFileSync(markupContractPath, "utf8");
 if (!markupContract.includes("blurEventElement(node.name)")) {
   const anchor = `        const event = attribute.name[3..];\n        const tag = self.findMsg(expression.tag);\n        if (std.mem.eql(u8, event, "input")) {`;
@@ -124,7 +320,11 @@ if (!runtimeApi.includes("blurred_id: canvas.ObjectId = 0")) {
 }
 
 let canvasEvents = readFileSync(eventsPath, "utf8");
-if (!canvasEvents.includes("updateCanvasWidgetFocusFromPointer(self: *Runtime, pointer_event: CanvasWidgetPointerEvent) anyerror!canvas.ObjectId")) {
+// The focus layer below evolves the pointer helper's return type, so its
+// signature cannot be the baseline-install sentinel. The blur contract
+// comment is introduced exactly by this block and remains true after later
+// additive layers have been installed.
+if (!canvasEvents.includes("blur/focus event contract.")) {
   canvasEvents = replaceOnce(canvasEvents, `        pub fn updateCanvasWidgetFocusFromPointer(self: *Runtime, pointer_event: CanvasWidgetPointerEvent) anyerror!void {\n            if (pointer_event.pointer.phase != .down) return;\n            const index = runtimeFindViewIndex(self, pointer_event.window_id, pointer_event.view_label) orelse return;\n            if (self.views[index].kind != .gpu_surface) return;`, `        /// Returns the old focused id only when an editable text widget lost\n        /// focus through this real pointer-down transition. Unmount, window\n        /// deactivation, and programmatic focus remain deliberately outside\n        /// the on-blur contract.\n        pub fn updateCanvasWidgetFocusFromPointer(self: *Runtime, pointer_event: CanvasWidgetPointerEvent) anyerror!canvas.ObjectId {\n            if (pointer_event.pointer.phase != .down) return 0;\n            const index = runtimeFindViewIndex(self, pointer_event.window_id, pointer_event.view_label) orelse return 0;\n            if (self.views[index].kind != .gpu_surface) return 0;`, "pointer blur transition anchor changed");
   canvasEvents = replaceOnce(canvasEvents, `            self.views[index].canvas_widget_focus_visible_keyboard = false;\n            if (self.views[index].canvas_widget_focused_id == next_focus_id and self.views[index].canvas_widget_focus_visible_id == next_focus_visible_id) return;\n            const previous_state = self.views[index].canvasWidgetRenderState();\n            self.views[index].canvas_widget_focused_id = next_focus_id;`, `            self.views[index].canvas_widget_focus_visible_keyboard = false;\n            const previous_focus_id = self.views[index].canvas_widget_focused_id;\n            if (previous_focus_id == next_focus_id and self.views[index].canvas_widget_focus_visible_id == next_focus_visible_id) return 0;\n            var blurred_id: canvas.ObjectId = 0;\n            if (previous_focus_id != 0 and previous_focus_id != next_focus_id) {\n                if (self.views[index].widgetLayoutTree().focusTargetById(previous_focus_id)) |previous| {\n                    if (canvas_widget_runtime.canvasWidgetEditableTextKind(previous.kind)) {\n                        blurred_id = previous_focus_id;\n                    }\n                }\n            }\n            const previous_state = self.views[index].canvasWidgetRenderState();\n            self.views[index].canvas_widget_focused_id = next_focus_id;`, "pointer blur previous-focus anchor changed");
   canvasEvents = replaceOnce(canvasEvents, `            self.views[index].canvas_widget_focus_visible_id = next_focus_visible_id;\n            try invalidateForCanvasWidgetRenderStateChange(self, index, previous_state, self.views[index].canvasWidgetRenderState());\n        }\n\n        pub fn updateCanvasWidgetInteractionFromPointer`, `            self.views[index].canvas_widget_focus_visible_id = next_focus_visible_id;\n            try invalidateForCanvasWidgetRenderStateChange(self, index, previous_state, self.views[index].canvasWidgetRenderState());\n            return blurred_id;\n        }\n\n        pub fn updateCanvasWidgetInteractionFromPointer`, "pointer blur return anchor changed");
@@ -254,7 +454,10 @@ if (controlRender.includes("A selected combobox exposes the shared text-clear af
 }
 
 let gpuSurfaceEvents = readFileSync(gpuSurfaceEventsPath, "utf8");
-if (!gpuSurfaceEvents.includes("pointer_event.blurred_id = try CanvasWidgetEventMethods().updateCanvasWidgetFocusFromPointer")) {
+// The focus transition layer below supersedes the blur assignment. Treat
+// either form as installed so a second postinstall is a no-op.
+if (!gpuSurfaceEvents.includes("pointer_event.blurred_id = try CanvasWidgetEventMethods().updateCanvasWidgetFocusFromPointer") &&
+    !gpuSurfaceEvents.includes("pointer_event.focused_id = transition.focused_id")) {
   gpuSurfaceEvents = replaceOnce(gpuSurfaceEvents, "                    try CanvasWidgetEventMethods().updateCanvasWidgetFocusFromPointer(self, pointer_event.*);", "                    pointer_event.blurred_id = try CanvasWidgetEventMethods().updateCanvasWidgetFocusFromPointer(self, pointer_event.*);", "pointer blur event plumbing anchor changed");
   gpuSurfaceEvents = replaceOnce(gpuSurfaceEvents, `            const widget_focus_moved = if (widget_surface_dismissed or targetless_composition_owns_keys or terminal_key_lifetime_suppressed)\n                false\n            else\n                try CanvasWidgetEventMethods().updateCanvasWidgetFocusFromKeyboardInput(self, input_event);\n            var widget_keyboard_event =`, `            var widget_blurred_id: canvas.ObjectId = 0;\n            const widget_focus_moved = if (widget_surface_dismissed or targetless_composition_owns_keys or terminal_key_lifetime_suppressed)\n                false\n            else\n                try CanvasWidgetEventMethods().updateCanvasWidgetFocusFromKeyboardInput(self, input_event, &widget_blurred_id);\n            var widget_keyboard_event =`, "keyboard blur event plumbing anchor changed");
   gpuSurfaceEvents = replaceOnce(gpuSurfaceEvents, `            if (widget_keyboard_event) |*keyboard_event| {\n                keyboard_event.keyboard.focus_moved = widget_focus_moved;\n            }`, `            if (widget_keyboard_event) |*keyboard_event| {\n                keyboard_event.keyboard.focus_moved = widget_focus_moved;\n                keyboard_event.blurred_id = widget_blurred_id;\n            }`, "keyboard blur assignment anchor changed");
@@ -659,6 +862,52 @@ if (!uiAppTests.includes("Repeated Tab and Shift+Tab cycle an open combobox resu
   uiAppTests = replaceOnce(uiAppTests, anchor, `${regression}${anchor}`, "repeated combobox Tab regression anchor changed");
   writeFileSync(uiAppTestsPath, uiAppTests);
 }
+
+// The focus layer depends on every blur/combobox baseline seam above. Running
+// it here makes a fresh 0.6.1 postinstall deterministic and keeps a later
+// SDK anchor change fail-closed rather than silently creating half an event.
+applyFocusPatch();
+
+// `updateCanvasWidgetFocusFromKeyboardInput` already has a local
+// `focused_id` later in its key-routing branch. Keep the event out-parameter
+// distinct so the generated Zig does not shadow it (and so the patch works
+// against both a cold SDK install and an earlier partially patched install).
+function repairKeyboardFocusOutParameter() {
+  let source = readFileSync(eventsPath, "utf8");
+  const start = "        pub fn updateCanvasWidgetFocusFromKeyboardInput(";
+  const end = "\n        fn setCanvasWidgetFocusFromKeyboardMoved(";
+  const startIndex = source.indexOf(start);
+  if (startIndex < 0) {
+    throw new Error("Unable to apply Native SDK combobox patch: keyboard focus function missing.");
+  }
+  const endIndex = source.indexOf(end, startIndex);
+  if (endIndex < 0) {
+    throw new Error("Unable to apply Native SDK combobox patch: keyboard focus helper boundary changed.");
+  }
+  let body = source.slice(startIndex, endIndex);
+  if (body.includes("focused_id: *canvas.ObjectId")) {
+    body = body.replace(
+      "focused_id: *canvas.ObjectId",
+      "focused_out: *canvas.ObjectId",
+    );
+    body = body.replace("focused_id.* = 0", "focused_out.* = 0");
+    body = body.replaceAll(
+      "entry_id,\n                            blurred_id,\n                            focused_id,",
+      "entry_id,\n                            blurred_id,\n                            focused_out,",
+    );
+    body = body.replaceAll(
+      "target.id, blurred_id, focused_id)",
+      "target.id, blurred_id, focused_out)",
+    );
+  }
+  body = body.replaceAll(
+    "entry_id, blurred_id)",
+    "entry_id, blurred_id, focused_out)",
+  );
+  source = `${source.slice(0, startIndex)}${body}${source.slice(endIndex)}`;
+  writeFileSync(eventsPath, source);
+}
+repairKeyboardFocusOutParameter();
 
 let anchoredTests = readFileSync(anchoredTestsPath, "utf8");
 if (!anchoredTests.includes("anchored select: Tab from its open trigger still dismisses")) {
