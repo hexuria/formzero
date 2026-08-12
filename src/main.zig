@@ -4444,8 +4444,12 @@ pub const Model = struct {
     ) []const ProfileYearOptionRow {
         const current = self.taxProfiles.default_tax_year;
         const minimum: i32 = 2020;
+        const visible_suggestion_limit: usize = 5;
         const suggestion_count: usize = if (current >= minimum)
-            @intCast(current - minimum + 1)
+            @min(
+                @as(usize, @intCast(current - minimum + 1)),
+                visible_suggestion_limit,
+            )
         else
             0;
         const typed_year = parseProfileYearOption(query);
@@ -4464,6 +4468,7 @@ pub const Model = struct {
                 continue;
             if (trimmed_query.len != 0 and
                 std.mem.indexOf(u8, label, trimmed_query) == null) continue;
+            if (count == visible_suggestion_limit) break;
             const selected = std.mem.eql(u8, trimmed_query, label);
             rows[count] = .{
                 .value = year,
@@ -23558,7 +23563,7 @@ test "profile year combobox provisions a single active fallback" {
     const start_rows = model.profileEffectiveStartYearOptionRows(
         arena_state.allocator(),
     );
-    try std.testing.expectEqual(@as(usize, 7), start_rows.len);
+    try std.testing.expectEqual(@as(usize, 5), start_rows.len);
     try std.testing.expectEqual(@as(i32, 2026), start_rows[0].value);
     try std.testing.expect(start_rows[0].selected);
     for (start_rows[1..]) |row| try std.testing.expect(!row.selected);
@@ -23568,6 +23573,7 @@ test "profile year combobox provisions a single active fallback" {
     const open_end_rows = model.profileEffectiveEndYearOptionRows(
         arena_state.allocator(),
     );
+    try std.testing.expectEqual(@as(usize, 5), open_end_rows.len);
     for (open_end_rows) |row| try std.testing.expect(!row.selected);
 
     model.taxProfiles.effective_end_year.set("20");
