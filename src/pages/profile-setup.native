@@ -267,7 +267,7 @@
       </button>
     </row>
     <separator/>
-    <column min-width="0" padding="20" gap="16">
+    <column grow="1" min-width="0" padding="20" gap="16">
       <text wrap="true" foreground="text_muted">{profileDirtyNavigationBody}</text>
       <if test="{profileSessionDraftActionVisible}">
         <text size="sm" wrap="true" foreground="text_muted">{profileSessionDraftMessage}</text>
@@ -275,23 +275,24 @@
       <if test="{profileSessionDraftBlockedVisible}">
         <text size="sm" wrap="true" foreground="warning">A session draft is already available. Resume or discard it before saving another draft.</text>
       </if>
-      <if test="{constrainedLayout}">
-        <column gap="8">
-          <if test="{profileSessionDraftActionVisible}">
-            <button size="sm" variant="primary" on-press="profile_save_session_draft_navigation">Save draft and continue</button>
-          </if>
-          <button size="sm" variant="destructive" on-press="profile_discard_navigation">{profileDiscardNavigationLabel}</button>
-        </column>
-      </if>
-      <else>
-        <row gap="8" main="end">
-          <if test="{profileSessionDraftActionVisible}">
-            <button size="sm" variant="primary" on-press="profile_save_session_draft_navigation">Save draft and continue</button>
-          </if>
-          <button size="sm" variant="destructive" on-press="profile_discard_navigation">{profileDiscardNavigationLabel}</button>
-        </row>
-      </else>
     </column>
+    <separator/>
+    <if test="{constrainedLayout}">
+      <column min-width="0" padding="20" gap="8">
+        <if test="{profileSessionDraftActionVisible}">
+          <button size="sm" variant="primary" on-press="profile_save_session_draft_navigation">Save draft and continue</button>
+        </if>
+        <button size="sm" variant="destructive" on-press="profile_discard_navigation">{profileDiscardNavigationLabel}</button>
+      </column>
+    </if>
+    <else>
+      <row min-width="0" padding="20" gap="8" main="end" cross="center">
+        <if test="{profileSessionDraftActionVisible}">
+          <button size="sm" variant="primary" on-press="profile_save_session_draft_navigation">Save draft and continue</button>
+        </if>
+        <button size="sm" variant="destructive" on-press="profile_discard_navigation">{profileDiscardNavigationLabel}</button>
+      </row>
+    </else>
   </column>
 </template>
 

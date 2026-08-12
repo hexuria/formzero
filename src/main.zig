@@ -26351,6 +26351,23 @@ fn expectDirtyNavigationDialogActionsInsideSurface(
         );
         return error.DirtyNavigationActionEscapesDialog;
     }
+
+    const discard_frame = (layout.findById(discard_action.id) orelse
+        return error.DirtyNavigationActionLayoutMissing).frame.normalized();
+    const footer_inset = dialog_frame.y + dialog_frame.height -
+        (discard_frame.y + discard_frame.height);
+    const expected_footer_inset: f32 = 20;
+    const footer_inset_tolerance: f32 = 1;
+    if (footer_inset < expected_footer_inset - footer_inset_tolerance or
+        footer_inset > expected_footer_inset + footer_inset_tolerance)
+    {
+        std.debug.print(
+            "dialog footer: {s} at {d}x{d}: discard bottom inset " ++
+                "{d:.1}px, expected {d:.1}px\n",
+            .{ label, width, height, footer_inset, expected_footer_inset },
+        );
+        return error.DirtyNavigationActionsNotPinnedToFooter;
+    }
 }
 
 fn expectDirtyNavigationDialogResponsiveLayout(
