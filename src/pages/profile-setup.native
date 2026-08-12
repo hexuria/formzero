@@ -54,7 +54,7 @@
 <template name="profile-rdo-editor">
   <column gap="4">
     <stack>
-      <combobox height="44" text="{profileRdoQueryValue}" placeholder="Search code or city" label="Revenue District Office (RDO)" selected="{profileRdoCommittedSelection}" expanded="{profileRdoPickerOpen}" autofocus="{profileRdoAutofocus}" on-input="profile_rdo_query_input" on-press="profile_rdo_toggle_picker" on-blur="profile_rdo_blurred"/>
+      <combobox height="44" text="{profileRdoQueryValue}" placeholder="Search code or city" label="Revenue District Office (RDO)" selected="{profileRdoCommittedSelection}" expanded="{profileRdoPickerOpen}" autofocus="{profileRdoAutofocus}" on-input="profile_rdo_query_input" on-focus="profile_rdo_toggle_picker" on-press="profile_rdo_toggle_picker" on-blur="profile_rdo_blurred"/>
       <if test="{profileRdoPickerOpen}">
         <dropdown-menu anchor="below" anchor-alignment="stretch" on-dismiss="profile_rdo_close_picker">
           <column padding="4" gap="2">
@@ -546,6 +546,7 @@
                   expanded="{profileSubjectPickerOpen}"
                   disabled="{profileBranchMode}"
                   on-input="profile_subject_query_input"
+                  on-focus="toggle_profile_subject_picker"
                   on-press="toggle_profile_subject_picker"
                   on-blur="profile_subject_blurred"/>
                 <if test="{profileSubjectPickerOpen}">
@@ -579,6 +580,7 @@
                     selected="{profileClassificationCommittedSelection}"
                     expanded="{profileClassificationPickerOpen}"
                     on-input="profile_classification_query_input"
+                    on-focus="toggle_profile_classification_picker"
                     on-press="toggle_profile_classification_picker"
                     on-blur="profile_classification_blurred"/>
                   <if test="{profileClassificationPickerOpen}">
@@ -643,7 +645,33 @@
             <grid columns="{profileReadColumns}" gap="12">
               <use template="profile-field" label="ZIP code">
                 <column gap="6">
-                  <input height="44" text="{profileZipValue}" placeholder="4-digit ZIP code" label="ZIP code" autofocus="{profileZipAutofocus}" on-input="profile_zip_input" on-blur="profile_zip_blurred"/>
+                  <stack>
+                    <combobox
+                      height="44"
+                      text="{profileZipQueryValue}"
+                      placeholder="Search ZIP code or location"
+                      label="ZIP code"
+                      selected="{profileZipCommittedSelection}"
+                      expanded="{profileZipPickerOpen}"
+                      autofocus="{profileZipAutofocus}"
+                      on-input="profile_zip_query_input"
+                      on-focus="profile_zip_toggle_picker"
+                      on-press="profile_zip_toggle_picker"
+                      on-blur="profile_zip_blurred"/>
+                    <if test="{profileZipPickerOpen}">
+                      <dropdown-menu anchor="below" anchor-alignment="stretch" on-dismiss="profile_zip_close_picker">
+                        <column padding="4" gap="2">
+                          <if test="{profileZipCommittedSelection}">
+                            <menu-item height="44" on-press="profile_zip_clear">Clear ZIP code</menu-item>
+                          </if>
+                          <for each="profileZipOptionRows" key="id" as="option">
+                            <menu-item height="44" selected="{option.selected}" on-press="profile_zip_select:{option.id}">{option.rowLabel}</menu-item>
+                          </for>
+                          <else><menu-item height="44" disabled="true">No matching ZIP codes or locations</menu-item></else>
+                        </column>
+                      </dropdown-menu>
+                    </if>
+                  </stack>
                   <if test="{profileZipErrorVisible}"><text wrap="true" foreground="destructive">{profileZipValidationMessage}</text></if>
                 </column>
               </use>
@@ -746,7 +774,7 @@
               <use template="profile-field" label="Citizenship">
                 <column gap="6">
                   <stack>
-                    <combobox height="44" text="{profileCitizenshipQueryValue}" placeholder="Search citizenship" label="Citizenship" selected="{profileCitizenshipCommittedSelection}" expanded="{profileCitizenshipPickerOpen}" disabled="{profilePersonalFieldsDisabled}" autofocus="{profileCitizenshipAutofocus}" on-input="profile_citizenship_input" on-press="profile_citizenship_toggle_picker" on-blur="profile_citizenship_blurred"/>
+                    <combobox height="44" text="{profileCitizenshipQueryValue}" placeholder="Search citizenship" label="Citizenship" selected="{profileCitizenshipCommittedSelection}" expanded="{profileCitizenshipPickerOpen}" disabled="{profilePersonalFieldsDisabled}" autofocus="{profileCitizenshipAutofocus}" on-input="profile_citizenship_input" on-focus="profile_citizenship_toggle_picker" on-press="profile_citizenship_toggle_picker" on-blur="profile_citizenship_blurred"/>
                     <if test="{profileCitizenshipPickerOpen}">
                       <dropdown-menu anchor="below" anchor-alignment="stretch" on-dismiss="profile_citizenship_close_picker">
                         <column padding="4" gap="2">
@@ -798,7 +826,7 @@
                 <use template="profile-field" label="When did this take effect?">
                   <column gap="6">
                     <stack>
-                      <combobox height="44" text="{profileEffectiveStartYearValue}" placeholder="YYYY" label="When did this take effect?" selected="{profileEffectiveStartYearSelected}" expanded="{profileEffectiveStartYearPickerOpen}" on-input="profile_effective_start_year_input" on-press="profile_effective_start_year_toggle_picker" on-blur="profile_effective_start_year_blurred"/>
+                      <combobox height="44" text="{profileEffectiveStartYearValue}" placeholder="YYYY" label="When did this take effect?" selected="{profileEffectiveStartYearSelected}" expanded="{profileEffectiveStartYearPickerOpen}" on-input="profile_effective_start_year_input" on-focus="profile_effective_start_year_toggle_picker" on-press="profile_effective_start_year_toggle_picker" on-blur="profile_effective_start_year_blurred"/>
                       <if test="{profileEffectiveStartYearPickerOpen}">
                         <dropdown-menu anchor="below" anchor-alignment="stretch" on-dismiss="profile_effective_start_year_close_picker">
                           <column padding="4" gap="2">
@@ -815,7 +843,7 @@
                 <use template="profile-field" label="Applies until">
                   <column gap="6">
                     <stack>
-                      <combobox height="44" text="{profileEffectiveEndYearValue}" placeholder="Optional YYYY" label="Applies until" selected="{profileEffectiveEndYearSelected}" expanded="{profileEffectiveEndYearPickerOpen}" on-input="profile_effective_end_year_input" on-press="profile_effective_end_year_toggle_picker" on-blur="profile_effective_end_year_blurred"/>
+                      <combobox height="44" text="{profileEffectiveEndYearValue}" placeholder="Optional YYYY" label="Applies until" selected="{profileEffectiveEndYearSelected}" expanded="{profileEffectiveEndYearPickerOpen}" on-input="profile_effective_end_year_input" on-focus="profile_effective_end_year_toggle_picker" on-press="profile_effective_end_year_toggle_picker" on-blur="profile_effective_end_year_blurred"/>
                       <if test="{profileEffectiveEndYearPickerOpen}">
                         <dropdown-menu anchor="below" anchor-alignment="stretch" on-dismiss="profile_effective_end_year_close_picker">
                           <column padding="4" gap="2">

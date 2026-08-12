@@ -34,6 +34,7 @@ const registration_workspace = @import(
 );
 const filing_projection = @import("filing/projection_context.zig");
 const rdo_reference = @import("tax_profile/rdo_reference.zig");
+const postal_reference = @import("tax_profile/philippine_postal_reference.zig");
 const citizenship_reference = @import("tax_profile/citizenship_reference.zig");
 const profile_store = @import("tax_profile/store.zig");
 const profile_persistence = @import("tax_profile/persistence_adapter.zig");
@@ -1514,6 +1515,26 @@ pub const ProfileRdoOptionRow = struct {
     }
 };
 
+pub const ProfileZipOptionRow = struct {
+    id: usize,
+    code: []const u8,
+    locality: []const u8,
+    province: []const u8,
+    region: []const u8,
+    selected: bool,
+
+    pub fn rowLabel(
+        self: *const ProfileZipOptionRow,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return std.fmt.allocPrint(
+            arena,
+            "{s} · {s}, {s} — {s}",
+            .{ self.code, self.locality, self.province, self.region },
+        ) catch self.code;
+    }
+};
+
 pub const ProfileSubjectKindOptionRow = struct {
     id: usize,
     label: []const u8,
@@ -1732,6 +1753,9 @@ pub const Model = struct {
     profileTinFocusActive: bool = false,
     profileRdoPickerVisible: bool = false,
     profileRdoQuery: canvas.TextBuffer(128) = .{},
+    profileZipQuery: canvas.TextBuffer(192) = .{},
+    profileZipPickerVisible: bool = false,
+    profileZipSelectedEntryIndex: ?usize = null,
     profileSubjectQuery: canvas.TextBuffer(64) = .{},
     /// Presentation-only birth-date text. The Tax Profile state keeps the
     /// canonical ISO value used by persistence and form projections; this
@@ -1789,6 +1813,9 @@ pub const Model = struct {
         "profileTinFocusActive",
         "profileRdoPickerVisible",
         "profileRdoQuery",
+        "profileZipPickerVisible",
+        "profileZipSelectedEntryIndex",
+        "profileZipQuery",
         "profileSubjectQuery",
         "profileBirthDateDisplay",
         "profileBirthDateFocused",
@@ -4248,7 +4275,19 @@ pub const Model = struct {
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const ProfileRdoOptionRow {
-        const matches = rdo_reference.search(self.profileRdoQuery.text());
+        const committed_entry = rdo_reference.findByCode(
+            self.taxProfiles.rdo.text(),
+        );
+        var committed_label_buffer: [128]u8 = undefined;
+        const search_query = if (committed_entry) |entry|
+            if (std.mem.eql(
+                u8,
+                self.profileRdoQuery.text(),
+                profileRdoLabel(entry, &committed_label_buffer),
+            )) entry.code else self.profileRdoQuery.text()
+        else
+            self.profileRdoQuery.text();
+        const matches = rdo_reference.search(search_query);
         const rows = arena.alloc(ProfileRdoOptionRow, matches.len) catch
             return &.{};
         const committed_code = self.taxProfiles.rdo.text();
@@ -4579,7 +4618,52 @@ pub const Model = struct {
     }
 
     pub fn profileZipValue(self: *const Model) []const u8 {
+        return self.profileZipQueryValue();
+    }
+
+    pub fn profileZipQueryValue(self: *const Model) []const u8 {
+        if (self.profileZipPickerVisible) return self.profileZipQuery.text();
         return self.taxProfiles.zip_code.text();
+    }
+
+    pub fn profileZipPickerOpen(self: *const Model) bool {
+        return self.profileZipPickerVisible;
+    }
+
+    pub fn profileZipCommittedSelection(self: *const Model) bool {
+        _ = profile_fields.ZipCode.parse(
+            self.taxProfiles.zip_code.text(),
+        ) catch return false;
+        return true;
+    }
+
+    pub fn profileZipOptionRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const ProfileZipOptionRow {
+        const matches = postal_reference.search(5, self.profileZipQuery.text());
+        const rows = arena.alloc(ProfileZipOptionRow, matches.len) catch return &.{};
+        for (matches.items(), 0..) |entry, row_index| {
+            var entry_index: usize = 0;
+            for (&postal_reference.entries, 0..) |*candidate, index| {
+                if (candidate == entry) {
+                    entry_index = index;
+                    break;
+                }
+            }
+            rows[row_index] = .{
+                .id = entry_index,
+                .code = entry.code,
+                .locality = entry.locality,
+                .province = entry.province,
+                .region = entry.region,
+                .selected = if (self.profileZipSelectedEntryIndex) |selected_index|
+                    selected_index == entry_index
+                else
+                    row_index == 0,
+            };
+        }
+        return rows;
     }
 
     pub fn profilePhoneValue(self: *const Model) []const u8 {
@@ -11032,9 +11116,42 @@ fn syncProfileRdoControl(model: *Model) void {
     model.profileRdoQuery.set(profileRdoLabel(entry, &buffer));
 }
 
+fn syncProfileZipControl(model: *Model) void {
+    model.profileZipQuery.set(model.taxProfiles.zip_code.text());
+    model.profileZipPickerVisible = false;
+    model.profileZipSelectedEntryIndex = null;
+}
+
+fn applyProfileZipQuery(model: *Model, edit: canvas.TextInputEvent) void {
+    const selection_only = switch (edit) {
+        .set_selection => true,
+        else => false,
+    };
+    model.profileZipQuery.apply(edit);
+    model.profileZipPickerVisible = true;
+    if (selection_only) return;
+
+    const query = std.mem.trim(u8, model.profileZipQuery.text(), " \t\r\n");
+    if (!std.mem.eql(u8, query, model.taxProfiles.zip_code.text())) {
+        model.taxProfiles.zip_code.clear();
+        model.profileZipSelectedEntryIndex = null;
+    }
+}
+
+fn selectProfileZip(model: *Model, entry_index: usize) void {
+    if (entry_index >= postal_reference.entries.len) return;
+    const entry = postal_reference.entries[entry_index];
+    model.taxProfiles.zip_code.set(entry.code);
+    model.profileZipQuery.set(entry.code);
+    model.profileZipSelectedEntryIndex = entry_index;
+    model.profileZipPickerVisible = false;
+    model.taxProfiles.revealProfileFieldValidation(.zip_code);
+}
+
 fn syncProfileIdentityControls(model: *Model) void {
     syncProfileTinControl(model);
     syncProfileRdoControl(model);
+    syncProfileZipControl(model);
     syncProfileSubjectControl(model);
     syncProfileClassificationControl(model);
     syncProfileBirthDateControl(model);
@@ -11885,13 +12002,17 @@ pub const Msg = union(enum) {
     profile_rdo_blurred,
     profile_rdo_query_input: canvas.TextInputEvent,
     profile_rdo_select: usize,
+    profile_zip_toggle_picker,
+    profile_zip_close_picker,
+    profile_zip_query_input: canvas.TextInputEvent,
+    profile_zip_blurred,
+    profile_zip_clear,
+    profile_zip_select: usize,
     profile_name_input: canvas.TextInputEvent,
     profile_name_blurred,
     profile_trade_name_input: canvas.TextInputEvent,
     profile_address_input: canvas.TextInputEvent,
     profile_address_blurred,
-    profile_zip_input: canvas.TextInputEvent,
-    profile_zip_blurred,
     profile_phone_input: canvas.TextInputEvent,
     profile_phone_blurred,
     profile_email_input: canvas.TextInputEvent,
@@ -13328,12 +13449,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.profileSetupSection = .email;
         },
         .toggle_profile_subject_picker => {
-            if (model.profileSubjectPickerVisible) {
-                syncProfileSubjectControl(model);
-            } else {
-                model.profileSubjectQuery.clear();
-                model.profileSubjectPickerVisible = true;
-            }
+            model.profileSubjectPickerVisible = true;
             model.profileClassificationPickerVisible = false;
             model.profileEoptPickerVisible = false;
         },
@@ -13350,12 +13466,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             selectProfileSubjectKind(model, choice_index);
         },
         .toggle_profile_classification_picker => {
-            if (model.profileClassificationPickerVisible) {
-                syncProfileClassificationControl(model);
-            } else {
-                model.profileClassificationQuery.clear();
-                model.profileClassificationPickerVisible = true;
-            }
+            model.profileClassificationPickerVisible = true;
             model.profileSubjectPickerVisible = false;
             model.profileEoptPickerVisible = false;
         },
@@ -13891,12 +14002,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             applyProfileTinSegment(model, 3, edit);
         },
         .profile_rdo_toggle_picker => {
-            if (model.profileRdoPickerVisible) {
-                syncProfileRdoControl(model);
-            } else {
-                model.profileRdoQuery.clear();
-                model.profileRdoPickerVisible = true;
-            }
+            model.profileRdoPickerVisible = true;
         },
         .profile_rdo_close_picker => syncProfileRdoControl(model),
         .profile_rdo_blurred => {
@@ -13927,13 +14033,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .profile_address_blurred => {
             model.taxProfiles.revealProfileFieldValidation(.registered_address);
         },
-        .profile_zip_input => |edit| {
-            model.taxProfiles.zip_code.apply(edit);
-            model.taxProfiles.captureInputTruncation();
-        },
-        .profile_zip_blurred => {
-            model.taxProfiles.revealProfileFieldValidation(.zip_code);
-        },
         .profile_phone_input => |edit| {
             model.taxProfiles.phone.apply(edit);
             model.taxProfiles.captureInputTruncation();
@@ -13961,13 +14060,36 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             syncProfileBirthDateControl(model);
             model.taxProfiles.revealProfileFieldValidation(.birth_date);
         },
-        .profile_citizenship_toggle_picker => {
-            if (model.profileCitizenshipPickerVisible) {
-                syncProfileCitizenshipControl(model);
-            } else {
-                model.profileCitizenshipQuery.clear();
-                model.profileCitizenshipPickerVisible = true;
+        .profile_zip_toggle_picker => {
+            if (!model.profileZipPickerVisible) {
+                model.profileZipQuery.set(model.taxProfiles.zip_code.text());
             }
+            model.profileZipPickerVisible = true;
+        },
+        .profile_zip_close_picker => syncProfileZipControl(model),
+        .profile_zip_query_input => |edit| applyProfileZipQuery(model, edit),
+        .profile_zip_blurred => {
+            const query = std.mem.trim(
+                u8,
+                model.profileZipQuery.text(),
+                " \t\r\n",
+            );
+            if (query.len != 0 and model.taxProfiles.zip_code.text().len == 0) {
+                model.taxProfiles.zip_code.set(query);
+            }
+            syncProfileZipControl(model);
+            model.taxProfiles.revealProfileFieldValidation(.zip_code);
+        },
+        .profile_zip_clear => {
+            model.profileZipQuery.clear();
+            model.taxProfiles.zip_code.clear();
+            model.profileZipSelectedEntryIndex = null;
+            model.profileZipPickerVisible = true;
+            model.taxProfiles.revealProfileFieldValidation(.zip_code);
+        },
+        .profile_zip_select => |entry_index| selectProfileZip(model, entry_index),
+        .profile_citizenship_toggle_picker => {
+            model.profileCitizenshipPickerVisible = true;
         },
         .profile_citizenship_close_picker => syncProfileCitizenshipControl(model),
         .profile_citizenship_select => |entry_index| {
@@ -14012,8 +14134,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.profileEffectiveEndYearPickerVisible = false;
         },
         .profile_effective_start_year_toggle_picker => {
-            model.profileEffectiveStartYearPickerVisible =
-                !model.profileEffectiveStartYearPickerVisible;
+            model.profileEffectiveStartYearPickerVisible = true;
         },
         .profile_effective_start_year_close_picker => {
             model.profileEffectiveStartYearPickerVisible = false;
@@ -14031,8 +14152,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.profileEffectiveStartYearPickerVisible = false;
         },
         .profile_effective_end_year_toggle_picker => {
-            model.profileEffectiveEndYearPickerVisible =
-                !model.profileEffectiveEndYearPickerVisible;
+            model.profileEffectiveEndYearPickerVisible = true;
         },
         .profile_effective_end_year_close_picker => {
             model.profileEffectiveEndYearPickerVisible = false;
@@ -23224,9 +23344,150 @@ test "profile taxpayer-type combobox filters, provisions, and synchronizes selec
     try std.testing.expectEqualStrings("Partnership", model.profileSubjectQueryValue());
 
     update(&model, .toggle_profile_subject_picker);
+    try std.testing.expect(model.profileSubjectPickerOpen());
+    try std.testing.expectEqualStrings(
+        "Partnership",
+        model.profileSubjectQueryValue(),
+    );
+    const reopened_rows = model.profileSubjectKindOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), reopened_rows.len);
+    try std.testing.expect(reopened_rows[0].selected);
     update(&model, .close_profile_subject_picker);
     try std.testing.expect(!model.profileSubjectPickerOpen());
     try std.testing.expectEqualStrings("Partnership", model.profileSubjectQueryValue());
+}
+
+test "profile combobox focus and click release keep empty pickers open" {
+    var model = Model{ .page = .profile_setup };
+
+    // Keyboard and pointer focus open the picker. A real pointer-down then
+    // mirrors a selection-only text edit into the controlled combobox before
+    // pointer-up dispatches on-press. That complete gesture must preserve the
+    // open picker instead of toggling it closed.
+    update(&model, .profile_rdo_toggle_picker);
+    try std.testing.expect(model.profileRdoPickerOpen());
+    applyProfileRdoQuery(&model, .{ .set_selection = .{
+        .anchor = 0,
+        .focus = 0,
+    } });
+    try std.testing.expect(model.profileRdoPickerOpen());
+    update(&model, .profile_rdo_toggle_picker);
+    try std.testing.expect(model.profileRdoPickerOpen());
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const rows = model.profileRdoOptionRows(arena_state.allocator());
+    try std.testing.expectEqual(@as(usize, 5), rows.len);
+    try std.testing.expect(rows[0].selected);
+
+    model.taxProfiles.rdo.set("019");
+    syncProfileRdoControl(&model);
+    update(&model, .profile_rdo_toggle_picker);
+    try std.testing.expectEqualStrings(
+        "019 - Subic Bay Freeport Zone",
+        model.profileRdoQueryValue(),
+    );
+    const reopened_rdo_rows = model.profileRdoOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), reopened_rdo_rows.len);
+    try std.testing.expectEqualStrings("019", reopened_rdo_rows[0].code);
+    try std.testing.expect(reopened_rdo_rows[0].selected);
+
+    update(&model, .profile_zip_toggle_picker);
+    try std.testing.expect(model.profileZipPickerOpen());
+    applyProfileZipQuery(&model, .{ .set_selection = .{
+        .anchor = 0,
+        .focus = 0,
+    } });
+    update(&model, .profile_zip_toggle_picker);
+    try std.testing.expect(model.profileZipPickerOpen());
+    const zip_rows = model.profileZipOptionRows(arena_state.allocator());
+    try std.testing.expectEqual(@as(usize, 5), zip_rows.len);
+    try std.testing.expect(zip_rows[0].selected);
+
+    model.taxProfiles.clearSubjectKindSelection();
+    syncProfileSubjectControl(&model);
+    update(&model, .toggle_profile_subject_picker);
+    try std.testing.expect(model.profileSubjectPickerOpen());
+    try std.testing.expectEqualStrings("", model.profileSubjectQueryValue());
+    applyProfileSubjectQuery(&model, .{ .set_selection = .{
+        .anchor = 0,
+        .focus = 0,
+    } });
+    update(&model, .toggle_profile_subject_picker);
+    try std.testing.expect(model.profileSubjectPickerOpen());
+    const subject_rows = model.profileSubjectKindOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 5), subject_rows.len);
+    try std.testing.expect(subject_rows[0].selected);
+
+    model.profileSubjectPickerVisible = false;
+    update(&model, .toggle_profile_classification_picker);
+    try std.testing.expect(model.profileClassificationPickerOpen());
+    applyProfileClassificationQuery(&model, .{ .set_selection = .{
+        .anchor = 0,
+        .focus = 0,
+    } });
+    update(&model, .toggle_profile_classification_picker);
+    try std.testing.expect(model.profileClassificationPickerOpen());
+    const classification_rows = model.profileClassificationOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 3), classification_rows.len);
+    try std.testing.expect(classification_rows[0].selected);
+
+    update(&model, .profile_citizenship_toggle_picker);
+    try std.testing.expect(model.profileCitizenshipPickerOpen());
+    applyProfileCitizenshipQuery(&model, .{ .set_selection = .{
+        .anchor = 0,
+        .focus = 0,
+    } });
+    update(&model, .profile_citizenship_toggle_picker);
+    try std.testing.expect(model.profileCitizenshipPickerOpen());
+    const citizenship_rows = model.profileCitizenshipOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 5), citizenship_rows.len);
+    try std.testing.expect(citizenship_rows[0].selected);
+
+    update(&model, .profile_effective_start_year_toggle_picker);
+    try std.testing.expect(model.profileEffectiveStartYearPickerOpen());
+    model.taxProfiles.applyEffectiveStartYearInput(.{ .set_selection = .{
+        .anchor = 0,
+        .focus = 0,
+    } });
+    update(&model, .profile_effective_start_year_toggle_picker);
+    try std.testing.expect(model.profileEffectiveStartYearPickerOpen());
+
+    update(&model, .profile_effective_end_year_toggle_picker);
+    try std.testing.expect(model.profileEffectiveEndYearPickerOpen());
+    model.taxProfiles.applyEffectiveEndYearInput(.{ .set_selection = .{
+        .anchor = 0,
+        .focus = 0,
+    } });
+    update(&model, .profile_effective_end_year_toggle_picker);
+    try std.testing.expect(model.profileEffectiveEndYearPickerOpen());
+}
+
+test "Tax Profile markup opens every combobox on focus" {
+    const focus_handlers = [_][]const u8{
+        "on-focus=\"profile_rdo_toggle_picker\"",
+        "on-focus=\"toggle_profile_subject_picker\"",
+        "on-focus=\"toggle_profile_classification_picker\"",
+        "on-focus=\"profile_zip_toggle_picker\"",
+        "on-focus=\"profile_citizenship_toggle_picker\"",
+        "on-focus=\"profile_effective_start_year_toggle_picker\"",
+        "on-focus=\"profile_effective_end_year_toggle_picker\"",
+    };
+    for (focus_handlers) |handler| {
+        try std.testing.expect(
+            std.mem.indexOf(u8, app_markup_pages, handler) != null,
+        );
+    }
 }
 
 test "profile tax-classification combobox filters, provisions, and synchronizes selection" {
@@ -23337,6 +23598,14 @@ test "profile combobox clear removes committed selections and collapses menus" {
     try std.testing.expectEqualStrings("", model.profileRdoQueryValue());
     try std.testing.expect(!model.profileRdoPickerOpen());
 
+    model.taxProfiles.zip_code.set("2600");
+    syncProfileZipControl(&model);
+    try std.testing.expect(model.profileZipCommittedSelection());
+    update(&model, .{ .profile_zip_query_input = .clear });
+    try std.testing.expect(!model.profileZipCommittedSelection());
+    try std.testing.expectEqualStrings("", model.profileZipQueryValue());
+    try std.testing.expect(model.profileZipPickerOpen());
+
     model.taxProfiles.citizenship.set("Filipino");
     syncProfileCitizenshipControl(&model);
     try std.testing.expect(model.profileCitizenshipCommittedSelection());
@@ -23356,6 +23625,106 @@ test "profile combobox clear removes committed selections and collapses menus" {
     update(&model, .{ .profile_effective_end_year_input = .clear });
     try std.testing.expect(!model.profileEffectiveEndYearSelected());
     try std.testing.expect(!model.profileEffectiveEndYearPickerOpen());
+}
+
+test "profile ZIP combobox searches geography and persists only the code" {
+    var model = Model{ .page = .profile_setup };
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    update(&model, .profile_zip_toggle_picker);
+    const initial_rows = model.profileZipOptionRows(arena_state.allocator());
+    try std.testing.expectEqual(@as(usize, 5), initial_rows.len);
+    try std.testing.expect(initial_rows[0].selected);
+
+    update(&model, .{ .profile_zip_query_input = .{ .insert_text = "2600" } });
+    const numeric_rows = model.profileZipOptionRows(arena_state.allocator());
+    try std.testing.expectEqual(@as(usize, 1), numeric_rows.len);
+    try std.testing.expectEqualStrings("Baguio City", numeric_rows[0].locality);
+
+    model.profileZipQuery.clear();
+    update(&model, .{ .profile_zip_query_input = .{ .insert_text = "Baguio" } });
+    const locality_rows = model.profileZipOptionRows(arena_state.allocator());
+    try std.testing.expect(locality_rows.len > 0);
+    try std.testing.expect(locality_rows.len <= 5);
+    try std.testing.expectEqualStrings("2600", locality_rows[0].code);
+
+    model.profileZipQuery.clear();
+    update(&model, .{ .profile_zip_query_input = .{ .insert_text = "Benguet" } });
+    const province_rows = model.profileZipOptionRows(arena_state.allocator());
+    try std.testing.expect(province_rows.len > 0);
+    try std.testing.expect(province_rows.len <= 5);
+
+    model.profileZipQuery.clear();
+    update(&model, .{ .profile_zip_query_input = .{ .insert_text = "Cordillera" } });
+    const region_rows = model.profileZipOptionRows(arena_state.allocator());
+    try std.testing.expect(region_rows.len > 0);
+    try std.testing.expect(region_rows.len <= 5);
+
+    update(&model, .{ .profile_zip_select = locality_rows[0].id });
+    try std.testing.expectEqualStrings("2600", model.taxProfiles.zip_code.text());
+    try std.testing.expectEqualStrings("2600", model.profileZipQueryValue());
+    try std.testing.expect(!model.profileZipPickerOpen());
+}
+
+test "profile ZIP combobox suppresses exact duplicates and accepts typed codes" {
+    var model = Model{ .page = .profile_setup };
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    update(&model, .profile_zip_toggle_picker);
+    update(&model, .{ .profile_zip_query_input = .{ .insert_text = "Balingoan" } });
+    const balingoan_rows = model.profileZipOptionRows(arena_state.allocator());
+    try std.testing.expectEqual(@as(usize, 1), balingoan_rows.len);
+    try std.testing.expectEqualStrings("9011", balingoan_rows[0].code);
+
+    model.profileZipQuery.clear();
+    update(&model, .{ .profile_zip_query_input = .{ .insert_text = "0000" } });
+    try std.testing.expectEqual(@as(usize, 0), model.profileZipOptionRows(
+        arena_state.allocator(),
+    ).len);
+    update(&model, .profile_zip_blurred);
+    try std.testing.expectEqualStrings("0000", model.taxProfiles.zip_code.text());
+    try std.testing.expect(!model.profileZipErrorVisible());
+
+    update(&model, .profile_zip_toggle_picker);
+    update(&model, .{ .profile_zip_query_input = .clear });
+    update(&model, .{ .profile_zip_query_input = .{ .insert_text = "100" } });
+    update(&model, .profile_zip_blurred);
+    try std.testing.expectEqualStrings("100", model.taxProfiles.zip_code.text());
+    try std.testing.expectEqualStrings("100", model.profileZipQueryValue());
+    try std.testing.expect(!model.profileZipPickerOpen());
+    try std.testing.expect(!model.profileZipCommittedSelection());
+    try std.testing.expect(model.profileZipErrorVisible());
+    try std.testing.expectEqualStrings(
+        "Enter a four-digit Philippine ZIP code.",
+        model.profileZipValidationMessage(),
+    );
+
+    update(&model, .profile_zip_toggle_picker);
+    try std.testing.expect(model.profileZipPickerOpen());
+    try std.testing.expectEqualStrings("100", model.profileZipQueryValue());
+
+    update(&model, .{ .profile_zip_query_input = .clear });
+    update(&model, .{ .profile_zip_query_input = .{ .insert_text = "10A0" } });
+    update(&model, .profile_zip_blurred);
+    try std.testing.expectEqualStrings("10A0", model.taxProfiles.zip_code.text());
+    try std.testing.expectEqualStrings("10A0", model.profileZipQueryValue());
+    try std.testing.expect(model.profileZipErrorVisible());
+    try std.testing.expect(!model.profileZipCommittedSelection());
+
+    model.profileZipSelectedEntryIndex = balingoan_rows[0].id;
+    model.taxProfiles.zip_code.set("1011");
+    syncProfileZipControl(&model);
+    try std.testing.expectEqual(
+        @as(?usize, null),
+        model.profileZipSelectedEntryIndex,
+    );
+
+    update(&model, .profile_zip_toggle_picker);
+    const switched_rows = model.profileZipOptionRows(arena_state.allocator());
+    try std.testing.expectEqual(@as(usize, 1), switched_rows.len);
+    try std.testing.expect(switched_rows[0].selected);
 }
 
 test "profile registered-address validation is revealed on blur" {
