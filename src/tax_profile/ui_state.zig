@@ -900,7 +900,7 @@ pub const State = struct {
                     break :blk "Birth date is required for an individual taxpayer.";
                 }
                 _ = self.birthDateForEditor() catch
-                    break :blk "Enter a real birth date as M/D/YY, MM/DD/YYYY, or YYYY-MM-DD.";
+                    break :blk "Enter a real birth date as 81788, M/D/YY, MM/DD/YYYY, or YYYY-MM-DD.";
                 break :blk null;
             },
             .citizenship => blk: {
@@ -5151,6 +5151,7 @@ test "staged Forms Set is isolated until save and blocks context switches" {
     state.display_name.set("Staged Forms Taxpayer");
     state.registered_address.set("Quezon City");
     setRequiredIndividualDetailsForTest(&state);
+    state.setNaturalPersonClassification(.pure_compensation);
     state.selectEffectiveStartYear(2026);
     try std.testing.expect(state.save());
     try std.testing.expectEqual(
@@ -5225,6 +5226,7 @@ test "new profile cannot manage or save the prior profile Forms Set" {
     state.display_name.set("Existing Taxpayer");
     state.registered_address.set("Quezon City");
     setRequiredIndividualDetailsForTest(&state);
+    state.setNaturalPersonClassification(.pure_compensation);
     state.selectEffectiveStartYear(2026);
     try std.testing.expect(state.save());
 
@@ -5266,6 +5268,7 @@ test "profile state appends immutable source-aware revision" {
     state.display_name.set("Maria Santos");
     state.registered_address.set("Quezon City");
     setRequiredIndividualDetailsForTest(&state);
+    state.setNaturalPersonClassification(.pure_compensation);
     state.selectEffectiveStartYear(2026);
     try std.testing.expect(state.save());
     const profile_id = state.selectedProfileDomainId().?;
@@ -7121,6 +7124,7 @@ test "a historical year with no details asks for a record instead of inventing o
     state.display_name.set("Recently Registered Taxpayer");
     state.registered_address.set("Quezon City");
     setRequiredIndividualDetailsForTest(&state);
+    state.setNaturalPersonClassification(.pure_compensation);
     state.selectEffectiveStartYear(2026);
     try std.testing.expect(state.save());
 
@@ -7158,6 +7162,7 @@ test "a taxpayer registered mid-year is not treated as missing details" {
     state.display_name.set("Mid Year Registrant");
     state.registered_address.set("Quezon City");
     setRequiredIndividualDetailsForTest(&state);
+    state.setNaturalPersonClassification(.pure_compensation);
     state.useExactEffectiveDates();
     state.effective_from.set("2026-08-04");
     try std.testing.expect(state.save());
@@ -7290,6 +7295,7 @@ test "one canonical TIN cannot be registered twice" {
     state.display_name.set("Same TIN Again");
     state.registered_address.set("Quezon City");
     setRequiredIndividualDetailsForTest(&state);
+    state.setNaturalPersonClassification(.pure_compensation);
     state.selectEffectiveStartYear(2026);
     try std.testing.expect(!state.save());
     // The refusal names who holds the TIN, so the user has somewhere to go.
@@ -7323,6 +7329,7 @@ test "an archived taxpayer still owns its TIN" {
     state.display_name.set("Different Taxpayer Same TIN");
     state.registered_address.set("Quezon City");
     setRequiredIndividualDetailsForTest(&state);
+    state.setNaturalPersonClassification(.pure_compensation);
     state.selectEffectiveStartYear(2020);
     try std.testing.expect(!state.save());
     try std.testing.expectEqualStrings(
@@ -7355,6 +7362,7 @@ test "searching narrows the view without stealing the selection" {
     state.display_name.set("Beta Other Taxpayer");
     state.registered_address.set("Quezon City");
     setRequiredIndividualDetailsForTest(&state);
+    state.setNaturalPersonClassification(.pure_compensation);
     state.selectEffectiveStartYear(2020);
     try std.testing.expect(state.save());
 

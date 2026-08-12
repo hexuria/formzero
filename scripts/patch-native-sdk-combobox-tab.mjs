@@ -1075,3 +1075,468 @@ if (!anchoredTests.includes("anchored select: Tab from its open trigger still di
   );
   writeFileSync(anchoredTestsPath, anchoredTests);
 }
+
+// A combobox trigger and the result menu it owns are one logical text-entry
+// control. Pointer focus still moves onto a menu row for keyboard activation,
+// but that internal move must not emit the trigger's blur before pointer-up
+// can select the row.
+let finalViewTree = readFileSync(viewTreePath, "utf8");
+if (!finalViewTree.includes("canvasWidgetFocusMovesIntoOwnedComboboxMenu")) {
+  const helper = `    /// Whether focus moves from one specific combobox trigger into the
+    /// anchored result menu that trigger owns. Physical focus still moves to
+    /// the row, but the public text-entry lifecycle remains inside one control.
+    pub fn canvasWidgetFocusMovesIntoOwnedComboboxMenu(
+        self: *const RuntimeView,
+        trigger_id: canvas.ObjectId,
+        target_id: canvas.ObjectId,
+    ) bool {
+        const trigger_index = self.canvasWidgetNodeIndexById(trigger_id) orelse
+            return false;
+        if (self.widget_layout_nodes[trigger_index].widget.kind != .combobox)
+            return false;
+        const surface_index = self.canvasWidgetOwnedMenuSurfaceIndex(
+            trigger_index,
+        ) orelse return false;
+        return self.canvasWidgetIdDescendsFromIndex(target_id, surface_index);
+    }
+
+`;
+  const anchor =
+    "    /// Whether keyboard focus is on an entry inside a combobox-owned result\n";
+  finalViewTree = replaceOnce(
+    finalViewTree,
+    anchor,
+    `${helper}${anchor}`,
+    "owned combobox pointer focus helper anchor changed",
+  );
+  writeFileSync(viewTreePath, finalViewTree);
+}
+
+let finalView = readFileSync(viewPath, "utf8");
+if (!finalView.includes("canvasWidgetFocusMovesIntoOwnedComboboxMenu")) {
+  const anchor =
+    "    pub const canvasWidgetOwnedComboboxMenuEntryId = CanvasWidgetTreeMethods.canvasWidgetOwnedComboboxMenuEntryId;\n";
+  const exportLine =
+    "    pub const canvasWidgetFocusMovesIntoOwnedComboboxMenu = CanvasWidgetTreeMethods.canvasWidgetFocusMovesIntoOwnedComboboxMenu;\n";
+  finalView = replaceOnce(
+    finalView,
+    anchor,
+    `${anchor}${exportLine}`,
+    "owned combobox pointer focus export anchor changed",
+  );
+  writeFileSync(viewPath, finalView);
+}
+
+let finalCanvasEvents = readFileSync(eventsPath, "utf8");
+if (
+  !finalCanvasEvents.includes(
+    "A combobox-owned menu row is an internal focus transition",
+  )
+) {
+  const anchor = `            var transition: FocusTransition = .{};
+            if (previous_focus_id != 0 and previous_focus_id != next_focus_id) {
+                if (self.views[index].widgetLayoutTree().focusTargetById(previous_focus_id)) |previous| {
+                    if (canvas_widget_runtime.canvasWidgetEditableTextKind(previous.kind)) {
+                        transition.blurred_id = previous_focus_id;
+                    }
+                }
+            }
+            if (next_focus_id != 0) {
+                if (self.views[index].widgetLayoutTree().focusTargetById(next_focus_id)) |next| {
+                    if (canvas_widget_runtime.canvasWidgetEditableTextKind(next.kind)) {
+                        transition.focused_id = next_focus_id;
+                    }
+                }
+            }
+            const previous_state = self.views[index].canvasWidgetRenderState();`;
+  const replacement = `            var transition: FocusTransition = .{};
+            // A combobox-owned menu row is an internal focus transition:
+            // keep physical row focus without blurring/refocusing the logical
+            // text-entry control before pointer-up commits the option.
+            const moved_into_owned_combobox_menu = previous_focus_id != 0 and
+                next_focus_id != 0 and
+                self.views[index].canvasWidgetFocusMovesIntoOwnedComboboxMenu(
+                    previous_focus_id,
+                    next_focus_id,
+                );
+            if (!moved_into_owned_combobox_menu) {
+                if (previous_focus_id != 0 and previous_focus_id != next_focus_id) {
+                    if (self.views[index].widgetLayoutTree().focusTargetById(previous_focus_id)) |previous| {
+                        if (canvas_widget_runtime.canvasWidgetEditableTextKind(previous.kind)) {
+                            transition.blurred_id = previous_focus_id;
+                        }
+                    }
+                }
+                if (next_focus_id != 0) {
+                    if (self.views[index].widgetLayoutTree().focusTargetById(next_focus_id)) |next| {
+                        if (canvas_widget_runtime.canvasWidgetEditableTextKind(next.kind)) {
+                            transition.focused_id = next_focus_id;
+                        }
+                    }
+                }
+            }
+            const previous_state = self.views[index].canvasWidgetRenderState();`;
+  finalCanvasEvents = replaceOnce(
+    finalCanvasEvents,
+    anchor,
+    replacement,
+    "owned combobox pointer focus transition anchor changed",
+  );
+  writeFileSync(eventsPath, finalCanvasEvents);
+}
+
+// Blur and focus handlers can rebuild the retained tree. Resolve each phase
+// independently, then acquire the post-focus tree used by the remainder of the
+// pointer or keyboard event so no stale handler table survives a dispatch.
+let finalUiApp = readFileSync(uiAppPath, "utf8");
+if (!finalUiApp.includes("Normal pointer focus follows the re-resolving path")) {
+  const pointerAnchor = `        fn handlePointer(self: *Self, runtime: *Runtime, pointer_event: core.CanvasWidgetPointerEvent) anyerror!void {
+            const tree = self.treeForViewLabel(pointer_event.view_label) orelse return;
+            // Focus changes before pointer activation. Dispatch the old text
+            // field's commit/normalization message before the new target's
+            // edit or press, matching the desktop blur-before-click order.
+            if (pointer_event.blurred_id != 0) {
+                if (tree.msgFor(pointer_event.blurred_id, .blur)) |msg| {
+                    try self.dispatch(runtime, pointer_event.window_id, msg);
+                }
+            }
+            if (pointer_event.focused_id != 0) {
+                if (tree.msgFor(pointer_event.focused_id, .focus)) |msg| {
+                    try self.dispatch(runtime, pointer_event.window_id, msg);
+                }
+            }
+            const terminal_selected = try self.handleTerminalPointer(runtime, pointer_event);`;
+  const pointerReplacement = `        fn handlePointer(self: *Self, runtime: *Runtime, pointer_event: core.CanvasWidgetPointerEvent) anyerror!void {
+            // Normal pointer focus follows the re-resolving path used by
+            // consumed context-menu input: blur can rebuild before focus, and
+            // focus can rebuild before the press itself is routed.
+            try self.handleFocusTransition(runtime, .{
+                .window_id = pointer_event.window_id,
+                .view_label = pointer_event.view_label,
+                .blurred_id = pointer_event.blurred_id,
+                .focused_id = pointer_event.focused_id,
+            });
+            const tree = self.treeForViewLabel(pointer_event.view_label) orelse return;
+            const terminal_selected = try self.handleTerminalPointer(runtime, pointer_event);`;
+  finalUiApp = replaceOnce(
+    finalUiApp,
+    pointerAnchor,
+    pointerReplacement,
+    "normal pointer focus re-resolution anchor changed",
+  );
+
+  const keyboardAnchor = `        fn handleKeyboard(self: *Self, runtime: *Runtime, keyboard_event: core.CanvasWidgetKeyboardEvent) anyerror!void {
+            const tree = self.treeForViewLabel(keyboard_event.view_label) orelse return;
+            // Tab/Shift+Tab already moved the runtime focus before routing
+            // this key to its new target. Commit the old text field first.
+            if (keyboard_event.blurred_id != 0) {
+                if (tree.msgFor(keyboard_event.blurred_id, .blur)) |msg| {
+                    try self.dispatch(runtime, keyboard_event.window_id, msg);
+                }
+            }
+            if (keyboard_event.focused_id != 0) {
+                if (tree.msgFor(keyboard_event.focused_id, .focus)) |msg| {
+                    try self.dispatch(runtime, keyboard_event.window_id, msg);
+                }
+            }
+            // Key precedence, top to bottom`;
+  const keyboardReplacement = `        fn handleKeyboard(self: *Self, runtime: *Runtime, keyboard_event: core.CanvasWidgetKeyboardEvent) anyerror!void {
+            // Normal keyboard focus also re-resolves after each dispatched
+            // phase before the arriving key is routed through the live tree.
+            try self.handleFocusTransition(runtime, .{
+                .window_id = keyboard_event.window_id,
+                .view_label = keyboard_event.view_label,
+                .blurred_id = keyboard_event.blurred_id,
+                .focused_id = keyboard_event.focused_id,
+            });
+            const tree = self.treeForViewLabel(keyboard_event.view_label) orelse return;
+            // Key precedence, top to bottom`;
+  finalUiApp = replaceOnce(
+    finalUiApp,
+    keyboardAnchor,
+    keyboardReplacement,
+    "normal keyboard focus re-resolution anchor changed",
+  );
+  writeFileSync(uiAppPath, finalUiApp);
+}
+
+// Extend the generic combobox fixture with two deliberately adversarial
+// policies: blur can close the owned menu, and blur can rebuild the next
+// field's focus handler. These exercise the real event seams used by Tax
+// Classification without coupling SDK tests to app-specific markup.
+let finalUiAppTests = readFileSync(uiAppTestsPath, "utf8");
+if (!finalUiAppTests.includes("close_on_blur: bool = false")) {
+  finalUiAppTests = replaceOnce(
+    finalUiAppTests,
+    `    focus_after_blur: bool = false,
+};`,
+    `    focus_after_blur: bool = false,
+    close_on_blur: bool = false,
+    rebind_focus_on_blur: bool = false,
+    focus_handler_rebound: bool = false,
+    stale_focus_count: u32 = 0,
+    live_focus_count: u32 = 0,
+};`,
+    "focus-rebuild fixture model anchor changed",
+  );
+  finalUiAppTests = replaceOnce(
+    finalUiAppTests,
+    `    blurred,
+    focused,
+};`,
+    `    blurred,
+    focused,
+    stale_focused,
+    live_focused,
+};`,
+    "focus-rebuild fixture message anchor changed",
+  );
+  finalUiAppTests = replaceOnce(
+    finalUiAppTests,
+    `        .blurred => model.blur_count += 1,
+        .focused => {
+            model.focus_count += 1;
+            model.focus_after_blur = model.blur_count > 0;
+        },`,
+    `        .blurred => {
+            model.blur_count += 1;
+            if (model.close_on_blur) model.open = false;
+            if (model.rebind_focus_on_blur) model.focus_handler_rebound = true;
+        },
+        .focused => {
+            model.focus_count += 1;
+            model.focus_after_blur = model.blur_count > 0;
+        },
+        .stale_focused => model.stale_focus_count += 1,
+        .live_focused => model.live_focus_count += 1,`,
+    "focus-rebuild fixture update anchor changed",
+  );
+  finalUiAppTests = replaceOnce(
+    finalUiAppTests,
+    `            .on_input = ComboMirrorApp.Ui.inputMsg(.note_edit),
+            .on_blur = .blurred,
+            .on_focus = .focused,
+        }, .{}),`,
+    `            .on_input = ComboMirrorApp.Ui.inputMsg(.note_edit),
+            .on_blur = .blurred,
+            .on_focus = if (model.rebind_focus_on_blur)
+                if (model.focus_handler_rebound) .live_focused else .stale_focused
+            else
+                .focused,
+        }, .{}),`,
+    "focus-rebuild fixture handler anchor changed",
+  );
+  writeFileSync(uiAppTestsPath, finalUiAppTests);
+}
+
+finalUiAppTests = readFileSync(uiAppTestsPath, "utf8");
+if (
+  !finalUiAppTests.includes(
+    "pointer selection inside an owned combobox menu does not blur the trigger",
+  )
+) {
+  const pointerSelectionRegression = `test "pointer selection inside an owned combobox menu does not blur the trigger" {
+    const harness = try core.TestHarness().create(std.testing.allocator, .{
+        .size = geometry.SizeF.init(400, 300),
+    });
+    defer harness.destroy(std.testing.allocator);
+    harness.null_platform.gpu_surfaces = true;
+
+    const app_state = try std.testing.allocator.create(ComboMirrorApp);
+    defer std.testing.allocator.destroy(app_state);
+    app_state.* = ComboMirrorApp.init(std.heap.page_allocator, .{}, .{
+        .name = "ui-app-combobox-pointer-selection",
+        .scene = combo_mirror_scene,
+        .canvas_label = combo_mirror_canvas_label,
+        .update = comboMirrorUpdate,
+        .view = comboMirrorView,
+    });
+    defer app_state.deinit();
+    app_state.model.query.set("glass");
+    app_state.model.open = true;
+    app_state.model.close_on_blur = true;
+    const app = app_state.app();
+    try harness.start(app);
+    try harness.runtime.dispatchPlatformEvent(app, .{ .gpu_surface_frame = .{
+        .label = combo_mirror_canvas_label,
+        .size = geometry.SizeF.init(400, 300),
+        .scale_factor = 1,
+        .frame_index = 1,
+        .timestamp_ns = 1_000_000,
+        .nonblank = true,
+    } });
+
+    const combo_id = findWidgetIdByKind(app_state.tree.?.root, .combobox).?;
+    const first_item_id = findWidgetIdByText(app_state.tree.?, .menu_item, "glass bead").?;
+    try core.testing.dispatchAutomationWidgetAction(&harness.runtime, app, .{
+        .view_label = combo_mirror_canvas_label,
+        .id = combo_id,
+        .action = .focus,
+    });
+    const item_frame = (try harness.runtime.canvasWidgetLayout(1, combo_mirror_canvas_label)).findById(first_item_id).?.frame;
+    const x = item_frame.x + item_frame.width * 0.5;
+    const y = item_frame.y + item_frame.height * 0.5;
+    try harness.runtime.dispatchPlatformEvent(app, .{ .gpu_surface_input = .{
+        .window_id = 1,
+        .label = combo_mirror_canvas_label,
+        .kind = .pointer_down,
+        .x = x,
+        .y = y,
+        .timestamp_ns = 2_000_000,
+    } });
+    try std.testing.expect(app_state.model.open);
+    try std.testing.expectEqual(@as(u32, 0), app_state.model.blur_count);
+    try std.testing.expectEqual(first_item_id, harness.runtime.views[0].canvas_widget_focused_id);
+
+    try harness.runtime.dispatchPlatformEvent(app, .{ .gpu_surface_input = .{
+        .window_id = 1,
+        .label = combo_mirror_canvas_label,
+        .kind = .pointer_up,
+        .x = x,
+        .y = y,
+        .timestamp_ns = 3_000_000,
+    } });
+    try std.testing.expect(!app_state.model.open);
+}
+
+`;
+  const anchor =
+    'test "text-entry on-focus dispatches after blur on real transitions" {';
+  finalUiAppTests = replaceOnce(
+    finalUiAppTests,
+    anchor,
+    `${pointerSelectionRegression}${anchor}`,
+    "owned combobox pointer regression anchor changed",
+  );
+  writeFileSync(uiAppTestsPath, finalUiAppTests);
+}
+
+finalUiAppTests = readFileSync(uiAppTestsPath, "utf8");
+if (
+  !finalUiAppTests.includes(
+    "pointer focus resolves the rebuilt destination handler after blur",
+  )
+) {
+  const pointerFocusRegression = `test "pointer focus resolves the rebuilt destination handler after blur" {
+    const harness = try core.TestHarness().create(std.testing.allocator, .{
+        .size = geometry.SizeF.init(400, 300),
+    });
+    defer harness.destroy(std.testing.allocator);
+    harness.null_platform.gpu_surfaces = true;
+
+    const app_state = try std.testing.allocator.create(ComboMirrorApp);
+    defer std.testing.allocator.destroy(app_state);
+    app_state.* = ComboMirrorApp.init(std.heap.page_allocator, .{}, .{
+        .name = "ui-app-pointer-focus-rebuild",
+        .scene = combo_mirror_scene,
+        .canvas_label = combo_mirror_canvas_label,
+        .update = comboMirrorUpdate,
+        .view = comboMirrorView,
+    });
+    defer app_state.deinit();
+    app_state.model.rebind_focus_on_blur = true;
+    const app = app_state.app();
+    try harness.start(app);
+    try harness.runtime.dispatchPlatformEvent(app, .{ .gpu_surface_frame = .{
+        .label = combo_mirror_canvas_label,
+        .size = geometry.SizeF.init(400, 300),
+        .scale_factor = 1,
+        .frame_index = 1,
+        .timestamp_ns = 1_000_000,
+        .nonblank = true,
+    } });
+
+    const combo_id = findWidgetIdByKind(app_state.tree.?.root, .combobox).?;
+    const note_id = findWidgetIdByKind(app_state.tree.?.root, .text_field).?;
+    try core.testing.dispatchAutomationWidgetAction(&harness.runtime, app, .{
+        .view_label = combo_mirror_canvas_label,
+        .id = combo_id,
+        .action = .focus,
+    });
+    const note_frame = (try harness.runtime.canvasWidgetLayout(1, combo_mirror_canvas_label)).findById(note_id).?.frame;
+    try harness.runtime.dispatchPlatformEvent(app, .{ .gpu_surface_input = .{
+        .window_id = 1,
+        .label = combo_mirror_canvas_label,
+        .kind = .pointer_down,
+        .x = note_frame.x + 4,
+        .y = note_frame.y + note_frame.height * 0.5,
+        .timestamp_ns = 2_000_000,
+    } });
+
+    try std.testing.expectEqual(note_id, harness.runtime.views[0].canvas_widget_focused_id);
+    try std.testing.expect(app_state.model.focus_handler_rebound);
+    try std.testing.expectEqual(@as(u32, 0), app_state.model.stale_focus_count);
+    try std.testing.expectEqual(@as(u32, 1), app_state.model.live_focus_count);
+}
+
+`;
+  const anchor = 'test "right-click focus transitions dispatch blur then focus" {';
+  finalUiAppTests = replaceOnce(
+    finalUiAppTests,
+    anchor,
+    `${pointerFocusRegression}${anchor}`,
+    "pointer focus rebuild regression anchor changed",
+  );
+  writeFileSync(uiAppTestsPath, finalUiAppTests);
+}
+
+finalUiAppTests = readFileSync(uiAppTestsPath, "utf8");
+if (
+  !finalUiAppTests.includes(
+    "keyboard focus resolves the rebuilt destination handler after blur",
+  )
+) {
+  const keyboardFocusRegression = `test "keyboard focus resolves the rebuilt destination handler after blur" {
+    const harness = try core.TestHarness().create(std.testing.allocator, .{
+        .size = geometry.SizeF.init(400, 300),
+    });
+    defer harness.destroy(std.testing.allocator);
+    harness.null_platform.gpu_surfaces = true;
+
+    const app_state = try std.testing.allocator.create(ComboMirrorApp);
+    defer std.testing.allocator.destroy(app_state);
+    app_state.* = ComboMirrorApp.init(std.heap.page_allocator, .{}, .{
+        .name = "ui-app-keyboard-focus-rebuild",
+        .scene = combo_mirror_scene,
+        .canvas_label = combo_mirror_canvas_label,
+        .update = comboMirrorUpdate,
+        .view = comboMirrorView,
+    });
+    defer app_state.deinit();
+    app_state.model.rebind_focus_on_blur = true;
+    const app = app_state.app();
+    try harness.start(app);
+    try harness.runtime.dispatchPlatformEvent(app, .{ .gpu_surface_frame = .{
+        .label = combo_mirror_canvas_label,
+        .size = geometry.SizeF.init(400, 300),
+        .scale_factor = 1,
+        .frame_index = 1,
+        .timestamp_ns = 1_000_000,
+        .nonblank = true,
+    } });
+
+    const combo_id = findWidgetIdByKind(app_state.tree.?.root, .combobox).?;
+    const note_id = findWidgetIdByKind(app_state.tree.?.root, .text_field).?;
+    try core.testing.dispatchAutomationWidgetAction(&harness.runtime, app, .{
+        .view_label = combo_mirror_canvas_label,
+        .id = combo_id,
+        .action = .focus,
+    });
+    try comboMirrorKey(harness, app, "tab");
+
+    try std.testing.expectEqual(note_id, harness.runtime.views[0].canvas_widget_focused_id);
+    try std.testing.expect(app_state.model.focus_handler_rebound);
+    try std.testing.expectEqual(@as(u32, 0), app_state.model.stale_focus_count);
+    try std.testing.expectEqual(@as(u32, 1), app_state.model.live_focus_count);
+}
+
+`;
+  const anchor = 'test "right-click focus transitions dispatch blur then focus" {';
+  finalUiAppTests = replaceOnce(
+    finalUiAppTests,
+    anchor,
+    `${keyboardFocusRegression}${anchor}`,
+    "keyboard focus rebuild regression anchor changed",
+  );
+  writeFileSync(uiAppTestsPath, finalUiAppTests);
+}
