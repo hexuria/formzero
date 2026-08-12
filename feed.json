@@ -1,8 +1,17 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1786462044,
+  "generated_at_unix": 1786512216,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmc:2026:092",
+      "kind": "RMC",
+      "title": "RMC No. 92-2026",
+      "summary": "Circularizing Anti-Red Tape Authority (ARTA) Memorandum Circular No. 2026-0004, Series of 2026, entitled \"Revised Memorandum on Campaign Against Fixers and Client Satisfaction Measurement (CSM), thereby Amending Memorandum Circular 2023-03\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2092-2026_redacted.pdf",
+      "published_at_unix": 1786464000,
+      "month_bucket": "2026-08"
+    },
     {
       "external_id": "bir:rmo:2026:020",
       "kind": "RMO",
