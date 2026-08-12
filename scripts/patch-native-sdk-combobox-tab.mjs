@@ -10,6 +10,8 @@ const viewTreePath = resolve(nativeSdkRoot, "src/runtime/view_widget_tree.zig");
 const eventsPath = resolve(nativeSdkRoot, "src/runtime/canvas_widget_events.zig");
 const gpuSurfaceEventsPath = resolve(nativeSdkRoot, "src/runtime/gpu_surface_events.zig");
 const contextMenuPath = resolve(nativeSdkRoot, "src/runtime/canvas_widget_context_menu.zig");
+const flowPath = resolve(nativeSdkRoot, "src/runtime/flow.zig");
+const corePath = resolve(nativeSdkRoot, "src/runtime/core.zig");
 const runtimeApiPath = resolve(nativeSdkRoot, "src/runtime/api.zig");
 const uiAppPath = resolve(nativeSdkRoot, "src/runtime/ui_app.zig");
 const uiAppTestsPath = resolve(nativeSdkRoot, "src/runtime/ui_app_tests.zig");
@@ -192,6 +194,114 @@ if (!focusUiApp.includes("pointer_event.focused_id")) {
   writeFileSync(uiAppPath, focusUiApp);
 }
 
+// Secondary-button input is consumed before the normal pointer pipeline, but
+// the default editable/terminal context menus deliberately move focus so Cut,
+// Copy, and Paste act on the field under the pointer. Carry that real focus
+// transition through its own event: synthesizing a primary pointer event here
+// would also run press/on-hold behavior and violate context-menu precedence.
+let focusContextRuntimeApi = readFileSync(runtimeApiPath, "utf8");
+if (!focusContextRuntimeApi.includes("pub const CanvasWidgetFocusEvent")) {
+  focusContextRuntimeApi = replaceOnce(
+    focusContextRuntimeApi,
+    `    focused_id: canvas.ObjectId = 0,\n};\n\npub const CanvasWidgetKeyboardEvent = struct {`,
+    `    focused_id: canvas.ObjectId = 0,\n};\n\n/// A real focus transition performed by a consumed pointer path, such as a\n/// secondary click that opens the platform edit menu. It is separate from\n/// CanvasWidgetPointerEvent so context-menu input cannot also press or hold.\npub const CanvasWidgetFocusEvent = struct {\n    window_id: platform.WindowId = 1,\n    view_label: []const u8,\n    blurred_id: canvas.ObjectId = 0,\n    focused_id: canvas.ObjectId = 0,\n};\n\npub const CanvasWidgetKeyboardEvent = struct {`,
+    "context-menu focus event type anchor changed",
+  );
+  focusContextRuntimeApi = replaceOnce(
+    focusContextRuntimeApi,
+    "    canvas_widget_pointer: CanvasWidgetPointerEvent,\n    canvas_widget_keyboard: CanvasWidgetKeyboardEvent,",
+    "    canvas_widget_pointer: CanvasWidgetPointerEvent,\n    canvas_widget_focus: CanvasWidgetFocusEvent,\n    canvas_widget_keyboard: CanvasWidgetKeyboardEvent,",
+    "context-menu focus event union anchor changed",
+  );
+  focusContextRuntimeApi = replaceOnce(
+    focusContextRuntimeApi,
+    '            .canvas_widget_pointer => "canvas_widget_pointer",\n            .canvas_widget_keyboard => "canvas_widget_keyboard",',
+    '            .canvas_widget_pointer => "canvas_widget_pointer",\n            .canvas_widget_focus => "canvas_widget_focus",\n            .canvas_widget_keyboard => "canvas_widget_keyboard",',
+    "context-menu focus event name anchor changed",
+  );
+  writeFileSync(runtimeApiPath, focusContextRuntimeApi);
+}
+
+let focusContextCore = readFileSync(corePath, "utf8");
+if (!focusContextCore.includes("pub const CanvasWidgetFocusEvent")) {
+  focusContextCore = replaceOnce(
+    focusContextCore,
+    "pub const CanvasWidgetPointerEvent = runtime_api.CanvasWidgetPointerEvent;\npub const CanvasWidgetKeyboardEvent = runtime_api.CanvasWidgetKeyboardEvent;",
+    "pub const CanvasWidgetPointerEvent = runtime_api.CanvasWidgetPointerEvent;\npub const CanvasWidgetFocusEvent = runtime_api.CanvasWidgetFocusEvent;\npub const CanvasWidgetKeyboardEvent = runtime_api.CanvasWidgetKeyboardEvent;",
+    "context-menu focus core export anchor changed",
+  );
+  writeFileSync(corePath, focusContextCore);
+}
+
+let focusContextFlow = readFileSync(flowPath, "utf8");
+if (!focusContextFlow.includes(".canvas_widget_focus => {}")) {
+  focusContextFlow = replaceOnce(
+    focusContextFlow,
+    "                .canvas_widget_pointer => {},\n                .canvas_widget_keyboard => {},",
+    "                .canvas_widget_pointer => {},\n                .canvas_widget_focus => {},\n                .canvas_widget_keyboard => {},",
+    "context-menu focus flow anchor changed",
+  );
+  writeFileSync(flowPath, focusContextFlow);
+}
+
+let focusContextMenu = readFileSync(contextMenuPath, "utf8");
+if (!focusContextMenu.includes("dispatchCanvasWidgetFocusTransition")) {
+  focusContextMenu = replaceOnce(
+    focusContextMenu,
+    `                    _ = try CanvasWidgetEventMethods().updateCanvasWidgetFocusFromPointer(self, pointer_event);\n                    const has_selection = if (canvas.widgetTextSelectionRange(widget)) |range| !range.isCollapsed(widget.text.len) else false;`,
+    `                    const transition = try CanvasWidgetEventMethods().updateCanvasWidgetFocusFromPointer(self, pointer_event);\n                    var focus_view_label: [platform.max_view_label_bytes]u8 = undefined;\n                    const focus_view_label_len = @min(pointer_event.view_label.len, focus_view_label.len);\n                    @memcpy(focus_view_label[0..focus_view_label_len], pointer_event.view_label[0..focus_view_label_len]);\n                    const has_selection = if (canvas.widgetTextSelectionRange(widget)) |range| !range.isCollapsed(widget.text.len) else false;`,
+    "editable context-menu focus capture anchor changed",
+  );
+  focusContextMenu = replaceOnce(
+    focusContextMenu,
+    `                    _ = try showMenu(self, app, index, .{\n                        .window_id = input_event.window_id,\n                        .target_id = target.id,\n                        .kind = .edit_text,\n                    }, point, items[0..5]);\n                    return;`,
+    `                    _ = try showMenu(self, app, index, .{\n                        .window_id = input_event.window_id,\n                        .target_id = target.id,\n                        .kind = .edit_text,\n                    }, point, items[0..5]);\n                    try dispatchCanvasWidgetFocusTransition(\n                        self,\n                        app,\n                        pointer_event.window_id,\n                        focus_view_label[0..focus_view_label_len],\n                        transition.blurred_id,\n                        transition.focused_id,\n                    );\n                    return;`,
+    "editable context-menu focus dispatch anchor changed",
+  );
+  focusContextMenu = replaceOnce(
+    focusContextMenu,
+    `                    _ = try CanvasWidgetEventMethods().updateCanvasWidgetFocusFromPointer(self, pointer_event);\n                    const has_selection = if (widget.terminal.grid) |grid| grid.selection_active else false;`,
+    `                    const transition = try CanvasWidgetEventMethods().updateCanvasWidgetFocusFromPointer(self, pointer_event);\n                    var focus_view_label: [platform.max_view_label_bytes]u8 = undefined;\n                    const focus_view_label_len = @min(pointer_event.view_label.len, focus_view_label.len);\n                    @memcpy(focus_view_label[0..focus_view_label_len], pointer_event.view_label[0..focus_view_label_len]);\n                    const has_selection = if (widget.terminal.grid) |grid| grid.selection_active else false;`,
+    "terminal context-menu focus capture anchor changed",
+  );
+  focusContextMenu = replaceOnce(
+    focusContextMenu,
+    `                    _ = try showMenu(self, app, index, .{\n                        .window_id = input_event.window_id,\n                        .target_id = target.id,\n                        .kind = .terminal,\n                    }, point, items[0..2]);\n                    return;`,
+    `                    _ = try showMenu(self, app, index, .{\n                        .window_id = input_event.window_id,\n                        .target_id = target.id,\n                        .kind = .terminal,\n                    }, point, items[0..2]);\n                    try dispatchCanvasWidgetFocusTransition(\n                        self,\n                        app,\n                        pointer_event.window_id,\n                        focus_view_label[0..focus_view_label_len],\n                        transition.blurred_id,\n                        transition.focused_id,\n                    );\n                    return;`,
+    "terminal context-menu focus dispatch anchor changed",
+  );
+  focusContextMenu = replaceOnce(
+    focusContextMenu,
+    `        fn CanvasWidgetEventMethods() type {\n            return runtime_canvas_widget_events.RuntimeCanvasWidgetEvents(Runtime);\n        }`,
+    `        fn dispatchCanvasWidgetFocusTransition(\n            self: *Runtime,\n            app: runtime_api.App(Runtime),\n            window_id: platform.WindowId,\n            view_label: []const u8,\n            blurred_id: canvas.ObjectId,\n            focused_id: canvas.ObjectId,\n        ) anyerror!void {\n            if (blurred_id == 0 and focused_id == 0) return;\n            try self.dispatchEvent(app, .{ .canvas_widget_focus = .{\n                .window_id = window_id,\n                .view_label = view_label,\n                .blurred_id = blurred_id,\n                .focused_id = focused_id,\n            } });\n        }\n\n        fn CanvasWidgetEventMethods() type {\n            return runtime_canvas_widget_events.RuntimeCanvasWidgetEvents(Runtime);\n        }`,
+    "context-menu focus dispatch helper anchor changed",
+  );
+  writeFileSync(contextMenuPath, focusContextMenu);
+}
+
+let focusContextUiApp = readFileSync(uiAppPath, "utf8");
+if (!focusContextUiApp.includes("fn handleFocusTransition")) {
+  focusContextUiApp = replaceOnce(
+    focusContextUiApp,
+    "                .canvas_widget_pointer => |pointer_event| try self.handlePointer(runtime, pointer_event),\n                .canvas_widget_keyboard => |keyboard_event| try self.handleKeyboard(runtime, keyboard_event),",
+    "                .canvas_widget_pointer => |pointer_event| try self.handlePointer(runtime, pointer_event),\n                .canvas_widget_focus => |focus_event| try self.handleFocusTransition(runtime, focus_event),\n                .canvas_widget_keyboard => |keyboard_event| try self.handleKeyboard(runtime, keyboard_event),",
+    "context-menu focus ui-app routing anchor changed",
+  );
+  focusContextUiApp = replaceOnce(
+    focusContextUiApp,
+    `                .canvas_widget_pointer,\n                .canvas_widget_drag,`,
+    `                .canvas_widget_pointer,\n                .canvas_widget_focus,\n                .canvas_widget_drag,`,
+    "context-menu focus hover-drain anchor changed",
+  );
+  focusContextUiApp = replaceOnce(
+    focusContextUiApp,
+    `        /// Typed press dispatch resolves through the press target — the\n        /// deepest widget on the hit path that claims presses — so a press`,
+    `        /// Dispatch a focus-only transition from a consumed pointer path.\n        /// Re-resolve the tree after blur because that Msg may rebuild the view\n        /// before the new field's focus handler is looked up.\n        fn handleFocusTransition(self: *Self, runtime: *Runtime, focus_event: core.CanvasWidgetFocusEvent) anyerror!void {\n            if (focus_event.blurred_id != 0) {\n                if (self.treeForViewLabel(focus_event.view_label)) |tree| {\n                    if (tree.msgFor(focus_event.blurred_id, .blur)) |msg| {\n                        try self.dispatch(runtime, focus_event.window_id, msg);\n                    }\n                }\n            }\n            if (focus_event.focused_id != 0) {\n                if (self.treeForViewLabel(focus_event.view_label)) |tree| {\n                    if (tree.msgFor(focus_event.focused_id, .focus)) |msg| {\n                        try self.dispatch(runtime, focus_event.window_id, msg);\n                    }\n                }\n            }\n        }\n\n        /// Typed press dispatch resolves through the press target — the\n        /// deepest widget on the hit path that claims presses — so a press`,
+    "context-menu focus ui-app handler anchor changed",
+  );
+  writeFileSync(uiAppPath, focusContextUiApp);
+}
+
 // Keep this generic regression beside the existing combobox fixture. It
 // proves the public on-focus contract rather than a Tax Profile-specific
 // presentation policy: automation focus is silent, real Tab/pointer moves
@@ -282,6 +392,19 @@ if (!focusUiAppTests.includes("text-entry on-focus dispatches after blur on real
 `;
   const anchor = 'test "a closed combobox\'s open arrows move neither the retained caret nor the model mirror" {';
   focusUiAppTests = replaceOnce(focusUiAppTests, anchor, `${regression}${anchor}`, "focus regression test anchor changed");
+  writeFileSync(uiAppTestsPath, focusUiAppTests);
+}
+
+focusUiAppTests = readFileSync(uiAppTestsPath, "utf8");
+if (!focusUiAppTests.includes("right-click focus transitions dispatch blur then focus")) {
+  const contextFocusRegression = `test "right-click focus transitions dispatch blur then focus" {\n    const harness = try core.TestHarness().create(std.testing.allocator, .{\n        .size = geometry.SizeF.init(400, 300),\n    });\n    defer harness.destroy(std.testing.allocator);\n    harness.null_platform.gpu_surfaces = true;\n\n    const app_state = try std.testing.allocator.create(ComboMirrorApp);\n    defer std.testing.allocator.destroy(app_state);\n    app_state.* = ComboMirrorApp.init(std.heap.page_allocator, .{}, .{\n        .name = "ui-app-context-focus",\n        .scene = combo_mirror_scene,\n        .canvas_label = combo_mirror_canvas_label,\n        .update = comboMirrorUpdate,\n        .view = comboMirrorView,\n    });\n    defer app_state.deinit();\n    const app = app_state.app();\n    try harness.start(app);\n    try harness.runtime.dispatchPlatformEvent(app, .{ .gpu_surface_frame = .{\n        .label = combo_mirror_canvas_label,\n        .size = geometry.SizeF.init(400, 300),\n        .scale_factor = 1,\n        .frame_index = 1,\n        .timestamp_ns = 1_000_000,\n        .nonblank = true,\n    } });\n\n    const combo_id = findWidgetIdByKind(app_state.tree.?.root, .combobox).?;\n    const note_id = findWidgetIdByKind(app_state.tree.?.root, .text_field).?;\n    try core.testing.dispatchAutomationWidgetAction(&harness.runtime, app, .{\n        .view_label = combo_mirror_canvas_label,\n        .id = combo_id,\n        .action = .focus,\n    });\n    try std.testing.expectEqual(@as(u32, 0), app_state.model.blur_count);\n    try std.testing.expectEqual(@as(u32, 0), app_state.model.focus_count);\n\n    const note_frame = (try harness.runtime.canvasWidgetLayout(1, combo_mirror_canvas_label)).findById(note_id).?.frame;\n    try harness.runtime.dispatchPlatformEvent(app, .{ .gpu_surface_input = .{\n        .window_id = 1,\n        .label = combo_mirror_canvas_label,\n        .kind = .pointer_down,\n        .button = 1,\n        .x = note_frame.x + 4,\n        .y = note_frame.y + note_frame.height * 0.5,\n        .timestamp_ns = 2_000_000,\n    } });\n\n    try std.testing.expectEqual(note_id, harness.runtime.views[0].canvas_widget_focused_id);\n    try std.testing.expectEqual(@as(u32, 1), app_state.model.blur_count);\n    try std.testing.expectEqual(@as(u32, 1), app_state.model.focus_count);\n    try std.testing.expect(app_state.model.focus_after_blur);\n    try std.testing.expectEqual(@as(usize, 1), harness.null_platform.context_menu_request_count);\n}\n\n`;
+  const anchor = 'test "a closed combobox\'s open arrows move neither the retained caret nor the model mirror" {';
+  focusUiAppTests = replaceOnce(
+    focusUiAppTests,
+    anchor,
+    `${contextFocusRegression}${anchor}`,
+    "context-menu focus regression test anchor changed",
+  );
   writeFileSync(uiAppTestsPath, focusUiAppTests);
 }
 }
