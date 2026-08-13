@@ -1,8 +1,35 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1786512216,
+  "generated_at_unix": 1786598833,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmo:2026:021",
+      "kind": "RMO",
+      "title": "RMO No. 21-2026",
+      "summary": "Guidelines and Procedures in the Pilot Implementation of the Document Tracking and Management System (DTMS)",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2021-2026_redacted.pdf",
+      "published_at_unix": 1786550400,
+      "month_bucket": "2026-08"
+    },
+    {
+      "external_id": "bir:rmc:2026:094",
+      "kind": "RMC",
+      "title": "RMC No. 94-2026",
+      "summary": "Additional Guidelines on the Utilization of the Personal Equity and Retirement Account Tax Credit Certificates",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2094-2026_redacted.pdf",
+      "published_at_unix": 1786550400,
+      "month_bucket": "2026-08"
+    },
+    {
+      "external_id": "bir:rmc:2026:093",
+      "kind": "RMC",
+      "title": "RMC No. 93-2026",
+      "summary": "Circularizing the Implementing Rules and Regulations of Republic Act No. 12253 Otherwise Known as the \"Enhanced Fiscal Regime for Large-Scale Metallic Mining Act\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2093-2026_redacted.pdf",
+      "published_at_unix": 1786550400,
+      "month_bucket": "2026-08"
+    },
     {
       "external_id": "bir:rmc:2026:092",
       "kind": "RMC",
