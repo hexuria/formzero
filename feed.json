@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1786598833,
+  "generated_at_unix": 1786618354,
   "source_label": "BIR",
   "notices": [
     {
@@ -53,7 +53,7 @@
       "kind": "RMC",
       "title": "RMC No. 91-2026",
       "summary": "Clarification of the Base Amount for the Imposition of the Twenty Percent (20%) Penalty Relative to the Early Withdrawal of Personal Equity and Retirement Account (PERA) Assets, Accounts and Sub-Accounts Classified as Unqualified, and Amending Certain Provisions of Revenue Memorandum Circular (RMC) No. 4-2023",
-      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2091-2026_redacted.pdf",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2091-2026%20corrected.pdf",
       "published_at_unix": 1786377600,
       "month_bucket": "2026-08"
     },
