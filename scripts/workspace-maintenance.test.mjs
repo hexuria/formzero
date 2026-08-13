@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readlinkSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -16,12 +17,60 @@ function run(args, cwd, env = {}) {
   });
 }
 
+async function waitForPath(path) {
+  const deadline = Date.now() + 10_000;
+  while (!existsSync(path)) {
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${path}`);
+    await new Promise((resolveReady) => setTimeout(resolveReady, 20));
+  }
+}
+
+async function runPausedAtHook(args, cwd, hook, mutate, extraEnv = {}) {
+  const hookRoot = mkdtempSync(join(tmpdir(), "workspace-maintenance-hook-"));
+  const marker = join(hookRoot, "marker.json");
+  const release = join(hookRoot, "release");
+  const child = spawn(process.execPath, [scriptPath, ...args], {
+    cwd,
+    env: {
+      ...process.env,
+      ...extraEnv,
+      NODE_ENV: "test",
+      WORKSPACE_MAINTENANCE_TEST_HOOK: hook,
+      WORKSPACE_MAINTENANCE_TEST_MARKER: marker,
+      WORKSPACE_MAINTENANCE_TEST_RELEASE: release,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const completed = new Promise((resolveCompleted, rejectCompleted) => {
+    child.once("error", rejectCompleted);
+    child.once("close", (status, signal) => resolveCompleted({ status, signal }));
+  });
+  try {
+    await waitForPath(marker);
+    await mutate(JSON.parse(readFileSync(marker, "utf8")));
+    writeFileSync(release, "continue\n");
+    const result = await completed;
+    return { ...result, stdout, stderr };
+  } finally {
+    if (!existsSync(release)) writeFileSync(release, "continue\n");
+    if (child.exitCode === null) child.kill("SIGTERM");
+    await completed.catch(() => {});
+    rmSync(hookRoot, { recursive: true, force: true });
+  }
+}
+
 function git(cwd, ...args) {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
-function makeRepo() {
-  const fixture = mkdtempSync(join(tmpdir(), "workspace-maintenance-test-"));
+function makeRepo(prefix = "workspace-maintenance-test-") {
+  const fixture = mkdtempSync(join(tmpdir(), prefix));
   const root = join(fixture, "primary");
   mkdirSync(root);
   git(root, "init", "-b", "main");
@@ -81,6 +130,15 @@ function assertProtected(worktree, expected) {
   assert.equal(readFileSync(join(worktree, "src/app.native"), "utf8"), "tracked generated file\n");
 }
 
+function rewriteReceipt(receiptPath, mutate) {
+  const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+  mutate(receipt);
+  receipt.contentsDigest = createHash("sha256")
+    .update(JSON.stringify({ moves: receipt.moves, nativeSymlinks: receipt.nativeSymlinks }))
+    .digest("hex");
+  writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+}
+
 test("clean with no target lists choices, exits 2, and changes nothing", () => {
   const { root, worktree } = makeRepo();
   try {
@@ -112,6 +170,82 @@ test("clean dry-run reports exact artifacts without mutating them", () => {
     assert.doesNotMatch(result.stdout, /zig-out/u);
     assert.ok(existsSync(join(worktree, ".zig-cache/cache.bin")));
     assert.ok(existsSync(join(worktree, "zig-cache/cache.bin")));
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("printed purge command safely quotes receipt paths containing apostrophes", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo("workspace-maintenance-'test-");
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+    const cleaned = run(["clean", "build"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receipt?.includes("'"));
+    assert.match(cleaned.stdout, /'"'"'/u);
+    const command = cleaned.stdout.match(/reclaim disk with: (just clean purge .+ --force)/u)?.[1];
+    assert.ok(command);
+    const parsed = spawnSync("/bin/sh", ["-c", `set -- ${command}; printf '%s' "$4"`], { encoding: "utf8" });
+    assert.equal(parsed.status, 0, parsed.stderr);
+    assert.equal(parsed.stdout, receipt);
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("post-rename failure records the move and rolls the artifact back", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "rollback sentinel\n");
+    const result = run(["clean", "build"], worktree, {
+      NODE_ENV: "test",
+      WORKSPACE_MAINTENANCE_TEST_FAIL_AT: "after-artifact-rename",
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /injected test failure/u);
+    assert.equal(readFileSync(join(worktree, "zig-out", "bin", "app"), "utf8"), "rollback sentinel\n");
+    const quarantineNamespace = join(dirname(worktree), ".buwiz-workspace-maintenance");
+    const quarantineFiles = existsSync(quarantineNamespace)
+      ? readdirSync(quarantineNamespace, { recursive: true })
+      : [];
+    assert.equal(quarantineFiles.some((name) => name.endsWith("receipt.json")), false);
+    assert.equal(quarantineFiles.some((name) => name.includes(".deleting-")), false);
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("rollback refuses source-ancestor symlink drift and retains quarantine", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    const artifact = join(worktree, "scripts", "news-sync", "work", "download.pdf");
+    const external = join(root, "external-news");
+    mkdirSync(dirname(artifact), { recursive: true });
+    mkdirSync(external);
+    writeFileSync(artifact, "quarantined sentinel\n");
+    const result = await runPausedAtHook(
+      ["clean", "news-scratch"],
+      worktree,
+      "after-artifact-rename",
+      ({ source }) => {
+        const newsSync = dirname(source);
+        renameSync(newsSync, `${newsSync}.original`);
+        symlinkSync(external, newsSync);
+      },
+      { WORKSPACE_MAINTENANCE_TEST_ACTION: "fail" },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /rollback was incomplete|source ancestors changed|ENOTDIR/u);
+    assert.equal(existsSync(join(external, "work", "download.pdf")), false);
+    assert.match(result.stderr, /quarantine retained at (.+)/u);
+    const retained = result.stderr.match(/quarantine retained at (.+?)(?::|\n)/u)?.[1];
+    assert.ok(retained && existsSync(retained));
   } finally {
     rmSync(dirname(root), { recursive: true, force: true });
   }
@@ -515,6 +649,114 @@ test("purge requires an exact receipt and force, then reclaims only its quaranti
   }
 });
 
+test("purge tombstone boundary refuses a replacement transaction", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+    const cleaned = run(["clean", "build"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receipt);
+    const transaction = dirname(receipt);
+    const original = `${transaction}.original`;
+    const replacementSentinel = join(transaction, "replacement-sentinel.txt");
+    const purged = await runPausedAtHook(
+      ["clean", "purge", receipt, "--force"],
+      worktree,
+      "before-purge-tombstone",
+      () => {
+        renameSync(transaction, original);
+        mkdirSync(transaction);
+        writeFileSync(replacementSentinel, "must survive\n");
+      },
+    );
+    assert.equal(purged.status, 3);
+    assert.match(purged.stderr, /identity changed at tombstone boundary/u);
+    assert.equal(readFileSync(replacementSentinel, "utf8"), "must survive\n");
+    assert.ok(existsSync(join(original, "receipt.json")));
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("purge refuses an unrecorded regular file inside a destination bucket", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+    const cleaned = run(["clean", "build"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    const receiptPath = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receiptPath);
+    const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+    const injected = join(dirname(receipt.moves[0].destination), "unrecorded.bin");
+    writeFileSync(injected, "must not be purged\n");
+
+    const purged = run(["clean", "purge", receiptPath, "--force"], worktree);
+    assert.equal(purged.status, 3);
+    assert.match(purged.stderr, /not named by the receipt/u);
+    assert.ok(existsSync(dirname(receiptPath)));
+    assert.equal(readFileSync(injected, "utf8"), "must not be purged\n");
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("purge refuses a same-bucket artifact omitted from the receipt", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    mkdirSync(join(worktree, "coverage"));
+    mkdirSync(join(worktree, "test-results"));
+    writeFileSync(join(worktree, "coverage", "report.json"), "coverage\n");
+    writeFileSync(join(worktree, "test-results", "results.xml"), "results\n");
+    const cleaned = run(["clean", "reports"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    const receiptPath = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receiptPath);
+    const original = JSON.parse(readFileSync(receiptPath, "utf8"));
+    assert.equal(original.moves.length, 2);
+    const omittedDestination = original.moves[1].destination;
+    rewriteReceipt(receiptPath, (receipt) => {
+      receipt.moves = receipt.moves.slice(0, 1);
+    });
+
+    const purged = run(["clean", "purge", receiptPath, "--force"], worktree);
+    assert.equal(purged.status, 3);
+    assert.match(purged.stderr, /not named by the receipt/u);
+    assert.ok(existsSync(omittedDestination));
+    assert.ok(existsSync(dirname(receiptPath)));
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("purge refuses a receipt whose recorded artifact size was tampered", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+    const cleaned = run(["clean", "build"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    const receiptPath = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receiptPath);
+    rewriteReceipt(receiptPath, (receipt) => {
+      receipt.moves[0].bytes += 1;
+    });
+
+    const purged = run(["clean", "purge", receiptPath, "--force"], worktree);
+    assert.equal(purged.status, 3);
+    assert.match(purged.stderr, /size does not match its receipt/u);
+    assert.ok(existsSync(dirname(receiptPath)));
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
 test("worktree-remove requires one exact absolute registered path", () => {
   const { root, worktree } = makeRepo();
   try {
@@ -540,6 +782,38 @@ test("worktree-remove removes a clean merged fixture through Git and preserves i
     assert.equal(existsSync(worktree), false);
     assert.match(git(root, "show-ref", "--verify", "refs/heads/candidate"), /refs\/heads\/candidate/u);
     assert.doesNotMatch(git(root, "worktree", "list", "--porcelain"), new RegExp(worktree, "u"));
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("worktree-remove requires every cleanup receipt to be purged, even with force", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+    const cleaned = run(["clean", "build"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receipt);
+
+    for (const args of [
+      ["worktree-remove", realpathSync(worktree)],
+      ["worktree-remove", realpathSync(worktree), "--force"],
+    ]) {
+      const blocked = run(args, root);
+      assert.equal(blocked.status, 3);
+      assert.match(blocked.stderr, /unpurged cleanup receipts/u);
+      assert.ok(blocked.stderr.includes(receipt));
+      assert.ok(existsSync(worktree));
+    }
+
+    const purged = run(["clean", "purge", receipt, "--force"], root);
+    assert.equal(purged.status, 0, purged.stderr);
+    const removed = run(["worktree-remove", realpathSync(worktree)], root);
+    assert.equal(removed.status, 0, removed.stderr);
+    assert.equal(existsSync(worktree), false);
   } finally {
     rmSync(dirname(root), { recursive: true, force: true });
   }

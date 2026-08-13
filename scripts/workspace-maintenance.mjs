@@ -19,7 +19,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { hostname } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const EXIT = Object.freeze({ operational: 1, usage: 2, safety: 3 });
@@ -45,6 +45,7 @@ const GIT_OPERATION_PATHS = Object.freeze([
   "sequencer",
 ]);
 const VERSION = "2";
+const executedTestHooks = new Set();
 
 class MaintenanceError extends Error {
   constructor(message, exitCode = EXIT.operational) {
@@ -55,6 +56,61 @@ class MaintenanceError extends Error {
 
 function fail(message, exitCode = EXIT.operational) {
   throw new MaintenanceError(message, exitCode);
+}
+
+function posixShellQuote(value) {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function runTestHook(name, payload = {}) {
+  if (process.env.NODE_ENV !== "test"
+    || process.env.WORKSPACE_MAINTENANCE_TEST_HOOK !== name
+    || executedTestHooks.has(name)) {
+    return;
+  }
+  executedTestHooks.add(name);
+  const marker = process.env.WORKSPACE_MAINTENANCE_TEST_MARKER;
+  const release = process.env.WORKSPACE_MAINTENANCE_TEST_RELEASE;
+  const action = process.env.WORKSPACE_MAINTENANCE_TEST_ACTION || "continue";
+  if (!marker || !release || !isAbsolute(marker) || !isAbsolute(release)
+    || resolve(marker) !== marker || resolve(release) !== release
+    || dirname(marker) !== dirname(release) || !["continue", "fail"].includes(action)) {
+    fail(`invalid test-hook configuration for ${name}`, EXIT.safety);
+  }
+  const temporaryRoot = realpathExisting(tmpdir(), "system temporary directory");
+  const hookRoot = realpathExisting(dirname(marker), "test-hook directory");
+  if (!isContained(temporaryRoot, hookRoot)) {
+    fail(`test-hook directory is outside the system temporary directory: ${hookRoot}`, EXIT.safety);
+  }
+  let fd;
+  try {
+    fd = openSync(marker, "wx", 0o600);
+    writeFileSync(fd, `${JSON.stringify({ name, ...payload })}\n`);
+    fsyncSync(fd);
+  } catch (error) {
+    fail(`could not create test-hook marker ${marker}: ${error.message}`, EXIT.safety);
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+  const signal = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + 10_000;
+  while (lstatOptional(release, "test-hook release") === null) {
+    if (Date.now() >= deadline) {
+      fail(`timed out waiting for test-hook release: ${name}`, EXIT.safety);
+    }
+    Atomics.wait(signal, 0, 0, 20);
+  }
+  physicalStat(release, "test-hook release", "file");
+  if (action === "fail") {
+    fail(`injected test failure at ${name}`, EXIT.safety);
+  }
+}
+
+function injectTestFailure(name) {
+  if (process.env.NODE_ENV === "test"
+    && process.env.WORKSPACE_MAINTENANCE_TEST_FAIL_AT === name) {
+    fail(`injected test failure at ${name}`, EXIT.safety);
+  }
 }
 
 function run(command, args, options = {}) {
@@ -418,6 +474,42 @@ function requireMutationPlatform() {
   }
 }
 
+function requireDistinctNonOverlappingPaths(paths, label) {
+  for (let left = 0; left < paths.length; left += 1) {
+    for (let right = left + 1; right < paths.length; right += 1) {
+      if (isContained(paths[left], paths[right]) || isContained(paths[right], paths[left])) {
+        fail(`cleanup receipt contains duplicate or overlapping ${label}: ${paths[left]} and ${paths[right]}`, EXIT.safety);
+      }
+    }
+  }
+}
+
+function validateReceiptTransactionLayout(transactionRoot, receiptPath, destinations) {
+  const destinationSet = new Set(destinations);
+  const structuralDirectories = new Set([transactionRoot]);
+  for (const destination of destinations) {
+    let parent = dirname(destination);
+    while (parent !== transactionRoot) {
+      if (!isContained(transactionRoot, parent)) {
+        fail(`cleanup receipt destination escapes its transaction: ${destination}`, EXIT.safety);
+      }
+      structuralDirectories.add(parent);
+      parent = dirname(parent);
+    }
+  }
+
+  const stack = [transactionRoot];
+  while (stack.length) {
+    const current = stack.pop();
+    if (current === receiptPath || destinationSet.has(current)) continue;
+    if (!structuralDirectories.has(current)) {
+      fail(`quarantine transaction contains content not named by the receipt: ${current}`, EXIT.safety);
+    }
+    physicalStat(current, "quarantine structural directory", "directory");
+    for (const name of readdirSync(current)) stack.push(join(current, name));
+  }
+}
+
 function parseReceipt(receiptPath, context) {
   if (!isAbsolute(receiptPath) || resolve(receiptPath) !== receiptPath || basename(receiptPath) !== "receipt.json") {
     fail(`purge requires an exact absolute receipt.json path: ${receiptPath}`, EXIT.safety);
@@ -449,6 +541,9 @@ function parseReceipt(receiptPath, context) {
     || !Array.isArray(receipt.moves) || receipt.moves.length === 0) {
     fail(`cleanup receipt has an unsupported or incomplete schema: ${receiptReal}`, EXIT.safety);
   }
+  if (new Set(receipt.sourceWorktrees).size !== receipt.sourceWorktrees.length) {
+    fail(`cleanup receipt contains duplicate source worktrees: ${receiptReal}`, EXIT.safety);
+  }
   const expectedQuarantineRoots = receipt.sourceWorktrees.map((sourceRoot) => {
     if (!isAbsolute(sourceRoot) || resolve(sourceRoot) !== sourceRoot) {
       fail(`cleanup receipt contains a non-canonical source worktree: ${sourceRoot}`, EXIT.safety);
@@ -469,33 +564,52 @@ function parseReceipt(receiptPath, context) {
   if (receipt.contentsDigest !== expectedDigest) {
     fail(`cleanup receipt digest is invalid: ${receiptReal}`, EXIT.safety);
   }
-  const destinations = receipt.moves.map((move) => {
+  const plannedMoves = receipt.moves.map((move) => {
     if (!move || typeof move.source !== "string" || typeof move.destination !== "string"
       || typeof move.bytes !== "number" || typeof move.entries !== "number") {
       fail(`cleanup receipt contains an invalid move entry: ${receiptReal}`, EXIT.safety);
     }
     const destination = resolve(move.destination);
-    if (destination !== move.destination || !isContained(transactionRoot, destination) || destination === receiptReal) {
+    if (destination !== move.destination || destination === transactionRoot
+      || !isContained(transactionRoot, destination) || destination === receiptReal) {
       fail(`cleanup receipt destination escapes its transaction: ${move.destination}`, EXIT.safety);
     }
     physicalStat(destination, "quarantined artifact root", "directory");
     if (!isAbsolute(move.source) || resolve(move.source) !== move.source) {
       fail(`cleanup receipt source is not an exact absolute path: ${move.source}`, EXIT.safety);
     }
-    const sourceRelative = receipt.sourceWorktrees
-      ?.filter((root) => typeof root === "string" && isContained(root, move.source))
-      .map((root) => relative(root, move.source))[0];
-    if (!sourceRelative || !ALL_TARGETS.flatMap((name) => TARGETS[name]).includes(sourceRelative)) {
+    const sourceMatches = receipt.sourceWorktrees
+      .filter((root) => typeof root === "string" && isContained(root, move.source))
+      .map((root) => ({ root, relativePath: relative(root, move.source) }))
+      .filter(({ relativePath }) => ALL_TARGETS.flatMap((name) => TARGETS[name]).includes(relativePath));
+    if (sourceMatches.length !== 1) {
       fail(`cleanup receipt source is outside the literal artifact catalog: ${move.source}`, EXIT.safety);
     }
-    return destination;
+    const [{ root: sourceRoot, relativePath: sourceRelative }] = sourceMatches;
+    const expectedDestination = join(
+      transactionRoot,
+      createHash("sha256").update(sourceRoot).digest("hex").slice(0, 12),
+      sourceRelative,
+    );
+    if (destination !== expectedDestination) {
+      fail(`cleanup receipt destination does not match its recorded source: ${move.destination}`, EXIT.safety);
+    }
+    return { move, destination };
   });
-  const actualChildren = readdirSync(transactionRoot).filter((name) => name !== "receipt.json");
-  const allowedTop = new Set(destinations.map((path) => relative(transactionRoot, path).split(sep)[0]));
-  if (actualChildren.some((name) => !allowedTop.has(name))) {
-    fail(`quarantine transaction contains content not named by the receipt: ${transactionRoot}`, EXIT.safety);
-  }
+  requireDistinctNonOverlappingPaths(plannedMoves.map(({ move }) => move.source), "move sources");
+  requireDistinctNonOverlappingPaths(plannedMoves.map(({ destination }) => destination), "move destinations");
+  validateReceiptTransactionLayout(
+    transactionRoot,
+    receiptReal,
+    plannedMoves.map(({ destination }) => destination),
+  );
   const receiptSymlinks = verifiedReceiptNativeSymlinks(receipt, receiptReal);
+  for (const { move, destination } of plannedMoves) {
+    const actual = directorySize(destination, { receiptSymlinks });
+    if (actual.bytes !== move.bytes || actual.entries !== move.entries) {
+      fail(`quarantined artifact size does not match its receipt: ${destination}`, EXIT.safety);
+    }
+  }
   const size = directorySize(transactionRoot, { receiptSymlinks });
   return {
     receipt,
@@ -539,9 +653,14 @@ function commandCleanPurge(positionals, options) {
       || verified.size.entries !== planned.size.entries) {
       fail("quarantine changed after planning; nothing was purged", EXIT.safety);
     }
-    rmSync(verified.transactionRoot, { recursive: true, force: false });
-    if (existsSync(verified.transactionRoot)) {
-      fail(`quarantine purge did not complete: ${verified.transactionRoot}`);
+    const tombstone = moveVerifiedDirectoryToTombstone(
+      verified.transactionRoot,
+      verified.transactionIdentity,
+      "purge",
+    );
+    rmSync(tombstone, { recursive: true, force: false });
+    if (existsSync(tombstone)) {
+      fail(`quarantine purge did not complete: ${tombstone}`);
     }
     process.stdout.write("Purge complete; the quarantined artifacts are no longer recoverable.\n");
   } finally {
@@ -802,6 +921,42 @@ function snapshotRootMatchesAt(entry, path) {
   }
 }
 
+function directoryIdentityMatchesAt(expected, path) {
+  try {
+    const stat = lstatSync(path);
+    return stat.isDirectory() && !stat.isSymbolicLink()
+      && stat.dev === expected.dev && stat.ino === expected.ino
+      && stat.mode === expected.mode;
+  } catch {
+    return false;
+  }
+}
+
+function moveVerifiedDirectoryToTombstone(path, expectedIdentity, label) {
+  if (!directoryIdentityMatchesAt(expectedIdentity, path)) {
+    fail(`${label} identity changed before tombstoning; retained at ${path}`, EXIT.safety);
+  }
+  const parent = dirname(path);
+  const parentIdentity = identity(parent, `${label} parent`, "directory");
+  const tombstone = join(parent, `.${basename(path)}.deleting-${randomUUID()}`);
+  if (lstatOptional(tombstone, `${label} tombstone`) !== null) {
+    fail(`${label} tombstone already exists: ${tombstone}`, EXIT.safety);
+  }
+  runTestHook(`before-${label}-tombstone`, { path, tombstone });
+  if (!identityMatches(parentIdentity) || !directoryIdentityMatchesAt(expectedIdentity, path)
+    || lstatOptional(tombstone, `${label} tombstone`) !== null) {
+    fail(`${label} identity changed at tombstone boundary; retained at ${path}`, EXIT.safety);
+  }
+  renameSync(path, tombstone);
+  if (!directoryIdentityMatchesAt(expectedIdentity, tombstone)) {
+    fail(`${label} tombstone does not match the verified directory; retained at ${tombstone}`, EXIT.safety);
+  }
+  if (lstatOptional(path, `${label} original path`) !== null) {
+    fail(`${label} original path was repopulated during tombstoning; retained at ${tombstone}`, EXIT.safety);
+  }
+  return tombstone;
+}
+
 function ensurePhysicalRelativeDirectory(parent, relativePath, label) {
   let current = parent;
   const identities = [identity(parent, `${label} root`, "directory")];
@@ -1051,7 +1206,7 @@ function metadataRoot(commonDir) {
   return candidateReal;
 }
 
-function quarantineBase(context, targetRoot, create = true) {
+function quarantineLocation(context, targetRoot) {
   const identity = createHash("sha256").update(context.commonDir).digest("hex").slice(0, 16);
   const targetDevice = lstatSync(targetRoot).dev;
   let parent = dirname(targetRoot);
@@ -1062,33 +1217,73 @@ function quarantineBase(context, targetRoot, create = true) {
     const candidate = join(maintenanceParent, identity);
     const overlaps = context.records.some((record) => record.pathReal && isContained(record.pathReal, candidate));
     if (!overlaps && lstatSync(parentReal).dev === targetDevice) {
-      const maintenanceParentReal = create
-        ? ensurePhysicalChild(parentReal, ".buwiz-workspace-maintenance", "quarantine namespace")
-        : realpathExisting(maintenanceParent, "quarantine namespace");
-      physicalStat(maintenanceParentReal, "quarantine namespace", "directory");
-      if (maintenanceParentReal !== maintenanceParent) {
-        fail(`quarantine namespace escapes its physical parent: ${maintenanceParent}`, EXIT.safety);
-      }
-      const candidateReal = create
-        ? ensurePhysicalChild(maintenanceParentReal, identity, "quarantine base")
-        : realpathExisting(candidate, "quarantine base");
-      physicalStat(candidateReal, "quarantine base", "directory");
-      if (candidateReal !== candidate) {
-        fail(`quarantine base escapes its physical parent: ${candidate}`, EXIT.safety);
-      }
-      if (context.records.some((record) => record.pathReal && isContained(record.pathReal, candidateReal))) {
-        fail(`quarantine base overlaps a registered worktree: ${candidateReal}`, EXIT.safety);
-      }
-      if (lstatSync(candidateReal).dev !== targetDevice) {
-        fail(`quarantine base is on a different filesystem: ${candidateReal}`, EXIT.safety);
-      }
-      return candidateReal;
+      return { parent: parentReal, namespace: maintenanceParent, base: candidate, identity, targetDevice };
     }
     const next = dirname(parentReal);
     if (next === parentReal) {
       fail(`could not find a same-filesystem quarantine outside registered worktrees for ${targetRoot}`, EXIT.safety);
     }
     parent = next;
+  }
+}
+
+function quarantineBase(context, targetRoot, create = true) {
+  const location = quarantineLocation(context, targetRoot);
+  const maintenanceParentReal = create
+    ? ensurePhysicalChild(location.parent, ".buwiz-workspace-maintenance", "quarantine namespace")
+    : realpathExisting(location.namespace, "quarantine namespace");
+  physicalStat(maintenanceParentReal, "quarantine namespace", "directory");
+  if (maintenanceParentReal !== location.namespace) {
+    fail(`quarantine namespace escapes its physical parent: ${location.namespace}`, EXIT.safety);
+  }
+  const candidateReal = create
+    ? ensurePhysicalChild(maintenanceParentReal, location.identity, "quarantine base")
+    : realpathExisting(location.base, "quarantine base");
+  physicalStat(candidateReal, "quarantine base", "directory");
+  if (candidateReal !== location.base) {
+    fail(`quarantine base escapes its physical parent: ${location.base}`, EXIT.safety);
+  }
+  if (context.records.some((record) => record.pathReal && isContained(record.pathReal, candidateReal))) {
+    fail(`quarantine base overlaps a registered worktree: ${candidateReal}`, EXIT.safety);
+  }
+  if (lstatSync(candidateReal).dev !== location.targetDevice) {
+    fail(`quarantine base is on a different filesystem: ${candidateReal}`, EXIT.safety);
+  }
+  return candidateReal;
+}
+
+function outstandingCleanupReceipts(context, target) {
+  const location = quarantineLocation(context, target.pathReal);
+  if (lstatOptional(location.namespace, "quarantine namespace") === null) {
+    return { receipts: [], uncertainty: null };
+  }
+  try {
+    physicalStat(location.namespace, "quarantine namespace", "directory");
+    if (realpathExisting(location.namespace, "quarantine namespace") !== location.namespace) {
+      fail(`quarantine namespace escapes its physical parent: ${location.namespace}`, EXIT.safety);
+    }
+    if (lstatOptional(location.base, "quarantine base") === null) {
+      return { receipts: [], uncertainty: null };
+    }
+    const base = quarantineBase(context, target.pathReal, false);
+    const receipts = [];
+    for (const name of readdirSync(base)) {
+      const transactionRoot = join(base, name);
+      physicalStat(transactionRoot, "quarantine transaction", "directory");
+      if (realpathExisting(transactionRoot, "quarantine transaction") !== transactionRoot) {
+        fail(`quarantine transaction escapes its physical path: ${transactionRoot}`, EXIT.safety);
+      }
+      const receiptPath = join(transactionRoot, "receipt.json");
+      physicalStat(receiptPath, "cleanup receipt", "file");
+      const parsed = parseReceipt(receiptPath, context);
+      if (parsed.receipt.sourceWorktrees.includes(target.path)) {
+        receipts.push(receiptPath);
+      }
+    }
+    return { receipts, uncertainty: null };
+  } catch (error) {
+    const detail = error instanceof MaintenanceError ? error.message : error?.message || String(error);
+    return { receipts: [], uncertainty: detail };
   }
 }
 
@@ -1275,6 +1470,7 @@ function commandClean(args) {
   const quarantineIdentity = identity(quarantineRoot, "quarantine base", "directory");
   const quarantineNamespaceIdentity = identity(dirname(quarantineRoot), "quarantine namespace", "directory");
   const release = acquireLock(context.commonDir, digest);
+  let transactionIdentity = null;
   try {
     const fresh = repoContext(invocationCwd());
     if (!contextTopologyEqual(context, fresh)) {
@@ -1301,7 +1497,7 @@ function commandClean(args) {
       fail("quarantine base changed after planning; nothing was deleted", EXIT.safety);
     }
     const transactionReal = ensurePhysicalChild(quarantineRoot, basename(transactionRoot), "quarantine transaction");
-    const transactionIdentity = identity(transactionReal, "quarantine transaction", "directory");
+    transactionIdentity = identity(transactionReal, "quarantine transaction", "directory");
     for (const item of plan) {
       for (const entry of item.entries) {
         if (!identityMatches(quarantineIdentity) || !identityMatches(quarantineNamespaceIdentity) || !identityMatches(transactionIdentity)) {
@@ -1331,10 +1527,12 @@ function commandClean(args) {
           fail(`artifact or quarantine identity changed at rename boundary: ${entry.absolute}`, EXIT.safety);
         }
         renameSync(entry.absolute, destination);
+        moved.push({ source: entry.absolute, destination, entry });
+        runTestHook("after-artifact-rename", { source: entry.absolute, destination });
+        injectTestFailure("after-artifact-rename");
         if (!snapshotRootMatchesAt(entry, destination) || !nativeSymlinksMatchAt(entry, destination)) {
           fail(`quarantined artifact identity does not match its snapshot: ${destination}`, EXIT.safety);
         }
-        moved.push({ source: entry.absolute, destination });
       }
     }
     const receipt = {
@@ -1346,13 +1544,11 @@ function commandClean(args) {
       transactionRoot,
       quarantineRoot,
       sourceWorktrees: plan.map((item) => item.record.path),
-      moves: moved.map(({ source, destination }) => {
-        const original = plan.flatMap((item) => item.entries).find((entry) => entry.absolute === source);
-        return { source, destination, bytes: original.bytes, entries: original.entries };
+      moves: moved.map(({ source, destination, entry }) => {
+        return { source, destination, bytes: entry.bytes, entries: entry.entries };
       }),
-      nativeSymlinks: moved.flatMap(({ source, destination }) => {
-        const original = plan.flatMap((item) => item.entries).find((entry) => entry.absolute === source);
-        return original.nativeSymlinks.map((link) => ({
+      nativeSymlinks: moved.flatMap(({ destination, entry }) => {
+        return entry.nativeSymlinks.map((link) => ({
           path: join(destination, link.relativePath),
           target: link.target,
           dev: link.dev,
@@ -1367,22 +1563,42 @@ function commandClean(args) {
       .digest("hex");
     writeReceipt(join(transactionRoot, "receipt.json"), receipt);
     process.stdout.write(`Quarantined artifacts; nothing has been permanently deleted.\n  receipt: ${join(transactionRoot, "receipt.json")}\n`);
-    process.stdout.write(`Review it, then reclaim disk with: just clean purge '${join(transactionRoot, "receipt.json")}' --force\n`);
+    process.stdout.write(`Review it, then reclaim disk with: just clean purge ${posixShellQuote(join(transactionRoot, "receipt.json"))} --force\n`);
   } catch (error) {
     let rollbackFailure = null;
-    for (const entry of [...moved].reverse()) {
-      if (!existsSync(entry.destination)) {
-        continue;
-      }
+    for (const move of [...moved].reverse()) {
       try {
-        mkdirSync(dirname(entry.source), { recursive: true });
-        renameSync(entry.destination, entry.source);
+        runTestHook("before-artifact-rollback", { source: move.source, destination: move.destination });
+        if (!move.entry.ancestors.every(identityMatches)) {
+          fail(`source ancestors changed before rollback: ${move.source}`, EXIT.safety);
+        }
+        if (lstatOptional(move.source, "rollback source") !== null) {
+          fail(`rollback source path is no longer empty: ${move.source}`, EXIT.safety);
+        }
+        if (!snapshotRootMatchesAt(move.entry, move.destination)
+          || !nativeSymlinksMatchAt(move.entry, move.destination)) {
+          fail(`rollback destination no longer matches quarantined artifact: ${move.destination}`, EXIT.safety);
+        }
+        renameSync(move.destination, move.source);
+        if (!snapshotRootMatchesAt(move.entry, move.source)
+          || !nativeSymlinksMatchAt(move.entry, move.source)) {
+          fail(`rolled-back artifact does not match its snapshot: ${move.source}`, EXIT.safety);
+        }
       } catch (rollbackError) {
-        rollbackFailure = rollbackError;
+        rollbackFailure = rollbackFailure || rollbackError;
       }
     }
-    if (existsSync(transactionRoot) && !rollbackFailure) {
-      rmSync(transactionRoot, { recursive: true, force: true });
+    if (existsSync(transactionRoot) && !rollbackFailure && transactionIdentity) {
+      try {
+        const tombstone = moveVerifiedDirectoryToTombstone(
+          transactionRoot,
+          transactionIdentity,
+          "rollback-cleanup",
+        );
+        rmSync(tombstone, { recursive: true, force: false });
+      } catch (cleanupError) {
+        rollbackFailure = cleanupError;
+      }
     }
     if (rollbackFailure) {
       fail(`artifact cleanup failed and rollback was incomplete; quarantine retained at ${transactionRoot}: ${rollbackFailure.message}`);
@@ -1439,6 +1655,12 @@ function isAncestor(root, head, refOid) {
 function validateRemoval(context, target, options) {
   const blockers = [];
   if (!topologyMatches(target)) blockers.push("worktree topology identity changed");
+  const cleanup = outstandingCleanupReceipts(context, target);
+  if (cleanup.uncertainty) {
+    blockers.push(`cleanup quarantine state is uncertain: ${cleanup.uncertainty}`);
+  } else if (cleanup.receipts.length) {
+    blockers.push(`worktree has unpurged cleanup receipts; purge them before removal: ${cleanup.receipts.join(", ")}`);
+  }
   const operation = operationBlocker(target);
   if (operation) blockers.push(`Git operation is in progress (${operation})`);
   if (hasConflicts(target.pathReal)) blockers.push("working tree has unresolved conflicts");
@@ -1452,7 +1674,7 @@ function validateRemoval(context, target, options) {
   const merged = isAncestor(target.pathReal, target.HEAD, refOid);
   if (!options.force && status.length > 0) blockers.push("working tree is not clean");
   if (!options.force && !merged) blockers.push(`HEAD ${target.HEAD} is not an ancestor of ${options.into}${refOid ? ` (${refOid})` : " (unresolved)"}`);
-  return { blockers, status, refOid, merged, process, protectedPaths };
+  return { blockers, status, refOid, merged, process, protectedPaths, cleanup };
 }
 
 function commandWorktreeRemove(args) {
