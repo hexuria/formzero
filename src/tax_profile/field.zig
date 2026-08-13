@@ -270,28 +270,33 @@ pub const ZipCode = struct {
 
 pub const ContactNumberError = error{
     InvalidCharacter,
-    InvalidLength,
+    InvalidPhilippineNumber,
 };
 
 pub const ContactNumber = struct {
     bytes: [16]u8 = undefined,
     len: u8 = 0,
 
-    /// Stores an optional leading `+` followed by 7-15 digits.
+    /// Accepts a Philippine mobile or geographic number in one of the three
+    /// public forms people normally enter: `+63…`, `63…`, or `0…`.
+    ///
+    /// Formatting punctuation is ignored and every valid representation is
+    /// stored in canonical E.164 form (`+63…`). This is deliberately a
+    /// format check, not a claim that a particular number is currently
+    /// allocated to a subscriber.
     pub fn parse(raw: []const u8) ContactNumberError!ContactNumber {
-        var result: ContactNumber = .{};
+        var input: [16]u8 = undefined;
+        var input_len: usize = 0;
         for (raw) |byte| {
             if (std.ascii.isDigit(byte)) {
-                if (result.len == result.bytes.len) {
-                    return error.InvalidLength;
-                }
-                result.bytes[result.len] = byte;
-                result.len += 1;
+                if (input_len == input.len) return error.InvalidPhilippineNumber;
+                input[input_len] = byte;
+                input_len += 1;
                 continue;
             }
-            if (byte == '+' and result.len == 0) {
-                result.bytes[0] = '+';
-                result.len = 1;
+            if (byte == '+' and input_len == 0) {
+                input[0] = byte;
+                input_len = 1;
                 continue;
             }
             if (byte == ' ' or byte == '-' or byte == '(' or byte == ')') {
@@ -299,10 +304,29 @@ pub const ContactNumber = struct {
             }
             return error.InvalidCharacter;
         }
-        const digit_count = result.len - @intFromBool(
-            result.len > 0 and result.bytes[0] == '+',
-        );
-        if (digit_count < 7 or digit_count > 15) return error.InvalidLength;
+
+        const has_plus = input_len > 0 and input[0] == '+';
+        const digits = input[@intFromBool(has_plus)..input_len];
+        const national = if (std.mem.startsWith(u8, digits, "63"))
+            digits[2..]
+        else if (!has_plus and std.mem.startsWith(u8, digits, "0"))
+            digits[1..]
+        else
+            return error.InvalidPhilippineNumber;
+
+        const valid_mobile = national.len == 10 and national[0] == '9';
+        const valid_geographic = national.len == 9 and
+            national[0] >= '2' and national[0] <= '8';
+        if (!valid_mobile and !valid_geographic) {
+            return error.InvalidPhilippineNumber;
+        }
+
+        var result: ContactNumber = .{};
+        result.bytes[0] = '+';
+        result.bytes[1] = '6';
+        result.bytes[2] = '3';
+        @memcpy(result.bytes[3 .. 3 + national.len], national);
+        result.len = @intCast(3 + national.len);
         return result;
     }
 
@@ -325,12 +349,13 @@ pub const EmailAddress = struct {
         const text = value.asSlice();
         const at = std.mem.indexOfScalar(u8, text, '@') orelse
             return error.InvalidEmailAddress;
-        if (at == 0 or at + 1 == text.len) return error.InvalidEmailAddress;
+        if (at == 0 or at + 1 == text.len or at > 64) {
+            return error.InvalidEmailAddress;
+        }
         if (std.mem.indexOfScalarPos(u8, text, at + 1, '@') != null) {
             return error.InvalidEmailAddress;
         }
-        const domain = text[at + 1 ..];
-        if (std.mem.indexOfScalar(u8, domain, '.') == null) {
+        if (!validEmailLocal(text[0..at]) or !validEmailDomain(text[at + 1 ..])) {
             return error.InvalidEmailAddress;
         }
         return .{ .value = value };
@@ -344,6 +369,120 @@ pub const EmailAddress = struct {
         return std.ascii.eqlIgnoreCase(self.asSlice(), other.asSlice());
     }
 };
+
+fn validEmailLocal(value: []const u8) bool {
+    if (value.len == 0 or value[0] == '.' or value[value.len - 1] == '.') {
+        return false;
+    }
+    var previous_dot = false;
+    for (value) |byte| {
+        const valid = std.ascii.isAlphanumeric(byte) or switch (byte) {
+            '!', '#', '$', '%', '&', '\'', '*', '+', '-', '/', '=', '?', '^', '_', '`', '{', '|', '}', '~', '.' => true,
+            else => false,
+        };
+        if (!valid) return false;
+        if (byte == '.' and previous_dot) return false;
+        previous_dot = byte == '.';
+    }
+    return true;
+}
+
+fn validEmailDomain(value: []const u8) bool {
+    if (value.len == 0 or std.mem.indexOfScalar(u8, value, '.') == null) {
+        return false;
+    }
+    var label_start: usize = 0;
+    var label_count: usize = 0;
+    for (value, 0..) |byte, index| {
+        if (byte == '.') {
+            if (!validEmailDomainLabel(value[label_start..index])) return false;
+            label_count += 1;
+            label_start = index + 1;
+            continue;
+        }
+        if (!std.ascii.isAlphanumeric(byte) and byte != '-') return false;
+    }
+    if (!validEmailDomainLabel(value[label_start..])) return false;
+    return label_count >= 1;
+}
+
+fn validEmailDomainLabel(value: []const u8) bool {
+    return value.len != 0 and value.len <= 63 and value[0] != '-' and
+        value[value.len - 1] != '-';
+}
+
+pub const BirthDateError = error{InvalidBirthDate};
+
+/// Parses the birth-date entry formats accepted by the profile editor. A
+/// two-digit year is resolved against the supplied current year: values up to
+/// that year's final two digits are in the 2000s; the remainder are in the
+/// 1900s. The caller owns the separate "not in the future" business rule.
+pub fn parseBirthDate(raw: []const u8, current_year: u16) BirthDateError!Date {
+    const value = std.mem.trim(u8, raw, " \t\r\n");
+    if (value.len == 10 and value[4] == '-' and value[7] == '-') {
+        return Date.parseIso(value) catch error.InvalidBirthDate;
+    }
+
+    const parts = blk: {
+        var digits_only = value.len != 0;
+        for (value) |byte| {
+            if (!std.ascii.isDigit(byte)) {
+                digits_only = false;
+                break;
+            }
+        }
+        if (digits_only) {
+            break :blk switch (value.len) {
+                // MDDYY, MMDDYY, MDDYYYY, and MMDDYYYY respectively.
+                5 => [_][]const u8{ value[0..1], value[1..3], value[3..5] },
+                6 => [_][]const u8{ value[0..2], value[2..4], value[4..6] },
+                7 => [_][]const u8{ value[0..1], value[1..3], value[3..7] },
+                8 => [_][]const u8{ value[0..2], value[2..4], value[4..8] },
+                else => return error.InvalidBirthDate,
+            };
+        }
+
+        const first_slash = std.mem.indexOfScalar(u8, value, '/') orelse
+            return error.InvalidBirthDate;
+        const second_slash = std.mem.indexOfScalarPos(
+            u8,
+            value,
+            first_slash + 1,
+            '/',
+        ) orelse return error.InvalidBirthDate;
+        if (std.mem.indexOfScalarPos(u8, value, second_slash + 1, '/') != null) {
+            return error.InvalidBirthDate;
+        }
+        break :blk [_][]const u8{
+            value[0..first_slash],
+            value[first_slash + 1 .. second_slash],
+            value[second_slash + 1 ..],
+        };
+    };
+    const month_text = parts[0];
+    const day_text = parts[1];
+    const year_text = parts[2];
+    if (month_text.len == 0 or month_text.len > 2 or
+        day_text.len == 0 or day_text.len > 2 or
+        (year_text.len != 2 and year_text.len != 4))
+    {
+        return error.InvalidBirthDate;
+    }
+    const month = std.fmt.parseInt(u8, month_text, 10) catch
+        return error.InvalidBirthDate;
+    const day = std.fmt.parseInt(u8, day_text, 10) catch
+        return error.InvalidBirthDate;
+    const parsed_year = std.fmt.parseInt(u16, year_text, 10) catch
+        return error.InvalidBirthDate;
+    const year = if (year_text.len == 2)
+        if (parsed_year <= current_year % 100)
+            @as(u16, 2000) + parsed_year
+        else
+            @as(u16, 1900) + parsed_year
+    else
+        parsed_year;
+    return Date.init(year, month, day) catch error.InvalidBirthDate;
+}
 
 pub const QuarterError = error{InvalidQuarter};
 
@@ -469,6 +608,19 @@ test "semantic text types normalize only boundary whitespace" {
     );
 }
 
+test "Philippine ZIP code has exactly four digits" {
+    const zip = try ZipCode.parse(" 1000 ");
+    try std.testing.expectEqualStrings("1000", zip.asSlice());
+    try std.testing.expectError(
+        error.InvalidZipCode,
+        ZipCode.parse("100"),
+    );
+    try std.testing.expectError(
+        error.InvalidZipCode,
+        ZipCode.parse("10A0"),
+    );
+}
+
 test "contact fields reject malformed values" {
     const number = try ContactNumber.parse("+63 (917) 123-4567");
     const email = try EmailAddress.parse("tax@example.ph");
@@ -477,6 +629,135 @@ test "contact fields reject malformed values" {
     try std.testing.expectError(
         error.InvalidEmailAddress,
         EmailAddress.parse("not-an-email"),
+    );
+}
+
+test "Philippine contact numbers accept mobile and geographic national formats" {
+    const mobile_international = try ContactNumber.parse("+63 917 123 4567");
+    try std.testing.expectEqualStrings(
+        "+639171234567",
+        mobile_international.asSlice(),
+    );
+
+    const mobile_country_code = try ContactNumber.parse("63 917 123 4567");
+    try std.testing.expectEqualStrings(
+        "+639171234567",
+        mobile_country_code.asSlice(),
+    );
+
+    const mobile_domestic = try ContactNumber.parse("0917 123 4567");
+    try std.testing.expectEqualStrings(
+        "+639171234567",
+        mobile_domestic.asSlice(),
+    );
+
+    const metro_manila = try ContactNumber.parse("02 8123 4567");
+    try std.testing.expectEqualStrings("+63281234567", metro_manila.asSlice());
+
+    const provincial = try ContactNumber.parse("+63 32 123 4567");
+    try std.testing.expectEqualStrings(
+        "+63321234567",
+        provincial.asSlice(),
+    );
+
+    const provincial_domestic = try ContactNumber.parse("063 123 4567");
+    try std.testing.expectEqualStrings(
+        "+63631234567",
+        provincial_domestic.asSlice(),
+    );
+
+    try std.testing.expectError(
+        error.InvalidPhilippineNumber,
+        ContactNumber.parse("+63 900 000 000"),
+    );
+    try std.testing.expectError(
+        error.InvalidPhilippineNumber,
+        ContactNumber.parse("0712 123 4567"),
+    );
+    try std.testing.expectError(
+        error.InvalidPhilippineNumber,
+        ContactNumber.parse("8123 4567"),
+    );
+}
+
+test "registered email validation rejects malformed mailbox and domain shapes" {
+    _ = try EmailAddress.parse("tax.payer+records@example.com.ph");
+    try std.testing.expectError(
+        error.InvalidEmailAddress,
+        EmailAddress.parse(".taxpayer@example.ph"),
+    );
+    try std.testing.expectError(
+        error.InvalidEmailAddress,
+        EmailAddress.parse("taxpayer..records@example.ph"),
+    );
+    try std.testing.expectError(
+        error.InvalidEmailAddress,
+        EmailAddress.parse("taxpayer@example-.ph"),
+    );
+    try std.testing.expectError(
+        error.InvalidEmailAddress,
+        EmailAddress.parse("taxpayer@example"),
+    );
+}
+
+test "birth date accepts Filipino entry formats and resolves two digit years" {
+    const short = try parseBirthDate("8/17/88", 2026);
+    var short_iso: [10]u8 = undefined;
+    try std.testing.expectEqualStrings("1988-08-17", short.writeIso(&short_iso));
+
+    const full = try parseBirthDate("08/17/1988", 2026);
+    var full_iso: [10]u8 = undefined;
+    try std.testing.expectEqualStrings("1988-08-17", full.writeIso(&full_iso));
+
+    const iso = try parseBirthDate("1988-08-17", 2026);
+    try std.testing.expect(iso.eql(full));
+
+    const current_century = try parseBirthDate("1/1/26", 2026);
+    var current_century_iso: [10]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "2026-01-01",
+        current_century.writeIso(&current_century_iso),
+    );
+
+    const compact_short = try parseBirthDate("81788", 2026);
+    var compact_short_iso: [10]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "1988-08-17",
+        compact_short.writeIso(&compact_short_iso),
+    );
+
+    const compact_full = try parseBirthDate("08171988", 2026);
+    var compact_full_iso: [10]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "1988-08-17",
+        compact_full.writeIso(&compact_full_iso),
+    );
+
+    const compact_padded_short = try parseBirthDate("081788", 2026);
+    var compact_padded_short_iso: [10]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "1988-08-17",
+        compact_padded_short.writeIso(&compact_padded_short_iso),
+    );
+
+    const compact_unpadded_full = try parseBirthDate("8171988", 2026);
+    var compact_unpadded_full_iso: [10]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "1988-08-17",
+        compact_unpadded_full.writeIso(&compact_unpadded_full_iso),
+    );
+
+    try std.testing.expectError(
+        error.InvalidBirthDate,
+        parseBirthDate("2/29/2025", 2026),
+    );
+    try std.testing.expectError(
+        error.InvalidBirthDate,
+        parseBirthDate("8/17/8", 2026),
+    );
+    try std.testing.expectError(
+        error.InvalidBirthDate,
+        parseBirthDate("1/1/0000", 2026),
     );
 }
 

@@ -1090,8 +1090,10 @@ fn seedTestProfile(repository: *store.Store) !void {
             .contact = .{
                 .registered_address = "RUNTIME EXACT ADDRESS",
                 .zip_code = "1100",
+                .contact_number = "+639171234567",
                 .email_address = "runtime@example.test",
             },
+            .accounting_period_basis = .calendar,
             .subject = .{ .individual = .{
                 .name = "RUNTIME EXACT FILER",
                 .date_of_birth = dateText(
@@ -1464,8 +1466,10 @@ test "v19 exact resume ignores current profile drift and reuses frozen history" 
         .contact = .{
             .registered_address = "DRIFTED CURRENT ADDRESS",
             .zip_code = "1100",
+            .contact_number = "+639171234567",
             .email_address = "drifted-current@example.test",
         },
+        .accounting_period_basis = .calendar,
         .subject = .{ .individual = .{
             .name = "DRIFTED CURRENT FILER",
             .date_of_birth = dateText(try model.Date.init(1990, 1, 1)),

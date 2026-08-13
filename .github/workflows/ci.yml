@@ -95,6 +95,7 @@ jobs:
         run: |
           npm run test:app-identity
           npm run check:tax-catalog
+          npm run check:postal-reference
 
       # Gate 2b — the BIR news-sync pipeline is strict TypeScript too. Its
       # tests read the committed captures under scripts/news-sync/fixtures/,
@@ -119,12 +120,17 @@ jobs:
       # Gate 4 — model, calendar, storage, export, and component behaviour,
       # including the SQLite-linked test roots registered in build.zig.
       - name: Run headless tests
-        run: npx native test --yes -Dplatform=null
-
-      # Gate 5 — markup and manifest must match the model contract.
-      - name: Strict check
         run: |
-          npx native check . --strict
+          # Reapplying is an assertion: the script refuses an unexpected SDK
+          # layout and makes the source-patched event contract explicit.
+          node scripts/patch-native-sdk-combobox-tab.mjs
+          npx native test --yes -Dplatform=null
+
+      # Gate 5 — the custom text-entry blur event is compiled from the patched
+      # SDK source by Gates 4 and 6. The shipped `native check` binary embeds
+      # the unpatched parser, so it cannot validate this workspace extension.
+      - name: Strict manifest check
+        run: |
           eval "$(node scripts/app-identity.mjs prepare --format shell)"
           npx native doctor --manifest "$BUWIZ_MANIFEST" --strict
 
@@ -132,7 +138,9 @@ jobs:
       # lets test and build each miss code reachable only from the other, so
       # both gates are required.
       - name: Build
-        run: npx native build . --yes
+        run: |
+          node scripts/patch-native-sdk-combobox-tab.mjs
+          npx native build . --yes
 
   linux-quality-gate:
     name: Quality gate (Linux)
@@ -154,7 +162,7 @@ jobs:
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes pkg-config libgtk-4-dev
+          sudo apt-get install --yes pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Install Just
         run: cargo install just --version 1.43.1 --locked

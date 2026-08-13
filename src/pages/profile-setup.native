@@ -41,20 +41,20 @@
 
 <template name="profile-tin-editor">
   <row gap="6" cross="center">
-    <input grow="1" height="44" text="{profileTinSegmentOneValue}" placeholder="3 digits" label="TIN first three digits" disabled="{profileBranchMode}" autofocus="{profileTinSegmentOneAutofocus}" on-input="profile_tin_segment_one_input"/>
+    <input key="{profileTinSegmentOneKey}" grow="1" height="44" text="{profileTinSegmentOneValue}" placeholder="3 digits" label="TIN first three digits" disabled="{profileBranchMode}" autofocus="{profileTinSegmentOneAutofocus}" on-input="profile_tin_segment_one_input"/>
     <text foreground="text_muted">-</text>
-    <input grow="1" height="44" text="{profileTinSegmentTwoValue}" placeholder="3 digits" label="TIN second three digits" disabled="{profileBranchMode}" autofocus="{profileTinSegmentTwoAutofocus}" on-input="profile_tin_segment_two_input"/>
+    <input key="{profileTinSegmentTwoKey}" grow="1" height="44" text="{profileTinSegmentTwoValue}" placeholder="3 digits" label="TIN second three digits" disabled="{profileBranchMode}" autofocus="{profileTinSegmentTwoAutofocus}" on-input="profile_tin_segment_two_input"/>
     <text foreground="text_muted">-</text>
-    <input grow="1" height="44" text="{profileTinSegmentThreeValue}" placeholder="3 digits" label="TIN third three digits" disabled="{profileBranchMode}" autofocus="{profileTinSegmentThreeAutofocus}" on-input="profile_tin_segment_three_input"/>
+    <input key="{profileTinSegmentThreeKey}" grow="1" height="44" text="{profileTinSegmentThreeValue}" placeholder="3 digits" label="TIN third three digits" disabled="{profileBranchMode}" autofocus="{profileTinSegmentThreeAutofocus}" on-input="profile_tin_segment_three_input"/>
     <text foreground="text_muted">-</text>
-    <input grow="1" height="44" text="{profileTinSegmentBranchValue}" placeholder="5 digits" label="TIN five digit branch code" autofocus="{profileTinSegmentBranchAutofocus}" on-input="profile_tin_segment_branch_input"/>
+    <input key="{profileTinSegmentBranchKey}" grow="1" height="44" text="{profileTinSegmentBranchValue}" placeholder="5 digits" label="TIN five digit branch code" autofocus="{profileTinSegmentBranchAutofocus}" on-input="profile_tin_segment_branch_input"/>
   </row>
 </template>
 
 <template name="profile-rdo-editor">
   <column gap="4">
     <stack>
-      <combobox height="44" text="{profileRdoQueryValue}" placeholder="Search code or city" label="Revenue District Office (RDO)" autofocus="{profileRdoAutofocus}" on-input="profile_rdo_query_input" on-press="profile_rdo_toggle_picker"/>
+      <combobox height="44" text="{profileRdoQueryValue}" placeholder="Search code or city" label="Revenue District Office (RDO)" selected="{profileRdoCommittedSelection}" expanded="{profileRdoPickerOpen}" autofocus="{profileRdoAutofocus}" on-input="profile_rdo_query_input" on-focus="profile_rdo_toggle_picker" on-press="profile_rdo_toggle_picker" on-blur="profile_rdo_blurred"/>
       <if test="{profileRdoPickerOpen}">
         <dropdown-menu anchor="below" anchor-alignment="stretch" on-dismiss="profile_rdo_close_picker">
           <column padding="4" gap="2">
@@ -65,8 +65,8 @@
         </dropdown-menu>
       </if>
     </stack>
-    <if test="{profileRdoSelectionMissing}">
-      <text wrap="true" foreground="warning">Choose an RDO from the filtered results.</text>
+    <if test="{profileRdoErrorVisible}">
+      <text wrap="true" foreground="destructive">{profileRdoValidationMessage}</text>
     </if>
   </column>
 </template>
@@ -250,6 +250,52 @@
   </card>
 </template>
 
+<template name="profile-dirty-navigation-dialog-content">
+  <column min-width="0">
+    <row min-width="0" padding="20" gap="12" cross="center">
+      <column grow="1" min-width="0" gap="4">
+        <text><span weight="bold" scale="1.2">{profileDirtyNavigationTitle}</span></text>
+      </column>
+      <button
+        width="36"
+        height="36"
+        size="icon"
+        variant="ghost"
+        icon="x"
+        label="Keep editing"
+        on-press="profile_keep_editing">
+      </button>
+    </row>
+    <separator/>
+    <column grow="1" min-width="0" padding="20" gap="16">
+      <text wrap="true" foreground="text_muted">{profileDirtyNavigationBody}</text>
+      <if test="{profileSessionDraftActionVisible}">
+        <text size="sm" wrap="true" foreground="text_muted">{profileSessionDraftMessage}</text>
+      </if>
+      <if test="{profileSessionDraftBlockedVisible}">
+        <text size="sm" wrap="true" foreground="warning">A session draft is already available. Resume or discard it before saving another draft.</text>
+      </if>
+    </column>
+    <separator/>
+    <if test="{constrainedLayout}">
+      <column min-width="0" padding="20" gap="8">
+        <if test="{profileSessionDraftActionVisible}">
+          <button size="sm" variant="primary" on-press="profile_save_session_draft_navigation">Save draft and continue</button>
+        </if>
+        <button size="sm" variant="destructive" on-press="profile_discard_navigation">{profileDiscardNavigationLabel}</button>
+      </column>
+    </if>
+    <else>
+      <row min-width="0" padding="20" gap="8" main="end" cross="center">
+        <if test="{profileSessionDraftActionVisible}">
+          <button size="sm" variant="primary" on-press="profile_save_session_draft_navigation">Save draft and continue</button>
+        </if>
+        <button size="sm" variant="destructive" on-press="profile_discard_navigation">{profileDiscardNavigationLabel}</button>
+      </row>
+    </else>
+  </column>
+</template>
+
 <template name="profile-setup-content">
   <column gap="24">
     <if test="{profileInlineBackVisible}">
@@ -299,17 +345,6 @@
       </button>
     </tabs>
 
-    <if test="{profileDirtyNavigationVisible}">
-      <dialog text="{profileDirtyNavigationTitle}" on-dismiss="profile_keep_editing">
-        <column padding="16" gap="10">
-          <text wrap="true" foreground="text_muted">{profileDirtyNavigationBody}</text>
-          <grid columns="{profileReadColumns}" gap="8">
-            <button height="44" variant="primary" autofocus="true" on-press="profile_keep_editing">Keep editing</button>
-            <button height="44" variant="outline" on-press="profile_discard_navigation">{profileDiscardNavigationLabel}</button>
-          </grid>
-        </column>
-      </dialog>
-    </if>
 
     <if test="{profileCompletionVisible}">
       <card padding="0">
@@ -321,6 +356,31 @@
     </if>
 
     <if test="{profileTaxActive}">
+      <if test="{profileSessionDraftVisible}">
+        <card padding="0">
+          <column padding="14" gap="10">
+            <column gap="4">
+              <row gap="8" cross="center">
+                <text><span weight="bold">Session draft available</span></text>
+                <badge variant="secondary">Session only</badge>
+              </row>
+              <text wrap="true" foreground="text_muted">{profileSessionDraftMessage}</text>
+            </column>
+            <if test="{constrainedLayout}">
+              <column gap="8">
+                <button size="sm" variant="primary" on-press="resume_profile_session_draft">Resume draft</button>
+                <button size="sm" variant="ghost" icon="x" on-press="discard_profile_session_draft">Discard session draft</button>
+              </column>
+            </if>
+            <else>
+              <row gap="8" main="end">
+                <button size="sm" variant="ghost" icon="x" label="Discard session draft" on-press="discard_profile_session_draft"></button>
+                <button size="sm" variant="primary" on-press="resume_profile_session_draft">Resume draft</button>
+              </row>
+            </else>
+          </column>
+        </card>
+      </if>
       <if test="{profileLegacyIdentityReadOnly}">
         <alert text="Legacy Taxpayer Profile is read-only">
           <column gap="10">
@@ -477,62 +537,86 @@
             <column gap="8">
               <text>Taxpayer Type</text>
               <stack>
-                <select
+                <combobox
                   height="44"
+                  text="{profileSubjectQueryValue}"
+                  placeholder="Search taxpayer type"
                   label="Taxpayer Type"
+                  selected="{profileSubjectCommittedSelection}"
+                  expanded="{profileSubjectPickerOpen}"
                   disabled="{profileBranchMode}"
-                  on-press="toggle_profile_subject_picker">{profileSubjectKindLabel}</select>
+                  on-input="profile_subject_query_input"
+                  on-focus="toggle_profile_subject_picker"
+                  on-press="toggle_profile_subject_picker"
+                  on-blur="profile_subject_blurred"/>
                 <if test="{profileSubjectPickerOpen}">
                   <dropdown-menu
                     anchor="below"
                     anchor-alignment="stretch"
                     on-dismiss="close_profile_subject_picker">
-                    <menu-item height="44" disabled="{profileBranchMode}" selected="{profileIndividualSelected}" on-press="profile_subject_individual">Individual</menu-item>
-                    <menu-item height="44" disabled="{profileBranchMode}" selected="{profileCorporationSelected}" on-press="profile_subject_corporation">Corporation</menu-item>
-                    <menu-item height="44" disabled="{profileBranchMode}" selected="{profilePartnershipSelected}" on-press="profile_subject_partnership">Partnership</menu-item>
-                    <menu-item height="44" disabled="{profileBranchMode}" selected="{profileCooperativeSelected}" on-press="profile_subject_cooperative">Cooperative</menu-item>
-                    <menu-item height="44" disabled="{profileBranchMode}" selected="{profileEstateSelected}" on-press="profile_subject_estate">Estate</menu-item>
-                    <menu-item height="44" disabled="{profileBranchMode}" selected="{profileTrustSelected}" on-press="profile_subject_trust">Trust</menu-item>
-                    <menu-item height="44" disabled="{profileBranchMode}" selected="{profileOtherLegalSelected}" on-press="profile_subject_other_legal">Other Legal Entity</menu-item>
+                    <column padding="4" gap="2">
+                      <for each="profileSubjectKindOptionRows" key="id" as="option">
+                        <menu-item height="44" selected="{option.selected}" on-press="profile_subject_select:{option.id}">{option.label}</menu-item>
+                      </for>
+                    </column>
                   </dropdown-menu>
                 </if>
               </stack>
+              <if test="{profileSubjectErrorVisible}">
+                <text wrap="true" foreground="destructive">{profileSubjectValidationMessage}</text>
+              </if>
             </column>
 
             <if test="{profileNaturalPersonClassificationVisible}">
               <column gap="8">
                 <text>Tax Classification</text>
                 <text wrap="true" foreground="text_muted">{profileClassificationHelp}</text>
-                <if test="{profileClassificationUnknownSelected}">
-                  <text wrap="true" foreground="warning">Choose a Tax Classification before saving this profile.</text>
-                </if>
                 <stack>
-                  <select
+                  <combobox
                     height="44"
+                    text="{profileClassificationQueryValue}"
+                    placeholder="Search tax classification"
                     label="Tax Classification"
-                    on-press="toggle_profile_classification_picker">{profileNaturalPersonClassificationLabel}</select>
+                    selected="{profileClassificationCommittedSelection}"
+                    expanded="{profileClassificationPickerOpen}"
+                    on-input="profile_classification_query_input"
+                    on-focus="toggle_profile_classification_picker"
+                    on-press="toggle_profile_classification_picker"
+                    on-blur="profile_classification_blurred"/>
                   <if test="{profileClassificationPickerOpen}">
                     <dropdown-menu
                       anchor="below"
                       anchor-alignment="stretch"
                       on-dismiss="close_profile_classification_picker">
-                      <menu-item height="44" selected="{profilePureCompensationSelected}" on-press="profile_classification_pure_compensation">Purely Compensation</menu-item>
-                      <menu-item height="44" selected="{profileSelfEmployedSelected}" on-press="profile_classification_self_employed">Self-Employed / Professional</menu-item>
-                      <menu-item height="44" selected="{profileMixedIncomeSelected}" on-press="profile_classification_mixed_income">Mixed Income</menu-item>
+                      <column padding="4" gap="2">
+                        <for each="profileClassificationOptionRows" key="id" as="option">
+                          <menu-item height="44" selected="{option.selected}" on-press="profile_classification_select:{option.id}">{option.label}</menu-item>
+                        </for>
+                        <else><menu-item height="44" disabled="true">No matching classifications</menu-item></else>
+                      </column>
                     </dropdown-menu>
                   </if>
                 </stack>
+                <if test="{profileClassificationErrorVisible}">
+                  <text wrap="true" foreground="destructive">{profileClassificationValidationMessage}</text>
+                </if>
               </column>
             </if>
 
             <use template="profile-field" label="Taxpayer or registered name">
-              <input
-                height="44"
-                text="{profileNameValue}"
-                placeholder="Registered taxpayer name"
-                label="Taxpayer or registered name"
-                autofocus="{profileNameAutofocus}"
-                on-input="profile_name_input"/>
+              <column gap="6">
+                <input
+                  height="44"
+                  text="{profileNameValue}"
+                  placeholder="Registered taxpayer name"
+                  label="Taxpayer or registered name"
+                  autofocus="{profileNameAutofocus}"
+                  on-input="profile_name_input"
+                  on-blur="profile_name_blurred"/>
+                <if test="{profileNameErrorVisible}">
+                  <text wrap="true" foreground="destructive">{profileNameValidationMessage}</text>
+                </if>
+              </column>
             </use>
             <if test="{profileTradeNameVisible}">
               <use template="profile-field" label="Trade name">
@@ -545,22 +629,66 @@
               </use>
             </if>
             <use template="profile-field" label="Registered address">
-              <input
-                height="44"
-                text="{profileAddressValue}"
-                placeholder="Registered address"
-                label="Registered address"
-                autofocus="{profileAddressAutofocus}"
-                on-input="profile_address_input"/>
+              <column gap="6">
+                <input
+                  height="44"
+                  text="{profileAddressValue}"
+                  placeholder="Registered address"
+                  label="Registered address"
+                  autofocus="{profileAddressAutofocus}"
+                  on-input="profile_address_input"
+                  on-blur="profile_address_blurred"/>
+                <if test="{profileAddressErrorVisible}"><text wrap="true" foreground="destructive">{profileAddressValidationMessage}</text></if>
+              </column>
             </use>
 
             <grid columns="{profileReadColumns}" gap="12">
-              <use template="profile-field" label="ZIP code"><input height="44" text="{profileZipValue}" placeholder="ZIP code" label="ZIP code" autofocus="{profileZipAutofocus}" on-input="profile_zip_input"/></use>
-              <use template="profile-field" label="Contact number"><input height="44" text="{profilePhoneValue}" placeholder="+63 900 000 0000" label="Contact number" autofocus="{profilePhoneAutofocus}" on-input="profile_phone_input"/></use>
+              <use template="profile-field" label="ZIP code">
+                <column gap="6">
+                  <stack>
+                    <combobox
+                      height="44"
+                      text="{profileZipQueryValue}"
+                      placeholder="Search ZIP code or location"
+                      label="ZIP code"
+                      selected="{profileZipCommittedSelection}"
+                      expanded="{profileZipPickerOpen}"
+                      autofocus="{profileZipAutofocus}"
+                      on-input="profile_zip_query_input"
+                      on-focus="profile_zip_toggle_picker"
+                      on-press="profile_zip_toggle_picker"
+                      on-blur="profile_zip_blurred"/>
+                    <if test="{profileZipPickerOpen}">
+                      <dropdown-menu anchor="below" anchor-alignment="stretch" on-dismiss="profile_zip_close_picker">
+                        <column padding="4" gap="2">
+                          <if test="{profileZipCommittedSelection}">
+                            <menu-item height="44" on-press="profile_zip_clear">Clear ZIP code</menu-item>
+                          </if>
+                          <for each="profileZipOptionRows" key="id" as="option">
+                            <menu-item height="44" selected="{option.selected}" on-press="profile_zip_select:{option.id}">{option.rowLabel}</menu-item>
+                          </for>
+                          <else><menu-item height="44" disabled="true">No matching ZIP codes or locations</menu-item></else>
+                        </column>
+                      </dropdown-menu>
+                    </if>
+                  </stack>
+                  <text size="sm" wrap="true" foreground="text_muted">Postal-code suggestions © GeoNames, CC BY 4.0. You may still enter any valid four-digit Philippine ZIP code.</text>
+                  <if test="{profileZipErrorVisible}"><text wrap="true" foreground="destructive">{profileZipValidationMessage}</text></if>
+                </column>
+              </use>
+              <use template="profile-field" label="Contact number">
+                <column gap="6">
+                  <input height="44" text="{profilePhoneValue}" placeholder="+63 917 123 4567" label="Contact number" autofocus="{profilePhoneAutofocus}" on-input="profile_phone_input" on-blur="profile_phone_blurred"/>
+                  <if test="{profilePhoneErrorVisible}"><text wrap="true" foreground="destructive">{profilePhoneValidationMessage}</text></if>
+                </column>
+              </use>
             </grid>
 
             <use template="profile-field" label="Registered email address">
-              <input height="44" text="{profileEmailValue}" placeholder="name@example.com" label="Registered email address" autofocus="{profileEmailAutofocus}" on-input="profile_email_input"/>
+              <column gap="6">
+                <input height="44" text="{profileEmailValue}" placeholder="name@example.ph" label="Registered email address" autofocus="{profileEmailAutofocus}" on-input="profile_email_input" on-blur="profile_email_blurred"/>
+                <if test="{profileEmailErrorVisible}"><text wrap="true" foreground="destructive">{profileEmailValidationMessage}</text></if>
+              </column>
             </use>
         </column>
 
@@ -573,14 +701,21 @@
             <button height="44" variant="outline" selected="{profileAccountingPeriodCalendarSelected}" on-press="profile_accounting_period_calendar">Calendar</button>
             <button height="44" variant="outline" selected="{profileAccountingPeriodFiscalSelected}" on-press="profile_accounting_period_fiscal">Fiscal</button>
           </grid>
+          <if test="{profileAccountingPeriodBasisErrorVisible}">
+            <text wrap="true" foreground="destructive">{profileAccountingPeriodBasisValidationMessage}</text>
+          </if>
           <if test="{profileFiscalYearEndMonthVisible}">
             <use template="profile-field" label="Fiscal year-end month">
-              <input
-                height="44"
-                text="{profileFiscalYearEndMonthValue}"
-                placeholder="1 to 12"
-                label="Fiscal year-end month"
-                on-input="profile_fiscal_year_end_month_input"/>
+              <column gap="6">
+                <input
+                  height="44"
+                  text="{profileFiscalYearEndMonthValue}"
+                  placeholder="1 to 12"
+                  label="Fiscal year-end month"
+                  on-input="profile_fiscal_year_end_month_input"
+                  on-blur="profile_fiscal_year_end_month_blurred"/>
+                <if test="{profileFiscalYearEndMonthErrorVisible}"><text wrap="true" foreground="destructive">{profileFiscalYearEndMonthValidationMessage}</text></if>
+              </column>
             </use>
           </if>
         </column>
@@ -627,12 +762,33 @@
         <if test="{profilePersonalFieldsVisible}">
           <column gap="16">
             <column gap="4">
-              <text><span weight="bold">Individual capabilities</span></text>
-              <text wrap="true" foreground="text_muted">{profileOptionalFactsHelp}</text>
+              <text><span weight="bold">Individual details</span></text>
+              <text wrap="true" foreground="text_muted">Birth date and citizenship are required for an individual taxpayer. A foreign tax number remains optional.</text>
             </column>
             <grid columns="{profileReadColumns}" gap="12">
-              <use template="profile-field" label="Birth date"><input height="44" text="{profileBirthDateValue}" placeholder="YYYY-MM-DD" label="Birth date" disabled="{profilePersonalFieldsDisabled}" autofocus="{profileBirthDateAutofocus}" on-input="profile_birth_date_input"/></use>
-              <use template="profile-field" label="Citizenship"><input height="44" text="{profileCitizenshipValue}" placeholder="Citizenship" label="Citizenship" disabled="{profilePersonalFieldsDisabled}" autofocus="{profileCitizenshipAutofocus}" on-input="profile_citizenship_input"/></use>
+              <use template="profile-field" label="Birth date">
+                <column gap="6">
+                  <input height="44" text="{profileBirthDateValue}" placeholder="81788, 08/17/1988, or 1988-08-17" label="Birth date" disabled="{profilePersonalFieldsDisabled}" autofocus="{profileBirthDateAutofocus}" on-input="profile_birth_date_input" on-focus="profile_birth_date_focused" on-blur="profile_birth_date_blurred"/>
+                  <if test="{profileBirthDateErrorVisible}"><text wrap="true" foreground="destructive">{profileBirthDateValidationMessage}</text></if>
+                </column>
+              </use>
+              <use template="profile-field" label="Citizenship">
+                <column gap="6">
+                  <stack>
+                    <combobox height="44" text="{profileCitizenshipQueryValue}" placeholder="Search citizenship" label="Citizenship" selected="{profileCitizenshipCommittedSelection}" expanded="{profileCitizenshipPickerOpen}" disabled="{profilePersonalFieldsDisabled}" autofocus="{profileCitizenshipAutofocus}" on-input="profile_citizenship_input" on-focus="profile_citizenship_toggle_picker" on-press="profile_citizenship_toggle_picker" on-blur="profile_citizenship_blurred"/>
+                    <if test="{profileCitizenshipPickerOpen}">
+                      <dropdown-menu anchor="below" anchor-alignment="stretch" on-dismiss="profile_citizenship_close_picker">
+                        <column padding="4" gap="2">
+                          <for each="profileCitizenshipOptionRows" key="id" as="option">
+                            <menu-item height="44" selected="{option.selected}" on-press="profile_citizenship_select:{option.id}">{option.label}</menu-item>
+                          </for>
+                        </column>
+                      </dropdown-menu>
+                    </if>
+                  </stack>
+                  <if test="{profileCitizenshipErrorVisible}"><text wrap="true" foreground="destructive">{profileCitizenshipValidationMessage}</text></if>
+                </column>
+              </use>
             </grid>
             <use template="profile-field" label="Foreign tax number">
               <input
@@ -660,20 +816,68 @@
               </grid>
             </if>
 
-            <use template="profile-field" label="{profileEffectiveDateLabel}">
-              <input
-                height="44"
-                text="{profileEffectiveFromValue}"
-                placeholder="YYYY-MM-DD"
-                label="{profileEffectiveDateLabel}"
-                on-input="profile_effective_from_input"/>
-            </use>
+            <grid columns="{profileReadColumns}" gap="8">
+              <button height="44" variant="outline" selected="{profileAnnualEffectiveYears}" on-press="profile_use_annual_effective_years">Year selection</button>
+              <button height="44" variant="outline" selected="{profileExactEffectiveDates}" on-press="profile_use_exact_effective_dates">Use exact dates</button>
+            </grid>
+
+            <if test="{profileAnnualEffectiveYears}">
+              <text wrap="true" foreground="text_muted">A start year maps to January 1. An optional end year maps to December 31; leaving it blank keeps this profile available in later years.</text>
+              <grid columns="{profileReadColumns}" gap="12">
+                <use template="profile-field" label="When did this take effect?">
+                  <column gap="6">
+                    <stack>
+                      <combobox height="44" text="{profileEffectiveStartYearValue}" placeholder="YYYY" label="When did this take effect?" selected="{profileEffectiveStartYearSelected}" expanded="{profileEffectiveStartYearPickerOpen}" on-input="profile_effective_start_year_input" on-focus="profile_effective_start_year_toggle_picker" on-press="profile_effective_start_year_toggle_picker" on-blur="profile_effective_start_year_blurred"/>
+                      <if test="{profileEffectiveStartYearPickerOpen}">
+                        <dropdown-menu anchor="below" anchor-alignment="stretch" on-dismiss="profile_effective_start_year_close_picker">
+                          <column padding="4" gap="2">
+                            <for each="profileEffectiveStartYearOptionRows" key="value" as="option">
+                              <menu-item height="44" selected="{option.selected}" on-press="profile_effective_start_year_select:{option.value}">{option.value}</menu-item>
+                            </for>
+                          </column>
+                        </dropdown-menu>
+                      </if>
+                    </stack>
+                    <if test="{profileEffectiveStartErrorVisible}"><text wrap="true" foreground="destructive">{profileEffectiveStartValidationMessage}</text></if>
+                  </column>
+                </use>
+                <use template="profile-field" label="Applies until">
+                  <column gap="6">
+                    <stack>
+                      <combobox height="44" text="{profileEffectiveEndYearValue}" placeholder="Optional YYYY" label="Applies until" selected="{profileEffectiveEndYearSelected}" expanded="{profileEffectiveEndYearPickerOpen}" on-input="profile_effective_end_year_input" on-focus="profile_effective_end_year_toggle_picker" on-press="profile_effective_end_year_toggle_picker" on-blur="profile_effective_end_year_blurred"/>
+                      <if test="{profileEffectiveEndYearPickerOpen}">
+                        <dropdown-menu anchor="below" anchor-alignment="stretch" on-dismiss="profile_effective_end_year_close_picker">
+                          <column padding="4" gap="2">
+                            <menu-item height="44" selected="{profileEffectiveEndYearClearSelected}" on-press="profile_effective_end_year_clear">No end year</menu-item>
+                            <for each="profileEffectiveEndYearOptionRows" key="value" as="option">
+                              <menu-item height="44" selected="{option.selected}" on-press="profile_effective_end_year_select:{option.value}">{option.value}</menu-item>
+                            </for>
+                          </column>
+                        </dropdown-menu>
+                      </if>
+                    </stack>
+                    <if test="{profileEffectiveEndErrorVisible}"><text wrap="true" foreground="destructive">{profileEffectiveEndValidationMessage}</text></if>
+                  </column>
+                </use>
+              </grid>
+            </if>
+            <else>
+              <text wrap="true" foreground="warning">This revision uses custom dates. Keep them exact so historic filings continue to select the right profile facts.</text>
+              <use template="profile-field" label="{profileEffectiveDateLabel}">
+                <column gap="6">
+                  <input height="44" text="{profileEffectiveFromValue}" placeholder="YYYY-MM-DD" label="{profileEffectiveDateLabel}" on-input="profile_effective_from_input" on-blur="profile_effective_start_blurred"/>
+                  <if test="{profileEffectiveStartErrorVisible}"><text wrap="true" foreground="destructive">{profileEffectiveStartValidationMessage}</text></if>
+                </column>
+              </use>
+              <use template="profile-field" label="Applies until">
+                <column gap="6">
+                  <input height="44" text="{profileEffectiveUntilValue}" placeholder="YYYY-MM-DD or empty" label="Applies until" on-input="profile_effective_until_input" on-blur="profile_effective_end_blurred"/>
+                  <if test="{profileEffectiveEndErrorVisible}"><text wrap="true" foreground="destructive">{profileEffectiveEndValidationMessage}</text></if>
+                </column>
+              </use>
+            </else>
 
             <text wrap="true" foreground="text_muted">{profileIdentityLockNote}</text>
-
-            <use template="profile-field" label="Applies until">
-              <input height="44" text="{profileEffectiveUntilValue}" placeholder="YYYY-MM-DD or empty" label="Applies until" on-input="profile_effective_until_input"/>
-            </use>
         </column>
         </else>
       </column>

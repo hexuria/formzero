@@ -12,6 +12,7 @@ const editor = @import("editor.zig");
 const fields = @import("field.zig");
 const model = @import("model.zig");
 const applicability = @import("applicability.zig");
+const citizenship_reference = @import("citizenship_reference.zig");
 const rdo_reference = @import("rdo_reference.zig");
 const registration_evidence_store = @import("registration_evidence_store.zig");
 const catalog = @import("../forms/generated/catalog.zig");
@@ -66,6 +67,7 @@ pub const Error = error{
     BranchLegalPersonChanged,
     InvalidRdoSelection,
     NewProfileTinMustHaveFourteenDigits,
+    InvalidProfileField,
 } || persistence.Error;
 
 pub const NoticeKind = enum {
@@ -125,6 +127,35 @@ pub const ChangeIntent = enum {
     /// Something was recorded wrongly and the same period must be restated.
     fix_mistake,
 };
+
+/// The editor normally presents taxpayer facts as an annual profile period,
+/// but exact dates remain necessary for a genuine mid-year change or a legacy
+/// revision that already has one. Persisted revisions always retain dates.
+pub const EffectiveDateMode = enum {
+    annual_years,
+    exact_dates,
+};
+
+/// Field-level feedback is intentionally owned beside the validation rules so
+/// save eligibility, focus-loss messages, and errors cannot drift apart.
+pub const ProfileField = enum {
+    rdo_code,
+    taxpayer_type,
+    tax_classification,
+    taxpayer_name,
+    registered_address,
+    zip_code,
+    contact_number,
+    email_address,
+    accounting_period_basis,
+    fiscal_year_end_month,
+    birth_date,
+    citizenship,
+    effective_start,
+    effective_end,
+};
+
+const profile_field_count = std.meta.tags(ProfileField).len;
 
 /// The Tax Profile screen has an explicit lifecycle. A persisted profile is
 /// read-only until the user chooses Edit; creating remains a distinct editor
@@ -249,6 +280,7 @@ const ProfileEditorSnapshot = struct {
     valid: bool = false,
     loaded_shape_supported: bool = true,
     subject_kind: model.SubjectKind = .individual,
+    subject_kind_selected: bool = false,
     natural_person_classification: model.NaturalPersonClassification =
         .classification_unknown,
     accounting_period_basis: ?model.AccountingPeriodBasis = null,
@@ -268,6 +300,9 @@ const ProfileEditorSnapshot = struct {
     birth_date: canvas.TextBuffer(10) = .{},
     citizenship: canvas.TextBuffer(80) = .{},
     foreign_tax_number: canvas.TextBuffer(64) = .{},
+    effective_date_mode: EffectiveDateMode = .annual_years,
+    effective_start_year: canvas.TextBuffer(4) = .{},
+    effective_end_year: canvas.TextBuffer(4) = .{},
     effective_from: canvas.TextBuffer(10) = .{},
     effective_until: canvas.TextBuffer(10) = .{},
     source_reference: canvas.TextBuffer(160) = .{},
@@ -353,6 +388,28 @@ pub const ProfileRow = struct {
     pub fn initialsLabel(self: *const ProfileRow) []const u8 {
         return self.initials.text();
     }
+};
+
+/// A bounded, process-only copy of an in-progress Taxpayer Profile editor. It is
+/// deliberately owned by `main.zig` rather than the persistence layer: a
+/// process restart starts with the default value and cannot recover it.
+pub const SessionDraft = struct {
+    valid: bool = false,
+    has_selection: bool = false,
+    selected_id: StableIdText = .{},
+    selected_revision_id: StableIdText = .{},
+    selected_revision_sequence: ?u32 = null,
+    selected_display: ProfileRow = .{ .slot = 0, .subject_kind = .individual },
+    has_selected_display: bool = false,
+    profile_mode: ProfileMode = .viewing,
+    editing_new: bool = false,
+    branch_mode: bool = false,
+    branch_source_root: FixedText(9) = .{},
+    branch_source_name: NameText = .{},
+    branch_source_kind: model.SubjectKind = .individual,
+    current: ProfileEditorSnapshot = .{},
+    baseline: ProfileEditorSnapshot = .{},
+    baseline_fingerprint: u64 = 0,
 };
 
 pub const DraftSummaryRow = struct {
@@ -443,6 +500,9 @@ pub const State = struct {
     profile_mode: ProfileMode = .creating,
     loaded_shape_supported: bool = true,
     subject_kind: model.SubjectKind = .individual,
+    /// A new profile must affirm its legal taxpayer type rather than silently
+    /// inheriting the implementation's internal Individual default.
+    subject_kind_selected: bool = false,
     natural_person_classification: model.NaturalPersonClassification =
         .classification_unknown,
     accounting_period_basis: ?model.AccountingPeriodBasis = null,
@@ -462,6 +522,9 @@ pub const State = struct {
     birth_date: canvas.TextBuffer(10) = .{},
     citizenship: canvas.TextBuffer(80) = .{},
     foreign_tax_number: canvas.TextBuffer(64) = .{},
+    effective_date_mode: EffectiveDateMode = .annual_years,
+    effective_start_year: canvas.TextBuffer(4) = .{},
+    effective_end_year: canvas.TextBuffer(4) = .{},
     effective_from: canvas.TextBuffer(10) = .{},
     effective_until: canvas.TextBuffer(10) = .{},
     source_reference: canvas.TextBuffer(160) = .{},
@@ -492,6 +555,8 @@ pub const State = struct {
     form_activity_filter: FormActivityFilter = .active,
     form_capability_filter: FormCapabilityFilter = .all,
     input_was_truncated: bool = false,
+    profile_field_touched: [profile_field_count]bool =
+        [_]bool{false} ** profile_field_count,
 
     default_effective_from: FixedText(10) = .{},
     default_tax_year: i32 = 2026,
@@ -715,51 +780,372 @@ pub const State = struct {
         if (rdo_reference.findByCode(trimmed(self.rdo.text())) == null) {
             return false;
         }
-        _ = fields.RegisteredAddress.parse(
-            trimmed(self.registered_address.text()),
-        ) catch return false;
-        if (trimmed(self.display_name.text()).len == 0) return false;
         if (self.subject_kind == .individual and
             self.natural_person_classification == .classification_unknown)
         {
             return false;
         }
-        const from = model.Date.parseIso(
-            trimmed(self.effective_from.text()),
-        ) catch return false;
-        const until = if (optionalTrimmed(self.effective_until.text())) |raw|
-            model.Date.parseIso(raw) catch return false
-        else
-            null;
-        _ = model.EffectivePeriod.init(from, until) catch return false;
-        if (optionalTrimmed(self.zip_code.text())) |raw| {
-            _ = fields.ZipCode.parse(raw) catch return false;
-        }
-        if (optionalTrimmed(self.phone.text())) |raw| {
-            _ = fields.ContactNumber.parse(raw) catch return false;
-        }
-        if (optionalTrimmed(self.email.text())) |raw| {
-            _ = fields.EmailAddress.parse(raw) catch return false;
-        }
         if (optionalTrimmed(self.primary_line_of_business.text())) |raw| {
             _ = fields.LineOfBusiness.parse(raw) catch return false;
         }
-        if (self.accounting_period_basis == null) {
-            return optionalTrimmed(self.fiscal_year_end_month.text()) == null;
-        }
-        switch (self.accounting_period_basis.?) {
-            .calendar => if (optionalTrimmed(
-                self.fiscal_year_end_month.text(),
-            ) != null) return false,
-            .fiscal => {
-                const raw = optionalTrimmed(
-                    self.fiscal_year_end_month.text(),
-                ) orelse return false;
-                const month = std.fmt.parseInt(u8, raw, 10) catch return false;
-                if (month < 1 or month > 12) return false;
-            },
+        inline for (std.meta.tags(ProfileField)) |field| {
+            if (self.profileFieldValidationMessage(field) != null) {
+                return false;
+            }
         }
         return true;
+    }
+
+    pub fn revealProfileFieldValidation(self: *State, field: ProfileField) void {
+        self.profile_field_touched[@intFromEnum(field)] = true;
+    }
+
+    pub fn revealAllProfileFieldValidation(self: *State) void {
+        self.profile_field_touched = [_]bool{true} ** profile_field_count;
+    }
+
+    pub fn profileFieldErrorVisible(
+        self: *const State,
+        field: ProfileField,
+    ) bool {
+        return !self.profileInputsDisabled() and
+            self.profile_field_touched[@intFromEnum(field)] and
+            self.profileFieldValidationMessage(field) != null;
+    }
+
+    pub fn profileFieldValidationMessage(
+        self: *const State,
+        field: ProfileField,
+    ) ?[]const u8 {
+        return switch (field) {
+            .rdo_code => blk: {
+                const value = trimmed(self.rdo.text());
+                if (value.len == 0) {
+                    break :blk "RDO is required.";
+                }
+                if (rdo_reference.findByCode(value) == null) {
+                    break :blk "Choose an RDO from the filtered results.";
+                }
+                break :blk null;
+            },
+            .taxpayer_type => if (!self.subject_kind_selected)
+                "Taxpayer Type is required."
+            else
+                null,
+            .tax_classification => if (self.naturalPersonFieldsVisible() and
+                self.natural_person_classification == .classification_unknown)
+                "Tax Classification is required for an individual taxpayer."
+            else
+                null,
+            .taxpayer_name => blk: {
+                const value = trimmed(self.display_name.text());
+                if (value.len == 0) {
+                    break :blk "Taxpayer or registered name is required.";
+                }
+                _ = fields.TaxpayerName.parse(value) catch
+                    break :blk "Enter a valid taxpayer or registered name.";
+                break :blk null;
+            },
+            .registered_address => blk: {
+                const value = trimmed(self.registered_address.text());
+                if (value.len == 0) {
+                    break :blk "Registered address is required.";
+                }
+                _ = fields.RegisteredAddress.parse(value) catch
+                    break :blk "Enter a valid registered address.";
+                break :blk null;
+            },
+            .zip_code => blk: {
+                const value = trimmed(self.zip_code.text());
+                if (value.len == 0) break :blk "ZIP code is required.";
+                _ = fields.ZipCode.parse(value) catch
+                    break :blk "Enter a four-digit Philippine ZIP code.";
+                break :blk null;
+            },
+            .contact_number => blk: {
+                const value = trimmed(self.phone.text());
+                if (value.len == 0) break :blk "Contact number is required.";
+                _ = fields.ContactNumber.parse(value) catch
+                    break :blk "Use +63, 63, or 0 followed by a valid Philippine mobile or landline number.";
+                break :blk null;
+            },
+            .email_address => blk: {
+                const value = trimmed(self.email.text());
+                if (value.len == 0) {
+                    break :blk "Registered email address is required.";
+                }
+                _ = fields.EmailAddress.parse(value) catch
+                    break :blk "Enter a valid email address, such as name@example.ph.";
+                break :blk null;
+            },
+            .accounting_period_basis => if (self.accounting_period_basis == null)
+                "Choose Calendar or Fiscal accounting period."
+            else
+                null,
+            .fiscal_year_end_month => blk: {
+                if (self.accounting_period_basis != .fiscal) break :blk null;
+                const value = optionalTrimmed(
+                    self.fiscal_year_end_month.text(),
+                ) orelse break :blk "Fiscal year-end month is required.";
+                const month = std.fmt.parseInt(u8, value, 10) catch
+                    break :blk "Enter a fiscal year-end month from 1 to 12.";
+                if (month < 1 or month > 12) {
+                    break :blk "Enter a fiscal year-end month from 1 to 12.";
+                }
+                break :blk null;
+            },
+            .birth_date => blk: {
+                if (!self.naturalPersonFieldsVisible()) break :blk null;
+                if (trimmed(self.birth_date.text()).len == 0) {
+                    break :blk "Birth date is required for an individual taxpayer.";
+                }
+                _ = self.birthDateForEditor() catch
+                    break :blk "Enter a real birth date as 81788, M/D/YY, MM/DD/YYYY, or YYYY-MM-DD.";
+                break :blk null;
+            },
+            .citizenship => blk: {
+                if (!self.naturalPersonFieldsVisible()) break :blk null;
+                const value = optionalTrimmed(self.citizenship.text()) orelse
+                    break :blk "Citizenship is required for an individual taxpayer.";
+                if (citizenship_reference.findByValue(value) == null) {
+                    break :blk "Choose citizenship from the filtered results.";
+                }
+                break :blk null;
+            },
+            .effective_start => blk: {
+                switch (self.effective_date_mode) {
+                    .annual_years => {
+                        if (optionalTrimmed(self.effective_start_year.text()) == null) {
+                            break :blk "When this takes effect is required.";
+                        }
+                        _ = parseTaxYear(self.effective_start_year.text()) catch
+                            break :blk "Enter a four-digit year from 0001 to 9999.";
+                    },
+                    .exact_dates => {
+                        _ = model.Date.parseIso(
+                            trimmed(self.effective_from.text()),
+                        ) catch break :blk "Enter the exact start date as YYYY-MM-DD.";
+                    },
+                }
+                break :blk null;
+            },
+            .effective_end => blk: {
+                if (self.effective_date_mode == .annual_years) {
+                    const until = optionalTrimmed(self.effective_end_year.text()) orelse
+                        break :blk null;
+                    const from_year = parseTaxYear(
+                        self.effective_start_year.text(),
+                    ) catch break :blk null;
+                    const until_year = parseTaxYear(until) catch
+                        break :blk "Enter a four-digit year from 0001 to 9999.";
+                    if (until_year < from_year) {
+                        break :blk "Applies until cannot be earlier than when this takes effect.";
+                    }
+                    break :blk null;
+                }
+                const until = optionalTrimmed(self.effective_until.text()) orelse
+                    break :blk null;
+                const from = model.Date.parseIso(
+                    trimmed(self.effective_from.text()),
+                ) catch break :blk null;
+                const end = model.Date.parseIso(until) catch
+                    break :blk "Enter the exact end date as YYYY-MM-DD.";
+                if (end.isBefore(from)) {
+                    break :blk "Applies until cannot be earlier than when this takes effect.";
+                }
+                break :blk null;
+            },
+        };
+    }
+
+    pub fn annualEffectiveYears(self: *const State) bool {
+        return self.effective_date_mode == .annual_years;
+    }
+
+    pub fn exactEffectiveDates(self: *const State) bool {
+        return self.effective_date_mode == .exact_dates;
+    }
+
+    pub fn useAnnualEffectiveYears(self: *State) void {
+        // A persisted mid-year interval is historical fact, not a presentation
+        // choice. Deriving a pair of years and then syncing them back would
+        // silently round (for example) 2026-07-01 to 2026-01-01.
+        if (self.effective_date_mode == .exact_dates and
+            !self.effectiveDatesFitAnnualYears())
+        {
+            self.setNotice(
+                .neutral,
+                "This profile has exact dates. Keep them to preserve its historical period.",
+            );
+            return;
+        }
+        self.syncAnnualYearsFromDates();
+        self.effective_date_mode = .annual_years;
+        self.syncDatesFromAnnualYears();
+    }
+
+    pub fn useExactEffectiveDates(self: *State) void {
+        // Do not expose a previously derived ISO interval through exact-date
+        // mode while the annual-year controls are partial or invalid. The
+        // annual input is the source of truth until it forms a real period.
+        if (self.effective_date_mode == .annual_years) {
+            _ = self.effectivePeriodForEditor() catch {
+                self.revealProfileFieldValidation(.effective_start);
+                self.revealProfileFieldValidation(.effective_end);
+                return;
+            };
+        }
+        self.syncDatesFromAnnualYears();
+        self.effective_date_mode = .exact_dates;
+    }
+
+    pub fn applyEffectiveStartYearInput(
+        self: *State,
+        edit: canvas.TextInputEvent,
+    ) void {
+        self.effective_start_year.apply(edit);
+        self.captureInputTruncation();
+        self.syncDatesFromAnnualYears();
+    }
+
+    pub fn applyEffectiveEndYearInput(
+        self: *State,
+        edit: canvas.TextInputEvent,
+    ) void {
+        self.effective_end_year.apply(edit);
+        self.captureInputTruncation();
+        self.syncDatesFromAnnualYears();
+    }
+
+    pub fn selectEffectiveStartYear(self: *State, year: i32) void {
+        setTaxYearBuffer(&self.effective_start_year, year);
+        self.syncDatesFromAnnualYears();
+    }
+
+    pub fn selectEffectiveEndYear(self: *State, year: ?i32) void {
+        if (year) |value| {
+            setTaxYearBuffer(&self.effective_end_year, value);
+        } else {
+            clearEditorBuffer(&self.effective_end_year);
+        }
+        self.syncDatesFromAnnualYears();
+    }
+
+    /// Normalizes only a complete, real entry. Partial text remains visible
+    /// while someone types, allowing M/D/YY and MM/DD/YYYY naturally.
+    pub fn normalizeBirthDateInput(self: *State) void {
+        const birth_date = self.birthDateForEditor() catch return;
+        var buffer: [10]u8 = undefined;
+        setEditorBuffer(&self.birth_date, birth_date.writeIso(&buffer));
+    }
+
+    fn birthDateForEditor(self: *const State) !model.Date {
+        const current = try model.Date.parseIso(self.default_effective_from.text());
+        const birth_date = try fields.parseBirthDate(
+            trimmed(self.birth_date.text()),
+            current.year,
+        );
+        if (birth_date.isAfter(current)) return error.InvalidBirthDate;
+        return birth_date;
+    }
+
+    fn effectivePeriodForEditor(self: *const State) !model.EffectivePeriod {
+        return switch (self.effective_date_mode) {
+            .annual_years => blk: {
+                const start_year = try parseTaxYear(
+                    self.effective_start_year.text(),
+                );
+                const from = try model.Date.init(@intCast(start_year), 1, 1);
+                const until = if (optionalTrimmed(
+                    self.effective_end_year.text(),
+                )) |raw| blk_until: {
+                    const end_year = try parseTaxYear(raw);
+                    break :blk_until try model.Date.init(
+                        @intCast(end_year),
+                        12,
+                        31,
+                    );
+                } else null;
+                break :blk try model.EffectivePeriod.init(from, until);
+            },
+            .exact_dates => try model.EffectivePeriod.init(
+                try model.Date.parseIso(trimmed(self.effective_from.text())),
+                if (optionalTrimmed(self.effective_until.text())) |raw|
+                    try model.Date.parseIso(raw)
+                else
+                    null,
+            ),
+        };
+    }
+
+    fn syncDatesFromAnnualYears(self: *State) void {
+        if (self.effective_date_mode != .annual_years) return;
+        const start_year = parseTaxYear(self.effective_start_year.text()) catch
+            return;
+        const from = model.Date.init(@intCast(start_year), 1, 1) catch return;
+        var from_buffer: [10]u8 = undefined;
+        setEditorBuffer(&self.effective_from, from.writeIso(&from_buffer));
+
+        const end_text = optionalTrimmed(self.effective_end_year.text()) orelse {
+            clearEditorBuffer(&self.effective_until);
+            return;
+        };
+        const end_year = parseTaxYear(end_text) catch return;
+        const until = model.Date.init(@intCast(end_year), 12, 31) catch return;
+        var until_buffer: [10]u8 = undefined;
+        setEditorBuffer(&self.effective_until, until.writeIso(&until_buffer));
+    }
+
+    fn syncAnnualYearsFromDates(self: *State) void {
+        const from = model.Date.parseIso(trimmed(self.effective_from.text())) catch
+            return;
+        setTaxYearBuffer(&self.effective_start_year, from.year);
+        if (optionalTrimmed(self.effective_until.text())) |raw| {
+            const until = model.Date.parseIso(raw) catch return;
+            setTaxYearBuffer(&self.effective_end_year, until.year);
+        } else {
+            clearEditorBuffer(&self.effective_end_year);
+        }
+    }
+
+    fn setDefaultAnnualEffectiveYear(self: *State) void {
+        const date = model.Date.parseIso(self.default_effective_from.text()) catch
+            return;
+        self.effective_date_mode = .annual_years;
+        setTaxYearBuffer(&self.effective_start_year, date.year);
+        clearEditorBuffer(&self.effective_end_year);
+        self.syncDatesFromAnnualYears();
+    }
+
+    fn effectiveDatesFitAnnualYears(self: *const State) bool {
+        const from = model.Date.parseIso(trimmed(self.effective_from.text())) catch
+            return false;
+        if (from.month != 1 or from.day != 1) return false;
+        const until_text = optionalTrimmed(self.effective_until.text()) orelse
+            return true;
+        const until = model.Date.parseIso(until_text) catch return false;
+        return until.month == 12 and until.day == 31;
+    }
+
+    fn setEffectivePresentationFromStoredDates(self: *State) void {
+        if (self.effectiveDatesFitAnnualYears()) {
+            self.effective_date_mode = .annual_years;
+            self.syncAnnualYearsFromDates();
+        } else {
+            self.effective_date_mode = .exact_dates;
+            clearEditorBuffer(&self.effective_start_year);
+            clearEditorBuffer(&self.effective_end_year);
+        }
+    }
+
+    fn validateProfileFieldsForSave(self: *State) !void {
+        inline for (std.meta.tags(ProfileField)) |field| {
+            if (self.profileFieldValidationMessage(field)) |message| {
+                self.revealAllProfileFieldValidation();
+                self.setErrorDetail(message);
+                return error.InvalidProfileField;
+            }
+        }
     }
 
     fn tinDiffersFromEditorBaseline(self: *const State) bool {
@@ -797,7 +1183,19 @@ pub const State = struct {
         self: *const State,
         subject_kind: model.SubjectKind,
     ) bool {
-        return self.subject_kind == subject_kind;
+        return self.subject_kind_selected and self.subject_kind == subject_kind;
+    }
+
+    /// The editor stores a concrete enum for every rendering path, but a new
+    /// profile must still have an explicit taxpayer-type choice before it is
+    /// eligible to save.
+    pub fn subjectKindSelectionCommitted(self: *const State) bool {
+        return self.subject_kind_selected;
+    }
+
+    pub fn clearSubjectKindSelection(self: *State) void {
+        if (self.branch_mode) return;
+        self.subject_kind_selected = false;
     }
 
     pub fn subjectKind(self: *const State) model.SubjectKind {
@@ -898,14 +1296,14 @@ pub const State = struct {
     }
 
     pub fn naturalPersonFieldsVisible(self: *const State) bool {
-        return applicability.fieldGroupVisible(
+        return self.subject_kind_selected and applicability.fieldGroupVisible(
             self.applicabilityContext(),
             .natural_person_details,
         );
     }
 
     pub fn tradeNameVisible(self: *const State) bool {
-        return applicability.fieldGroupVisible(
+        return self.subject_kind_selected and applicability.fieldGroupVisible(
             self.applicabilityContext(),
             .trade_name,
         );
@@ -919,7 +1317,7 @@ pub const State = struct {
     }
 
     pub fn lineOfBusinessVisible(self: *const State) bool {
-        return applicability.fieldGroupVisible(
+        return self.subject_kind_selected and applicability.fieldGroupVisible(
             self.applicabilityContext(),
             .line_of_business,
         );
@@ -944,6 +1342,8 @@ pub const State = struct {
             trimmed(self.foreign_tax_number.text()),
             trimmed(self.fiscal_year_end_month.text()),
             trimmed(self.primary_line_of_business.text()),
+            trimmed(self.effective_start_year.text()),
+            trimmed(self.effective_end_year.text()),
             trimmed(self.effective_from.text()),
             trimmed(self.effective_until.text()),
             trimmed(self.source_reference.text()),
@@ -954,8 +1354,10 @@ pub const State = struct {
         }
         hasher.update(&[_]u8{
             @intFromEnum(self.subject_kind),
+            @intFromBool(self.subject_kind_selected),
             @intFromEnum(self.natural_person_classification),
             @intFromEnum(self.source_kind),
+            @intFromEnum(self.effective_date_mode),
             if (self.accounting_period_basis) |basis|
                 @as(u8, @intFromEnum(basis)) + 1
             else
@@ -978,6 +1380,7 @@ pub const State = struct {
             .valid = true,
             .loaded_shape_supported = self.loaded_shape_supported,
             .subject_kind = self.subject_kind,
+            .subject_kind_selected = self.subject_kind_selected,
             .natural_person_classification = self.natural_person_classification,
             .accounting_period_basis = self.accounting_period_basis,
             .fiscal_year_end_month = self.fiscal_year_end_month,
@@ -996,6 +1399,9 @@ pub const State = struct {
             .birth_date = self.birth_date,
             .citizenship = self.citizenship,
             .foreign_tax_number = self.foreign_tax_number,
+            .effective_date_mode = self.effective_date_mode,
+            .effective_start_year = self.effective_start_year,
+            .effective_end_year = self.effective_end_year,
             .effective_from = self.effective_from,
             .effective_until = self.effective_until,
             .source_reference = self.source_reference,
@@ -1011,6 +1417,7 @@ pub const State = struct {
         const baseline = self.editor_baseline;
         self.loaded_shape_supported = baseline.loaded_shape_supported;
         self.subject_kind = baseline.subject_kind;
+        self.subject_kind_selected = baseline.subject_kind_selected;
         self.natural_person_classification =
             baseline.natural_person_classification;
         self.accounting_period_basis = baseline.accounting_period_basis;
@@ -1030,6 +1437,9 @@ pub const State = struct {
         self.birth_date = baseline.birth_date;
         self.citizenship = baseline.citizenship;
         self.foreign_tax_number = baseline.foreign_tax_number;
+        self.effective_date_mode = baseline.effective_date_mode;
+        self.effective_start_year = baseline.effective_start_year;
+        self.effective_end_year = baseline.effective_end_year;
         self.effective_from = baseline.effective_from;
         self.effective_until = baseline.effective_until;
         self.source_reference = baseline.source_reference;
@@ -1038,6 +1448,7 @@ pub const State = struct {
         self.loaded_effective_from = baseline.loaded_effective_from;
         self.input_was_truncated = baseline.input_was_truncated;
         self.captureBaseline();
+        self.profile_field_touched = [_]bool{false} ** profile_field_count;
         return true;
     }
 
@@ -1051,6 +1462,173 @@ pub const State = struct {
 
     pub fn profileDirty(self: *const State) bool {
         return self.factsDirty();
+    }
+
+    pub fn hasSessionDraft(_: *const State, draft: *const SessionDraft) bool {
+        return draft.valid;
+    }
+
+    pub fn canSaveSessionDraft(
+        self: *const State,
+        draft: *const SessionDraft,
+    ) bool {
+        if (self.profile_mode == .viewing or !self.profileDirty()) return false;
+        // There is one process-only parking slot. Never silently replace it:
+        // Resume or explicitly discard the parked draft first.
+        return !draft.valid;
+    }
+
+    /// Copies the active editor into the in-memory draft supplied by the app
+    /// model. This intentionally performs no persistence operation.
+    pub fn saveSessionDraft(
+        self: *const State,
+        draft: *SessionDraft,
+    ) bool {
+        if (!self.canSaveSessionDraft(draft)) return false;
+
+        draft.* = .{
+            .valid = true,
+            .has_selection = self.has_selection,
+            .selected_id = self.selected_id,
+            .selected_revision_id = self.selected_revision_id,
+            .selected_revision_sequence = self.selected_revision_sequence,
+            .selected_display = self.selected_display,
+            .has_selected_display = self.has_selected_display,
+            .profile_mode = self.profile_mode,
+            .editing_new = self.editing_new,
+            .branch_mode = self.branch_mode,
+            .branch_source_root = self.branch_source_root,
+            .branch_source_name = self.branch_source_name,
+            .branch_source_kind = self.branch_source_kind,
+            .current = .{
+                .valid = true,
+                .loaded_shape_supported = self.loaded_shape_supported,
+                .subject_kind = self.subject_kind,
+                .subject_kind_selected = self.subject_kind_selected,
+                .natural_person_classification = self.natural_person_classification,
+                .accounting_period_basis = self.accounting_period_basis,
+                .fiscal_year_end_month = self.fiscal_year_end_month,
+                .eopt_tier = self.eopt_tier,
+                .primary_line_of_business = self.primary_line_of_business,
+                .consolidation_review_state = self.consolidation_review_state,
+                .source_kind = self.source_kind,
+                .tin = self.tin,
+                .rdo = self.rdo,
+                .display_name = self.display_name,
+                .trade_name = self.trade_name,
+                .registered_address = self.registered_address,
+                .zip_code = self.zip_code,
+                .phone = self.phone,
+                .email = self.email,
+                .birth_date = self.birth_date,
+                .citizenship = self.citizenship,
+                .foreign_tax_number = self.foreign_tax_number,
+                .effective_date_mode = self.effective_date_mode,
+                .effective_start_year = self.effective_start_year,
+                .effective_end_year = self.effective_end_year,
+                .effective_from = self.effective_from,
+                .effective_until = self.effective_until,
+                .source_reference = self.source_reference,
+                .tax_year = self.tax_year,
+                .change_intent = self.change_intent,
+                .loaded_effective_from = self.loaded_effective_from,
+                .input_was_truncated = self.input_was_truncated,
+            },
+            .baseline = self.editor_baseline,
+            .baseline_fingerprint = self.baseline_fingerprint,
+        };
+        return true;
+    }
+
+    pub fn discardSessionDraft(_: *State, draft: *SessionDraft) void {
+        draft.* = .{};
+    }
+
+    /// Restores a parked editor after selecting its source profile again. The
+    /// database is read only to refresh surrounding profile UI; the captured
+    /// revision context is restored afterwards so a concurrent change still
+    /// receives the normal optimistic-concurrency protection on Save.
+    pub fn resumeSessionDraft(
+        self: *State,
+        draft: *const SessionDraft,
+    ) bool {
+        if (!draft.valid or !draft.current.valid or !draft.baseline.valid) return false;
+
+        const creates_profile = draft.editing_new or draft.branch_mode;
+        if (!creates_profile) {
+            // The app must first select this taxpayer through its normal
+            // context-switch lifecycle (form and exact-filer guards, calendar
+            // refreshes, etc.). Do not mutate selection here on a failed
+            // database load and leave the UI half-switched.
+            if (!self.has_selection or
+                !std.mem.eql(u8, self.selected_id.text(), draft.selected_id.text()))
+            {
+                return false;
+            }
+            self.loadSelectedRevision(true) catch |err| {
+                self.setError(err);
+                return false;
+            };
+            self.selected_revision_id = draft.selected_revision_id;
+            self.selected_revision_sequence = draft.selected_revision_sequence;
+        } else {
+            // Creation and branch drafts are prepared by startNew() or
+            // beginAddBranch() before this overlay. A creation editor may
+            // deliberately retain its source selection for Cancel to restore.
+            if (!self.editing_new or self.branch_mode != draft.branch_mode) return false;
+            if (draft.has_selection) {
+                if (!self.has_selection or
+                    !std.mem.eql(u8, self.selected_id.text(), draft.selected_id.text()))
+                {
+                    return false;
+                }
+            } else if (self.has_selection) {
+                return false;
+            }
+        }
+
+        const current = draft.current;
+        self.loaded_shape_supported = current.loaded_shape_supported;
+        self.subject_kind = current.subject_kind;
+        self.subject_kind_selected = current.subject_kind_selected;
+        self.natural_person_classification = current.natural_person_classification;
+        self.accounting_period_basis = current.accounting_period_basis;
+        self.fiscal_year_end_month = current.fiscal_year_end_month;
+        self.eopt_tier = current.eopt_tier;
+        self.primary_line_of_business = current.primary_line_of_business;
+        self.consolidation_review_state = current.consolidation_review_state;
+        self.source_kind = current.source_kind;
+        self.tin = current.tin;
+        self.rdo = current.rdo;
+        self.display_name = current.display_name;
+        self.trade_name = current.trade_name;
+        self.registered_address = current.registered_address;
+        self.zip_code = current.zip_code;
+        self.phone = current.phone;
+        self.email = current.email;
+        self.birth_date = current.birth_date;
+        self.citizenship = current.citizenship;
+        self.foreign_tax_number = current.foreign_tax_number;
+        self.effective_date_mode = current.effective_date_mode;
+        self.effective_start_year = current.effective_start_year;
+        self.effective_end_year = current.effective_end_year;
+        self.effective_from = current.effective_from;
+        self.effective_until = current.effective_until;
+        self.source_reference = current.source_reference;
+        self.tax_year = current.tax_year;
+        self.change_intent = current.change_intent;
+        self.loaded_effective_from = current.loaded_effective_from;
+        self.input_was_truncated = current.input_was_truncated;
+        self.editor_baseline = draft.baseline;
+        self.baseline_fingerprint = draft.baseline_fingerprint;
+        self.profile_mode = draft.profile_mode;
+        self.editing_new = draft.editing_new;
+        self.branch_mode = draft.branch_mode;
+        self.branch_source_root = draft.branch_source_root;
+        self.branch_source_name = draft.branch_source_name;
+        self.branch_source_kind = draft.branch_source_kind;
+        self.profile_field_touched = [_]bool{false} ** profile_field_count;
+        return true;
     }
 
     /// The editor's current value for one canonical reusable fact. Forms
@@ -1109,7 +1687,7 @@ pub const State = struct {
     pub fn beginRecordChange(self: *State) void {
         if (self.editing_new or !self.has_selection) return;
         self.change_intent = .record_change;
-        setEditorBuffer(&self.effective_from, self.default_effective_from.text());
+        self.setDefaultAnnualEffectiveYear();
     }
 
     /// Restates the period that is already on screen, because what was
@@ -1118,6 +1696,7 @@ pub const State = struct {
         if (self.editing_new or !self.has_selection) return;
         self.change_intent = .fix_mistake;
         setEditorBuffer(&self.effective_from, self.loaded_effective_from.text());
+        self.setEffectivePresentationFromStoredDates();
     }
 
     pub fn factsSummaryAvailable(self: *const State) bool {
@@ -1629,7 +2208,7 @@ pub const State = struct {
         self.profile_mode = .creating;
         self.loaded_shape_supported = true;
         self.clearEditor();
-        setEditorBuffer(&self.effective_from, self.default_effective_from.text());
+        self.setDefaultAnnualEffectiveYear();
         setTaxYearBuffer(&self.tax_year, self.default_tax_year);
         self.forms_set_configured = false;
         self.form_set_state = .needs_configuration;
@@ -1672,10 +2251,11 @@ pub const State = struct {
 
     /// Starts another registration of the selected taxpayer.
     ///
-    /// Contact details and the registered name are reused because they
-    /// describe the same taxpayer. The branch segment, RDO, address, and every
-    /// registration fact are deliberately left blank: they are the facts most
-    /// likely to differ, and a silent copy would assert something unverified.
+    /// The taxpayer's name, personal facts, and portable contact details are
+    /// reused because they describe the same taxpayer. The branch segment,
+    /// RDO, address, and every registration fact are deliberately left blank:
+    /// they are the facts most likely to differ, and a silent copy would assert
+    /// something unverified.
     /// Nothing is copied that belongs to a filing, an evidence document, or a
     /// secret.
     pub fn beginAddBranch(self: *State) bool {
@@ -1703,14 +2283,20 @@ pub const State = struct {
         const reused_trade_name = self.trade_name.text();
         const reused_phone = self.phone.text();
         const reused_email = self.email.text();
+        const reused_birth_date = self.birth_date.text();
+        const reused_citizenship = self.citizenship.text();
         var name_buffer: [160]u8 = undefined;
         var trade_buffer: [160]u8 = undefined;
         var phone_buffer: [32]u8 = undefined;
         var email_buffer: [254]u8 = undefined;
+        var birth_date_buffer: [10]u8 = undefined;
+        var citizenship_buffer: [80]u8 = undefined;
         const name = copyInto(&name_buffer, reused_name);
         const trade_name = copyInto(&trade_buffer, reused_trade_name);
         const phone = copyInto(&phone_buffer, reused_phone);
         const email = copyInto(&email_buffer, reused_email);
+        const birth_date = copyInto(&birth_date_buffer, reused_birth_date);
+        const citizenship = copyInto(&citizenship_buffer, reused_citizenship);
 
         self.editing_new = true;
         self.profile_mode = .creating;
@@ -1723,6 +2309,7 @@ pub const State = struct {
 
         // The branch belongs to the same legal person, so its kind is fixed.
         self.subject_kind = source_kind;
+        self.subject_kind_selected = true;
         self.natural_person_classification = source_classification;
         // Prefill the root the way a TIN is normally written, so the user
         // appends a branch code to something they recognize.
@@ -1736,7 +2323,9 @@ pub const State = struct {
         setEditorBuffer(&self.trade_name, trade_name);
         setEditorBuffer(&self.phone, phone);
         setEditorBuffer(&self.email, email);
-        setEditorBuffer(&self.effective_from, self.default_effective_from.text());
+        setEditorBuffer(&self.birth_date, birth_date);
+        setEditorBuffer(&self.citizenship, citizenship);
+        self.setDefaultAnnualEffectiveYear();
         setTaxYearBuffer(&self.tax_year, self.default_tax_year);
         self.captureBaseline();
         self.setNotice(
@@ -1865,6 +2454,7 @@ pub const State = struct {
         } else {
             self.subject_kind = subject_kind;
         }
+        self.subject_kind_selected = true;
         // Visibility is derived from the selected kind. Keep conditional
         // values buffered until Save or Cancel so changing a selector never
         // destroys data merely because a section became hidden.
@@ -1938,7 +2528,6 @@ pub const State = struct {
         if (self.input_was_truncated or self.inputsTruncated()) {
             return error.FieldTooLong;
         }
-
         const year = try parseTaxYear(self.tax_year.text());
 
         const tin = try fields.Tin.parse(trimmed(self.tin.text()));
@@ -1947,20 +2536,21 @@ pub const State = struct {
         {
             return error.NewProfileTinMustHaveFourteenDigits;
         }
+        // Let Save reveal the same field-level RDO (and other required-field)
+        // feedback as focus loss before parsing the validated identity.
+        try self.validateProfileFieldsForSave();
+
+        // Preserve the reference and parser checks at the domain boundary
+        // after the UI-level validation has made its feedback visible.
         if (rdo_reference.findByCode(trimmed(self.rdo.text())) == null) {
             return error.InvalidRdoSelection;
         }
         const rdo = try fields.RdoCode.parse(trimmed(self.rdo.text()));
+
         const address = try fields.RegisteredAddress.parse(
             trimmed(self.registered_address.text()),
         );
-        const effective = try model.EffectivePeriod.init(
-            try model.Date.parseIso(trimmed(self.effective_from.text())),
-            if (optionalTrimmed(self.effective_until.text())) |until|
-                try model.Date.parseIso(until)
-            else
-                null,
-        );
+        const effective = try self.effectivePeriodForEditor();
 
         if (cor) |apply| {
             // The forms half of a combined apply carries the same reviewed-
@@ -1979,18 +2569,9 @@ pub const State = struct {
 
         const contact: model.RegisteredContact = .{
             .address = address,
-            .zip_code = if (optionalTrimmed(self.zip_code.text())) |value|
-                try fields.ZipCode.parse(value)
-            else
-                null,
-            .contact_number = if (optionalTrimmed(self.phone.text())) |value|
-                try fields.ContactNumber.parse(value)
-            else
-                null,
-            .email_address = if (optionalTrimmed(self.email.text())) |value|
-                try fields.EmailAddress.parse(value)
-            else
-                null,
+            .zip_code = try fields.ZipCode.parse(trimmed(self.zip_code.text())),
+            .contact_number = try fields.ContactNumber.parse(trimmed(self.phone.text())),
+            .email_address = try fields.EmailAddress.parse(trimmed(self.email.text())),
         };
 
         const source = try self.buildSource();
@@ -3091,14 +3672,13 @@ pub const State = struct {
                         try fields.RegisteredName.parse(value)
                     else
                         null,
-                    .date_of_birth = if (optionalTrimmed(self.birth_date.text())) |value|
-                        try model.Date.parseIso(value)
-                    else
-                        null,
-                    .citizenship = if (optionalTrimmed(self.citizenship.text())) |value|
-                        try fields.Citizenship.parse(value)
-                    else
-                        null,
+                    .date_of_birth = try self.birthDateForEditor(),
+                    .citizenship = try fields.Citizenship.parse(
+                        (citizenship_reference.findByValue(
+                            optionalTrimmed(self.citizenship.text()) orelse
+                                return error.InvalidProfileField,
+                        ) orelse return error.InvalidProfileField).value(),
+                    ),
                     .foreign_tax_number = if (optionalTrimmed(self.foreign_tax_number.text())) |value|
                         try fields.ForeignTaxNumber.parse(value)
                     else
@@ -3552,6 +4132,7 @@ pub const State = struct {
             .sole_proprietor => .individual,
             else => revision.subject.kind(),
         };
+        self.subject_kind_selected = true;
         self.natural_person_classification =
             revision.subject.naturalPersonClassification() orelse
             .classification_unknown;
@@ -3635,6 +4216,7 @@ pub const State = struct {
         } else {
             clearEditorBuffer(&self.effective_until);
         }
+        self.setEffectivePresentationFromStoredDates();
         switch (revision.source) {
             .manual_entry => {
                 self.source_kind = .manual_entry;
@@ -3661,6 +4243,7 @@ pub const State = struct {
         self.input_was_truncated = false;
         self.captureBaseline();
         self.captureEditorSnapshot();
+        self.profile_field_touched = [_]bool{false} ** profile_field_count;
         self.refreshFactsSummary(self.default_tax_year);
         self.refreshCorEvidence();
     }
@@ -3751,12 +4334,16 @@ pub const State = struct {
         clearEditorBuffer(&self.foreign_tax_number);
         clearEditorBuffer(&self.fiscal_year_end_month);
         clearEditorBuffer(&self.primary_line_of_business);
+        self.effective_date_mode = .annual_years;
+        clearEditorBuffer(&self.effective_start_year);
+        clearEditorBuffer(&self.effective_end_year);
         clearEditorBuffer(&self.effective_from);
         clearEditorBuffer(&self.effective_until);
         clearEditorBuffer(&self.source_reference);
         clearEditorBuffer(&self.tax_year);
         clearEditorBuffer(&self.forms_set);
         self.subject_kind = .individual;
+        self.subject_kind_selected = false;
         self.natural_person_classification = .classification_unknown;
         self.accounting_period_basis = null;
         self.eopt_tier = null;
@@ -3778,11 +4365,14 @@ pub const State = struct {
         self.change_intent = .record_change;
         self.resetFormFilters();
         self.input_was_truncated = false;
+        self.profile_field_touched = [_]bool{false} ** profile_field_count;
     }
 
     pub fn captureInputTruncation(self: *State) void {
-        self.input_was_truncated =
-            self.input_was_truncated or self.inputsTruncated();
+        // TextBuffer clears its own truncation flag once the user corrects
+        // the value. Mirror the current buffer state rather than latching a
+        // past overflow that would permanently disable Save for this edit.
+        self.input_was_truncated = self.inputsTruncated();
     }
 
     fn inputsTruncated(self: *const State) bool {
@@ -3799,6 +4389,8 @@ pub const State = struct {
             self.foreign_tax_number.truncated or
             self.fiscal_year_end_month.truncated or
             self.primary_line_of_business.truncated or
+            self.effective_start_year.truncated or
+            self.effective_end_year.truncated or
             self.effective_from.truncated or
             self.effective_until.truncated or
             self.source_reference.truncated or
@@ -4046,7 +4638,14 @@ fn classificationDisplayLabel(
 
 fn setTaxYearBuffer(buffer: anytype, year: i32) void {
     var value: [16]u8 = undefined;
-    const text = std.fmt.bufPrint(&value, "{d}", .{year}) catch unreachable;
+    // The formatter renders signed integers with an explicit `+` when
+    // zero-padding. Tax years are positive calendar values, so format an
+    // unsigned value and keep every valid year within the four-byte editor.
+    const text = std.fmt.bufPrint(
+        &value,
+        "{d:0>4}",
+        .{@as(u16, @intCast(year))},
+    ) catch unreachable;
     setEditorBuffer(buffer, text);
 }
 
@@ -4375,7 +4974,8 @@ test "global dashboard attachment indexes saved profiles without implicit contex
     focused.display_name.set("Global Dashboard Taxpayer");
     focused.setNaturalPersonClassification(.pure_compensation);
     focused.registered_address.set("Quezon City");
-    focused.effective_from.set("2026-01-01");
+    setRequiredIndividualDetailsForTest(&focused);
+    focused.selectEffectiveStartYear(2026);
     try std.testing.expect(focused.save());
     const expected_id = focused.selectedProfileId().?;
 
@@ -4436,8 +5036,9 @@ test "profile state builds domain revision and explicit empty Forms Set" {
     state.display_name.set("Maria Santos");
     state.setNaturalPersonClassification(.self_employed);
     state.registered_address.set("Quezon City");
+    setRequiredIndividualDetailsForTest(&state);
     state.email.set("maria@example.ph");
-    state.effective_from.set("2026-01-01");
+    state.selectEffectiveStartYear(2026);
     state.accounting_period_basis = .calendar;
     state.primary_line_of_business.set("Professional services");
     try std.testing.expect(state.save());
@@ -4510,7 +5111,7 @@ test "new profile rejects a legacy-length TIN without padding it" {
     state.rdo.set("040");
     state.display_name.set("Legacy Length New Profile");
     state.registered_address.set("Quezon City");
-    state.effective_from.set("2026-01-01");
+    state.selectEffectiveStartYear(2026);
     state.setNaturalPersonClassification(.pure_compensation);
 
     try std.testing.expect(state.saveDisabled());
@@ -4549,7 +5150,9 @@ test "staged Forms Set is isolated until save and blocks context switches" {
     state.rdo.set("040");
     state.display_name.set("Staged Forms Taxpayer");
     state.registered_address.set("Quezon City");
-    state.effective_from.set("2026-01-01");
+    setRequiredIndividualDetailsForTest(&state);
+    state.setNaturalPersonClassification(.pure_compensation);
+    state.selectEffectiveStartYear(2026);
     try std.testing.expect(state.save());
     try std.testing.expectEqual(
         persistence.FormSetState.needs_configuration,
@@ -4622,7 +5225,9 @@ test "new profile cannot manage or save the prior profile Forms Set" {
     state.rdo.set("040");
     state.display_name.set("Existing Taxpayer");
     state.registered_address.set("Quezon City");
-    state.effective_from.set("2026-01-01");
+    setRequiredIndividualDetailsForTest(&state);
+    state.setNaturalPersonClassification(.pure_compensation);
+    state.selectEffectiveStartYear(2026);
     try std.testing.expect(state.save());
 
     const existing_id = state.selectedProfileDomainId().?;
@@ -4662,12 +5267,15 @@ test "profile state appends immutable source-aware revision" {
     state.rdo.set("040");
     state.display_name.set("Maria Santos");
     state.registered_address.set("Quezon City");
-    state.effective_from.set("2026-01-01");
+    setRequiredIndividualDetailsForTest(&state);
+    state.setNaturalPersonClassification(.pure_compensation);
+    state.selectEffectiveStartYear(2026);
     try std.testing.expect(state.save());
     const profile_id = state.selectedProfileDomainId().?;
     const first_id = state.selectedRevisionContext().?.revision_id;
 
     state.display_name.set("Maria Santos Updated");
+    state.useExactEffectiveDates();
     state.effective_from.set("2026-07-01");
     state.setSourceKind(.imported);
     state.source_reference.set("COR import batch 7");
@@ -4712,10 +5320,269 @@ fn workspaceFixture(
     state.display_name.set("Workspace Taxpayer");
     state.setNaturalPersonClassification(.pure_compensation);
     state.registered_address.set("Quezon City");
+    setRequiredIndividualDetailsForTest(state);
     // Registered well before the years these tests set up, so historical years
     // resolve real facts instead of hitting the retroactive-record guard.
-    state.effective_from.set("2020-01-01");
+    state.selectEffectiveStartYear(2020);
     try std.testing.expect(state.save());
+}
+
+fn setRequiredIndividualDetailsForTest(state: *State) void {
+    // New profiles must explicitly affirm the legal taxpayer type; the enum's
+    // internal Individual default is deliberately not treated as a selection.
+    state.setSubjectKind(.individual);
+    state.setAccountingPeriodBasis(.calendar);
+    setRequiredContactDetailsForTest(state);
+    state.birth_date.set("1990-01-02");
+    state.citizenship.set("Filipino");
+}
+
+fn setRequiredContactDetailsForTest(state: *State) void {
+    state.zip_code.set("1100");
+    state.phone.set("0281234567");
+    state.email.set("records@example.ph");
+}
+
+test "new profiles default to the current calendar year and keep an open end" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try state.attach(allocator, &store, "2026-08-11", 2026);
+
+    try std.testing.expect(state.annualEffectiveYears());
+    try std.testing.expectEqualStrings("2026", state.effective_start_year.text());
+    try std.testing.expectEqualStrings("2026-01-01", state.effective_from.text());
+    try std.testing.expectEqualStrings("", state.effective_end_year.text());
+    try std.testing.expectEqualStrings("", state.effective_until.text());
+}
+
+test "annual effective years map to whole calendar-year dates" {
+    var state = State{};
+
+    state.selectEffectiveStartYear(2026);
+    state.selectEffectiveEndYear(2028);
+
+    try std.testing.expectEqualStrings("2026", state.effective_start_year.text());
+    try std.testing.expectEqualStrings("2028", state.effective_end_year.text());
+    try std.testing.expectEqualStrings("2026-01-01", state.effective_from.text());
+    try std.testing.expectEqualStrings("2028-12-31", state.effective_until.text());
+}
+
+test "typed older annual years and zero-padded boundary years are valid" {
+    var state = State{};
+
+    state.applyEffectiveStartYearInput(.{ .insert_text = "2019" });
+    try std.testing.expectEqualStrings("2019", state.effective_start_year.text());
+    try std.testing.expectEqualStrings("2019-01-01", state.effective_from.text());
+
+    state.selectEffectiveStartYear(1);
+    try std.testing.expectEqualStrings("0001", state.effective_start_year.text());
+    try std.testing.expectEqual(@as(i32, 1), parseTaxYear(
+        state.effective_start_year.text(),
+    ));
+}
+
+test "incomplete annual years fail validation and appear after focus loss" {
+    var state = State{};
+    state.subject_kind = .corporation;
+    state.display_name.set("Annual Profile Inc.");
+    state.registered_address.set("Quezon City");
+    state.zip_code.set("1100");
+    state.phone.set("0281234567");
+    state.email.set("records@example.ph");
+    state.effective_start_year.set("20");
+
+    try std.testing.expectEqualStrings(
+        "Enter a four-digit year from 0001 to 9999.",
+        state.profileFieldValidationMessage(.effective_start).?,
+    );
+    try std.testing.expect(!state.profileFieldErrorVisible(.effective_start));
+
+    state.revealProfileFieldValidation(.effective_start);
+    try std.testing.expect(state.profileFieldErrorVisible(.effective_start));
+    try std.testing.expectError(
+        error.InvalidProfileField,
+        state.validateProfileFieldsForSave(),
+    );
+}
+
+test "an incomplete annual start year cannot switch to exact dates" {
+    var state = State{};
+    state.selectEffectiveStartYear(2026);
+    state.effective_start_year.set("20");
+
+    state.useExactEffectiveDates();
+
+    try std.testing.expect(state.annualEffectiveYears());
+    try std.testing.expect(state.profileFieldErrorVisible(.effective_start));
+    try std.testing.expectEqualStrings(
+        "Enter a four-digit year from 0001 to 9999.",
+        state.profileFieldValidationMessage(.effective_start).?,
+    );
+}
+
+test "an incomplete annual end year cannot switch to exact dates" {
+    var state = State{};
+    state.selectEffectiveStartYear(2026);
+    state.selectEffectiveEndYear(2027);
+    state.effective_end_year.set("20");
+
+    state.useExactEffectiveDates();
+
+    try std.testing.expect(state.annualEffectiveYears());
+    try std.testing.expect(state.profileFieldErrorVisible(.effective_end));
+    try std.testing.expectEqualStrings(
+        "Enter a four-digit year from 0001 to 9999.",
+        state.profileFieldValidationMessage(.effective_end).?,
+    );
+}
+
+test "correcting a truncated profile input clears the save block" {
+    var state = State{};
+    const too_long = [_]u8{'A'} ** 161;
+
+    state.display_name.apply(.{ .insert_text = &too_long });
+    state.captureInputTruncation();
+    try std.testing.expect(state.input_was_truncated);
+
+    state.display_name.apply(.clear);
+    state.display_name.apply(.{ .insert_text = "Corrected Taxpayer Name" });
+    state.captureInputTruncation();
+
+    try std.testing.expect(!state.input_was_truncated);
+    try std.testing.expect(!state.inputsTruncated());
+}
+
+test "a mid-year stored range remains exact when annual years are requested" {
+    var state = State{};
+    state.effective_from.set("2026-07-01");
+    state.effective_until.set("2027-06-30");
+    state.setEffectivePresentationFromStoredDates();
+
+    try std.testing.expect(state.exactEffectiveDates());
+    state.useAnnualEffectiveYears();
+
+    try std.testing.expect(state.exactEffectiveDates());
+    try std.testing.expectEqualStrings("2026-07-01", state.effective_from.text());
+    try std.testing.expectEqualStrings("2027-06-30", state.effective_until.text());
+    try std.testing.expectEqualStrings("", state.effective_start_year.text());
+    try std.testing.expectEqualStrings("", state.effective_end_year.text());
+}
+
+test "registered address is required and parser-backed" {
+    var state = State{};
+
+    try std.testing.expectEqualStrings(
+        "Registered address is required.",
+        state.profileFieldValidationMessage(.registered_address).?,
+    );
+
+    state.registered_address.set("Quezon\x01City");
+    try std.testing.expectEqualStrings(
+        "Enter a valid registered address.",
+        state.profileFieldValidationMessage(.registered_address).?,
+    );
+}
+
+test "registered address validation becomes visible on blur and on save" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try state.attach(allocator, &store, "2026-08-11", 2026);
+    state.setSubjectKind(.corporation);
+    state.tin.set("123-456-789-00000");
+    state.rdo.set("040");
+    state.display_name.set("Validation Profile Inc.");
+    state.zip_code.set("1100");
+    state.phone.set("0281234567");
+    state.email.set("records@example.ph");
+
+    try std.testing.expect(!state.profileFieldErrorVisible(.registered_address));
+    state.revealProfileFieldValidation(.registered_address);
+    try std.testing.expect(state.profileFieldErrorVisible(.registered_address));
+
+    state.profile_field_touched = [_]bool{false} ** profile_field_count;
+    try std.testing.expect(!state.save());
+    try std.testing.expect(state.profileFieldErrorVisible(.registered_address));
+    try std.testing.expect(
+        state.profile_field_touched[@intFromEnum(ProfileField.email_address)],
+    );
+}
+
+test "RDO validation becomes visible on save" {
+    const allocator = std.testing.allocator;
+    var store = try persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var state = State{};
+    try state.attach(allocator, &store, "2026-08-11", 2026);
+    state.setSubjectKind(.corporation);
+    state.setAccountingPeriodBasis(.calendar);
+    state.tin.set("123-456-789-00000");
+    state.display_name.set("RDO Validation Profile Inc.");
+    state.registered_address.set("Quezon City");
+    state.zip_code.set("1100");
+    state.phone.set("0281234567");
+    state.email.set("records@example.ph");
+
+    try std.testing.expect(!state.profileFieldErrorVisible(.rdo_code));
+    try std.testing.expect(!state.save());
+    try std.testing.expect(state.profileFieldErrorVisible(.rdo_code));
+    try std.testing.expectEqualStrings(
+        "RDO is required.",
+        state.profileFieldValidationMessage(.rdo_code).?,
+    );
+}
+
+test "taxpayer type and accounting basis require explicit choices" {
+    var state = State{};
+
+    try std.testing.expectEqualStrings(
+        "Taxpayer Type is required.",
+        state.profileFieldValidationMessage(.taxpayer_type).?,
+    );
+    try std.testing.expectEqualStrings(
+        "Choose Calendar or Fiscal accounting period.",
+        state.profileFieldValidationMessage(.accounting_period_basis).?,
+    );
+
+    state.setSubjectKind(.individual);
+    state.setAccountingPeriodBasis(.calendar);
+    try std.testing.expect(state.profileFieldValidationMessage(.taxpayer_type) == null);
+    try std.testing.expect(
+        state.profileFieldValidationMessage(.accounting_period_basis) == null,
+    );
+
+    state.clearSubjectKindSelection();
+    try std.testing.expectEqualStrings(
+        "Taxpayer Type is required.",
+        state.profileFieldValidationMessage(.taxpayer_type).?,
+    );
+}
+
+test "restoring a profile snapshot clears prior field validation visibility" {
+    var state = State{};
+    state.display_name.set("Saved name");
+    state.captureEditorSnapshot();
+    state.display_name.clear();
+    state.revealProfileFieldValidation(.taxpayer_name);
+    try std.testing.expect(state.profileFieldErrorVisible(.taxpayer_name));
+
+    try std.testing.expect(state.restoreEditorSnapshot());
+    try std.testing.expect(!state.profileFieldErrorVisible(.taxpayer_name));
+}
+
+test "birth date editor normalizes accepted Filipino short dates" {
+    var state = State{};
+    try state.default_effective_from.set("2026-08-11");
+    state.birth_date.set("8/17/88");
+
+    state.normalizeBirthDateInput();
+    try std.testing.expectEqualStrings("1988-08-17", state.birth_date.text());
 }
 
 test "complete profile creation stores consolidated reusable fields" {
@@ -4730,7 +5597,8 @@ test "complete profile creation stores consolidated reusable fields" {
     state.display_name.set("New Complete Taxpayer");
     state.setNaturalPersonClassification(.self_employed);
     state.registered_address.set("Quezon City");
-    state.effective_from.set("2026-01-01");
+    setRequiredIndividualDetailsForTest(&state);
+    state.selectEffectiveStartYear(2026);
     state.setAccountingPeriodBasis(.fiscal);
     state.fiscal_year_end_month.set("6");
     state.setEoptTier(.micro);
@@ -4899,6 +5767,11 @@ test "editor visibility exhaustively delegates to central applicability" {
     // One state allocation avoids multiplying this large fixed-buffer model
     // across compile-time-unrolled cases and exhausting the test stack.
     var state = State{};
+    // The visibility methods intentionally require an explicit taxpayer-type
+    // choice; this exhaustive matrix supplies that committed UI state directly
+    // so its raw SubjectKind cases (including legacy compatibility tags) stay
+    // intact.
+    state.subject_kind_selected = true;
     for (std.meta.tags(model.SubjectKind)) |subject_kind| {
         for (std.meta.tags(model.NaturalPersonClassification)) |classification| {
             for ([_]bool{ false, true }) |has_trade_name| {
@@ -5026,9 +5899,11 @@ fn subjectBuildTestBase() !editor.Base {
 test "new natural-person subjects never build sole-proprietor rows" {
     inline for (std.meta.tags(model.NaturalPersonClassification)) |classification| {
         var state = State{};
+        try state.default_effective_from.set("2026-01-01");
         state.display_name.set("Maria Santos");
         state.setSubjectKind(.individual);
         state.setNaturalPersonClassification(classification);
+        setRequiredIndividualDetailsForTest(&state);
         const has_trade_name = classification == .self_employed or
             classification == .mixed_income;
         if (has_trade_name) {
@@ -5055,15 +5930,40 @@ test "new natural-person subjects never build sole-proprietor rows" {
 
     // The deprecated selector input is normalized before the build as well.
     var compatibility = State{};
+    try compatibility.default_effective_from.set("2026-01-01");
     compatibility.display_name.set("Legacy UI Shortcut");
     compatibility.trade_name.set("Shortcut Trade Name");
     compatibility.setSubjectKind(.sole_proprietor);
+    setRequiredIndividualDetailsForTest(&compatibility);
     const ready = try compatibility.buildSubject(try subjectBuildTestBase());
     const revision = try ready.build();
     switch (revision.subject) {
         .individual => |person| try std.testing.expectEqual(
             model.NaturalPersonClassification.self_employed,
             person.classification,
+        ),
+        .sole_proprietor, .legal_entity => return error.TestUnexpectedResult,
+    }
+}
+
+test "legacy citizenship codes stay editable and normalize on the next save" {
+    var state = State{};
+    try state.default_effective_from.set("2026-08-11");
+    state.setSubjectKind(.individual);
+    state.setNaturalPersonClassification(.pure_compensation);
+    state.display_name.set("Maria Santos");
+    state.birth_date.set("1990-01-02");
+    state.citizenship.set("PH");
+
+    try std.testing.expect(
+        state.profileFieldValidationMessage(.citizenship) == null,
+    );
+    const ready = try state.buildSubject(try subjectBuildTestBase());
+    const revision = try ready.build();
+    switch (revision.subject) {
+        .individual => |person| try std.testing.expectEqualStrings(
+            "Filipino",
+            person.citizenship.?.asSlice(),
         ),
         .sole_proprietor, .legal_entity => return error.TestUnexpectedResult,
     }
@@ -5124,13 +6024,19 @@ test "legacy sole-proprietor load migrates through canonical individual save" {
         },
         .contact = .{
             .address = try fields.RegisteredAddress.parse("Quezon City"),
+            .zip_code = try fields.ZipCode.parse("1100"),
+            .contact_number = try fields.ContactNumber.parse("09171234567"),
+            .email_address = try fields.EmailAddress.parse("legacy@example.ph"),
         },
         .subject = .{ .sole_proprietor = .{
             .person = .{
                 .name = try fields.TaxpayerName.parse("Legacy Professional"),
+                .date_of_birth = try model.Date.parseIso("1990-01-02"),
+                .citizenship = try fields.Citizenship.parse("Filipino"),
             },
             .trade_name = try fields.RegisteredName.parse("Legacy Trade Name"),
         } },
+        .accounting_period_basis = .calendar,
     };
     try profile_persistence.createProfileWithRevision(
         &store,
@@ -5154,6 +6060,7 @@ test "legacy sole-proprietor load migrates through canonical individual save" {
     );
 
     state.editSelected();
+    setRequiredIndividualDetailsForTest(&state);
     state.registered_address.set("Makati City");
     try std.testing.expect(state.save());
 
@@ -5191,8 +6098,10 @@ test "legal-entity trade name loads and cancel restores it exactly" {
     state.display_name.set("Example Corporation");
     state.trade_name.set("Example Trading");
     state.registered_address.set("Makati City");
-    state.effective_from.set("2020-01-01");
+    setRequiredContactDetailsForTest(&state);
+    state.selectEffectiveStartYear(2020);
     state.setSubjectKind(.corporation);
+    state.setAccountingPeriodBasis(.calendar);
     try std.testing.expect(state.save());
 
     try std.testing.expect(state.subjectKindSelected(.corporation));
@@ -6189,6 +7098,7 @@ test "a year carries details forward without a duplicate record" {
 
     // A mid-year change is reported as such, and earlier years are untouched.
     state.registered_address.set("Makati City");
+    state.useExactEffectiveDates();
     state.effective_from.set("2026-07-01");
     try std.testing.expect(state.save());
 
@@ -6213,7 +7123,9 @@ test "a historical year with no details asks for a record instead of inventing o
     state.rdo.set("040");
     state.display_name.set("Recently Registered Taxpayer");
     state.registered_address.set("Quezon City");
-    state.effective_from.set("2026-01-01");
+    setRequiredIndividualDetailsForTest(&state);
+    state.setNaturalPersonClassification(.pure_compensation);
+    state.selectEffectiveStartYear(2026);
     try std.testing.expect(state.save());
 
     try std.testing.expect(state.openYearWorkspace(2023));
@@ -6229,7 +7141,7 @@ test "a historical year with no details asks for a record instead of inventing o
     );
 
     // Recording what was true then unblocks the year.
-    state.effective_from.set("2023-01-01");
+    state.selectEffectiveStartYear(2023);
     state.registered_address.set("Cebu City");
     try std.testing.expect(state.save());
     try std.testing.expect(state.openYearWorkspace(2023));
@@ -6249,6 +7161,9 @@ test "a taxpayer registered mid-year is not treated as missing details" {
     state.rdo.set("040");
     state.display_name.set("Mid Year Registrant");
     state.registered_address.set("Quezon City");
+    setRequiredIndividualDetailsForTest(&state);
+    state.setNaturalPersonClassification(.pure_compensation);
+    state.useExactEffectiveDates();
     state.effective_from.set("2026-08-04");
     try std.testing.expect(state.save());
 
@@ -6284,15 +7199,19 @@ test "a branch reuses safe details and clears branch-specific base facts" {
     try std.testing.expect(state.beginAddBranch());
     try std.testing.expect(state.branchMode());
     try std.testing.expect(state.editing_new);
+    state.setAccountingPeriodBasis(.calendar);
 
     // The taxpayer's own details carry over.
     try std.testing.expectEqualStrings("123-456-789", state.tin.text());
     try std.testing.expectEqualStrings("Workspace Taxpayer", state.display_name.text());
     try std.testing.expectEqualStrings("+639171234567", state.phone.text());
     try std.testing.expectEqualStrings("head@example.ph", state.email.text());
+    try std.testing.expectEqualStrings("1990-01-02", state.birth_date.text());
+    try std.testing.expectEqualStrings("Filipino", state.citizenship.text());
     // Everything branch-specific starts blank so it must be reviewed.
     try std.testing.expectEqualStrings("", state.rdo.text());
     try std.testing.expectEqualStrings("", state.registered_address.text());
+    try std.testing.expectEqualStrings("", state.zip_code.text());
     try std.testing.expectEqualStrings(
         "",
         state.primary_line_of_business.text(),
@@ -6301,6 +7220,7 @@ test "a branch reuses safe details and clears branch-specific base facts" {
     // Saving without a branch code would create a duplicate registration.
     state.rdo.set("043");
     state.registered_address.set("Makati City");
+    state.zip_code.set("1200");
     try std.testing.expect(!state.save());
     try std.testing.expect(state.noticeFailure());
 
@@ -6325,9 +7245,11 @@ test "a branch cannot become a different kind of taxpayer" {
     try workspaceFixture(&state, allocator, &store);
     try std.testing.expect(state.beginAddBranch());
     try std.testing.expectEqual(state.subject_kind, state.branch_source_kind);
+    state.setAccountingPeriodBasis(.calendar);
 
     state.rdo.set("043");
     state.registered_address.set("Makati City");
+    state.zip_code.set("1200");
     state.tin.set("123-456-789-00002");
     state.setSubjectKind(.corporation);
     try std.testing.expect(!state.save());
@@ -6346,9 +7268,11 @@ test "a branch cannot change the taxpayer it belongs to" {
     var state = State{};
     try workspaceFixture(&state, allocator, &store);
     try std.testing.expect(state.beginAddBranch());
+    state.setAccountingPeriodBasis(.calendar);
 
     state.rdo.set("043");
     state.registered_address.set("Makati City");
+    state.zip_code.set("1200");
     state.tin.set("999-888-777-00002");
     try std.testing.expect(!state.save());
     try std.testing.expectEqualStrings(
@@ -6370,7 +7294,9 @@ test "one canonical TIN cannot be registered twice" {
     state.rdo.set("040");
     state.display_name.set("Same TIN Again");
     state.registered_address.set("Quezon City");
-    state.effective_from.set("2026-01-01");
+    setRequiredIndividualDetailsForTest(&state);
+    state.setNaturalPersonClassification(.pure_compensation);
+    state.selectEffectiveStartYear(2026);
     try std.testing.expect(!state.save());
     // The refusal names who holds the TIN, so the user has somewhere to go.
     try std.testing.expectEqualStrings(
@@ -6402,7 +7328,9 @@ test "an archived taxpayer still owns its TIN" {
     state.rdo.set("040");
     state.display_name.set("Different Taxpayer Same TIN");
     state.registered_address.set("Quezon City");
-    state.effective_from.set("2020-01-01");
+    setRequiredIndividualDetailsForTest(&state);
+    state.setNaturalPersonClassification(.pure_compensation);
+    state.selectEffectiveStartYear(2020);
     try std.testing.expect(!state.save());
     try std.testing.expectEqualStrings(
         "That TIN belongs to Workspace Taxpayer, which is archived. Restore it instead of adding it again.",
@@ -6433,7 +7361,9 @@ test "searching narrows the view without stealing the selection" {
     state.rdo.set("040");
     state.display_name.set("Beta Other Taxpayer");
     state.registered_address.set("Quezon City");
-    state.effective_from.set("2020-01-01");
+    setRequiredIndividualDetailsForTest(&state);
+    state.setNaturalPersonClassification(.pure_compensation);
+    state.selectEffectiveStartYear(2020);
     try std.testing.expect(state.save());
 
     // Select the first taxpayer, then search for the other one.
@@ -6500,12 +7430,18 @@ test "a taxpayer past the display bound is reachable by search" {
             },
             .contact = .{
                 .address = try fields.RegisteredAddress.parse("Quezon City"),
+                .zip_code = try fields.ZipCode.parse("1100"),
+                .contact_number = try fields.ContactNumber.parse("09171234567"),
+                .email_address = try fields.EmailAddress.parse("scale@example.ph"),
             },
             .subject = .{ .individual = .{
                 .name = try fields.TaxpayerName.parse(
                     try std.fmt.bufPrint(&name_buffer, "Taxpayer {d:0>4}", .{index}),
                 ),
+                .date_of_birth = try model.Date.parseIso("1990-01-02"),
+                .citizenship = try fields.Citizenship.parse("Filipino"),
             } },
+            .accounting_period_basis = .calendar,
         };
         try profile_persistence.createProfileWithRevision(
             &store,
@@ -6553,8 +7489,10 @@ test "a corrected TIN reaches the sidebar and regroups its registrations" {
     const head_office_id = owner_storage[0..selected.len];
 
     try std.testing.expect(state.beginAddBranch());
+    state.setAccountingPeriodBasis(.calendar);
     state.rdo.set("043");
     state.registered_address.set("Makati City");
+    state.zip_code.set("1200");
     state.tin.set("123-456-789-00002");
     try std.testing.expect(state.save());
     try std.testing.expectEqual(@as(usize, 2), state.rows().len);
@@ -6602,8 +7540,10 @@ test "profile rows expose head office and branch identity" {
     var state = State{};
     try workspaceFixture(&state, allocator, &store);
     try std.testing.expect(state.beginAddBranch());
+    state.setAccountingPeriodBasis(.calendar);
     state.rdo.set("043");
     state.registered_address.set("Makati City");
+    state.zip_code.set("1200");
     state.tin.set("123-456-789-00002");
     try std.testing.expect(state.save());
 

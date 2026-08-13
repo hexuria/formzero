@@ -63,6 +63,7 @@
 
 const std = @import("std");
 const profile_field = @import("field.zig");
+const citizenship_reference = @import("citizenship_reference.zig");
 const evolution = @import("evolution.zig");
 const exact_draft = @import("../form_engine/draft.zig");
 const exact_identity = @import("../form_engine/identity.zig");
@@ -4471,7 +4472,11 @@ pub const Store = struct {
         components: RevisionComponentsWrite,
     ) !void {
         try validateProfileCreate(profile);
-        try validateRevision(revision, components);
+        try validateRevisionWithPolicy(
+            revision,
+            components,
+            .legacy_fixture,
+        );
         if (!std.mem.eql(u8, profile.id, revision.profile_id)) {
             return Error.InvalidValue;
         }
@@ -4689,7 +4694,11 @@ pub const Store = struct {
         value: RevisionWrite,
         components: RevisionComponentsWrite,
     ) !void {
-        try validateRevision(value, components);
+        try validateRevisionWithPolicy(
+            value,
+            components,
+            .legacy_fixture,
+        );
         if (components.business_activities.len == 0 and
             components.registration_facts.len == 0)
         {
@@ -4701,6 +4710,25 @@ pub const Store = struct {
         errdefer if (!committed) self.rollbackNoFail();
 
         try self.appendRevisionRowsInTx(value, components);
+
+        try self.commit();
+        committed = true;
+    }
+
+    /// Test-only compatibility fixture path for an older consolidated Base
+    /// revision. It permits fields that the current editor requires to be
+    /// absent, while retaining the same validation for every supplied value.
+    fn appendLegacyBaseRevisionForCompatibilityTest(
+        self: *Store,
+        value: RevisionWrite,
+    ) !void {
+        try validateRevisionWithPolicy(value, .{}, .legacy_fixture);
+
+        try self.beginImmediate();
+        var committed = false;
+        errdefer if (!committed) self.rollbackNoFail();
+
+        try self.appendRevisionRowsInTx(value, .{});
 
         try self.commit();
         committed = true;
@@ -7351,10 +7379,10 @@ pub const Store = struct {
         return values.toOwnedSlice(allocator);
     }
 
-    /// Finds taxpayers whose current legal/taxpayer name contains the query,
-    /// or whose canonical TIN contains the query's digits, across the whole
-    /// store. Legacy local labels remain stored only for migration history;
-    /// they are not a display identity or search key.
+    /// Finds taxpayers whose current legal/taxpayer name or opaque stable ID
+    /// contains the query, or whose canonical TIN contains the query's digits,
+    /// across the whole store. Legacy local labels remain stored only for
+    /// migration history; they are not a display identity or search key.
     ///
     /// This exists because the sidebar holds a bounded number of rows: a
     /// taxpayer past that bound must still be findable by typing, otherwise
@@ -7414,6 +7442,7 @@ pub const Store = struct {
             \\          LIKE ? ESCAPE '\'
             \\      OR (? IS NOT NULL AND
             \\          COALESCE(anchor.canonical_tin, r.tin) LIKE ? ESCAPE '\')
+            \\      OR p.id LIKE ? ESCAPE '\'
             \\  )
             \\ORDER BY COALESCE(r.taxpayer_name, r.registered_name)
             \\    COLLATE NOCASE, p.id;
@@ -7423,6 +7452,7 @@ pub const Store = struct {
         try statement.bindText(2, name_pattern);
         try statement.bindOptionalText(3, tin_pattern);
         try statement.bindOptionalText(4, tin_pattern);
+        try statement.bindText(5, name_pattern);
 
         var items: std.ArrayList(OwnedProfileSummary) = .empty;
         errdefer {
@@ -13366,6 +13396,16 @@ pub const testing = if (@import("builtin").is_test) struct {
         return store.appendLegacyRevisionForMigrationTest(value, components);
     }
 
+    /// Seeds an older consolidated Base revision without retired components.
+    /// This is available only in test builds so production writes always use
+    /// the current complete-profile validation policy.
+    pub fn appendLegacyBaseRevision(
+        store: *Store,
+        value: RevisionWrite,
+    ) !void {
+        return store.appendLegacyBaseRevisionForCompatibilityTest(value);
+    }
+
     /// Reads retired registration rows for migration/compatibility tests.
     /// Normal runtime code must project the consolidated Base revision.
     pub fn listLegacyRegistrationHistory(
@@ -15172,9 +15212,27 @@ fn validateEvolutionSourceReference(value: []const u8) Error!void {
         return Error.InvalidValue;
 }
 
+const RevisionValidationPolicy = enum {
+    /// New or amended Taxpayer Profile revisions must be complete enough for
+    /// the current Taxpayer Profile workflow. Storage remains nullable so older
+    /// migrations can still be read without inventing historical facts.
+    production,
+    /// Migration fixtures model older physical rows. They may omit fields
+    /// added by the current workflow, but any value they retain is validated.
+    legacy_fixture,
+};
+
 fn validateRevision(
     value: RevisionWrite,
     components: RevisionComponentsWrite,
+) Error!void {
+    return validateRevisionWithPolicy(value, components, .production);
+}
+
+fn validateRevisionWithPolicy(
+    value: RevisionWrite,
+    components: RevisionComponentsWrite,
+    policy: RevisionValidationPolicy,
 ) Error!void {
     try validateIdText(value.id);
     try validateIdText(value.profile_id);
@@ -15194,10 +15252,38 @@ fn validateRevision(
     _ = profile_field.Tin.parse(value.identity.tin) catch
         return Error.InvalidValue;
     try requireValue(value.identity.rdo_code);
-    try requireValue(value.contact.registered_address);
-    try validateOptionalValue(value.contact.zip_code);
-    try validateOptionalValue(value.contact.contact_number);
-    try validateOptionalValue(value.contact.email_address);
+    _ = profile_field.RegisteredAddress.parse(value.contact.registered_address) catch
+        return Error.InvalidValue;
+    switch (policy) {
+        .production => {
+            try validateRequiredProfileField(
+                value.contact.zip_code,
+                profile_field.ZipCode,
+            );
+            try validateRequiredProfileField(
+                value.contact.contact_number,
+                profile_field.ContactNumber,
+            );
+            try validateRequiredProfileField(
+                value.contact.email_address,
+                profile_field.EmailAddress,
+            );
+        },
+        .legacy_fixture => {
+            try validateOptionalProfileField(
+                value.contact.zip_code,
+                profile_field.ZipCode,
+            );
+            try validateOptionalProfileField(
+                value.contact.contact_number,
+                profile_field.ContactNumber,
+            );
+            try validateOptionalProfileField(
+                value.contact.email_address,
+                profile_field.EmailAddress,
+            );
+        },
+    }
     if (value.accounting_period_basis) |basis| {
         switch (basis) {
             .calendar => if (value.fiscal_year_end_month != null) {
@@ -15209,15 +15295,20 @@ fn validateRevision(
                 if (month < 1 or month > 12) return Error.InvalidValue;
             },
         }
-    } else if (value.fiscal_year_end_month != null) {
-        return Error.InvalidValue;
+    } else {
+        if (policy == .production or value.fiscal_year_end_month != null) {
+            return Error.InvalidValue;
+        }
     }
     try validateOptionalValue(value.primary_line_of_business);
     switch (value.subject) {
-        .individual => |person| try validateIndividual(person),
+        .individual => |person| try validateIndividual(person, policy),
         .sole_proprietor => |proprietor| {
-            try validateIndividual(proprietor.person);
-            try validateOptionalValue(proprietor.trade_name);
+            try validateIndividual(proprietor.person, policy);
+            try validateOptionalProfileField(
+                proprietor.trade_name,
+                profile_field.RegisteredName,
+            );
             if (proprietor.person.classification !=
                 .classification_unknown and
                 proprietor.person.classification != .self_employed)
@@ -15227,8 +15318,12 @@ fn validateRevision(
             _ = try soleProprietorTradeName(proprietor);
         },
         .legal_entity => |entity| {
-            try requireValue(entity.registered_name);
-            try validateOptionalValue(entity.trade_name);
+            _ = profile_field.RegisteredName.parse(entity.registered_name) catch
+                return Error.InvalidValue;
+            try validateOptionalProfileField(
+                entity.trade_name,
+                profile_field.RegisteredName,
+            );
         },
     }
     for (components.business_activities, 0..) |activity, index| {
@@ -15524,12 +15619,60 @@ fn validateRegistrationFactAnchorRef(
     try validateIdText(reference.anchor_id);
 }
 
-fn validateIndividual(value: IndividualWrite) Error!void {
-    try requireValue(value.name);
-    try validateOptionalValue(value.trade_name);
-    if (value.date_of_birth) |date| try validateDate(date[0..]);
-    try validateOptionalValue(value.citizenship);
+fn validateIndividual(
+    value: IndividualWrite,
+    policy: RevisionValidationPolicy,
+) Error!void {
+    _ = profile_field.TaxpayerName.parse(value.name) catch
+        return Error.InvalidValue;
+    try validateOptionalProfileField(
+        value.trade_name,
+        profile_field.RegisteredName,
+    );
+    switch (policy) {
+        .production => {
+            const date = value.date_of_birth orelse return Error.InvalidValue;
+            try validateDate(date[0..]);
+            const citizenship = value.citizenship orelse
+                return Error.InvalidValue;
+            try validateCitizenship(citizenship);
+        },
+        .legacy_fixture => {
+            if (value.date_of_birth) |date| try validateDate(date[0..]);
+            if (value.citizenship) |citizenship| {
+                try validateCitizenship(citizenship);
+            }
+        },
+    }
     try validateOptionalValue(value.foreign_tax_number);
+}
+
+fn validateRequiredProfileField(
+    value: ?[]const u8,
+    comptime Field: type,
+) Error!void {
+    const text = value orelse return Error.InvalidValue;
+    _ = Field.parse(text) catch return Error.InvalidValue;
+}
+
+fn validateOptionalProfileField(
+    value: ?[]const u8,
+    comptime Field: type,
+) Error!void {
+    if (value) |text| {
+        _ = Field.parse(text) catch return Error.InvalidValue;
+    }
+}
+
+fn validateCitizenship(value: []const u8) Error!void {
+    const parsed = profile_field.Citizenship.parse(value) catch
+        return Error.InvalidValue;
+    const text = parsed.asSlice();
+    if (citizenship_reference.findByValue(text) == null and
+        citizenship_reference.findByCode(text) == null)
+    {
+        return Error.InvalidValue;
+    }
 }
 
 fn soleProprietorTradeName(
@@ -28644,6 +28787,11 @@ test "legacy local label never replaces legal display identity or search" {
     try std.testing.expectEqual(@as(usize, 1), by_legal_name.items.len);
     try std.testing.expectEqualStrings(profile_id, by_legal_name.items[0].id);
 
+    var by_stable_id = try store.searchProfiles(allocator, profile_id, false);
+    defer by_stable_id.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), by_stable_id.items.len);
+    try std.testing.expectEqualStrings(profile_id, by_stable_id.items[0].id);
+
     try std.testing.expectError(
         Error.InvalidValue,
         store.updateProfileLabel(.{ .profile_id = profile_id, .label = "   " }),
@@ -29350,6 +29498,8 @@ test "schema v13 round trips every classification and legal trade names" {
             .name = "Canonical Individual",
             .classification = classification,
             .trade_name = "INDIVIDUAL TRADE",
+            .date_of_birth = testDate("1990-01-01"),
+            .citizenship = "PH",
         } };
         try store.createProfileWithRevision(.{ .id = profile_id }, revision);
         var loaded = (try store.getCurrentRevision(allocator, profile_id)).?;
@@ -33458,6 +33608,132 @@ fn openLegacyStoreForTest(version: u32) !Store {
     return store;
 }
 
+test "revision writes enforce validated contact and citizenship fields" {
+    var revision = testRevision(
+        "profile-validation-boundary",
+        0,
+        "Validation Boundary",
+        "2026-01-01",
+    );
+    // Legacy fixtures retain their stored ISO country code, while new UI
+    // writes use the canonical citizenship value. Both are reference-backed.
+    try validateRevision(revision, .{});
+    revision.subject.sole_proprietor.person.citizenship = "Filipino";
+    try validateRevision(revision, .{});
+
+    revision = testRevision(
+        "profile-invalid-zip",
+        0,
+        "Invalid ZIP",
+        "2026-01-01",
+    );
+    revision.contact.zip_code = "100";
+    try std.testing.expectError(Error.InvalidValue, validateRevision(revision, .{}));
+
+    revision = testRevision(
+        "profile-invalid-phone",
+        0,
+        "Invalid Phone",
+        "2026-01-01",
+    );
+    revision.contact.contact_number = "81234567";
+    try std.testing.expectError(Error.InvalidValue, validateRevision(revision, .{}));
+
+    revision = testRevision(
+        "profile-invalid-email",
+        0,
+        "Invalid Email",
+        "2026-01-01",
+    );
+    revision.contact.email_address = "not-an-email";
+    try std.testing.expectError(Error.InvalidValue, validateRevision(revision, .{}));
+
+    revision = testRevision(
+        "profile-invalid-citizenship",
+        0,
+        "Invalid Citizenship",
+        "2026-01-01",
+    );
+    revision.subject.sole_proprietor.person.citizenship = "Atlantis";
+    try std.testing.expectError(Error.InvalidValue, validateRevision(revision, .{}));
+
+    revision = testRevision(
+        "profile-missing-zip",
+        0,
+        "Missing ZIP",
+        "2026-01-01",
+    );
+    revision.contact.zip_code = null;
+    try std.testing.expectError(Error.InvalidValue, validateRevision(revision, .{}));
+
+    revision = testRevision(
+        "profile-missing-phone",
+        0,
+        "Missing Phone",
+        "2026-01-01",
+    );
+    revision.contact.contact_number = null;
+    try std.testing.expectError(Error.InvalidValue, validateRevision(revision, .{}));
+
+    revision = testRevision(
+        "profile-missing-email",
+        0,
+        "Missing Email",
+        "2026-01-01",
+    );
+    revision.contact.email_address = null;
+    try std.testing.expectError(Error.InvalidValue, validateRevision(revision, .{}));
+
+    revision = testRevision(
+        "profile-missing-accounting-basis",
+        0,
+        "Missing Accounting Basis",
+        "2026-01-01",
+    );
+    revision.accounting_period_basis = null;
+    try std.testing.expectError(Error.InvalidValue, validateRevision(revision, .{}));
+
+    revision = testRevision(
+        "profile-missing-date-of-birth",
+        0,
+        "Missing Birth Date",
+        "2026-01-01",
+    );
+    revision.subject.sole_proprietor.person.date_of_birth = null;
+    try std.testing.expectError(Error.InvalidValue, validateRevision(revision, .{}));
+
+    revision = testRevision(
+        "profile-missing-citizenship",
+        0,
+        "Missing Citizenship",
+        "2026-01-01",
+    );
+    revision.subject.sole_proprietor.person.citizenship = null;
+    try std.testing.expectError(Error.InvalidValue, validateRevision(revision, .{}));
+}
+
+test "legacy revision fixture validation permits omissions but validates values" {
+    var revision = testRevision(
+        "legacy-profile-omitted-current-fields",
+        0,
+        "Legacy Omitted Fields",
+        "2026-01-01",
+    );
+    revision.contact.zip_code = null;
+    revision.contact.contact_number = null;
+    revision.contact.email_address = null;
+    revision.accounting_period_basis = null;
+    revision.subject.sole_proprietor.person.date_of_birth = null;
+    revision.subject.sole_proprietor.person.citizenship = null;
+    try validateRevisionWithPolicy(revision, .{}, .legacy_fixture);
+
+    revision.contact.zip_code = "100";
+    try std.testing.expectError(
+        Error.InvalidValue,
+        validateRevisionWithPolicy(revision, .{}, .legacy_fixture),
+    );
+}
+
 fn testRevision(
     profile_id: []const u8,
     expected_current_sequence: u32,
@@ -33512,6 +33788,7 @@ fn testRevisionWithTin(
             },
             .trade_name = "Sample Trade",
         } },
+        .accounting_period_basis = .calendar,
     };
 }
 

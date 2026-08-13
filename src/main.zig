@@ -34,6 +34,8 @@ const registration_workspace = @import(
 );
 const filing_projection = @import("filing/projection_context.zig");
 const rdo_reference = @import("tax_profile/rdo_reference.zig");
+const postal_reference = @import("tax_profile/philippine_postal_reference.zig");
+const citizenship_reference = @import("tax_profile/citizenship_reference.zig");
 const profile_store = @import("tax_profile/store.zig");
 const profile_persistence = @import("tax_profile/persistence_adapter.zig");
 const profile_editor = @import("tax_profile/editor.zig");
@@ -1513,6 +1515,70 @@ pub const ProfileRdoOptionRow = struct {
     }
 };
 
+pub const ProfileZipOptionRow = struct {
+    id: usize,
+    code: []const u8,
+    locality: []const u8,
+    province: []const u8,
+    region: []const u8,
+    selected: bool,
+
+    pub fn rowLabel(
+        self: *const ProfileZipOptionRow,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (self.province.len == 0 and self.region.len == 0) {
+            return std.fmt.allocPrint(
+                arena,
+                "{s} · {s}",
+                .{ self.code, self.locality },
+            ) catch self.code;
+        }
+        if (self.province.len == 0) {
+            return std.fmt.allocPrint(
+                arena,
+                "{s} · {s} — {s}",
+                .{ self.code, self.locality, self.region },
+            ) catch self.code;
+        }
+        if (self.region.len == 0) {
+            return std.fmt.allocPrint(
+                arena,
+                "{s} · {s}, {s}",
+                .{ self.code, self.locality, self.province },
+            ) catch self.code;
+        }
+        return std.fmt.allocPrint(
+            arena,
+            "{s} · {s}, {s} — {s}",
+            .{ self.code, self.locality, self.province, self.region },
+        ) catch self.code;
+    }
+};
+
+pub const ProfileSubjectKindOptionRow = struct {
+    id: usize,
+    label: []const u8,
+    selected: bool,
+};
+
+pub const ProfileClassificationOptionRow = struct {
+    id: usize,
+    label: []const u8,
+    selected: bool,
+};
+
+pub const ProfileCitizenshipOptionRow = struct {
+    id: usize,
+    label: []const u8,
+    selected: bool,
+};
+
+pub const ProfileYearOptionRow = struct {
+    value: i32,
+    selected: bool,
+};
+
 /// The Tax Form Library's period picker is a display/opening context. It
 /// never changes the authoritative Forms Set; it only narrows the cadence
 /// cards shown for the selected taxpayer and tax year.
@@ -1595,6 +1661,9 @@ pub const Model = struct {
     /// default for the session, which is what an unreadable store degrades to.
     preferencesStore: ?*preferences_store.Store = null,
     taxProfiles: profile_ui.State = .{},
+    /// Process-only Taxpayer Profile work. This is never passed to a store or
+    /// preferences effect, so quitting the app permanently removes it.
+    sessionProfileDraft: profile_ui.SessionDraft = .{},
     registrationLedger: ?registration_ledger.TaxpayerRegistrationLedger = null,
     registrationMutationGate: RegistrationMutationGate = .{},
     registrationMutationBlocked: bool = false,
@@ -1699,10 +1768,26 @@ pub const Model = struct {
     profileNoticeTimerKey: u64 = 0,
     profileTinSegments: [segmented_tin.segment_count]canvas.TextBuffer(32) =
         [_]canvas.TextBuffer(32){.{}} ** segmented_tin.segment_count,
+    profileTinControlRevisions: [segmented_tin.segment_count]u64 =
+        [_]u64{0} ** segmented_tin.segment_count,
     profileTinFocusSegment: u8 = 0,
     profileTinFocusActive: bool = false,
     profileRdoPickerVisible: bool = false,
     profileRdoQuery: canvas.TextBuffer(128) = .{},
+    profileZipQuery: canvas.TextBuffer(192) = .{},
+    profileZipPickerVisible: bool = false,
+    profileZipSelectedEntryIndex: ?usize = null,
+    profileSubjectQuery: canvas.TextBuffer(64) = .{},
+    /// Presentation-only birth-date text. The Taxpayer Profile state keeps the
+    /// canonical ISO value used by persistence and form projections; this
+    /// buffer is allowed to show the friendlier long label while blurred.
+    profileBirthDateDisplay: canvas.TextBuffer(32) = .{},
+    profileBirthDateFocused: bool = false,
+    profileClassificationQuery: canvas.TextBuffer(64) = .{},
+    profileCitizenshipPickerVisible: bool = false,
+    profileCitizenshipQuery: canvas.TextBuffer(192) = .{},
+    profileEffectiveStartYearPickerVisible: bool = false,
+    profileEffectiveEndYearPickerVisible: bool = false,
     globalRdoContextPickerVisible: bool = false,
     globalRdoContextQuery: canvas.TextBuffer(128) = .{},
     calendarToday: calendar_domain.Date = .{
@@ -1744,10 +1829,22 @@ pub const Model = struct {
         "profileEoptPickerVisible",
         "profilePrimaryLineOfBusiness",
         "profileTinSegments",
+        "profileTinControlRevisions",
         "profileTinFocusSegment",
         "profileTinFocusActive",
         "profileRdoPickerVisible",
         "profileRdoQuery",
+        "profileZipPickerVisible",
+        "profileZipSelectedEntryIndex",
+        "profileZipQuery",
+        "profileSubjectQuery",
+        "profileBirthDateDisplay",
+        "profileBirthDateFocused",
+        "profileClassificationQuery",
+        "profileCitizenshipPickerVisible",
+        "profileCitizenshipQuery",
+        "profileEffectiveStartYearPickerVisible",
+        "profileEffectiveEndYearPickerVisible",
         "globalRdoContextPickerVisible",
         "globalRdoContextQuery",
         "profileCompletionTarget",
@@ -3496,6 +3593,49 @@ pub const Model = struct {
         return self.pendingProfileNavigation != null;
     }
 
+    pub fn profileDirtyNavigationDialogWidth(self: *const Model) f32 {
+        const available = @max(@as(f32, 0), self.viewportWidth - 32);
+        return @min(480, available);
+    }
+
+    pub fn profileDirtyNavigationDialogHeight(self: *const Model) f32 {
+        const has_supplemental_content =
+            self.profileSessionDraftActionVisible() or
+            self.profileSessionDraftBlockedVisible();
+
+        return switch (self.viewportClass) {
+            .phone => if (has_supplemental_content) 400 else 300,
+            .compact => if (has_supplemental_content) 340 else 280,
+            else => if (has_supplemental_content) 288 else 240,
+        };
+    }
+
+    pub fn profileSessionDraftActionVisible(self: *const Model) bool {
+        if (self.pendingProfileNavigation == null) return false;
+        return self.taxProfiles.canSaveSessionDraft(&self.sessionProfileDraft);
+    }
+
+    pub fn profileSessionDraftBlockedVisible(self: *const Model) bool {
+        if (self.pendingProfileNavigation == null) return false;
+        // This discard dialog is also shared by Registration/Evidence flows.
+        // A parked Taxpayer Profile draft must not make those unrelated dialogs
+        // appear blocked; show this only when the active Taxpayer Profile editor is
+        // the unsaved work that could otherwise be parked.
+        if (!self.taxProfiles.profileDirty()) return false;
+        return self.taxProfiles.hasSessionDraft(&self.sessionProfileDraft) and
+            !self.taxProfiles.canSaveSessionDraft(&self.sessionProfileDraft);
+    }
+
+    pub fn profileSessionDraftVisible(self: *const Model) bool {
+        return self.pendingProfileNavigation == null and
+            !self.taxProfiles.profileDirty() and
+            self.taxProfiles.hasSessionDraft(&self.sessionProfileDraft);
+    }
+
+    pub fn profileSessionDraftMessage(_: *const Model) []const u8 {
+        return "This draft is kept only while this app remains open. Closing the app permanently removes it.";
+    }
+
     pub fn profileDirtyNavigationTitle(self: *const Model) []const u8 {
         if (self.pendingProfileNavigation) |pending| switch (pending) {
             .registration_taxpayer => return self.registrationEditor
@@ -3734,8 +3874,113 @@ pub const Model = struct {
         return self.profileSubjectPickerVisible;
     }
 
+    pub fn profileSubjectQueryValue(self: *const Model) []const u8 {
+        return self.profileSubjectQuery.text();
+    }
+
+    pub fn profileSubjectCommittedSelection(self: *const Model) bool {
+        return self.taxProfiles.subjectKindSelectionCommitted();
+    }
+
+    pub fn profileSubjectKindOptionRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const ProfileSubjectKindOptionRow {
+        const query = std.mem.trim(u8, self.profileSubjectQuery.text(), " \t\r\n");
+        var matched: [5]profile_model.SubjectKind = undefined;
+        var count: usize = 0;
+        for (profile_subject_kind_choices) |kind| {
+            if (query.len != 0 and !containsAsciiInsensitive(
+                profileSubjectKindOptionLabel(kind),
+                query,
+            )) continue;
+            if (count == matched.len) break;
+            matched[count] = kind;
+            count += 1;
+        }
+        const rows = arena.alloc(ProfileSubjectKindOptionRow, count) catch return &.{};
+        const committed = profileSubjectKindChoice(self.taxProfiles.subjectKind());
+        const committed_selection =
+            self.taxProfiles.subjectKindSelectionCommitted();
+        var committed_match_visible = false;
+        for (matched[0..count]) |kind| {
+            if (committed_selection and kind == committed) {
+                committed_match_visible = true;
+                break;
+            }
+        }
+        for (matched[0..count], 0..) |kind, index| {
+            rows[index] = .{
+                .id = profileSubjectKindOptionId(kind),
+                .label = profileSubjectKindOptionLabel(kind),
+                .selected = if (committed_match_visible) kind == committed else index == 0,
+            };
+        }
+        return rows;
+    }
+
     pub fn profileClassificationPickerOpen(self: *const Model) bool {
         return self.profileClassificationPickerVisible;
+    }
+
+    pub fn profileClassificationQueryValue(self: *const Model) []const u8 {
+        return self.profileClassificationQuery.text();
+    }
+
+    pub fn profileClassificationCommittedSelection(self: *const Model) bool {
+        return self.taxProfiles.naturalPersonClassification() !=
+            .classification_unknown;
+    }
+
+    pub fn profileClassificationErrorVisible(self: *const Model) bool {
+        return self.profileFieldErrorVisible(.tax_classification);
+    }
+
+    pub fn profileClassificationValidationMessage(self: *const Model) []const u8 {
+        return self.profileFieldValidationMessage(.tax_classification);
+    }
+
+    pub fn profileClassificationOptionRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const ProfileClassificationOptionRow {
+        const query = std.mem.trim(
+            u8,
+            self.profileClassificationQuery.text(),
+            " \t\r\n",
+        );
+        var matched: [profile_classification_choices.len]profile_model.NaturalPersonClassification = undefined;
+        var count: usize = 0;
+        for (profile_classification_choices) |classification| {
+            if (query.len != 0 and !containsAsciiInsensitive(
+                profileClassificationOptionLabel(classification),
+                query,
+            )) continue;
+            matched[count] = classification;
+            count += 1;
+        }
+        const rows = arena.alloc(ProfileClassificationOptionRow, count) catch
+            return &.{};
+        const committed = self.taxProfiles.naturalPersonClassification();
+        const committed_selection = committed != .classification_unknown;
+        var committed_match_visible = false;
+        for (matched[0..count]) |classification| {
+            if (committed_selection and classification == committed) {
+                committed_match_visible = true;
+                break;
+            }
+        }
+        for (matched[0..count], 0..) |classification, index| {
+            rows[index] = .{
+                .id = profileClassificationOptionId(classification),
+                .label = profileClassificationOptionLabel(classification),
+                .selected = if (committed_match_visible)
+                    classification == committed
+                else
+                    index == 0,
+            };
+        }
+        return rows;
     }
 
     pub fn profileEoptPickerOpen(self: *const Model) bool {
@@ -3743,6 +3988,9 @@ pub const Model = struct {
     }
 
     pub fn profileSubjectKindLabel(self: *const Model) []const u8 {
+        if (!self.taxProfiles.subjectKindSelectionCommitted()) {
+            return "Choose taxpayer type";
+        }
         return switch (self.taxProfiles.subject_kind) {
             .individual => "Individual",
             // Legacy rows normalize to an individual self-employed taxpayer;
@@ -3854,6 +4102,18 @@ pub const Model = struct {
         return self.taxProfiles.accountingPeriodBasisSelected(.fiscal);
     }
 
+    pub fn profileAccountingPeriodBasisErrorVisible(
+        self: *const Model,
+    ) bool {
+        return self.profileFieldErrorVisible(.accounting_period_basis);
+    }
+
+    pub fn profileAccountingPeriodBasisValidationMessage(
+        self: *const Model,
+    ) []const u8 {
+        return self.profileFieldValidationMessage(.accounting_period_basis);
+    }
+
     pub fn profileFiscalYearEndMonthVisible(self: *const Model) bool {
         return self.profileAccountingPeriodFiscalSelected();
     }
@@ -3957,6 +4217,27 @@ pub const Model = struct {
         return self.profileTinSegments[3].text();
     }
 
+    fn profileTinSegmentKey(self: *const Model, segment: usize) u64 {
+        return self.profileTinControlRevisions[segment] *% segmented_tin.segment_count +%
+            @as(u64, @intCast(segment));
+    }
+
+    pub fn profileTinSegmentOneKey(self: *const Model) u64 {
+        return self.profileTinSegmentKey(0);
+    }
+
+    pub fn profileTinSegmentTwoKey(self: *const Model) u64 {
+        return self.profileTinSegmentKey(1);
+    }
+
+    pub fn profileTinSegmentThreeKey(self: *const Model) u64 {
+        return self.profileTinSegmentKey(2);
+    }
+
+    pub fn profileTinSegmentBranchKey(self: *const Model) u64 {
+        return self.profileTinSegmentKey(3);
+    }
+
     pub fn profileTinInvalidVisible(self: *const Model) bool {
         if (!self.profileTaxEditorVisible()) return false;
         if (!self.taxProfiles.profileDirty() and
@@ -4003,18 +4284,41 @@ pub const Model = struct {
         return self.profileRdoPickerVisible;
     }
 
+    pub fn profileRdoCommittedSelection(self: *const Model) bool {
+        return rdo_reference.findByCode(self.taxProfiles.rdo.text()) != null;
+    }
+
     pub fn profileRdoSelectionMissing(self: *const Model) bool {
-        return !self.profileTaxViewing() and
-            rdo_reference.findByCode(self.taxProfiles.rdo.text()) == null;
+        return self.profileRdoErrorVisible();
     }
 
     pub fn profileRdoOptionRows(
         self: *const Model,
         arena: std.mem.Allocator,
     ) []const ProfileRdoOptionRow {
-        const matches = rdo_reference.search(self.profileRdoQuery.text());
+        const committed_entry = rdo_reference.findByCode(
+            self.taxProfiles.rdo.text(),
+        );
+        var committed_label_buffer: [128]u8 = undefined;
+        const search_query = if (committed_entry) |entry|
+            if (std.mem.eql(
+                u8,
+                self.profileRdoQuery.text(),
+                profileRdoLabel(entry, &committed_label_buffer),
+            )) entry.code else self.profileRdoQuery.text()
+        else
+            self.profileRdoQuery.text();
+        const matches = rdo_reference.search(search_query);
         const rows = arena.alloc(ProfileRdoOptionRow, matches.len) catch
             return &.{};
+        const committed_code = self.taxProfiles.rdo.text();
+        var committed_match_visible = false;
+        for (matches.items()) |candidate| {
+            if (std.mem.eql(u8, candidate.code, committed_code)) {
+                committed_match_visible = true;
+                break;
+            }
+        }
         for (matches.items(), 0..) |candidate, row_index| {
             var entry_index: usize = 0;
             for (&rdo_reference.entries, 0..) |*entry, index| {
@@ -4027,14 +4331,304 @@ pub const Model = struct {
                 .id = entry_index,
                 .code = candidate.code,
                 .name = candidate.name,
-                .selected = std.mem.eql(
-                    u8,
-                    candidate.code,
-                    self.taxProfiles.rdo.text(),
-                ),
+                .selected = if (committed_match_visible)
+                    std.mem.eql(u8, candidate.code, committed_code)
+                else
+                    row_index == 0,
             };
         }
         return rows;
+    }
+
+    pub fn profileCitizenshipQueryValue(self: *const Model) []const u8 {
+        return self.profileCitizenshipQuery.text();
+    }
+
+    pub fn profileCitizenshipPickerOpen(self: *const Model) bool {
+        return self.profileCitizenshipPickerVisible;
+    }
+
+    pub fn profileCitizenshipCommittedSelection(self: *const Model) bool {
+        return citizenship_reference.findByValue(
+            self.taxProfiles.citizenship.text(),
+        ) != null;
+    }
+
+    pub fn profileCitizenshipOptionRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const ProfileCitizenshipOptionRow {
+        const matches = citizenship_reference.search(
+            self.profileCitizenshipQuery.text(),
+        );
+        const rows = arena.alloc(ProfileCitizenshipOptionRow, matches.len) catch
+            return &.{};
+        const committed = self.taxProfiles.citizenship.text();
+        var committed_match_visible = false;
+        for (matches.items()) |candidate| {
+            if (std.ascii.eqlIgnoreCase(candidate.value(), committed)) {
+                committed_match_visible = true;
+                break;
+            }
+        }
+        for (matches.items(), 0..) |candidate, row_index| {
+            var entry_index: usize = 0;
+            for (&citizenship_reference.entries, 0..) |*entry, index| {
+                if (entry == candidate) {
+                    entry_index = index;
+                    break;
+                }
+            }
+            rows[row_index] = .{
+                .id = entry_index,
+                .label = candidate.label(),
+                .selected = if (committed_match_visible)
+                    std.ascii.eqlIgnoreCase(candidate.value(), committed)
+                else
+                    row_index == 0,
+            };
+        }
+        return rows;
+    }
+
+    pub fn profileAnnualEffectiveYears(self: *const Model) bool {
+        return self.taxProfiles.annualEffectiveYears();
+    }
+
+    pub fn profileExactEffectiveDates(self: *const Model) bool {
+        return self.taxProfiles.exactEffectiveDates();
+    }
+
+    pub fn profileEffectiveStartYearValue(self: *const Model) []const u8 {
+        return self.taxProfiles.effective_start_year.text();
+    }
+
+    pub fn profileEffectiveEndYearValue(self: *const Model) []const u8 {
+        return self.taxProfiles.effective_end_year.text();
+    }
+
+    pub fn profileEffectiveStartYearPickerOpen(self: *const Model) bool {
+        return self.profileEffectiveStartYearPickerVisible;
+    }
+
+    pub fn profileEffectiveStartYearSelected(self: *const Model) bool {
+        return parseProfileYearOption(
+            self.taxProfiles.effective_start_year.text(),
+        ) != null;
+    }
+
+    pub fn profileEffectiveEndYearPickerOpen(self: *const Model) bool {
+        return self.profileEffectiveEndYearPickerVisible;
+    }
+
+    pub fn profileEffectiveEndYearSelected(self: *const Model) bool {
+        return parseProfileYearOption(
+            self.taxProfiles.effective_end_year.text(),
+        ) != null;
+    }
+
+    pub fn profileEffectiveStartYearOptionRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const ProfileYearOptionRow {
+        return self.profileEffectiveYearOptionRows(
+            arena,
+            self.taxProfiles.effective_start_year.text(),
+            true,
+        );
+    }
+
+    pub fn profileEffectiveEndYearOptionRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const ProfileYearOptionRow {
+        return self.profileEffectiveYearOptionRows(
+            arena,
+            self.taxProfiles.effective_end_year.text(),
+            false,
+        );
+    }
+
+    pub fn profileEffectiveEndYearClearSelected(self: *const Model) bool {
+        return std.mem.trim(
+            u8,
+            self.taxProfiles.effective_end_year.text(),
+            " \t\r\n",
+        ).len == 0;
+    }
+
+    fn profileEffectiveYearOptionRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+        query: []const u8,
+        select_first_when_empty: bool,
+    ) []const ProfileYearOptionRow {
+        const current = self.taxProfiles.default_tax_year;
+        const minimum: i32 = 2020;
+        const visible_suggestion_limit: usize = 5;
+        const suggestion_count: usize = if (current >= minimum)
+            @min(
+                @as(usize, @intCast(current - minimum + 1)),
+                visible_suggestion_limit,
+            )
+        else
+            0;
+        const typed_year = parseProfileYearOption(query);
+        const rows = arena.alloc(
+            ProfileYearOptionRow,
+            suggestion_count + @intFromBool(typed_year != null),
+        ) catch return &.{};
+        const trimmed_query = std.mem.trim(u8, query, " \t\r\n");
+        var count: usize = 0;
+        var contains_typed = false;
+        var has_selected = false;
+        var year = current;
+        while (year >= minimum) : (year -= 1) {
+            var buffer: [16]u8 = undefined;
+            const label = std.fmt.bufPrint(&buffer, "{d}", .{year}) catch
+                continue;
+            if (trimmed_query.len != 0 and
+                std.mem.indexOf(u8, label, trimmed_query) == null) continue;
+            if (count == visible_suggestion_limit) break;
+            const selected = std.mem.eql(u8, trimmed_query, label);
+            rows[count] = .{
+                .value = year,
+                .selected = selected,
+            };
+            has_selected = has_selected or selected;
+            if (typed_year) |typed| contains_typed = typed == year;
+            count += 1;
+        }
+        if (typed_year) |typed| {
+            if (!contains_typed) {
+                rows[count] = .{
+                    .value = typed,
+                    .selected = true,
+                };
+                has_selected = true;
+                count += 1;
+            }
+        }
+        if (!has_selected and count != 0 and
+            (trimmed_query.len != 0 or select_first_when_empty))
+        {
+            rows[0].selected = true;
+        }
+        return rows[0..count];
+    }
+
+    fn profileFieldErrorVisible(
+        self: *const Model,
+        field: profile_ui.ProfileField,
+    ) bool {
+        return self.taxProfiles.profileFieldErrorVisible(field);
+    }
+
+    fn profileFieldValidationMessage(
+        self: *const Model,
+        field: profile_ui.ProfileField,
+    ) []const u8 {
+        return self.taxProfiles.profileFieldValidationMessage(field) orelse "";
+    }
+
+    pub fn profileSubjectErrorVisible(self: *const Model) bool {
+        return self.profileFieldErrorVisible(.taxpayer_type);
+    }
+
+    pub fn profileRdoErrorVisible(self: *const Model) bool {
+        return self.profileFieldErrorVisible(.rdo_code);
+    }
+
+    pub fn profileRdoValidationMessage(self: *const Model) []const u8 {
+        return self.profileFieldValidationMessage(.rdo_code);
+    }
+
+    pub fn profileSubjectValidationMessage(self: *const Model) []const u8 {
+        return self.profileFieldValidationMessage(.taxpayer_type);
+    }
+
+    pub fn profileNameErrorVisible(self: *const Model) bool {
+        return self.profileFieldErrorVisible(.taxpayer_name);
+    }
+
+    pub fn profileNameValidationMessage(self: *const Model) []const u8 {
+        return self.profileFieldValidationMessage(.taxpayer_name);
+    }
+
+    pub fn profileAddressErrorVisible(self: *const Model) bool {
+        return self.profileFieldErrorVisible(.registered_address);
+    }
+
+    pub fn profileAddressValidationMessage(self: *const Model) []const u8 {
+        return self.profileFieldValidationMessage(.registered_address);
+    }
+
+    pub fn profileZipErrorVisible(self: *const Model) bool {
+        return self.profileFieldErrorVisible(.zip_code);
+    }
+
+    pub fn profileZipValidationMessage(self: *const Model) []const u8 {
+        return self.profileFieldValidationMessage(.zip_code);
+    }
+
+    pub fn profilePhoneErrorVisible(self: *const Model) bool {
+        return self.profileFieldErrorVisible(.contact_number);
+    }
+
+    pub fn profilePhoneValidationMessage(self: *const Model) []const u8 {
+        return self.profileFieldValidationMessage(.contact_number);
+    }
+
+    pub fn profileEmailErrorVisible(self: *const Model) bool {
+        return self.profileFieldErrorVisible(.email_address);
+    }
+
+    pub fn profileEmailValidationMessage(self: *const Model) []const u8 {
+        return self.profileFieldValidationMessage(.email_address);
+    }
+
+    pub fn profileFiscalYearEndMonthErrorVisible(self: *const Model) bool {
+        return self.profileFieldErrorVisible(.fiscal_year_end_month);
+    }
+
+    pub fn profileFiscalYearEndMonthValidationMessage(
+        self: *const Model,
+    ) []const u8 {
+        return self.profileFieldValidationMessage(.fiscal_year_end_month);
+    }
+
+    pub fn profileBirthDateErrorVisible(self: *const Model) bool {
+        return self.profileFieldErrorVisible(.birth_date);
+    }
+
+    pub fn profileBirthDateValidationMessage(self: *const Model) []const u8 {
+        return self.profileFieldValidationMessage(.birth_date);
+    }
+
+    pub fn profileCitizenshipErrorVisible(self: *const Model) bool {
+        return self.profileFieldErrorVisible(.citizenship);
+    }
+
+    pub fn profileCitizenshipValidationMessage(self: *const Model) []const u8 {
+        return self.profileFieldValidationMessage(.citizenship);
+    }
+
+    pub fn profileEffectiveStartErrorVisible(self: *const Model) bool {
+        return self.profileFieldErrorVisible(.effective_start);
+    }
+
+    pub fn profileEffectiveStartValidationMessage(
+        self: *const Model,
+    ) []const u8 {
+        return self.profileFieldValidationMessage(.effective_start);
+    }
+
+    pub fn profileEffectiveEndErrorVisible(self: *const Model) bool {
+        return self.profileFieldErrorVisible(.effective_end);
+    }
+
+    pub fn profileEffectiveEndValidationMessage(self: *const Model) []const u8 {
+        return self.profileFieldValidationMessage(.effective_end);
     }
 
     pub fn profileNameValue(self: *const Model) []const u8 {
@@ -4050,7 +4644,52 @@ pub const Model = struct {
     }
 
     pub fn profileZipValue(self: *const Model) []const u8 {
+        return self.profileZipQueryValue();
+    }
+
+    pub fn profileZipQueryValue(self: *const Model) []const u8 {
+        if (self.profileZipPickerVisible) return self.profileZipQuery.text();
         return self.taxProfiles.zip_code.text();
+    }
+
+    pub fn profileZipPickerOpen(self: *const Model) bool {
+        return self.profileZipPickerVisible;
+    }
+
+    pub fn profileZipCommittedSelection(self: *const Model) bool {
+        _ = profile_fields.ZipCode.parse(
+            self.taxProfiles.zip_code.text(),
+        ) catch return false;
+        return true;
+    }
+
+    pub fn profileZipOptionRows(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const ProfileZipOptionRow {
+        const matches = postal_reference.search(5, self.profileZipQuery.text());
+        const rows = arena.alloc(ProfileZipOptionRow, matches.len) catch return &.{};
+        for (matches.items(), 0..) |entry, row_index| {
+            var entry_index: usize = 0;
+            for (&postal_reference.entries, 0..) |*candidate, index| {
+                if (candidate == entry) {
+                    entry_index = index;
+                    break;
+                }
+            }
+            rows[row_index] = .{
+                .id = entry_index,
+                .code = entry.code,
+                .locality = entry.locality,
+                .province = entry.province,
+                .region = entry.region,
+                .selected = if (self.profileZipSelectedEntryIndex) |selected_index|
+                    selected_index == entry_index
+                else
+                    row_index == 0,
+            };
+        }
+        return rows;
     }
 
     pub fn profilePhoneValue(self: *const Model) []const u8 {
@@ -4061,8 +4700,23 @@ pub const Model = struct {
         return self.taxProfiles.email.text();
     }
 
-    pub fn profileBirthDateValue(self: *const Model) []const u8 {
-        return self.taxProfiles.birth_date.text();
+    pub fn profileBirthDateValue(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        if (self.profileBirthDateFocused) {
+            return self.taxProfiles.birth_date.text();
+        }
+        if (self.profileBirthDateDisplay.text().len != 0) {
+            return self.profileBirthDateDisplay.text();
+        }
+        const canonical = self.taxProfiles.birth_date.text();
+        if (canonical.len == 0 or
+            self.taxProfiles.profileFieldValidationMessage(.birth_date) != null)
+        {
+            return canonical;
+        }
+        return friendlyDateLabel(arena, canonical);
     }
 
     pub fn profileCitizenshipValue(self: *const Model) []const u8 {
@@ -4138,8 +4792,11 @@ pub const Model = struct {
         return recordedProfileValue(self.profileEmailValue());
     }
 
-    pub fn profileBirthDateDisplayValue(self: *const Model) []const u8 {
-        return recordedProfileValue(self.profileBirthDateValue());
+    pub fn profileBirthDateDisplayValue(
+        self: *const Model,
+        arena: std.mem.Allocator,
+    ) []const u8 {
+        return recordedProfileValue(self.profileBirthDateValue(arena));
     }
 
     pub fn profileCitizenshipDisplayValue(self: *const Model) []const u8 {
@@ -10242,6 +10899,19 @@ fn friendlyDateLabel(arena: std.mem.Allocator, iso: []const u8) []const u8 {
     ) catch iso;
 }
 
+fn friendlyDateLabelBuffer(output: []u8, iso: []const u8) []const u8 {
+    if (iso.len != 10) return iso;
+    const year = std.fmt.parseInt(u16, iso[0..4], 10) catch return iso;
+    const month = std.fmt.parseInt(u8, iso[5..7], 10) catch return iso;
+    const day = std.fmt.parseInt(u8, iso[8..10], 10) catch return iso;
+    if (month < 1 or month > 12) return iso;
+    return std.fmt.bufPrint(
+        output,
+        "{s} {d}, {d}",
+        .{ month_names[month - 1], day, year },
+    ) catch iso;
+}
+
 fn recordedProfileValue(value: []const u8) []const u8 {
     return if (std.mem.trim(u8, value, " \t\r\n").len == 0)
         "Not recorded"
@@ -10285,6 +10955,182 @@ fn profileRdoLabel(entry: *const rdo_reference.Entry, output: []u8) []const u8 {
     ) catch entry.code;
 }
 
+const profile_subject_kind_choices = [_]profile_model.SubjectKind{
+    .individual,
+    .corporation,
+    .partnership,
+    .cooperative,
+    .estate,
+    .trust,
+    .other_legal_entity,
+};
+
+const profile_classification_choices = [_]profile_model.NaturalPersonClassification{
+    .pure_compensation,
+    .self_employed,
+    .mixed_income,
+};
+
+fn profileSubjectKindChoice(kind: profile_model.SubjectKind) profile_model.SubjectKind {
+    // Sole proprietor is a compatibility input that the editor normalizes to
+    // an individual with a self-employed classification. Never show it as a
+    // second legal-person choice in the current combobox.
+    return if (kind == .sole_proprietor) .individual else kind;
+}
+
+fn profileSubjectKindOptionId(kind: profile_model.SubjectKind) usize {
+    for (profile_subject_kind_choices, 0..) |candidate, index| {
+        if (candidate == kind) return index;
+    }
+    return 0;
+}
+
+fn profileSubjectKindOptionLabel(kind: profile_model.SubjectKind) []const u8 {
+    return switch (profileSubjectKindChoice(kind)) {
+        .individual => "Individual",
+        .sole_proprietor => unreachable,
+        .corporation => "Corporation",
+        .partnership => "Partnership",
+        .cooperative => "Cooperative",
+        .estate => "Estate",
+        .trust => "Trust",
+        .other_legal_entity => "Other legal entity",
+    };
+}
+
+fn profileClassificationOptionId(
+    classification: profile_model.NaturalPersonClassification,
+) usize {
+    for (profile_classification_choices, 0..) |candidate, index| {
+        if (candidate == classification) return index;
+    }
+    return 0;
+}
+
+fn profileClassificationOptionLabel(
+    classification: profile_model.NaturalPersonClassification,
+) []const u8 {
+    return switch (classification) {
+        .classification_unknown => "Not yet recorded",
+        .pure_compensation => "Purely Compensation",
+        .self_employed => "Self-Employed / Professional",
+        .mixed_income => "Mixed Income",
+    };
+}
+
+fn containsAsciiInsensitive(candidate: []const u8, query: []const u8) bool {
+    if (query.len == 0) return true;
+    if (query.len > candidate.len) return false;
+    var start: usize = 0;
+    while (start + query.len <= candidate.len) : (start += 1) {
+        var equal = true;
+        for (candidate[start .. start + query.len], query) |left, right| {
+            if (std.ascii.toLower(left) != std.ascii.toLower(right)) {
+                equal = false;
+                break;
+            }
+        }
+        if (equal) return true;
+    }
+    return false;
+}
+
+fn syncProfileSubjectControl(model: *Model) void {
+    model.profileSubjectPickerVisible = false;
+    if (!model.taxProfiles.subjectKindSelectionCommitted()) {
+        model.profileSubjectQuery.clear();
+        return;
+    }
+    model.profileSubjectQuery.set(profileSubjectKindOptionLabel(
+        model.taxProfiles.subjectKind(),
+    ));
+}
+
+fn syncProfileClassificationControl(model: *Model) void {
+    model.profileClassificationPickerVisible = false;
+    const classification = model.taxProfiles.naturalPersonClassification();
+    if (classification == .classification_unknown) {
+        model.profileClassificationQuery.clear();
+        return;
+    }
+    model.profileClassificationQuery.set(
+        profileClassificationOptionLabel(classification),
+    );
+}
+
+fn syncProfileBirthDateControl(model: *Model) void {
+    model.profileBirthDateFocused = false;
+    model.profileBirthDateDisplay.clear();
+    const canonical = model.taxProfiles.birth_date.text();
+    if (canonical.len == 0 or
+        model.taxProfiles.profileFieldValidationMessage(.birth_date) != null)
+    {
+        model.profileBirthDateDisplay.set(canonical);
+        return;
+    }
+    var friendly_buffer: [32]u8 = undefined;
+    const friendly = friendlyDateLabelBuffer(&friendly_buffer, canonical);
+    model.profileBirthDateDisplay.set(friendly);
+}
+
+fn focusProfileBirthDateControl(model: *Model) void {
+    model.profileBirthDateFocused = true;
+    model.profileBirthDateDisplay.clear();
+}
+
+fn applyProfileSubjectQuery(
+    model: *Model,
+    edit: canvas.TextInputEvent,
+) void {
+    if (edit == .clear) {
+        model.taxProfiles.clearSubjectKindSelection();
+        model.profileSubjectQuery.clear();
+        model.profileSubjectPickerVisible = false;
+        return;
+    }
+    model.profileSubjectQuery.apply(edit);
+    model.profileSubjectPickerVisible = true;
+}
+
+fn applyProfileClassificationQuery(
+    model: *Model,
+    edit: canvas.TextInputEvent,
+) void {
+    if (edit == .clear) {
+        model.taxProfiles.setNaturalPersonClassification(.classification_unknown);
+        model.profileClassificationQuery.clear();
+        model.profileClassificationPickerVisible = false;
+        return;
+    }
+    model.profileClassificationQuery.apply(edit);
+    model.profileClassificationPickerVisible = true;
+    const selected = model.taxProfiles.naturalPersonClassification();
+    if (selected == .classification_unknown) return;
+    if (!std.mem.eql(
+        u8,
+        model.profileClassificationQuery.text(),
+        profileClassificationOptionLabel(selected),
+    )) {
+        model.taxProfiles.setNaturalPersonClassification(.classification_unknown);
+    }
+}
+
+fn selectProfileSubjectKind(model: *Model, choice_index: usize) void {
+    if (model.taxProfiles.branchMode() or
+        choice_index >= profile_subject_kind_choices.len) return;
+    model.taxProfiles.setSubjectKind(profile_subject_kind_choices[choice_index]);
+    syncProfileSubjectControl(model);
+    syncProfileClassificationControl(model);
+}
+
+fn selectProfileClassification(model: *Model, choice_index: usize) void {
+    if (choice_index >= profile_classification_choices.len) return;
+    model.taxProfiles.setNaturalPersonClassification(
+        profile_classification_choices[choice_index],
+    );
+    syncProfileClassificationControl(model);
+}
+
 fn syncProfileRdoControl(model: *Model) void {
     model.profileRdoPickerVisible = false;
     const raw = std.mem.trim(u8, model.taxProfiles.rdo.text(), " \t\r\n");
@@ -10296,9 +11142,49 @@ fn syncProfileRdoControl(model: *Model) void {
     model.profileRdoQuery.set(profileRdoLabel(entry, &buffer));
 }
 
+fn syncProfileZipControl(model: *Model) void {
+    model.profileZipQuery.set(model.taxProfiles.zip_code.text());
+    model.profileZipPickerVisible = false;
+    model.profileZipSelectedEntryIndex = null;
+}
+
+fn applyProfileZipQuery(model: *Model, edit: canvas.TextInputEvent) void {
+    const selection_only = switch (edit) {
+        .set_selection => true,
+        else => false,
+    };
+    model.profileZipQuery.apply(edit);
+    model.profileZipPickerVisible = true;
+    if (selection_only) return;
+
+    const query = std.mem.trim(u8, model.profileZipQuery.text(), " \t\r\n");
+    if (!std.mem.eql(u8, query, model.taxProfiles.zip_code.text())) {
+        model.taxProfiles.zip_code.clear();
+        model.profileZipSelectedEntryIndex = null;
+    }
+
+    _ = profile_fields.ZipCode.parse(query) catch return;
+    model.taxProfiles.zip_code.set(query);
+}
+
+fn selectProfileZip(model: *Model, entry_index: usize) void {
+    if (entry_index >= postal_reference.entries.len) return;
+    const entry = postal_reference.entries[entry_index];
+    model.taxProfiles.zip_code.set(entry.code);
+    model.profileZipQuery.set(entry.code);
+    model.profileZipSelectedEntryIndex = entry_index;
+    model.profileZipPickerVisible = false;
+    model.taxProfiles.revealProfileFieldValidation(.zip_code);
+}
+
 fn syncProfileIdentityControls(model: *Model) void {
     syncProfileTinControl(model);
     syncProfileRdoControl(model);
+    syncProfileZipControl(model);
+    syncProfileSubjectControl(model);
+    syncProfileClassificationControl(model);
+    syncProfileBirthDateControl(model);
+    syncProfileCitizenshipControl(model);
 }
 
 fn applyProfileTinSegment(
@@ -10330,6 +11216,7 @@ fn applyProfileTinSegment(
         segment_index,
         model.profileTinSegments[segment_index].text(),
     ) orelse return;
+    var edited_segment_was_normalized = false;
     for (0..segmented_tin.segment_count) |index| {
         const normalized = tin.segmentText(index).?;
         if (!std.mem.eql(
@@ -10337,8 +11224,12 @@ fn applyProfileTinSegment(
             model.profileTinSegments[index].text(),
             normalized,
         )) {
+            if (index == segment_index) edited_segment_was_normalized = true;
             model.profileTinSegments[index].set(normalized);
         }
+    }
+    if (edited_segment_was_normalized) {
+        model.profileTinControlRevisions[segment_index] +%= 1;
     }
     var digits: [segmented_tin.maximum_digit_count]u8 = undefined;
     const canonical = tin.writeDigits(&digits) catch return;
@@ -10351,6 +11242,12 @@ fn applyProfileRdoQuery(
     model: *Model,
     edit: canvas.TextInputEvent,
 ) void {
+    if (edit == .clear) {
+        model.taxProfiles.rdo.clear();
+        model.profileRdoQuery.clear();
+        model.profileRdoPickerVisible = false;
+        return;
+    }
     model.profileRdoQuery.apply(edit);
     model.profileRdoPickerVisible = true;
     const selected = rdo_reference.findByCode(
@@ -10370,6 +11267,55 @@ fn selectProfileRdo(model: *Model, entry_index: usize) void {
     if (entry_index >= rdo_reference.entries.len) return;
     model.taxProfiles.rdo.set(rdo_reference.entries[entry_index].code);
     syncProfileRdoControl(model);
+}
+
+fn syncProfileCitizenshipControl(model: *Model) void {
+    model.profileCitizenshipPickerVisible = false;
+    const raw = std.mem.trim(u8, model.taxProfiles.citizenship.text(), " \t\r\n");
+    const entry = citizenship_reference.findByValue(raw) orelse {
+        model.profileCitizenshipQuery.set(raw);
+        return;
+    };
+    model.profileCitizenshipQuery.set(entry.label());
+}
+
+fn applyProfileCitizenshipQuery(
+    model: *Model,
+    edit: canvas.TextInputEvent,
+) void {
+    if (edit == .clear) {
+        model.taxProfiles.citizenship.clear();
+        model.profileCitizenshipQuery.clear();
+        model.profileCitizenshipPickerVisible = false;
+        return;
+    }
+    model.profileCitizenshipQuery.apply(edit);
+    model.profileCitizenshipPickerVisible = true;
+    const selected = citizenship_reference.findByValue(
+        model.taxProfiles.citizenship.text(),
+    ) orelse return;
+    if (!std.mem.eql(
+        u8,
+        model.profileCitizenshipQuery.text(),
+        selected.label(),
+    )) {
+        model.taxProfiles.citizenship.clear();
+    }
+}
+
+fn selectProfileCitizenship(model: *Model, entry_index: usize) void {
+    if (entry_index >= citizenship_reference.entries.len) return;
+    model.taxProfiles.citizenship.set(
+        citizenship_reference.entries[entry_index].value(),
+    );
+    syncProfileCitizenshipControl(model);
+}
+
+fn parseProfileYearOption(raw: []const u8) ?i32 {
+    const value = std.mem.trim(u8, raw, " \t\r\n");
+    if (value.len != 4) return null;
+    const year = std.fmt.parseInt(i32, value, 10) catch return null;
+    return if (year >= 1 and year <= 9999) year else null;
 }
 
 fn beginCompleteProfileEdit(model: *Model) void {
@@ -11053,16 +11999,12 @@ pub const Msg = union(enum) {
     form_filing_email_input: canvas.TextInputEvent,
     form_filing_use_profile_contacts,
     show_profile_email,
-    profile_subject_individual,
-    profile_subject_corporation,
-    profile_subject_partnership,
-    profile_subject_cooperative,
-    profile_subject_estate,
-    profile_subject_trust,
-    profile_subject_other_legal,
-    profile_classification_pure_compensation,
-    profile_classification_self_employed,
-    profile_classification_mixed_income,
+    profile_subject_query_input: canvas.TextInputEvent,
+    profile_subject_blurred,
+    profile_subject_select: usize,
+    profile_classification_query_input: canvas.TextInputEvent,
+    profile_classification_blurred,
+    profile_classification_select: usize,
     toggle_profile_subject_picker,
     close_profile_subject_picker,
     toggle_profile_classification_picker,
@@ -11076,6 +12018,7 @@ pub const Msg = union(enum) {
     profile_accounting_period_calendar,
     profile_accounting_period_fiscal,
     profile_fiscal_year_end_month_input: canvas.TextInputEvent,
+    profile_fiscal_year_end_month_blurred,
     profile_source_manual,
     profile_source_imported,
     profile_source_migrated,
@@ -11085,20 +12028,51 @@ pub const Msg = union(enum) {
     profile_tin_segment_branch_input: canvas.TextInputEvent,
     profile_rdo_toggle_picker,
     profile_rdo_close_picker,
+    profile_rdo_blurred,
     profile_rdo_query_input: canvas.TextInputEvent,
     profile_rdo_select: usize,
+    profile_zip_toggle_picker,
+    profile_zip_close_picker,
+    profile_zip_query_input: canvas.TextInputEvent,
+    profile_zip_blurred,
+    profile_zip_clear,
+    profile_zip_select: usize,
     profile_name_input: canvas.TextInputEvent,
+    profile_name_blurred,
     profile_trade_name_input: canvas.TextInputEvent,
     profile_address_input: canvas.TextInputEvent,
-    profile_zip_input: canvas.TextInputEvent,
+    profile_address_blurred,
     profile_phone_input: canvas.TextInputEvent,
+    profile_phone_blurred,
     profile_email_input: canvas.TextInputEvent,
+    profile_email_blurred,
     profile_birth_date_input: canvas.TextInputEvent,
+    profile_birth_date_focused,
+    profile_birth_date_blurred,
+    profile_citizenship_toggle_picker,
+    profile_citizenship_close_picker,
     profile_citizenship_input: canvas.TextInputEvent,
+    profile_citizenship_blurred,
+    profile_citizenship_select: usize,
     profile_foreign_tax_number_input: canvas.TextInputEvent,
     profile_primary_line_of_business_input: canvas.TextInputEvent,
     profile_effective_from_input: canvas.TextInputEvent,
     profile_effective_until_input: canvas.TextInputEvent,
+    profile_effective_start_blurred,
+    profile_effective_end_blurred,
+    profile_use_annual_effective_years,
+    profile_use_exact_effective_dates,
+    profile_effective_start_year_toggle_picker,
+    profile_effective_start_year_close_picker,
+    profile_effective_start_year_input: canvas.TextInputEvent,
+    profile_effective_start_year_blurred,
+    profile_effective_start_year_select: i32,
+    profile_effective_end_year_toggle_picker,
+    profile_effective_end_year_close_picker,
+    profile_effective_end_year_input: canvas.TextInputEvent,
+    profile_effective_end_year_blurred,
+    profile_effective_end_year_select: i32,
+    profile_effective_end_year_clear,
     profile_source_reference_input: canvas.TextInputEvent,
     profile_setup_toggle_year_picker,
     profile_setup_close_year_picker,
@@ -11210,7 +12184,10 @@ pub const Msg = union(enum) {
     save_profile,
     cancel_profile_edit,
     profile_keep_editing,
+    profile_save_session_draft_navigation,
     profile_discard_navigation,
+    resume_profile_session_draft,
+    discard_profile_session_draft,
     dismiss_profile_notice,
     dismiss_profile_filing_readiness_notice,
     open_profile_filing_readiness_remediation,
@@ -12501,22 +13478,39 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.profileSetupSection = .email;
         },
         .toggle_profile_subject_picker => {
-            model.profileSubjectPickerVisible =
-                !model.profileSubjectPickerVisible;
+            model.profileSubjectPickerVisible = true;
             model.profileClassificationPickerVisible = false;
             model.profileEoptPickerVisible = false;
         },
         .close_profile_subject_picker => {
-            model.profileSubjectPickerVisible = false;
+            syncProfileSubjectControl(model);
+        },
+        .profile_subject_query_input => |edit| {
+            applyProfileSubjectQuery(model, edit);
+        },
+        .profile_subject_blurred => {
+            model.taxProfiles.revealProfileFieldValidation(.taxpayer_type);
+        },
+        .profile_subject_select => |choice_index| {
+            selectProfileSubjectKind(model, choice_index);
         },
         .toggle_profile_classification_picker => {
-            model.profileClassificationPickerVisible =
-                !model.profileClassificationPickerVisible;
+            model.profileClassificationPickerVisible = true;
             model.profileSubjectPickerVisible = false;
             model.profileEoptPickerVisible = false;
         },
         .close_profile_classification_picker => {
-            model.profileClassificationPickerVisible = false;
+            syncProfileClassificationControl(model);
+        },
+        .profile_classification_query_input => |edit| {
+            applyProfileClassificationQuery(model, edit);
+        },
+        .profile_classification_blurred => {
+            syncProfileClassificationControl(model);
+            model.taxProfiles.revealProfileFieldValidation(.tax_classification);
+        },
+        .profile_classification_select => |choice_index| {
+            selectProfileClassification(model, choice_index);
         },
         .toggle_profile_eopt_picker => {
             model.profileEoptPickerVisible = !model.profileEoptPickerVisible;
@@ -12525,48 +13519,6 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .close_profile_eopt_picker => {
             model.profileEoptPickerVisible = false;
-        },
-        .profile_subject_individual => {
-            model.taxProfiles.setSubjectKind(.individual);
-            model.profileSubjectPickerVisible = false;
-        },
-        .profile_subject_corporation => {
-            model.taxProfiles.setSubjectKind(.corporation);
-            model.profileSubjectPickerVisible = false;
-        },
-        .profile_subject_partnership => {
-            model.taxProfiles.setSubjectKind(.partnership);
-            model.profileSubjectPickerVisible = false;
-        },
-        .profile_subject_cooperative => {
-            model.taxProfiles.setSubjectKind(.cooperative);
-            model.profileSubjectPickerVisible = false;
-        },
-        .profile_subject_estate => {
-            model.taxProfiles.setSubjectKind(.estate);
-            model.profileSubjectPickerVisible = false;
-        },
-        .profile_subject_trust => {
-            model.taxProfiles.setSubjectKind(.trust);
-            model.profileSubjectPickerVisible = false;
-        },
-        .profile_subject_other_legal => {
-            model.taxProfiles.setSubjectKind(.other_legal_entity);
-            model.profileSubjectPickerVisible = false;
-        },
-        .profile_classification_pure_compensation => {
-            model.taxProfiles.setNaturalPersonClassification(
-                .pure_compensation,
-            );
-            model.profileClassificationPickerVisible = false;
-        },
-        .profile_classification_self_employed => {
-            model.taxProfiles.setNaturalPersonClassification(.self_employed);
-            model.profileClassificationPickerVisible = false;
-        },
-        .profile_classification_mixed_income => {
-            model.taxProfiles.setNaturalPersonClassification(.mixed_income);
-            model.profileClassificationPickerVisible = false;
         },
         .profile_eopt_micro => selectCompleteProfileEopt(model, .micro),
         .profile_eopt_small => selectCompleteProfileEopt(model, .small),
@@ -12581,6 +13533,9 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .profile_fiscal_year_end_month_input => |edit| {
             applyDigitsOnly(&model.taxProfiles.fiscal_year_end_month, edit);
             model.taxProfiles.captureInputTruncation();
+        },
+        .profile_fiscal_year_end_month_blurred => {
+            model.taxProfiles.revealProfileFieldValidation(.fiscal_year_end_month);
         },
         .profile_source_manual => {
             model.taxProfiles.setSourceKind(.manual_entry);
@@ -13076,14 +14031,13 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             applyProfileTinSegment(model, 3, edit);
         },
         .profile_rdo_toggle_picker => {
-            if (model.profileRdoPickerVisible) {
-                syncProfileRdoControl(model);
-            } else {
-                model.profileRdoQuery.clear();
-                model.profileRdoPickerVisible = true;
-            }
+            model.profileRdoPickerVisible = true;
         },
         .profile_rdo_close_picker => syncProfileRdoControl(model),
+        .profile_rdo_blurred => {
+            syncProfileRdoControl(model);
+            model.taxProfiles.revealProfileFieldValidation(.rdo_code);
+        },
         .profile_rdo_query_input => |edit| {
             applyProfileRdoQuery(model, edit);
         },
@@ -13094,6 +14048,9 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.taxProfiles.display_name.apply(edit);
             model.taxProfiles.captureInputTruncation();
         },
+        .profile_name_blurred => {
+            model.taxProfiles.revealProfileFieldValidation(.taxpayer_name);
+        },
         .profile_trade_name_input => |edit| {
             model.taxProfiles.trade_name.apply(edit);
             model.taxProfiles.captureInputTruncation();
@@ -13102,25 +14059,77 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.taxProfiles.registered_address.apply(edit);
             model.taxProfiles.captureInputTruncation();
         },
-        .profile_zip_input => |edit| {
-            model.taxProfiles.zip_code.apply(edit);
-            model.taxProfiles.captureInputTruncation();
+        .profile_address_blurred => {
+            model.taxProfiles.revealProfileFieldValidation(.registered_address);
         },
         .profile_phone_input => |edit| {
             model.taxProfiles.phone.apply(edit);
             model.taxProfiles.captureInputTruncation();
         },
+        .profile_phone_blurred => {
+            model.taxProfiles.revealProfileFieldValidation(.contact_number);
+        },
         .profile_email_input => |edit| {
             model.taxProfiles.email.apply(edit);
             model.taxProfiles.captureInputTruncation();
         },
+        .profile_email_blurred => {
+            model.taxProfiles.revealProfileFieldValidation(.email_address);
+        },
         .profile_birth_date_input => |edit| {
+            focusProfileBirthDateControl(model);
             model.taxProfiles.birth_date.apply(edit);
             model.taxProfiles.captureInputTruncation();
         },
+        .profile_birth_date_focused => {
+            focusProfileBirthDateControl(model);
+        },
+        .profile_birth_date_blurred => {
+            model.taxProfiles.normalizeBirthDateInput();
+            syncProfileBirthDateControl(model);
+            model.taxProfiles.revealProfileFieldValidation(.birth_date);
+        },
+        .profile_zip_toggle_picker => {
+            if (!model.profileZipPickerVisible) {
+                model.profileZipQuery.set(model.taxProfiles.zip_code.text());
+            }
+            model.profileZipPickerVisible = true;
+        },
+        .profile_zip_close_picker => syncProfileZipControl(model),
+        .profile_zip_query_input => |edit| applyProfileZipQuery(model, edit),
+        .profile_zip_blurred => {
+            const query = std.mem.trim(
+                u8,
+                model.profileZipQuery.text(),
+                " \t\r\n",
+            );
+            if (query.len != 0 and model.taxProfiles.zip_code.text().len == 0) {
+                model.taxProfiles.zip_code.set(query);
+            }
+            syncProfileZipControl(model);
+            model.taxProfiles.revealProfileFieldValidation(.zip_code);
+        },
+        .profile_zip_clear => {
+            model.profileZipQuery.clear();
+            model.taxProfiles.zip_code.clear();
+            model.profileZipSelectedEntryIndex = null;
+            model.profileZipPickerVisible = true;
+            model.taxProfiles.revealProfileFieldValidation(.zip_code);
+        },
+        .profile_zip_select => |entry_index| selectProfileZip(model, entry_index),
+        .profile_citizenship_toggle_picker => {
+            model.profileCitizenshipPickerVisible = true;
+        },
+        .profile_citizenship_close_picker => syncProfileCitizenshipControl(model),
+        .profile_citizenship_select => |entry_index| {
+            selectProfileCitizenship(model, entry_index);
+        },
         .profile_citizenship_input => |edit| {
-            model.taxProfiles.citizenship.apply(edit);
-            model.taxProfiles.captureInputTruncation();
+            applyProfileCitizenshipQuery(model, edit);
+        },
+        .profile_citizenship_blurred => {
+            syncProfileCitizenshipControl(model);
+            model.taxProfiles.revealProfileFieldValidation(.citizenship);
         },
         .profile_foreign_tax_number_input => |edit| {
             model.taxProfiles.foreign_tax_number.apply(edit);
@@ -13136,6 +14145,62 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .profile_effective_until_input => |edit| {
             model.taxProfiles.effective_until.apply(edit);
             model.taxProfiles.captureInputTruncation();
+        },
+        .profile_effective_start_blurred => {
+            model.taxProfiles.revealProfileFieldValidation(.effective_start);
+        },
+        .profile_effective_end_blurred => {
+            model.taxProfiles.revealProfileFieldValidation(.effective_end);
+        },
+        .profile_use_annual_effective_years => {
+            model.taxProfiles.useAnnualEffectiveYears();
+            model.profileEffectiveStartYearPickerVisible = false;
+            model.profileEffectiveEndYearPickerVisible = false;
+        },
+        .profile_use_exact_effective_dates => {
+            model.taxProfiles.useExactEffectiveDates();
+            model.profileEffectiveStartYearPickerVisible = false;
+            model.profileEffectiveEndYearPickerVisible = false;
+        },
+        .profile_effective_start_year_toggle_picker => {
+            model.profileEffectiveStartYearPickerVisible = true;
+        },
+        .profile_effective_start_year_close_picker => {
+            model.profileEffectiveStartYearPickerVisible = false;
+        },
+        .profile_effective_start_year_input => |edit| {
+            model.taxProfiles.applyEffectiveStartYearInput(edit);
+            model.profileEffectiveStartYearPickerVisible = edit != .clear;
+        },
+        .profile_effective_start_year_blurred => {
+            model.profileEffectiveStartYearPickerVisible = false;
+            model.taxProfiles.revealProfileFieldValidation(.effective_start);
+        },
+        .profile_effective_start_year_select => |year| {
+            model.taxProfiles.selectEffectiveStartYear(year);
+            model.profileEffectiveStartYearPickerVisible = false;
+        },
+        .profile_effective_end_year_toggle_picker => {
+            model.profileEffectiveEndYearPickerVisible = true;
+        },
+        .profile_effective_end_year_close_picker => {
+            model.profileEffectiveEndYearPickerVisible = false;
+        },
+        .profile_effective_end_year_input => |edit| {
+            model.taxProfiles.applyEffectiveEndYearInput(edit);
+            model.profileEffectiveEndYearPickerVisible = edit != .clear;
+        },
+        .profile_effective_end_year_blurred => {
+            model.profileEffectiveEndYearPickerVisible = false;
+            model.taxProfiles.revealProfileFieldValidation(.effective_end);
+        },
+        .profile_effective_end_year_select => |year| {
+            model.taxProfiles.selectEffectiveEndYear(year);
+            model.profileEffectiveEndYearPickerVisible = false;
+        },
+        .profile_effective_end_year_clear => {
+            model.taxProfiles.selectEffectiveEndYear(null);
+            model.profileEffectiveEndYearPickerVisible = false;
         },
         .profile_source_reference_input => |edit| {
             model.taxProfiles.source_reference.apply(edit);
@@ -13234,6 +14299,10 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .profile_keep_editing => {
             model.pendingProfileNavigation = null;
         },
+        .profile_save_session_draft_navigation => {
+            if (!model.taxProfiles.saveSessionDraft(&model.sessionProfileDraft)) return;
+            updateCore(model, .profile_discard_navigation, fx);
+        },
         .profile_discard_navigation => {
             const pending = model.pendingProfileNavigation orelse return;
             model.pendingProfileNavigation = null;
@@ -13298,6 +14367,25 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
                 .new_taxpayer => updateCore(model, .new_taxpayer_profile, fx),
                 .add_branch => updateCore(model, .add_branch_profile, fx),
             }
+        },
+        .resume_profile_session_draft => {
+            if (!prepareSessionDraftResume(model, fx)) return;
+            if (!model.taxProfiles.resumeSessionDraft(&model.sessionProfileDraft)) return;
+            model.pendingProfileNavigation = null;
+            model.profileSetupSection = .tax_profile;
+            if (model.page == .taxpayer_dashboard) {
+                model.dashboardSection = .profile_settings;
+            }
+            syncProfileIdentityControls(model);
+            model.profileSubjectPickerVisible = false;
+            model.profileClassificationPickerVisible = false;
+            model.profileEoptPickerVisible = false;
+            // The draft is now the active editor state. Keep no second parked
+            // copy so later blank creation flows cannot be mistaken for it.
+            model.taxProfiles.discardSessionDraft(&model.sessionProfileDraft);
+        },
+        .discard_profile_session_draft => {
+            model.taxProfiles.discardSessionDraft(&model.sessionProfileDraft);
         },
         .dismiss_profile_notice => model.taxProfiles.dismissNotice(),
         .dismiss_profile_filing_readiness_notice => {
@@ -17652,6 +18740,77 @@ fn deferTaxpayerContextMutation(
     return model.taxProfiles.rejectIfFormsDirty();
 }
 
+/// Select a parked draft's source profile without depending on whichever
+/// bounded/filterable slice the sidebar happens to display. The user's query
+/// is restored immediately after the normal selection lifecycle completes.
+fn selectSessionDraftSource(
+    model: *Model,
+    profile_id: []const u8,
+    fx: ?*Effects,
+) bool {
+    if (model.taxProfiles.selectedProfileId()) |selected| {
+        if (std.mem.eql(u8, selected, profile_id)) return true;
+    }
+
+    const original_query = model.taxProfiles.sidebarQuery();
+    var original_query_copy: [96]u8 = undefined;
+    std.debug.assert(original_query.len <= original_query_copy.len);
+    @memcpy(original_query_copy[0..original_query.len], original_query);
+
+    // Searching by the opaque stable ID yields the parked taxpayer even when
+    // it is outside the current sidebar query or first display page.
+    model.taxProfiles.setSidebarQuery(profile_id);
+    var matching_slot: ?usize = null;
+    for (model.taxProfiles.rows()) |row| {
+        if (std.mem.eql(u8, row.idLabel(), profile_id)) {
+            matching_slot = row.slot;
+            break;
+        }
+    }
+    if (matching_slot) |slot| {
+        updateCore(model, .{ .select_taxpayer = slot }, fx);
+    }
+    model.taxProfiles.setSidebarQuery(original_query_copy[0..original_query.len]);
+
+    const selected = model.taxProfiles.selectedProfileId() orelse return false;
+    return std.mem.eql(u8, selected, profile_id);
+}
+
+/// Resume through the same context-change paths as a real taxpayer switch,
+/// new-taxpayer action, or branch action. A session draft is only editor data;
+/// it must not bypass the surrounding Forms Set, calendar, or exact-filer
+/// lifecycle.
+fn prepareSessionDraftResume(model: *Model, fx: ?*Effects) bool {
+    const draft = &model.sessionProfileDraft;
+    if (!draft.valid) return false;
+
+    if (draft.has_selection and
+        !selectSessionDraftSource(model, draft.selected_id.text(), fx))
+    {
+        return false;
+    }
+
+    const creates_profile = draft.editing_new or draft.branch_mode;
+    if (!creates_profile) return draft.has_selection;
+
+    // startNew()/beginAddBranch() reset profile-scoped workspace state and
+    // establish the cancellation snapshot. Do that before restoring fields.
+    if (draft.branch_mode) {
+        updateCore(model, .add_branch_profile, fx);
+    } else {
+        updateCore(model, .new_taxpayer_profile, fx);
+    }
+    if (!model.taxProfiles.profileCreating() or
+        model.taxProfiles.branchMode() != draft.branch_mode)
+    {
+        return false;
+    }
+    if (!draft.has_selection) return model.taxProfiles.selectedProfileId() == null;
+
+    const selected = model.taxProfiles.selectedProfileId() orelse return false;
+    return std.mem.eql(u8, selected, draft.selected_id.text());
+}
+
 fn navigate(model: *Model, page: Page) void {
     if (model.page == .tax_form_profile and
         page != .tax_form_profile and
@@ -18759,6 +19918,61 @@ fn addTestProfile(
         tin,
         subject_kind,
         "040",
+    );
+}
+
+/// Current UI saves require the complete individual contact and identity
+/// facts. Keep direct test setup explicit so these tests exercise their
+/// intended workflow instead of relying on legacy optional storage fields.
+fn setRequiredIndividualProfileFieldsForTest(
+    state: *profile_ui.State,
+    effective_start_year: i32,
+) void {
+    // Match the UI's required, affirmative taxpayer-type choice rather than
+    // relying on State's implementation default of Individual.
+    state.setSubjectKind(.individual);
+    state.setAccountingPeriodBasis(.calendar);
+    state.zip_code.set("1100");
+    state.phone.set("09171234567");
+    state.email.set("fixture@example.ph");
+    state.birth_date.set("1990-01-02");
+    state.citizenship.set("Filipino");
+    state.selectEffectiveStartYear(effective_start_year);
+}
+
+/// Older persisted records can lack contact details that the current editor
+/// now requires. Seed that historical state through the persistence boundary
+/// so readiness tests do not rely on a UI save accepting invalid data.
+fn appendLegacyIncompleteContactRevisionForTest(
+    store: *profile_store.Store,
+    raw_profile_id: []const u8,
+) !void {
+    const allocator = std.testing.allocator;
+    const profile_id = try profile_model.ProfileId.parse(raw_profile_id);
+    var owned = (try profile_persistence.loadCurrentRevision(
+        store,
+        allocator,
+        profile_id,
+    )).?;
+    defer owned.deinit(allocator);
+
+    var revision = owned.revision;
+    revision.id = try profile_model.RevisionId.parse(
+        "legacy-incomplete-contact-revision",
+    );
+    revision.sequence += 1;
+    revision.contact.zip_code = null;
+    revision.contact.contact_number = null;
+    revision.contact.email_address = null;
+    var rows = try profile_persistence.toWriteRows(
+        allocator,
+        &revision,
+        owned.revision.sequence,
+    );
+    defer rows.deinit(allocator);
+    try profile_store.testing.appendLegacyBaseRevision(
+        store,
+        rows.revision,
     );
 }
 
@@ -20693,6 +21907,10 @@ test "library disables incomplete profile periods without redirecting to setup" 
         "123-456-789-000",
         .individual,
     );
+    try appendLegacyIncompleteContactRevisionForTest(
+        &store,
+        "11111111111111111111111111111111",
+    );
 
     var model = Model{};
     model.calendar.selected_year = 2026;
@@ -20722,10 +21940,6 @@ test "library disables incomplete profile periods without redirecting to setup" 
         .form_code = "2551Q",
         .form_revision = "2018-01-ENCS",
     }});
-    model.taxProfiles.editSelected();
-    model.taxProfiles.phone.clear();
-    model.taxProfiles.email.clear();
-    try std.testing.expect(model.taxProfiles.save());
     refreshSelectedProfileFormSet(&model);
 
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -21709,7 +22923,7 @@ test "material exact 1701Q guards profile creation and retains its immutable rev
     model.taxProfiles.tin.set("444-555-666-00000");
     model.taxProfiles.rdo.set("040");
     model.taxProfiles.registered_address.set("Quezon City");
-    model.taxProfiles.effective_from.set("2026-01-01");
+    setRequiredIndividualProfileFieldsForTest(&model.taxProfiles, 2026);
     model.taxProfiles.setNaturalPersonClassification(.pure_compensation);
     openProfileEditor(&model);
     try std.testing.expect(model.taxProfiles.editing_new);
@@ -22121,24 +23335,531 @@ test "calendar handoff markup is exposed only as a profile action" {
     ) == null);
 }
 
-test "compact profile subject picker selects and dismisses predictably" {
+test "profile taxpayer-type combobox filters, provisions, and synchronizes selection" {
     var model = Model{
         .page = .profile_setup,
         .viewportClass = .phone,
         .viewportWidth = 390,
     };
-    try std.testing.expectEqualStrings("Individual", model.profileSubjectKindLabel());
+    syncProfileSubjectControl(&model);
+    try std.testing.expectEqualStrings(
+        "Choose taxpayer type",
+        model.profileSubjectKindLabel(),
+    );
+    try std.testing.expectEqualStrings("", model.profileSubjectQueryValue());
     try std.testing.expect(!model.profileSubjectPickerOpen());
 
     update(&model, .toggle_profile_subject_picker);
     try std.testing.expect(model.profileSubjectPickerOpen());
-    update(&model, .profile_subject_corporation);
+    try std.testing.expectEqualStrings("", model.profileSubjectQueryValue());
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const initial_rows = model.profileSubjectKindOptionRows(arena_state.allocator());
+    try std.testing.expectEqual(@as(usize, 5), initial_rows.len);
+    try std.testing.expect(initial_rows[0].selected);
+
+    applyProfileSubjectQuery(&model, .{ .insert_text = "part" });
+    const filtered_rows = model.profileSubjectKindOptionRows(arena_state.allocator());
+    try std.testing.expectEqual(@as(usize, 1), filtered_rows.len);
+    try std.testing.expectEqualStrings("Partnership", filtered_rows[0].label);
+    // No taxpayer type is committed yet, so the first filtered row is the
+    // provisional keyboard target.
+    try std.testing.expect(filtered_rows[0].selected);
+
+    update(&model, .{ .profile_subject_select = filtered_rows[0].id });
     try std.testing.expect(!model.profileSubjectPickerOpen());
-    try std.testing.expectEqualStrings("Corporation", model.profileSubjectKindLabel());
+    try std.testing.expectEqualStrings("Partnership", model.profileSubjectKindLabel());
+    try std.testing.expectEqualStrings("Partnership", model.profileSubjectQueryValue());
 
     update(&model, .toggle_profile_subject_picker);
+    try std.testing.expect(model.profileSubjectPickerOpen());
+    try std.testing.expectEqualStrings(
+        "Partnership",
+        model.profileSubjectQueryValue(),
+    );
+    const reopened_rows = model.profileSubjectKindOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), reopened_rows.len);
+    try std.testing.expect(reopened_rows[0].selected);
     update(&model, .close_profile_subject_picker);
     try std.testing.expect(!model.profileSubjectPickerOpen());
+    try std.testing.expectEqualStrings("Partnership", model.profileSubjectQueryValue());
+}
+
+test "profile combobox focus and click release keep empty pickers open" {
+    var model = Model{ .page = .profile_setup };
+
+    // Keyboard and pointer focus open the picker. A real pointer-down then
+    // mirrors a selection-only text edit into the controlled combobox before
+    // pointer-up dispatches on-press. That complete gesture must preserve the
+    // open picker instead of toggling it closed.
+    update(&model, .profile_rdo_toggle_picker);
+    try std.testing.expect(model.profileRdoPickerOpen());
+    applyProfileRdoQuery(&model, .{ .set_selection = .{
+        .anchor = 0,
+        .focus = 0,
+    } });
+    try std.testing.expect(model.profileRdoPickerOpen());
+    update(&model, .profile_rdo_toggle_picker);
+    try std.testing.expect(model.profileRdoPickerOpen());
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const rows = model.profileRdoOptionRows(arena_state.allocator());
+    try std.testing.expectEqual(@as(usize, 5), rows.len);
+    try std.testing.expect(rows[0].selected);
+
+    model.taxProfiles.rdo.set("019");
+    syncProfileRdoControl(&model);
+    update(&model, .profile_rdo_toggle_picker);
+    try std.testing.expectEqualStrings(
+        "019 - Subic Bay Freeport Zone",
+        model.profileRdoQueryValue(),
+    );
+    const reopened_rdo_rows = model.profileRdoOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), reopened_rdo_rows.len);
+    try std.testing.expectEqualStrings("019", reopened_rdo_rows[0].code);
+    try std.testing.expect(reopened_rdo_rows[0].selected);
+
+    update(&model, .profile_zip_toggle_picker);
+    try std.testing.expect(model.profileZipPickerOpen());
+    applyProfileZipQuery(&model, .{ .set_selection = .{
+        .anchor = 0,
+        .focus = 0,
+    } });
+    update(&model, .profile_zip_toggle_picker);
+    try std.testing.expect(model.profileZipPickerOpen());
+    const zip_rows = model.profileZipOptionRows(arena_state.allocator());
+    try std.testing.expectEqual(@as(usize, 5), zip_rows.len);
+    try std.testing.expect(zip_rows[0].selected);
+
+    model.taxProfiles.clearSubjectKindSelection();
+    syncProfileSubjectControl(&model);
+    update(&model, .toggle_profile_subject_picker);
+    try std.testing.expect(model.profileSubjectPickerOpen());
+    try std.testing.expectEqualStrings("", model.profileSubjectQueryValue());
+    applyProfileSubjectQuery(&model, .{ .set_selection = .{
+        .anchor = 0,
+        .focus = 0,
+    } });
+    update(&model, .toggle_profile_subject_picker);
+    try std.testing.expect(model.profileSubjectPickerOpen());
+    const subject_rows = model.profileSubjectKindOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 5), subject_rows.len);
+    try std.testing.expect(subject_rows[0].selected);
+
+    model.profileSubjectPickerVisible = false;
+    update(&model, .toggle_profile_classification_picker);
+    try std.testing.expect(model.profileClassificationPickerOpen());
+    applyProfileClassificationQuery(&model, .{ .set_selection = .{
+        .anchor = 0,
+        .focus = 0,
+    } });
+    update(&model, .toggle_profile_classification_picker);
+    try std.testing.expect(model.profileClassificationPickerOpen());
+    const classification_rows = model.profileClassificationOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 3), classification_rows.len);
+    try std.testing.expect(classification_rows[0].selected);
+
+    update(&model, .profile_citizenship_toggle_picker);
+    try std.testing.expect(model.profileCitizenshipPickerOpen());
+    applyProfileCitizenshipQuery(&model, .{ .set_selection = .{
+        .anchor = 0,
+        .focus = 0,
+    } });
+    update(&model, .profile_citizenship_toggle_picker);
+    try std.testing.expect(model.profileCitizenshipPickerOpen());
+    const citizenship_rows = model.profileCitizenshipOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 5), citizenship_rows.len);
+    try std.testing.expect(citizenship_rows[0].selected);
+
+    update(&model, .profile_effective_start_year_toggle_picker);
+    try std.testing.expect(model.profileEffectiveStartYearPickerOpen());
+    model.taxProfiles.applyEffectiveStartYearInput(.{ .set_selection = .{
+        .anchor = 0,
+        .focus = 0,
+    } });
+    update(&model, .profile_effective_start_year_toggle_picker);
+    try std.testing.expect(model.profileEffectiveStartYearPickerOpen());
+
+    update(&model, .profile_effective_end_year_toggle_picker);
+    try std.testing.expect(model.profileEffectiveEndYearPickerOpen());
+    model.taxProfiles.applyEffectiveEndYearInput(.{ .set_selection = .{
+        .anchor = 0,
+        .focus = 0,
+    } });
+    update(&model, .profile_effective_end_year_toggle_picker);
+    try std.testing.expect(model.profileEffectiveEndYearPickerOpen());
+}
+
+test "Taxpayer Profile markup opens every combobox on focus" {
+    const focus_handlers = [_][]const u8{
+        "on-focus=\"profile_rdo_toggle_picker\"",
+        "on-focus=\"toggle_profile_subject_picker\"",
+        "on-focus=\"toggle_profile_classification_picker\"",
+        "on-focus=\"profile_zip_toggle_picker\"",
+        "on-focus=\"profile_citizenship_toggle_picker\"",
+        "on-focus=\"profile_effective_start_year_toggle_picker\"",
+        "on-focus=\"profile_effective_end_year_toggle_picker\"",
+    };
+    for (focus_handlers) |handler| {
+        try std.testing.expect(
+            std.mem.indexOf(u8, app_markup_pages, handler) != null,
+        );
+    }
+}
+
+test "profile tax-classification combobox filters, provisions, and synchronizes selection" {
+    var model = Model{ .page = .profile_setup };
+    model.taxProfiles.setSubjectKind(.individual);
+    syncProfileClassificationControl(&model);
+
+    try std.testing.expectEqualStrings(
+        "",
+        model.profileClassificationQueryValue(),
+    );
+    try std.testing.expect(!model.profileClassificationPickerOpen());
+    try std.testing.expect(!model.profileClassificationCommittedSelection());
+
+    update(&model, .toggle_profile_classification_picker);
+    try std.testing.expect(model.profileClassificationPickerOpen());
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const initial_rows = model.profileClassificationOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 3), initial_rows.len);
+    try std.testing.expect(initial_rows[0].selected);
+
+    applyProfileClassificationQuery(&model, .{ .insert_text = "mixed" });
+    const filtered_rows = model.profileClassificationOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), filtered_rows.len);
+    try std.testing.expectEqualStrings("Mixed Income", filtered_rows[0].label);
+    // With no committed selection, the first filtered row is the provisional
+    // Tab/Enter target just as it is for Taxpayer Type and RDO.
+    try std.testing.expect(filtered_rows[0].selected);
+
+    update(&model, .{ .profile_classification_select = filtered_rows[0].id });
+    try std.testing.expect(!model.profileClassificationPickerOpen());
+    try std.testing.expect(model.profileClassificationCommittedSelection());
+    try std.testing.expectEqualStrings(
+        "Mixed Income",
+        model.profileClassificationQueryValue(),
+    );
+
+    update(&model, .{ .profile_classification_query_input = .clear });
+    try std.testing.expect(!model.profileClassificationCommittedSelection());
+    try std.testing.expectEqualStrings("", model.profileClassificationQueryValue());
+    try std.testing.expect(!model.profileClassificationPickerOpen());
+
+    update(&model, .toggle_profile_classification_picker);
+    update(&model, .profile_classification_blurred);
+    try std.testing.expect(!model.profileClassificationPickerOpen());
+    try std.testing.expectEqualStrings("", model.profileClassificationQueryValue());
+    try std.testing.expect(model.profileClassificationErrorVisible());
+    try std.testing.expectEqualStrings(
+        "Tax Classification is required for an individual taxpayer.",
+        model.profileClassificationValidationMessage(),
+    );
+}
+
+test "profile year combobox provisions a single active fallback" {
+    var model = Model{ .page = .profile_setup };
+    model.taxProfiles.default_tax_year = 2026;
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    model.taxProfiles.effective_start_year.set("20");
+    const start_rows = model.profileEffectiveStartYearOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 5), start_rows.len);
+    try std.testing.expectEqual(@as(i32, 2026), start_rows[0].value);
+    try std.testing.expect(start_rows[0].selected);
+    for (start_rows[1..]) |row| try std.testing.expect(!row.selected);
+
+    model.taxProfiles.effective_end_year.set("");
+    try std.testing.expect(model.profileEffectiveEndYearClearSelected());
+    const open_end_rows = model.profileEffectiveEndYearOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 5), open_end_rows.len);
+    for (open_end_rows) |row| try std.testing.expect(!row.selected);
+
+    model.taxProfiles.effective_end_year.set("20");
+    try std.testing.expect(!model.profileEffectiveEndYearClearSelected());
+    const filtered_end_rows = model.profileEffectiveEndYearOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expect(filtered_end_rows[0].selected);
+    for (filtered_end_rows[1..]) |row| try std.testing.expect(!row.selected);
+
+    model.taxProfiles.effective_end_year.set("2019");
+    const older_end_rows = model.profileEffectiveEndYearOptionRows(
+        arena_state.allocator(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), older_end_rows.len);
+    try std.testing.expectEqual(@as(i32, 2019), older_end_rows[0].value);
+    try std.testing.expect(older_end_rows[0].selected);
+}
+
+test "profile combobox clear removes committed selections and collapses menus" {
+    var model = Model{ .page = .profile_setup };
+
+    model.taxProfiles.rdo.set("019");
+    syncProfileRdoControl(&model);
+    try std.testing.expect(model.profileRdoCommittedSelection());
+    update(&model, .{ .profile_rdo_query_input = .clear });
+    try std.testing.expect(!model.profileRdoCommittedSelection());
+    try std.testing.expectEqualStrings("", model.profileRdoQueryValue());
+    try std.testing.expect(!model.profileRdoPickerOpen());
+
+    model.taxProfiles.zip_code.set("2600");
+    syncProfileZipControl(&model);
+    try std.testing.expect(model.profileZipCommittedSelection());
+    update(&model, .{ .profile_zip_query_input = .clear });
+    try std.testing.expect(!model.profileZipCommittedSelection());
+    try std.testing.expectEqualStrings("", model.profileZipQueryValue());
+    try std.testing.expect(model.profileZipPickerOpen());
+
+    model.taxProfiles.citizenship.set("Filipino");
+    syncProfileCitizenshipControl(&model);
+    try std.testing.expect(model.profileCitizenshipCommittedSelection());
+    update(&model, .{ .profile_citizenship_input = .clear });
+    try std.testing.expect(!model.profileCitizenshipCommittedSelection());
+    try std.testing.expectEqualStrings("", model.profileCitizenshipQueryValue());
+    try std.testing.expect(!model.profileCitizenshipPickerOpen());
+
+    model.taxProfiles.selectEffectiveStartYear(2026);
+    try std.testing.expect(model.profileEffectiveStartYearSelected());
+    update(&model, .{ .profile_effective_start_year_input = .clear });
+    try std.testing.expect(!model.profileEffectiveStartYearSelected());
+    try std.testing.expect(!model.profileEffectiveStartYearPickerOpen());
+
+    model.taxProfiles.selectEffectiveEndYear(2027);
+    try std.testing.expect(model.profileEffectiveEndYearSelected());
+    update(&model, .{ .profile_effective_end_year_input = .clear });
+    try std.testing.expect(!model.profileEffectiveEndYearSelected());
+    try std.testing.expect(!model.profileEffectiveEndYearPickerOpen());
+}
+
+test "profile ZIP combobox searches geography and persists only the code" {
+    var model = Model{ .page = .profile_setup };
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    update(&model, .profile_zip_toggle_picker);
+    const initial_rows = model.profileZipOptionRows(arena_state.allocator());
+    try std.testing.expectEqual(@as(usize, 5), initial_rows.len);
+    try std.testing.expect(initial_rows[0].selected);
+
+    update(&model, .{ .profile_zip_query_input = .{ .insert_text = "2600" } });
+    const numeric_rows = model.profileZipOptionRows(arena_state.allocator());
+    try std.testing.expectEqual(@as(usize, 1), numeric_rows.len);
+    try std.testing.expectEqualStrings("2600", numeric_rows[0].code);
+    try std.testing.expectEqualStrings("Baguio City", numeric_rows[0].locality);
+
+    update(&model, .{ .profile_zip_query_input = .clear });
+    update(&model, .{ .profile_zip_query_input = .{ .insert_text = "Baguio" } });
+    const locality_rows = model.profileZipOptionRows(arena_state.allocator());
+    try std.testing.expect(locality_rows.len > 0);
+    try std.testing.expect(locality_rows.len <= 5);
+    try std.testing.expectEqualStrings("2600", locality_rows[0].code);
+
+    update(&model, .{ .profile_zip_query_input = .clear });
+    update(&model, .{ .profile_zip_query_input = .{ .insert_text = "Benguet" } });
+    const province_rows = model.profileZipOptionRows(arena_state.allocator());
+    try std.testing.expect(province_rows.len > 0);
+    try std.testing.expect(province_rows.len <= 5);
+
+    update(&model, .{ .profile_zip_query_input = .clear });
+    update(&model, .{ .profile_zip_query_input = .{ .insert_text = "Cordillera" } });
+    const region_rows = model.profileZipOptionRows(arena_state.allocator());
+    try std.testing.expect(region_rows.len > 0);
+    try std.testing.expect(region_rows.len <= 5);
+
+    update(&model, .{ .profile_zip_select = locality_rows[0].id });
+    try std.testing.expectEqualStrings("2600", model.taxProfiles.zip_code.text());
+    try std.testing.expectEqualStrings("2600", model.profileZipQueryValue());
+    try std.testing.expect(!model.profileZipPickerOpen());
+}
+
+test "profile ZIP combobox searches the reference and accepts typed codes" {
+    var model = Model{ .page = .profile_setup };
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    update(&model, .profile_zip_toggle_picker);
+    update(&model, .{ .profile_zip_query_input = .{ .insert_text = "Balingoan" } });
+    const balingoan_rows = model.profileZipOptionRows(arena_state.allocator());
+    try std.testing.expectEqual(@as(usize, 1), balingoan_rows.len);
+    try std.testing.expectEqualStrings("9011", balingoan_rows[0].code);
+
+    update(&model, .{ .profile_zip_query_input = .clear });
+    update(&model, .{ .profile_zip_query_input = .{ .insert_text = "0000" } });
+    try std.testing.expectEqual(@as(usize, 0), model.profileZipOptionRows(
+        arena_state.allocator(),
+    ).len);
+    update(&model, .profile_zip_blurred);
+    try std.testing.expectEqualStrings("0000", model.taxProfiles.zip_code.text());
+    try std.testing.expect(!model.profileZipErrorVisible());
+
+    update(&model, .profile_zip_toggle_picker);
+    update(&model, .{ .profile_zip_query_input = .clear });
+    update(&model, .{ .profile_zip_query_input = .{ .insert_text = "100" } });
+    update(&model, .profile_zip_blurred);
+    try std.testing.expectEqualStrings("100", model.taxProfiles.zip_code.text());
+    try std.testing.expectEqualStrings("100", model.profileZipQueryValue());
+    try std.testing.expect(!model.profileZipPickerOpen());
+    try std.testing.expect(!model.profileZipCommittedSelection());
+    try std.testing.expect(model.profileZipErrorVisible());
+    try std.testing.expectEqualStrings(
+        "Enter a four-digit Philippine ZIP code.",
+        model.profileZipValidationMessage(),
+    );
+
+    update(&model, .profile_zip_toggle_picker);
+    try std.testing.expect(model.profileZipPickerOpen());
+    try std.testing.expectEqualStrings("100", model.profileZipQueryValue());
+
+    update(&model, .{ .profile_zip_query_input = .clear });
+    update(&model, .{ .profile_zip_query_input = .{ .insert_text = "10A0" } });
+    update(&model, .profile_zip_blurred);
+    try std.testing.expectEqualStrings("10A0", model.taxProfiles.zip_code.text());
+    try std.testing.expectEqualStrings("10A0", model.profileZipQueryValue());
+    try std.testing.expect(model.profileZipErrorVisible());
+    try std.testing.expect(!model.profileZipCommittedSelection());
+
+    model.profileZipSelectedEntryIndex = balingoan_rows[0].id;
+    model.taxProfiles.zip_code.set("1011");
+    syncProfileZipControl(&model);
+    try std.testing.expectEqual(
+        @as(?usize, null),
+        model.profileZipSelectedEntryIndex,
+    );
+
+    update(&model, .profile_zip_toggle_picker);
+    const switched_rows = model.profileZipOptionRows(arena_state.allocator());
+    try std.testing.expectEqual(@as(usize, 1), switched_rows.len);
+    try std.testing.expect(switched_rows[0].selected);
+}
+
+test "profile ZIP combobox commits a typed four-digit code before blur" {
+    var model = Model{ .page = .profile_setup };
+    model.taxProfiles.zip_code.set("2600");
+    syncProfileZipControl(&model);
+    model.taxProfiles.revealProfileFieldValidation(.zip_code);
+
+    update(&model, .profile_zip_toggle_picker);
+    update(&model, .{ .profile_zip_query_input = .clear });
+    update(&model, .{ .profile_zip_query_input = .{ .insert_text = "0000" } });
+
+    try std.testing.expectEqualStrings("0000", model.profileZipQueryValue());
+    try std.testing.expectEqualStrings("0000", model.taxProfiles.zip_code.text());
+    try std.testing.expect(model.profileZipCommittedSelection());
+    try std.testing.expect(!model.profileZipErrorVisible());
+
+    update(&model, .profile_zip_close_picker);
+    try std.testing.expectEqualStrings("0000", model.profileZipQueryValue());
+    try std.testing.expectEqualStrings("0000", model.taxProfiles.zip_code.text());
+    try std.testing.expect(!model.profileZipPickerOpen());
+    try std.testing.expect(!model.profileZipErrorVisible());
+}
+
+test "profile registered-address validation is revealed on blur" {
+    var model = Model{ .page = .profile_setup };
+    try std.testing.expect(!model.profileAddressErrorVisible());
+
+    update(&model, .profile_address_blurred);
+    try std.testing.expect(model.profileAddressErrorVisible());
+    try std.testing.expectEqualStrings(
+        "Registered address is required.",
+        model.profileAddressValidationMessage(),
+    );
+}
+
+test "profile required-field blur messages reach every text-entry validator" {
+    var model = Model{ .page = .profile_setup };
+
+    update(&model, .profile_subject_blurred);
+    try std.testing.expect(model.profileSubjectErrorVisible());
+
+    update(&model, .profile_name_blurred);
+    update(&model, .profile_zip_blurred);
+    update(&model, .profile_phone_blurred);
+    update(&model, .profile_email_blurred);
+    try std.testing.expect(model.profileNameErrorVisible());
+    try std.testing.expect(model.profileZipErrorVisible());
+    try std.testing.expect(model.profilePhoneErrorVisible());
+    try std.testing.expect(model.profileEmailErrorVisible());
+
+    update(&model, .profile_accounting_period_fiscal);
+    update(&model, .profile_fiscal_year_end_month_blurred);
+    try std.testing.expect(model.profileFiscalYearEndMonthErrorVisible());
+
+    model.taxProfiles.setSubjectKind(.individual);
+    model.taxProfiles.setNaturalPersonClassification(.pure_compensation);
+    update(&model, .profile_birth_date_blurred);
+    update(&model, .profile_citizenship_blurred);
+    try std.testing.expect(model.profileBirthDateErrorVisible());
+    try std.testing.expect(model.profileCitizenshipErrorVisible());
+
+    update(&model, .profile_effective_start_year_blurred);
+    try std.testing.expect(model.profileEffectiveStartErrorVisible());
+    model.taxProfiles.selectEffectiveStartYear(2026);
+    model.taxProfiles.selectEffectiveEndYear(2025);
+    update(&model, .profile_effective_end_year_blurred);
+    try std.testing.expect(model.profileEffectiveEndErrorVisible());
+}
+
+test "profile birth date shows friendly text on blur and ISO when focused" {
+    var model = Model{ .page = .profile_setup };
+    try model.taxProfiles.default_effective_from.set("2026-08-12");
+    model.taxProfiles.setSubjectKind(.individual);
+    model.taxProfiles.setNaturalPersonClassification(.pure_compensation);
+
+    update(&model, .profile_birth_date_focused);
+    update(&model, .{ .profile_birth_date_input = .{ .insert_text = "81788" } });
+    try std.testing.expectEqualStrings("81788", model.taxProfiles.birth_date.text());
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    try std.testing.expectEqualStrings(
+        "81788",
+        model.profileBirthDateValue(arena_state.allocator()),
+    );
+
+    update(&model, .profile_birth_date_blurred);
+    try std.testing.expectEqualStrings("1988-08-17", model.taxProfiles.birth_date.text());
+    try std.testing.expectEqualStrings(
+        "August 17, 1988",
+        model.profileBirthDateValue(arena_state.allocator()),
+    );
+
+    update(&model, .profile_birth_date_focused);
+    try std.testing.expectEqualStrings(
+        "1988-08-17",
+        model.profileBirthDateValue(arena_state.allocator()),
+    );
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        app_markup,
+        "Interpreted as {profileBirthDateInterpretation}",
+    ) == null);
 }
 
 test "compact profile settings tab opens inline" {
@@ -22197,6 +23918,333 @@ test "profile view cancel stays put and Back returns to its opening page" {
         Page.global_dashboard,
         model.profileEditorOrigin,
     );
+}
+
+test "Taxpayer Profile session draft resumes without a persistent revision" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addTestProfile(
+        &store,
+        "profile-session-draft",
+        "Session Draft Taxpayer",
+        "123-456-788-000",
+        .individual,
+    );
+
+    var model = Model{ .page = .taxpayer_dashboard };
+    try model.taxProfiles.attach(allocator, &store, "2026-08-04", 2026);
+    model.taxProfiles.select(
+        profileSlotNamed(&model, "Session Draft Taxpayer").?,
+    );
+    const saved_sequence = model.taxProfiles.selectedRevisionSequence().?;
+
+    update(&model, .show_profile_setup);
+    update(&model, .edit_tax_profile);
+    model.taxProfiles.display_name.set("Session Draft Value");
+    update(&model, .go_back);
+    try std.testing.expect(model.profileDirtyNavigationVisible());
+    try std.testing.expect(model.profileSessionDraftActionVisible());
+    try expectAppMarkupBuilds(&model);
+
+    update(&model, .profile_keep_editing);
+    try std.testing.expect(model.taxProfiles.profileEditing());
+    try std.testing.expectEqualStrings(
+        "Session Draft Value",
+        model.taxProfiles.display_name.text(),
+    );
+
+    update(&model, .go_back);
+    update(&model, .profile_save_session_draft_navigation);
+    try std.testing.expect(!model.profileDirtyNavigationVisible());
+    try std.testing.expect(model.taxProfiles.profileViewing());
+    try std.testing.expect(model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
+    try std.testing.expectEqual(saved_sequence, model.taxProfiles.selectedRevisionSequence().?);
+
+    update(&model, .show_dashboard_profile_settings);
+    try std.testing.expect(model.profileSessionDraftVisible());
+    update(&model, .resume_profile_session_draft);
+    try std.testing.expect(model.taxProfiles.profileEditing());
+    try std.testing.expect(model.taxProfiles.profileDirty());
+    try std.testing.expectEqualStrings(
+        "Session Draft Value",
+        model.taxProfiles.display_name.text(),
+    );
+    try std.testing.expectEqual(saved_sequence, model.taxProfiles.selectedRevisionSequence().?);
+
+    update(&model, .go_back);
+    update(&model, .profile_discard_navigation);
+    try std.testing.expect(!model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
+}
+
+test "Taxpayer Profile session draft survives another taxpayer save and resumes its context" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addTestProfile(
+        &store,
+        "profile-session-draft-a",
+        "Session Draft Taxpayer A",
+        "123-456-781-000",
+        .individual,
+    );
+    try addTestProfile(
+        &store,
+        "profile-session-draft-b",
+        "Session Draft Taxpayer B",
+        "123-456-782-000",
+        .individual,
+    );
+
+    var model = Model{ .page = .taxpayer_dashboard };
+    try model.taxProfiles.attach(allocator, &store, "2026-08-04", 2026);
+    const a_slot = profileSlotNamed(&model, "Session Draft Taxpayer A").?;
+    const b_slot = profileSlotNamed(&model, "Session Draft Taxpayer B").?;
+    update(&model, .{ .select_taxpayer = a_slot });
+    update(&model, .show_profile_setup);
+    update(&model, .edit_tax_profile);
+    model.taxProfiles.display_name.set("Session Draft Value A");
+    update(&model, .go_back);
+    update(&model, .profile_save_session_draft_navigation);
+    try std.testing.expect(model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
+
+    update(&model, .{ .select_taxpayer = b_slot });
+    update(&model, .show_profile_setup);
+    update(&model, .edit_tax_profile);
+    model.taxProfiles.display_name.set("Saved Value B");
+    update(&model, .save_profile);
+    try std.testing.expect(model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
+
+    update(&model, .show_dashboard_profile_settings);
+    model.taxProfiles.setSidebarQuery("Session Draft Taxpayer B");
+    try std.testing.expect(model.profileSessionDraftVisible());
+    update(&model, .resume_profile_session_draft);
+    try std.testing.expectEqualStrings(
+        "Session Draft Taxpayer A",
+        model.selectedTaxpayerName(),
+    );
+    try std.testing.expect(model.taxProfiles.profileEditing());
+    try std.testing.expectEqualStrings(
+        "Session Draft Value A",
+        model.taxProfiles.display_name.text(),
+    );
+    try std.testing.expectEqualStrings(
+        "Session Draft Taxpayer B",
+        model.taxProfiles.sidebarQuery(),
+    );
+    try std.testing.expect(!model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
+}
+
+test "parked Taxpayer Profile session draft cannot be replaced by another edit" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addTestProfile(
+        &store,
+        "profile-session-draft-parked",
+        "Parked Session Draft Taxpayer",
+        "123-456-783-000",
+        .individual,
+    );
+
+    var model = Model{ .page = .taxpayer_dashboard };
+    try model.taxProfiles.attach(allocator, &store, "2026-08-04", 2026);
+    const slot = profileSlotNamed(&model, "Parked Session Draft Taxpayer").?;
+    update(&model, .{ .select_taxpayer = slot });
+    update(&model, .show_profile_setup);
+    update(&model, .edit_tax_profile);
+    model.taxProfiles.display_name.set("Parked Session Draft Value");
+    update(&model, .go_back);
+    update(&model, .profile_save_session_draft_navigation);
+    try std.testing.expect(model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
+
+    update(&model, .{ .select_taxpayer = slot });
+    update(&model, .show_profile_setup);
+    update(&model, .edit_tax_profile);
+    model.taxProfiles.display_name.set("Unrelated Edit Value");
+    update(&model, .go_back);
+    try std.testing.expect(model.profileDirtyNavigationVisible());
+    try std.testing.expect(!model.profileSessionDraftActionVisible());
+    try std.testing.expect(model.profileSessionDraftBlockedVisible());
+    try expectDirtyNavigationDialogResponsiveLayout(&model, .supplemental);
+    update(&model, .profile_discard_navigation);
+    try std.testing.expect(model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
+
+    update(&model, .show_dashboard_profile_settings);
+    update(&model, .resume_profile_session_draft);
+    try std.testing.expectEqualStrings(
+        "Parked Session Draft Value",
+        model.taxProfiles.display_name.text(),
+    );
+    try std.testing.expect(!model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
+}
+
+test "new Taxpayer Profile session draft cannot be overwritten by another creation editor" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+
+    var model = Model{ .page = .profile_setup };
+    try model.taxProfiles.attach(allocator, &store, "2026-08-04", 2026);
+    model.taxProfiles.display_name.set("Parked New Taxpayer");
+    update(&model, .go_back);
+    update(&model, .profile_save_session_draft_navigation);
+    try std.testing.expect(model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
+
+    update(&model, .new_taxpayer_profile);
+    model.taxProfiles.display_name.set("Different New Taxpayer");
+    update(&model, .go_back);
+    try std.testing.expect(model.profileDirtyNavigationVisible());
+    try std.testing.expect(!model.profileSessionDraftActionVisible());
+    try std.testing.expect(model.profileSessionDraftBlockedVisible());
+
+    update(&model, .profile_discard_navigation);
+    try std.testing.expect(model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
+    update(&model, .show_profile_setup);
+    update(&model, .resume_profile_session_draft);
+    try std.testing.expect(model.taxProfiles.profileCreating());
+    try std.testing.expectEqualStrings(
+        "Parked New Taxpayer",
+        model.taxProfiles.display_name.text(),
+    );
+    try std.testing.expect(!model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
+}
+
+test "new Taxpayer Profile session draft restores its source through the creation lifecycle" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addTestProfile(
+        &store,
+        "profile-session-new-source-a",
+        "New Draft Source A",
+        "123-456-784-000",
+        .individual,
+    );
+    try addTestProfile(
+        &store,
+        "profile-session-new-source-b",
+        "New Draft Source B",
+        "123-456-785-000",
+        .individual,
+    );
+
+    var model = Model{ .page = .taxpayer_dashboard };
+    try model.taxProfiles.attach(allocator, &store, "2026-08-04", 2026);
+    const a_slot = profileSlotNamed(&model, "New Draft Source A").?;
+    const b_slot = profileSlotNamed(&model, "New Draft Source B").?;
+    update(&model, .{ .select_taxpayer = a_slot });
+    update(&model, .new_taxpayer_profile);
+    try std.testing.expect(model.taxProfiles.profileCreating());
+    model.taxProfiles.display_name.set("New Draft From Source A");
+    update(&model, .go_back);
+    update(&model, .profile_save_session_draft_navigation);
+
+    update(&model, .{ .select_taxpayer = b_slot });
+    update(&model, .show_dashboard_profile_settings);
+    update(&model, .resume_profile_session_draft);
+    try std.testing.expect(model.taxProfiles.profileCreating());
+    try std.testing.expect(!model.taxProfiles.branchMode());
+    try std.testing.expectEqualStrings("New Draft Source A", model.selectedTaxpayerName());
+    try std.testing.expectEqualStrings(
+        "New Draft From Source A",
+        model.taxProfiles.display_name.text(),
+    );
+    try std.testing.expect(!model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
+}
+
+const DirtyNavigationDialogContent = enum { basic, supplemental };
+
+const dirty_navigation_dialog_layout_cases = [_]struct {
+    label: []const u8,
+    width: usize,
+    height: usize,
+    basic_height: f32,
+    supplemental_height: f32,
+}{
+    .{
+        .label = "desktop",
+        .width = 1_400,
+        .height = 900,
+        .basic_height = 240,
+        .supplemental_height = 288,
+    },
+    .{
+        .label = "compact",
+        .width = 700,
+        .height = 900,
+        .basic_height = 280,
+        .supplemental_height = 340,
+    },
+    .{
+        .label = "phone minimum",
+        .width = 320,
+        .height = 500,
+        .basic_height = 300,
+        .supplemental_height = 400,
+    },
+};
+
+test "profile discard dialog is rooted and keeps creation drafts in memory only" {
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            app_markup_root,
+            "profileDirtyNavigationVisible",
+        ) != null,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            app_markup_root,
+            "height=\"{profileDirtyNavigationDialogHeight}\"",
+        ) != null,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            app_markup_pages,
+            "Save draft and continue",
+        ) != null,
+    );
+
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    var model = Model{ .page = .profile_setup };
+    try model.taxProfiles.attach(allocator, &store, "2026-08-04", 2026);
+    try std.testing.expectEqual(@as(usize, 0), model.profileRows().len);
+    model.taxProfiles.display_name.set("Unpersisted Session Draft");
+
+    update(&model, .go_back);
+    try std.testing.expect(model.profileDirtyNavigationVisible());
+    try std.testing.expect(model.profileSessionDraftActionVisible());
+
+    try expectDirtyNavigationDialogResponsiveLayout(&model, .supplemental);
+
+    update(&model, .profile_save_session_draft_navigation);
+    try std.testing.expectEqual(@as(usize, 0), model.profileRows().len);
+    try std.testing.expect(model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
+
+    update(&model, .show_profile_setup);
+    update(&model, .resume_profile_session_draft);
+    try std.testing.expect(model.taxProfiles.profileCreating());
+    try std.testing.expect(model.taxProfiles.profileDirty());
+    try std.testing.expectEqualStrings(
+        "Unpersisted Session Draft",
+        model.taxProfiles.display_name.text(),
+    );
+}
+
+test "profile discard dialog reserves responsive basic-content height" {
+    var model = Model{
+        .page = .profile_setup,
+        .pendingProfileNavigation = .registration_create_branch,
+    };
+    try std.testing.expect(!model.profileSessionDraftActionVisible());
+    try std.testing.expect(!model.profileSessionDraftBlockedVisible());
+
+    try expectDirtyNavigationDialogResponsiveLayout(&model, .basic);
 }
 
 test "profile editor Back exits clean edits and guards dirty edits" {
@@ -22301,7 +24349,7 @@ test "Tax Form Profile repair route opens the complete atomic profile editor" {
     try std.testing.expect(model.profileSaveDisabled());
     try std.testing.expect(!model.profileCancelDisabled());
 
-    update(&model, .profile_subject_corporation);
+    update(&model, .{ .profile_subject_select = 1 });
     update(&model, .profile_eopt_micro);
     update(&model, .{ .profile_primary_line_of_business_input = .{
         .insert_text = "Professional services",
@@ -22560,7 +24608,7 @@ test "successful profile save returns to Tax Profile view" {
     model.taxProfiles.natural_person_classification = .pure_compensation;
     model.taxProfiles.display_name.set("Navigation Test Taxpayer");
     model.taxProfiles.registered_address.set("Quezon City");
-    model.taxProfiles.effective_from.set("2026-01-01");
+    setRequiredIndividualProfileFieldsForTest(&model.taxProfiles, 2026);
 
     update(&model, .save_profile);
 
@@ -23961,12 +26009,16 @@ test "the selected profile's registered RDO decides which synced override it see
 
     // The taxpayer type the context carries is read from the stored row, so
     // an unsaved change of legal subject cannot move a deadline either.
-    update(&model, .profile_subject_corporation);
+    update(&model, .{
+        .profile_subject_select = profileSubjectKindOptionId(.corporation),
+    });
     try std.testing.expectEqualStrings(
         "Individual",
         model.selectedTaxpayerKind(),
     );
-    update(&model, .profile_subject_individual);
+    update(&model, .{
+        .profile_subject_select = profileSubjectKindOptionId(.individual),
+    });
 
     // Re-registering the same taxpayer in a district the circular does not
     // name returns the obligation to its statutory date, through the profile
@@ -24914,6 +26966,140 @@ fn expectSetupWorkspaceLayoutClean(
         std.debug.print("  - {s}\n", .{writer.buffered()});
     }
     return error.LayoutAuditFindings;
+}
+
+/// Verifies every visible navigation action stays inside the clipped dialog
+/// surface. The surrounding setup page has its own broad audit; this focused
+/// assertion isolates the modal regression from unrelated background copy.
+fn expectDirtyNavigationDialogActionsInsideSurface(
+    model: *const Model,
+    width: usize,
+    height: usize,
+    label: []const u8,
+) !void {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var view = try initAppMarkupView(arena);
+    var ui = canvas.Ui(Msg).init(arena);
+    const tree = try ui.finalize(try view.build(&ui, model));
+    const dialog = findWidgetByKind(tree.root, .dialog) orelse
+        return error.DirtyNavigationDialogMissing;
+    const save_action = findWidgetByText(
+        dialog,
+        .button,
+        "Save draft and continue",
+    );
+    if (model.profileSessionDraftActionVisible() and save_action == null) {
+        return error.DirtyNavigationSaveActionMissing;
+    }
+    if (!model.profileSessionDraftActionVisible() and save_action != null) {
+        return error.DirtyNavigationUnexpectedSaveAction;
+    }
+    const discard_action = findWidgetByText(
+        dialog,
+        .button,
+        model.profileDiscardNavigationLabel(),
+    ) orelse return error.DirtyNavigationDiscardActionMissing;
+
+    const tokens = canvas.DesignTokens.theme(.{ .color_scheme = .light });
+    const nodes = try arena.alloc(
+        canvas.WidgetLayoutNode,
+        canvas.max_layout_audit_nodes,
+    );
+    const bounds = geometry.RectF.init(
+        0,
+        0,
+        @floatFromInt(width),
+        @floatFromInt(height),
+    );
+    const layout = try canvas.layoutWidgetTreeWithTokens(
+        tree.root,
+        bounds,
+        tokens,
+        nodes,
+    );
+    const dialog_frame = (layout.findById(dialog.id) orelse
+        return error.DirtyNavigationDialogLayoutMissing).frame.normalized();
+
+    var actions: [2]canvas.Widget = undefined;
+    var action_count: usize = 0;
+    if (save_action) |action| {
+        actions[action_count] = action;
+        action_count += 1;
+    }
+    actions[action_count] = discard_action;
+    action_count += 1;
+
+    for (actions[0..action_count]) |action| {
+        const action_frame = (layout.findById(action.id) orelse
+            return error.DirtyNavigationActionLayoutMissing).frame.normalized();
+        if (dialog_frame.containsRect(action_frame)) continue;
+
+        std.debug.print(
+            "dialog containment: {s} at {d}x{d}: action '{s}' frame " ++
+                "({d:.1},{d:.1} {d:.1}x{d:.1}) escapes dialog " ++
+                "({d:.1},{d:.1} {d:.1}x{d:.1})\n",
+            .{
+                label,
+                width,
+                height,
+                action.text,
+                action_frame.x,
+                action_frame.y,
+                action_frame.width,
+                action_frame.height,
+                dialog_frame.x,
+                dialog_frame.y,
+                dialog_frame.width,
+                dialog_frame.height,
+            },
+        );
+        return error.DirtyNavigationActionEscapesDialog;
+    }
+
+    const discard_frame = (layout.findById(discard_action.id) orelse
+        return error.DirtyNavigationActionLayoutMissing).frame.normalized();
+    const footer_inset = dialog_frame.y + dialog_frame.height -
+        (discard_frame.y + discard_frame.height);
+    const expected_footer_inset: f32 = 20;
+    const footer_inset_tolerance: f32 = 1;
+    if (footer_inset < expected_footer_inset - footer_inset_tolerance or
+        footer_inset > expected_footer_inset + footer_inset_tolerance)
+    {
+        std.debug.print(
+            "dialog footer: {s} at {d}x{d}: discard bottom inset " ++
+                "{d:.1}px, expected {d:.1}px\n",
+            .{ label, width, height, footer_inset, expected_footer_inset },
+        );
+        return error.DirtyNavigationActionsNotPinnedToFooter;
+    }
+}
+
+fn expectDirtyNavigationDialogResponsiveLayout(
+    model: *Model,
+    content: DirtyNavigationDialogContent,
+) !void {
+    for (dirty_navigation_dialog_layout_cases) |case| {
+        update(model, .{
+            .viewport_width_changed = @floatFromInt(case.width),
+        });
+        const expected_height = switch (content) {
+            .basic => case.basic_height,
+            .supplemental => case.supplemental_height,
+        };
+        try std.testing.expectEqual(
+            expected_height,
+            model.profileDirtyNavigationDialogHeight(),
+        );
+        try expectDirtyNavigationDialogActionsInsideSurface(
+            model,
+            case.width,
+            case.height,
+            case.label,
+        );
+    }
 }
 
 test "taxpayer setup workspace lays out cleanly at every width" {
@@ -26216,7 +28402,7 @@ test "missing taxpayer details are listed once with the forms that need them" {
     model.taxProfiles.natural_person_classification = .pure_compensation;
     model.taxProfiles.display_name.set("Missing Details Taxpayer");
     model.taxProfiles.registered_address.set("Quezon City");
-    model.taxProfiles.effective_from.set("2026-01-01");
+    setRequiredIndividualProfileFieldsForTest(&model.taxProfiles, 2026);
     try std.testing.expect(model.taxProfiles.save());
 
     var arena_state = std.heap.ArenaAllocator.init(allocator);
@@ -26236,6 +28422,13 @@ test "missing taxpayer details are listed once with the forms that need them" {
         &.{.{ .form_code = "2551Q", .form_revision = "2018-01-ENCS" }},
     );
     try model.taxProfiles.refreshCalendarFormSet(2026);
+
+    // Current saves require these details, while this readiness exercise
+    // deliberately checks an in-progress correction for all three fields.
+    model.taxProfiles.editSelected();
+    model.taxProfiles.zip_code.clear();
+    model.taxProfiles.phone.clear();
+    model.taxProfiles.email.clear();
 
     const rows = model.profileMissingFactRows(arena);
     try std.testing.expect(rows.len >= 3);
@@ -27790,6 +29983,51 @@ fn dispatchAppWidgetBySemanticsPrefix(
     return true;
 }
 
+test "TIN branch overflow remounts the controlled input with five digits" {
+    var model = Model{ .page = .profile_setup };
+    model.taxProfiles.tin.set("12345678900000");
+    syncProfileTinControl(&model);
+
+    var initial_id: u64 = 0;
+    {
+        var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        var view = try initAppMarkupView(arena);
+        var ui = canvas.Ui(Msg).init(arena);
+        const tree = try ui.finalize(try view.build(&ui, &model));
+        const branch_input = findWidgetByKindAndSemanticsLabel(
+            tree.root,
+            .input,
+            "TIN five digit branch code",
+        ) orelse return error.TestUnexpectedResult;
+        initial_id = branch_input.id;
+
+        const message = tree.msgForTextEdit(
+            branch_input.id,
+            .{ .insert_text = "0" },
+        ) orelse return error.TestUnexpectedResult;
+        update(&model, message);
+    }
+
+    try std.testing.expectEqualStrings("00000", model.profileTinSegments[3].text());
+    try std.testing.expectEqualStrings("12345678900000", model.taxProfiles.tin.text());
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var view = try initAppMarkupView(arena);
+    var ui = canvas.Ui(Msg).init(arena);
+    const tree = try ui.finalize(try view.build(&ui, &model));
+    const branch_input = findWidgetByKindAndSemanticsLabel(
+        tree.root,
+        .input,
+        "TIN five digit branch code",
+    ) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("00000", branch_input.text);
+    try std.testing.expect(initial_id != branch_input.id);
+}
+
 test "segmented TIN rejects composition letters and caps the branch at five digits" {
     var model: Model = .{};
     model.taxProfiles.tin.set("123456789000");
@@ -27811,6 +30049,68 @@ test "segmented TIN rejects composition letters and caps the branch at five digi
     } });
     try std.testing.expectEqualStrings("12345", model.profileTinSegments[3].text());
     try std.testing.expectEqualStrings("12345678912345", model.taxProfiles.tin.text());
+}
+
+test "profile RDO filter marks its first result for keyboard entry" {
+    var model = Model{ .page = .profile_setup };
+    applyProfileRdoQuery(&model, .{ .insert_text = "019" });
+
+    try std.testing.expect(model.profileRdoPickerOpen());
+    try std.testing.expectEqualStrings("019", model.profileRdoQueryValue());
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const rows = model.profileRdoOptionRows(arena_state.allocator());
+    try std.testing.expectEqual(@as(usize, 1), rows.len);
+    try std.testing.expectEqualStrings("019", rows[0].code);
+    try std.testing.expect(rows[0].selected);
+
+    selectProfileRdo(&model, rows[0].id);
+    try std.testing.expectEqualStrings("019", model.taxProfiles.rdo.text());
+    try std.testing.expectEqualStrings(
+        "019 - Subic Bay Freeport Zone",
+        model.profileRdoQueryValue(),
+    );
+    try std.testing.expect(!model.profileRdoSelectionMissing());
+}
+
+test "profile combobox blur closes popups and reveals only applicable validation" {
+    var model = Model{ .page = .profile_setup };
+
+    try std.testing.expect(!model.profileRdoErrorVisible());
+    update(&model, .profile_rdo_toggle_picker);
+    try std.testing.expect(model.profileRdoPickerOpen());
+    update(&model, .profile_rdo_blurred);
+    try std.testing.expect(!model.profileRdoPickerOpen());
+    try std.testing.expect(model.profileRdoErrorVisible());
+    try std.testing.expectEqualStrings(
+        "RDO is required.",
+        model.profileRdoValidationMessage(),
+    );
+    update(&model, .{ .profile_rdo_select = 0 });
+    try std.testing.expect(!model.profileRdoErrorVisible());
+
+    model.taxProfiles.setSubjectKind(.individual);
+    model.taxProfiles.setNaturalPersonClassification(.pure_compensation);
+    update(&model, .profile_citizenship_toggle_picker);
+    try std.testing.expect(model.profileCitizenshipPickerOpen());
+    update(&model, .profile_citizenship_blurred);
+    try std.testing.expect(!model.profileCitizenshipPickerOpen());
+    try std.testing.expect(model.profileCitizenshipErrorVisible());
+    update(&model, .{ .profile_citizenship_select = 0 });
+    try std.testing.expect(!model.profileCitizenshipErrorVisible());
+
+    update(&model, .profile_effective_start_year_toggle_picker);
+    try std.testing.expect(model.profileEffectiveStartYearPickerOpen());
+    update(&model, .profile_effective_start_year_blurred);
+    try std.testing.expect(!model.profileEffectiveStartYearPickerOpen());
+    try std.testing.expect(model.profileEffectiveStartErrorVisible());
+
+    update(&model, .profile_effective_end_year_toggle_picker);
+    try std.testing.expect(model.profileEffectiveEndYearPickerOpen());
+    update(&model, .profile_effective_end_year_blurred);
+    try std.testing.expect(!model.profileEffectiveEndYearPickerOpen());
+    try std.testing.expect(!model.profileEffectiveEndErrorVisible());
 }
 
 test "registration filing tab keeps legacy workspace fail closed" {

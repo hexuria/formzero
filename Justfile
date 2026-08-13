@@ -39,16 +39,36 @@ news-sync-offline:
     {{ npm_command }} run news:sync -- all --offline
 
 # Validate catalog ownership and Native markup/app manifest.
-[unix]
+[macos]
 check: generate
     #!/usr/bin/env bash
     set -euo pipefail
     {{ npm_command }} run test:app-identity
     {{ npm_command }} run check:tax-catalog
+
+    {{ npm_command }} run check:postal-reference
     {{ npm_command }} run typecheck:news-sync
     {{ npm_command }} run test:news-sync
     eval "$(node scripts/app-identity.mjs prepare --format shell)"
-    npx native check "$BUWIZ_APP_ROOT" --strict
+    node scripts/patch-native-sdk-combobox-tab.mjs
+    npx native doctor --manifest "$BUWIZ_MANIFEST" --strict
+
+[linux]
+check: generate
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{ npm_command }} run test:app-identity
+    {{ npm_command }} run check:tax-catalog
+
+    {{ npm_command }} run check:postal-reference
+    bash scripts/check-linux-deps.sh
+    eval "$(node scripts/app-identity.mjs prepare --format shell)"
+    node scripts/patch-native-sdk-combobox-tab.mjs
+    # Strict doctor treats macOS-only codesigning as an unsupported Linux
+    # capability. Validate the manifest explicitly; build/package below prove
+    # the actual Linux host integration.
+    npx native validate "$BUWIZ_MANIFEST"
+    npx native doctor --manifest "$BUWIZ_MANIFEST"
 
 [windows]
 check: generate
@@ -57,6 +77,7 @@ check: generate
 # Run the headless Native SDK test suite.
 [unix]
 test: generate
+    node scripts/patch-native-sdk-combobox-tab.mjs
     npx native test . --yes -Dplatform=null
 
 [windows]
@@ -66,6 +87,7 @@ test: generate
 # Build a ReleaseFast production binary into zig-out/bin/.
 [macos]
 build: generate
+    node scripts/patch-native-sdk-combobox-tab.mjs
     npx native build . --yes
 
 [windows]
@@ -75,11 +97,13 @@ build: generate
 [linux]
 build: generate
     bash scripts/check-linux-deps.sh
+    node scripts/patch-native-sdk-combobox-tab.mjs
     npx native build . --yes
 
 # Build a ReleaseFast binary with Native automation enabled.
 [macos]
 build-automation: generate
+    node scripts/patch-native-sdk-combobox-tab.mjs
     npx native build . --yes -Dautomation=true
 
 [windows]
@@ -89,11 +113,13 @@ build-automation: generate
 [linux]
 build-automation: generate
     bash scripts/check-linux-deps.sh
+    node scripts/patch-native-sdk-combobox-tab.mjs
     npx native build . --yes -Dautomation=true
 
 # Run the local Debug app with Native markup hot reload.
 [macos]
 run: generate
+    node scripts/patch-native-sdk-combobox-tab.mjs
     npx native dev . --yes
 
 [windows]
@@ -103,15 +129,25 @@ run: generate
 [linux]
 run: generate
     bash scripts/check-linux-deps.sh
+    node scripts/patch-native-sdk-combobox-tab.mjs
     npx native dev . --yes
 
 # Check the toolchain and manifest without building the app.
-[unix]
+[macos]
 doctor:
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(node scripts/app-identity.mjs prepare --format shell)"
     npx native doctor --manifest "$BUWIZ_MANIFEST" --strict
+
+[linux]
+doctor:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bash scripts/check-linux-deps.sh
+    eval "$(node scripts/app-identity.mjs prepare --format shell)"
+    npx native validate "$BUWIZ_MANIFEST"
+    npx native doctor --manifest "$BUWIZ_MANIFEST"
 
 [windows]
 doctor:

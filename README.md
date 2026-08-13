@@ -44,7 +44,7 @@ because source-app captures may contain private taxpayer data.
 ## Quick start
 
 Requirements: Node.js 22.15+, Zig 0.16.0, and [Just](https://just.systems/).
-Linux also needs `pkg-config` and GTK4 development files. macOS is the
+Linux also needs `pkg-config`, GTK4, and WebKitGTK 6.0 development files. macOS is the
 original development host. Windows ARM64 uses a pinned host-tool workaround
 documented in the [Windows development guide](docs/WINDOWS_DEVELOPMENT.md).
 
@@ -102,9 +102,10 @@ Use `just package` for distributable artifacts. On non-main branches, the
 Native SDK's direct `zig build package` step fails closed because that upstream
 step reads the unsuffixed root manifest.
 
-Linux builds require GTK4 development files because the Native SDK uses the
-system GTK host. Install them with `sudo apt-get install pkg-config libgtk-4-dev` on
-Debian/Ubuntu (the command prints Fedora and Arch equivalents). The Linux
+Linux builds require GTK4 and WebKitGTK 6.0 development files because the Native SDK
+uses the system GTK/WebKit host. Install them with
+`sudo apt-get install pkg-config libgtk-4-dev libwebkitgtk-6.0-dev` on Debian/Ubuntu
+(the dependency check prints Fedora and Arch equivalents). The Linux
 artifact is a relocatable Native SDK directory; AppImage, Flatpak, and tarball
 generation are still future release work. The Windows path is for the audited
 Windows ARM64 environment; load it with the [Windows development guide](docs/WINDOWS_DEVELOPMENT.md)
@@ -149,6 +150,9 @@ deterministic and idempotent.
 - `src/tax_profile/` — reusable facts, immutable revisions, evolution,
   persistence, canonical Taxpayer/Registration Unit evidence, migration
   inventory, and profile UI state
+- `scripts/postal-reference/` — pinned GeoNames `PH.zip` snapshot, provenance
+  manifest, tests, and deterministic offline Zig catalogue generator (CC BY
+  4.0; © GeoNames, <https://www.geonames.org/>)
 - `src/filing/` — reviewed policy selection, Filing Planner resolution,
   transient scope-provenance validation, and a value-owned read-only preview
   snapshot, plus exact form projection context; immutable draft/artifact

@@ -103,9 +103,11 @@ switch ($Command) {
     "check" {
         Invoke-Checked "npm.cmd" @("run", "test:app-identity")
         Invoke-Checked "npm.cmd" @("run", "check:tax-catalog")
+        Invoke-Checked "npm.cmd" @("run", "check:postal-reference")
         Invoke-Checked "npm.cmd" @("run", "typecheck:news-sync")
         Invoke-Checked "npm.cmd" @("run", "test:news-sync")
-        Invoke-NativeCli @("check", [string]$appIdentity.appRoot, "--strict")
+        Invoke-Checked "node" @("scripts/patch-native-sdk-combobox-tab.mjs")
+        Invoke-NativeCli @("doctor", "--manifest", $manifestPath, "--strict")
     }
 
     # The news pipeline is plain Node and needs no Zig toolchain, but a live
@@ -120,10 +122,12 @@ switch ($Command) {
     }
 
     "test" {
+        Invoke-Checked "node" @("scripts/patch-native-sdk-combobox-tab.mjs")
         Invoke-NativeCli @("test", ".", "--yes", "-Dplatform=null")
     }
 
     "build" {
+        Invoke-Checked "node" @("scripts/patch-native-sdk-combobox-tab.mjs")
         Invoke-TargetZig @(
             "build",
             "-Dtarget=$env:BUWIZ_WINDOWS_TARGET",
@@ -132,6 +136,7 @@ switch ($Command) {
     }
 
     "build-automation" {
+        Invoke-Checked "node" @("scripts/patch-native-sdk-combobox-tab.mjs")
         Invoke-TargetZig @(
             "build",
             "-Dtarget=$env:BUWIZ_WINDOWS_TARGET",
@@ -142,6 +147,7 @@ switch ($Command) {
 
     "run" {
         Require-TargetEnvironment
+        Invoke-Checked "node" @("scripts/patch-native-sdk-combobox-tab.mjs")
         Invoke-NativeCli @(
             "dev",
             ".",

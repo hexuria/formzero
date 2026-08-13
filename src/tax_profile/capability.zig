@@ -141,7 +141,7 @@ test "capability set follows the subject variant rather than nullable answers" {
         .contact = .{
             .address = try field.RegisteredAddress.parse("1 Corporate Way"),
             .zip_code = try field.ZipCode.parse("1000"),
-            .contact_number = try field.ContactNumber.parse("81234567"),
+            .contact_number = try field.ContactNumber.parse("0281234567"),
             .email_address = try field.EmailAddress.parse("tax@corp.example"),
         },
         .subject = .{ .legal_entity = .{
