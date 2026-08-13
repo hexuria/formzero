@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readlinkSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readlinkSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -22,6 +22,21 @@ async function waitForPath(path) {
   while (!existsSync(path)) {
     if (Date.now() >= deadline) throw new Error(`timed out waiting for ${path}`);
     await new Promise((resolveReady) => setTimeout(resolveReady, 20));
+  }
+}
+
+async function readHookMarker(path) {
+  await waitForPath(path);
+  const deadline = Date.now() + 1_000;
+  while (true) {
+    try {
+      const markerStat = lstatSync(path);
+      assert.equal(markerStat.isFile() && !markerStat.isSymbolicLink(), true);
+      return JSON.parse(readFileSync(path, "utf8"));
+    } catch (error) {
+      if (Date.now() >= deadline) throw error;
+      await new Promise((resolveReady) => setTimeout(resolveReady, 10));
+    }
   }
 }
 
@@ -60,14 +75,69 @@ async function runPausedAtHook(args, cwd, hook, mutate, extraEnv = {}) {
     child.once("close", (status, signal) => resolveCompleted({ status, signal }));
   });
   try {
-    await waitForPath(marker);
-    await mutate(JSON.parse(readFileSync(marker, "utf8")));
+    await mutate(await readHookMarker(marker));
     releaseTestHook(release);
     const result = await completed;
     return { ...result, stdout, stderr };
   } finally {
     releaseTestHook(release);
     if (child.exitCode === null) child.kill("SIGTERM");
+    await completed.catch(() => {});
+    rmSync(hookRoot, { recursive: true, force: true });
+  }
+}
+
+async function runKilledAtHook(args, cwd, hook, beforeKill = async () => {}, extraEnv = {}) {
+  const hookRoot = mkdtempSync(join(tmpdir(), "workspace-maintenance-kill-hook-"));
+  const marker = join(hookRoot, "marker.json");
+  const release = join(hookRoot, "release");
+  const child = spawn(process.execPath, [scriptPath, ...args], {
+    cwd,
+    env: {
+      ...process.env,
+      ...extraEnv,
+      NODE_ENV: "test",
+      NODE_TEST_CONTEXT: "child-v8",
+      WORKSPACE_MAINTENANCE_TEST_HOOK: hook,
+      WORKSPACE_MAINTENANCE_TEST_MARKER: marker,
+      WORKSPACE_MAINTENANCE_TEST_RELEASE: release,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const completed = new Promise((resolveCompleted, rejectCompleted) => {
+    child.once("error", rejectCompleted);
+    child.once("close", (status, signal) => resolveCompleted({ status, signal }));
+  });
+  try {
+    const markerReached = readHookMarker(marker).then((payload) => ({ kind: "marker", payload }));
+    const earlyExit = completed.then((result) => ({ kind: "exit", result }));
+    const first = await Promise.race([markerReached, earlyExit]);
+    if (first.kind === "exit") {
+      assert.fail(
+        `maintenance child exited before reaching ${hook}: `
+        + `status=${first.result.status} signal=${first.result.signal}; stderr=${stderr}`,
+      );
+    }
+    const { payload } = first;
+    assert.equal(payload.name, hook);
+    assert.equal(existsSync(release), false);
+    await beforeKill(payload, { childPid: child.pid, marker, release });
+    assert.equal(child.exitCode, null, `maintenance child exited before SIGKILL at ${hook}`);
+    assert.equal(child.signalCode, null, `maintenance child was signaled before SIGKILL at ${hook}`);
+    assert.equal(child.kill("SIGKILL"), true, `could not SIGKILL maintenance child at ${hook}`);
+    const result = await completed;
+    assert.equal(result.status, null);
+    assert.equal(result.signal, "SIGKILL");
+    assert.equal(existsSync(release), false);
+    return { ...result, childPid: child.pid, payload, stdout, stderr };
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     await completed.catch(() => {});
     rmSync(hookRoot, { recursive: true, force: true });
   }
@@ -101,6 +171,69 @@ function makeRepo(prefix = "workspace-maintenance-test-") {
   const worktree = join(fixture, "candidate");
   git(root, "worktree", "add", "-b", "candidate", worktree, "main");
   return { fixture, root, worktree };
+}
+
+function linkedWorktreeMaintenancePaths(root, worktree) {
+  const commonRaw = git(root, "rev-parse", "--git-common-dir");
+  const commonDir = realpathSync(resolve(root, commonRaw));
+  const gitDir = realpathSync(git(worktree, "rev-parse", "--absolute-git-dir"));
+  const key = createHash("sha256").update(`${commonDir}\0${gitDir}`).digest("hex");
+  const stateRoot = join(commonDir, "buwiz-workspace-maintenance");
+  return {
+    commonDir,
+    gitDir,
+    state: join(stateRoot, "cleanup-state", `${key}.json`),
+  };
+}
+
+function cleanupJournalFromResult(result) {
+  const path = result.stderr.match(/just clean resume '([^']+journal\.json)' --force/u)?.[1]
+    ?? result.stdout.match(/journal: (.+journal\.json)/u)?.[1];
+  assert.ok(path && isAbsolute(path), `cleanup command did not expose an absolute journal: ${result.stderr}`);
+  return path;
+}
+
+function cleanupLockPath(root) {
+  const commonDir = realpathSync(resolve(root, git(root, "rev-parse", "--git-common-dir")));
+  return join(commonDir, "buwiz-workspace-maintenance", "lock.json");
+}
+
+function physicalTreeSnapshot(root) {
+  const entries = [];
+  const stack = [root];
+  while (stack.length) {
+    const current = stack.pop();
+    const stat = lstatSync(current);
+    const relativePath = relative(root, current);
+    const type = stat.isDirectory() ? "directory" : stat.isFile() ? "file" : stat.isSymbolicLink() ? "symlink" : "other";
+    entries.push({
+      relativePath,
+      type,
+      dev: stat.dev,
+      ino: stat.ino,
+      mode: stat.mode,
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      contentDigest: type === "file" ? createHash("sha256").update(readFileSync(current)).digest("hex") : null,
+      linkTarget: type === "symlink" ? readlinkSync(current) : null,
+    });
+    if (type === "directory") {
+      for (const name of readdirSync(current).sort().reverse()) stack.push(join(current, name));
+    }
+  }
+  return entries;
+}
+
+function linkedWorktreeTopology(worktree) {
+  const commonRaw = git(worktree, "rev-parse", "--git-common-dir");
+  return {
+    root: realpathSync(git(worktree, "rev-parse", "--show-toplevel")),
+    gitDir: realpathSync(git(worktree, "rev-parse", "--absolute-git-dir")),
+    commonDir: realpathSync(resolve(worktree, commonRaw)),
+    head: git(worktree, "rev-parse", "HEAD"),
+    branch: git(worktree, "symbolic-ref", "HEAD"),
+    status: git(worktree, "status", "--porcelain=v2", "--untracked-files=all", "--ignore-submodules=none"),
+  };
 }
 
 function seedArtifacts(worktree) {
@@ -143,6 +276,8 @@ function rewriteReceipt(receiptPath, mutate) {
   mutate(receipt);
   receipt.contentsDigest = createHash("sha256")
     .update(JSON.stringify({
+      sourceWorktrees: receipt.sourceWorktrees,
+      sourceWorktreeGitDirs: receipt.sourceWorktreeGitDirs,
       moves: receipt.moves,
       nativeSymlinks: receipt.nativeSymlinks,
       dependencySymlinks: receipt.dependencySymlinks,
@@ -229,7 +364,7 @@ test("printed purge command safely quotes receipt paths containing apostrophes",
   }
 });
 
-test("post-rename failure retains every moved artifact in a recovery transaction", (context) => {
+test("post-rename failure prints an exact resumable cleanup journal", (context) => {
   if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
   const { root, worktree } = makeRepo();
   try {
@@ -241,30 +376,22 @@ test("post-rename failure retains every moved artifact in a recovery transaction
       WORKSPACE_MAINTENANCE_TEST_FAIL_AT: "after-artifact-rename",
     });
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /no automatic rollback was attempted/u);
+    assert.match(result.stderr, /resume only with: just clean resume/u);
     assert.equal(existsSync(join(worktree, "zig-out")), false);
-    const recovery = result.stderr.match(/recovery retained at (.+recovery\.json):/u)?.[1];
-    assert.ok(recovery);
-    const recoveryReceipt = JSON.parse(readFileSync(recovery, "utf8"));
-    assert.equal(recoveryReceipt.operation, "clean-partial");
-    assert.equal(recoveryReceipt.moves.length, 1);
-    assert.equal(recoveryReceipt.moves[0].verification, "uncertain");
-    assert.equal(recoveryReceipt.moves[0].expectedRootIdentity.type, "directory");
-    assert.ok(Number.isInteger(recoveryReceipt.moves[0].expectedRootIdentity.ino));
-    assert.deepEqual(recoveryReceipt.moves[0].nativeSymlinks, []);
-    assert.equal(readFileSync(join(recoveryReceipt.moves[0].destination, "bin", "app"), "utf8"), "rollback sentinel\n");
-    const quarantineNamespace = join(dirname(worktree), ".buwiz-workspace-maintenance");
-    const quarantineFiles = existsSync(quarantineNamespace)
-      ? readdirSync(quarantineNamespace, { recursive: true })
-      : [];
-    assert.equal(quarantineFiles.some((name) => name.endsWith("recovery.json")), true);
-    assert.equal(quarantineFiles.some((name) => name.includes(".deleting-")), false);
+    const journal = result.stderr.match(/just clean resume '([^']+journal\.json)' --force/u)?.[1];
+    assert.ok(journal && existsSync(journal));
+    const resumed = run(["clean", "resume", journal, "--force"], worktree);
+    assert.equal(resumed.status, 0, resumed.stderr);
+    const receiptPath = resumed.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receiptPath && existsSync(receiptPath));
+    const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+    assert.equal(readFileSync(join(receipt.moves[0].destination, "bin", "app"), "utf8"), "rollback sentinel\n");
   } finally {
     rmSync(dirname(root), { recursive: true, force: true });
   }
 });
 
-test("post-rename destination replacement is retained with an uncertain recovery record", async (context) => {
+test("post-rename destination replacement is preserved and blocks resume", async (context) => {
   if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
   const { root, worktree } = makeRepo();
   try {
@@ -283,10 +410,12 @@ test("post-rename destination replacement is retained with an uncertain recovery
       },
     );
     assert.equal(result.status, 3);
-    const recovery = result.stderr.match(/recovery retained at (.+?recovery\.json):/u)?.[1];
-    assert.ok(recovery && existsSync(recovery));
-    const receipt = JSON.parse(readFileSync(recovery, "utf8"));
-    assert.equal(receipt.moves[0].verification, "uncertain");
+    const journal = result.stderr.match(/just clean resume '([^']+journal\.json)' --force/u)?.[1];
+    assert.ok(journal && existsSync(journal));
+    const receipt = JSON.parse(readFileSync(journal, "utf8"));
+    const resumed = run(["clean", "resume", journal, "--force"], worktree);
+    assert.equal(resumed.status, 3);
+    assert.match(resumed.stderr, /destination.*changed|destination was replaced|unknown content/u);
     assert.equal(readFileSync(replacement, "utf8"), "replacement survives\n");
     assert.equal(readFileSync(`${receipt.moves[0].destination}.original/bin/app`, "utf8"), "original\n");
   } finally {
@@ -294,7 +423,7 @@ test("post-rename destination replacement is retained with an uncertain recovery
   }
 });
 
-test("zero-move failure removes only empty command-created scaffolding", async (context) => {
+test("pre-first-move failure leaves an exact resumable cleanup journal", async (context) => {
   if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
   const { root, worktree } = makeRepo();
   try {
@@ -309,8 +438,12 @@ test("zero-move failure removes only empty command-created scaffolding", async (
       { WORKSPACE_MAINTENANCE_TEST_ACTION: "fail" },
     );
     assert.equal(result.status, 3);
-    assert.equal(existsSync(transactionRoot), false);
+    assert.equal(existsSync(transactionRoot), true);
     assert.equal(readFileSync(join(worktree, "zig-out", "bin", "app"), "utf8"), "original\n");
+    const journal = result.stderr.match(/just clean resume '([^']+journal\.json)' --force/u)?.[1];
+    assert.ok(journal && existsSync(journal));
+    const resumed = run(["clean", "resume", journal, "--force"], worktree);
+    assert.equal(resumed.status, 0, resumed.stderr);
   } finally {
     rmSync(dirname(root), { recursive: true, force: true });
   }
@@ -336,8 +469,11 @@ test("zero-move failure retains unknown scaffolding content and reports its tran
       { WORKSPACE_MAINTENANCE_TEST_ACTION: "fail" },
     );
     assert.equal(result.status, 3);
-    assert.ok(result.stderr.includes(transactionRoot));
-    assert.match(result.stderr, /no unknown content was deleted/u);
+    const journal = result.stderr.match(/just clean resume '([^']+journal\.json)' --force/u)?.[1];
+    assert.ok(journal && existsSync(journal));
+    const resumed = run(["clean", "resume", journal, "--force"], worktree);
+    assert.equal(resumed.status, 3);
+    assert.match(resumed.stderr, /unknown content/u);
     assert.equal(readFileSync(sentinel, "utf8"), "must survive\n");
   } finally {
     rmSync(dirname(root), { recursive: true, force: true });
@@ -365,10 +501,17 @@ test("post-rename failure does not follow a changed source ancestor", async (con
       { WORKSPACE_MAINTENANCE_TEST_ACTION: "fail" },
     );
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /no automatic rollback was attempted/u);
+    assert.match(result.stderr, /resume only with: just clean resume/u);
     assert.equal(existsSync(join(external, "work", "download.pdf")), false);
-    const retained = result.stderr.match(/recovery retained at (.+?recovery\.json):/u)?.[1];
-    assert.ok(retained && existsSync(retained));
+    const journal = result.stderr.match(/just clean resume '([^']+journal\.json)' --force/u)?.[1];
+    assert.ok(journal && existsSync(journal));
+    const resumed = run(["clean", "resume", journal, "--force"], worktree);
+    assert.equal(resumed.status, 0, resumed.stderr);
+    const receiptPath = resumed.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receiptPath && existsSync(receiptPath));
+    const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+    assert.equal(readFileSync(join(receipt.moves[0].destination, "download.pdf"), "utf8"), "quarantined sentinel\n");
+    assert.equal(existsSync(join(external, "download.pdf")), false);
   } finally {
     rmSync(dirname(root), { recursive: true, force: true });
   }
@@ -601,11 +744,13 @@ test("clean deps treats normal nested package links as leaves and purge never fo
     assert.equal(cleaned.status, 0, cleaned.stderr);
     const receiptPath = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
     assert.ok(receiptPath);
+    const transactionRoot = JSON.parse(readFileSync(receiptPath, "utf8")).transactionRoot;
     assert.equal(existsSync(join(worktree, "node_modules")), false);
 
     const purged = run(["clean", "purge", receiptPath, "--force"], worktree);
     assert.equal(purged.status, 0, purged.stderr);
-    assert.equal(existsSync(dirname(receiptPath)), false);
+    assert.equal(existsSync(transactionRoot), false);
+    assert.equal(existsSync(receiptPath), true);
     assert.equal(readFileSync(join(external, "keep.txt"), "utf8"), "external target survives\n");
   } finally {
     rmSync(dirname(root), { recursive: true, force: true });
@@ -664,13 +809,43 @@ test("clean native quarantines and purges generated identity links without follo
 
     const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
     assert.ok(receipt);
+    const transactionRoot = JSON.parse(readFileSync(receipt, "utf8")).transactionRoot;
     const preview = run(["clean", "purge", receipt, "--dry-run"], worktree);
     assert.equal(preview.status, 0, preview.stderr);
-    assert.ok(existsSync(dirname(receipt)));
+    assert.ok(existsSync(transactionRoot));
     const purged = run(["clean", "purge", receipt, "--force"], worktree);
     assert.equal(purged.status, 0, purged.stderr);
-    assert.equal(existsSync(dirname(receipt)), false);
+    assert.equal(existsSync(transactionRoot), false);
+    assert.equal(existsSync(receipt), true);
     assert.equal(readFileSync(join(worktree, "src", "source-sentinel.native"), "utf8"), "source sentinel\n");
+    assert.equal(readFileSync(join(assets, "asset-sentinel.txt"), "utf8"), "asset sentinel\n");
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("clean native dry-run accepts generated identity links without changing them", () => {
+  const { root, worktree } = makeRepo();
+  try {
+    const nativeIdentity = join(worktree, ".native", "identities", "fixture-identity");
+    const source = join(worktree, "src");
+    const assets = join(worktree, "assets");
+    mkdirSync(nativeIdentity, { recursive: true });
+    mkdirSync(assets);
+    writeFileSync(join(nativeIdentity, "identity.json"), "fixture identity\n");
+    writeFileSync(join(source, "source-sentinel.native"), "source sentinel\n");
+    writeFileSync(join(assets, "asset-sentinel.txt"), "asset sentinel\n");
+    symlinkSync(source, join(nativeIdentity, "src"));
+    symlinkSync(assets, join(nativeIdentity, "assets"));
+
+    const preview = run(["clean", "native", "--dry-run"], worktree);
+    assert.equal(preview.status, 0, preview.stderr);
+    assert.match(preview.stdout, /Would clean/u);
+    assert.ok(lstatSync(join(nativeIdentity, "src")).isSymbolicLink());
+    assert.ok(lstatSync(join(nativeIdentity, "assets")).isSymbolicLink());
+    assert.equal(realpathSync(join(nativeIdentity, "src")), realpathSync(source));
+    assert.equal(realpathSync(join(nativeIdentity, "assets")), realpathSync(assets));
+    assert.equal(readFileSync(join(source, "source-sentinel.native"), "utf8"), "source sentinel\n");
     assert.equal(readFileSync(join(assets, "asset-sentinel.txt"), "utf8"), "asset sentinel\n");
   } finally {
     rmSync(dirname(root), { recursive: true, force: true });
@@ -696,7 +871,7 @@ test("purge refuses a replaced quarantined Native link and preserves both target
     assert.equal(cleaned.status, 0, cleaned.stderr);
     const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
     assert.ok(receipt);
-    const transaction = dirname(receipt);
+    const transaction = JSON.parse(readFileSync(receipt, "utf8")).transactionRoot;
     const quarantinedSrc = JSON.parse(readFileSync(receipt, "utf8")).moves[0].destination;
     const srcLink = join(quarantinedSrc, "identities", "fixture-identity", "src");
     assert.equal(realpathSync(srcLink), realpathSync(join(worktree, "src")));
@@ -706,10 +881,40 @@ test("purge refuses a replaced quarantined Native link and preserves both target
 
     const purged = run(["clean", "purge", receipt, "--force"], worktree);
     assert.equal(purged.status, 3);
-    assert.match(purged.stderr, /does not target its source worktree/u);
+    assert.match(purged.stderr, /not recorded by the receipt or changed identity/u);
     assert.ok(existsSync(transaction));
     assert.equal(readFileSync(join(worktree, "src", "source-sentinel.native"), "utf8"), "source sentinel\n");
     assert.equal(readFileSync(join(attacker, "attacker-sentinel.txt"), "utf8"), "attacker sentinel\n");
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("moving a worktree leaves quarantined Native links purgeable without following them", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  const movedParent = join(dirname(worktree), "moved-native-parent");
+  const movedWorktree = join(movedParent, "candidate");
+  try {
+    const nativeIdentity = join(worktree, ".native", "identities", "fixture-identity");
+    const assets = join(worktree, "assets");
+    mkdirSync(nativeIdentity, { recursive: true });
+    mkdirSync(assets);
+    writeFileSync(join(worktree, "src", "source-sentinel.native"), "source sentinel\n");
+    writeFileSync(join(assets, "asset-sentinel.txt"), "asset sentinel\n");
+    symlinkSync(join(worktree, "src"), join(nativeIdentity, "src"));
+    symlinkSync(assets, join(nativeIdentity, "assets"));
+    const cleaned = run(["clean", "native"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receipt);
+
+    mkdirSync(movedParent);
+    git(root, "worktree", "move", worktree, movedWorktree);
+    const purged = run(["clean", "purge", receipt, "--force"], root);
+    assert.equal(purged.status, 0, purged.stderr);
+    assert.equal(readFileSync(join(movedWorktree, "src", "source-sentinel.native"), "utf8"), "source sentinel\n");
+    assert.equal(readFileSync(join(movedWorktree, "assets", "asset-sentinel.txt"), "utf8"), "asset sentinel\n");
   } finally {
     rmSync(dirname(root), { recursive: true, force: true });
   }
@@ -728,7 +933,7 @@ test("purge refuses a safe-looking Native link injected after quarantine", (cont
     assert.equal(cleaned.status, 0, cleaned.stderr);
     const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
     assert.ok(receipt);
-    const transaction = dirname(receipt);
+    const transaction = JSON.parse(readFileSync(receipt, "utf8")).transactionRoot;
     const nativeDestination = JSON.parse(readFileSync(receipt, "utf8")).moves[0].destination;
     const injectedIdentity = join(nativeDestination, "identities", "injected-identity");
     mkdirSync(injectedIdentity);
@@ -814,7 +1019,7 @@ test("purge requires an exact receipt and force, then reclaims only its quaranti
     assert.equal(cleaned.status, 0, cleaned.stderr);
     const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
     assert.ok(receipt);
-    const transaction = dirname(receipt);
+    const transaction = JSON.parse(readFileSync(receipt, "utf8")).transactionRoot;
 
     const noForce = run(["clean", "purge", receipt], worktree);
     assert.equal(noForce.status, 3);
@@ -845,7 +1050,7 @@ test("purge tombstone boundary refuses a replacement transaction", async (contex
     assert.equal(cleaned.status, 0, cleaned.stderr);
     const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
     assert.ok(receipt);
-    const transaction = dirname(receipt);
+    const transaction = JSON.parse(readFileSync(receipt, "utf8")).transactionRoot;
     const original = `${transaction}.original`;
     const replacementSentinel = join(transaction, "replacement-sentinel.txt");
     const purged = await runPausedAtHook(
@@ -876,7 +1081,7 @@ test("purge refuses content inserted after its pre-tombstone manifest", async (c
     const cleaned = run(["clean", "build"], worktree);
     const receiptPath = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
     assert.ok(receiptPath);
-    const transaction = dirname(receiptPath);
+    const transaction = JSON.parse(readFileSync(receiptPath, "utf8")).transactionRoot;
     const sentinel = join(transaction, "late-before-tombstone.bin");
     const result = await runPausedAtHook(
       ["clean", "purge", receiptPath, "--force"],
@@ -903,8 +1108,8 @@ test("purge revalidates receipt-bound contents after tombstoning", async (contex
     assert.equal(cleaned.status, 0, cleaned.stderr);
     const receiptPath = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
     assert.ok(receiptPath);
-    const transaction = dirname(receiptPath);
     const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+    const transaction = receipt.transactionRoot;
     const injectedRelative = relative(transaction, join(dirname(receipt.moves[0].destination), "late-unrecorded.bin"));
     const purged = await runPausedAtHook(
       ["clean", "purge", receiptPath, "--force"],
@@ -916,7 +1121,7 @@ test("purge revalidates receipt-bound contents after tombstoning", async (contex
       },
     );
     assert.equal(purged.status, 3);
-    assert.match(purged.stderr, /not named by the receipt/u);
+    assert.match(purged.stderr, /quarantine transaction contains content not named by the receipt|purge tombstone contains unknown content/u);
     assert.ok(tombstone);
     assert.equal(readFileSync(join(tombstone, injectedRelative), "utf8"), "must survive\n");
   } finally {
@@ -1048,7 +1253,7 @@ test("purge refuses an unrecorded regular file inside a destination bucket", (co
 
     const purged = run(["clean", "purge", receiptPath, "--force"], worktree);
     assert.equal(purged.status, 3);
-    assert.match(purged.stderr, /not named by the receipt/u);
+    assert.match(purged.stderr, /not named by the receipt|contains unknown content/u);
     assert.ok(existsSync(dirname(receiptPath)));
     assert.equal(readFileSync(injected, "utf8"), "must not be purged\n");
   } finally {
@@ -1077,7 +1282,7 @@ test("purge refuses a same-bucket artifact omitted from the receipt", (context) 
 
     const purged = run(["clean", "purge", receiptPath, "--force"], worktree);
     assert.equal(purged.status, 3);
-    assert.match(purged.stderr, /not named by the receipt/u);
+    assert.match(purged.stderr, /durable and transaction cleanup receipts differ/u);
     assert.ok(existsSync(omittedDestination));
     assert.ok(existsSync(dirname(receiptPath)));
   } finally {
@@ -1101,10 +1306,127 @@ test("purge refuses a receipt whose recorded artifact size was tampered", (conte
 
     const purged = run(["clean", "purge", receiptPath, "--force"], worktree);
     assert.equal(purged.status, 3);
-    assert.match(purged.stderr, /size does not match its receipt/u);
+    assert.match(purged.stderr, /durable and transaction cleanup receipts differ/u);
     assert.ok(existsSync(dirname(receiptPath)));
   } finally {
     rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("purge resumes safely after real SIGKILL at every durable deletion phase", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const hooks = [
+    "after-purge-journal-create",
+    "after-purge-journal-deleting",
+    "after-purge-tombstone",
+    "after-delete-entry-rename",
+    "after-delete-entry-unlink",
+    "after-purge-root-rmdir",
+    "after-purge-complete-before-state",
+  ];
+  for (const hook of hooks) {
+    await context.test(hook, async () => {
+      const { root, worktree } = makeRepo(`workspace-maintenance-purge-kill-${hook}-`);
+      try {
+        mkdirSync(join(worktree, "zig-out", "bin", "nested"), { recursive: true });
+        writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+        writeFileSync(join(worktree, "zig-out", "bin", "nested", "data"), "data\n");
+        const cleaned = run(["clean", "build"], worktree);
+        assert.equal(cleaned.status, 0, cleaned.stderr);
+        const receiptPath = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+        assert.ok(receiptPath);
+        const transactionRoot = JSON.parse(readFileSync(receiptPath, "utf8")).transactionRoot;
+
+        await runKilledAtHook(["clean", "purge", receiptPath, "--force"], worktree, hook);
+        const resumed = run(["clean", "purge", receiptPath, "--force"], worktree);
+        assert.equal(resumed.status, 0, `${hook}: ${resumed.stderr}`);
+        assert.equal(existsSync(transactionRoot), false, hook);
+        const second = run(["clean", "purge", receiptPath, "--force"], worktree);
+        assert.equal(second.status, 0, `${hook} second run: ${second.stderr}`);
+        assert.match(second.stdout, /already complete/u);
+      } finally {
+        rmSync(dirname(root), { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("purge refuses a live same-operation lock and preserves it", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  let paused;
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+    const cleaned = run(["clean", "build"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    const receiptPath = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receiptPath);
+    const hookRoot = mkdtempSync(join(tmpdir(), "workspace-maintenance-live-purge-lock-"));
+    const marker = join(hookRoot, "marker.json");
+    const release = join(hookRoot, "release");
+    paused = spawn(process.execPath, [scriptPath, "clean", "purge", receiptPath, "--force"], {
+      cwd: worktree,
+      env: {
+        ...process.env,
+        NODE_ENV: "test",
+        NODE_TEST_CONTEXT: "child-v8",
+        WORKSPACE_MAINTENANCE_TEST_HOOK: "after-purge-journal-deleting",
+        WORKSPACE_MAINTENANCE_TEST_MARKER: marker,
+        WORKSPACE_MAINTENANCE_TEST_RELEASE: release,
+      },
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    await waitForPath(marker);
+    const lockPath = join(root, ".git", "buwiz-workspace-maintenance", "lock.json");
+    const before = readFileSync(lockPath, "utf8");
+    const refused = run(["clean", "purge", receiptPath, "--force"], worktree);
+    assert.equal(refused.status, 3);
+    assert.match(refused.stderr, /already held or cannot be proven stale/u);
+    assert.equal(readFileSync(lockPath, "utf8"), before);
+    releaseTestHook(release);
+    await new Promise((resolveClosed) => paused.once("close", resolveClosed));
+    paused = null;
+  } finally {
+    paused?.kill("SIGKILL");
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("purge refuses corrupt or different-operation locks without replacing them", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  for (const variant of ["corrupt", "different-operation"]) {
+    await context.test(variant, async () => {
+      const { root, worktree } = makeRepo(`workspace-maintenance-purge-lock-${variant}-`);
+      try {
+        mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+        writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+        const cleaned = run(["clean", "build"], worktree);
+        assert.equal(cleaned.status, 0, cleaned.stderr);
+        const receiptPath = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+        assert.ok(receiptPath);
+        await runKilledAtHook(
+          ["clean", "purge", receiptPath, "--force"],
+          worktree,
+          "after-purge-journal-deleting",
+        );
+        const lockPath = join(root, ".git", "buwiz-workspace-maintenance", "lock.json");
+        if (variant === "corrupt") {
+          writeFileSync(lockPath, "not json\n");
+        } else {
+          const owner = JSON.parse(readFileSync(lockPath, "utf8"));
+          owner.operationId = "0".repeat(64);
+          writeFileSync(lockPath, `${JSON.stringify(owner, null, 2)}\n`);
+        }
+        const before = readFileSync(lockPath, "utf8");
+        const refused = run(["clean", "purge", receiptPath, "--force"], worktree);
+        assert.equal(refused.status, 3);
+        assert.match(refused.stderr, /lock is corrupt|cannot be proven stale/u);
+        assert.equal(readFileSync(lockPath, "utf8"), before);
+      } finally {
+        rmSync(dirname(root), { recursive: true, force: true });
+      }
+    });
   }
 });
 
@@ -1138,6 +1460,478 @@ test("worktree-remove removes a clean merged fixture through Git and preserves i
   }
 });
 
+test("worktree-remove preserves target branch history and exact sibling topology", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  const sibling = join(dirname(worktree), "sibling");
+  try {
+    git(root, "worktree", "add", "-b", "sibling", sibling, "main");
+    const targetHead = git(worktree, "rev-parse", "HEAD");
+    const targetRef = git(worktree, "symbolic-ref", "HEAD");
+    const targetReflogBefore = git(root, "reflog", "show", "--format=%H %gs", targetRef);
+    const siblingBefore = linkedWorktreeTopology(sibling);
+    const siblingAdminNamesBefore = physicalTreeSnapshot(siblingBefore.gitDir)
+      .map(({ relativePath, type }) => ({ relativePath, type }));
+    const siblingRefBefore = git(root, "show-ref", "--verify", siblingBefore.branch);
+    const siblingReflogBefore = git(root, "reflog", "show", "--format=%H %gs", siblingBefore.branch);
+
+    const removed = run(["worktree-remove", realpathSync(worktree)], root);
+    assert.equal(removed.status, 0, removed.stderr);
+    assert.equal(existsSync(worktree), false);
+    assert.equal(git(root, "rev-parse", targetRef), targetHead);
+    assert.equal(git(root, "reflog", "show", "--format=%H %gs", targetRef), targetReflogBefore);
+    assert.deepEqual(linkedWorktreeTopology(sibling), siblingBefore);
+    assert.deepEqual(
+      physicalTreeSnapshot(siblingBefore.gitDir).map(({ relativePath, type }) => ({ relativePath, type })),
+      siblingAdminNamesBefore,
+    );
+    assert.equal(git(root, "show-ref", "--verify", siblingBefore.branch), siblingRefBefore);
+    assert.equal(git(root, "reflog", "show", "--format=%H %gs", siblingBefore.branch), siblingReflogBefore);
+    const listed = git(root, "worktree", "list", "--porcelain");
+    assert.doesNotMatch(listed, new RegExp(worktree, "u"));
+    assert.match(listed, new RegExp(realpathSync(sibling), "u"));
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("worktree removal lock protects staged administration data from Git prune", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo("workspace-maintenance-prune-protection-");
+  const sibling = join(dirname(worktree), "sibling");
+  try {
+    git(root, "worktree", "add", "-b", "sibling", sibling, "main");
+    const target = realpathSync(worktree);
+    const targetHead = git(worktree, "rev-parse", "HEAD");
+    const targetRef = git(worktree, "symbolic-ref", "HEAD");
+    const targetAdmin = realpathSync(git(worktree, "rev-parse", "--absolute-git-dir"));
+    const siblingBefore = linkedWorktreeTopology(sibling);
+    let receiptPath;
+    const result = await runPausedAtHook(
+      ["worktree-remove", target],
+      root,
+      "after-worktree-holding-rename",
+      async (marker) => {
+        receiptPath = marker.receiptPath;
+        assert.equal(existsSync(target), false);
+        assert.ok(existsSync(marker.holdingPath));
+        assert.ok(existsSync(targetAdmin));
+        assert.match(readFileSync(join(targetAdmin, "locked"), "utf8"), /^buwiz-worktree-remove:/u);
+        git(root, "worktree", "prune");
+        assert.ok(existsSync(targetAdmin));
+        assert.equal(git(root, "rev-parse", targetRef), targetHead);
+        assert.deepEqual(linkedWorktreeTopology(sibling), siblingBefore);
+      },
+      { WORKSPACE_MAINTENANCE_TEST_ACTION: "fail" },
+    );
+    assert.equal(result.status, 3, result.stderr);
+    assert.ok(receiptPath && existsSync(receiptPath));
+    const resumed = run(["worktree-remove", "--resume", receiptPath, "--force"], root);
+    assert.equal(resumed.status, 0, resumed.stderr);
+    assert.equal(existsSync(targetAdmin), false);
+    assert.equal(git(root, "rev-parse", targetRef), targetHead);
+    assert.deepEqual(linkedWorktreeTopology(sibling), siblingBefore);
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("worktree removal resumes after SIGKILL at every durable boundary", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const hooks = [
+    "after-worktree-removal-journal-create",
+    "after-worktree-git-move",
+    "after-worktree-holding-rename",
+    "after-worktree-admin-holding-rename",
+    "after-worktree-admin-entry-rename",
+    "after-worktree-admin-entry-unlink",
+    "after-worktree-admin-root-rmdir",
+    "after-worktree-root-entry-rename",
+    "after-worktree-root-entry-unlink",
+    "after-worktree-root-rmdir",
+    "after-worktree-removal-complete-write",
+  ];
+  for (const hook of hooks) {
+    await context.test(hook, async () => {
+      const { root, worktree } = makeRepo(`workspace-maintenance-remove-kill-${hook}-`);
+      const sibling = join(dirname(worktree), "sibling");
+      try {
+        git(root, "worktree", "add", "-b", "sibling", sibling, "main");
+        const target = realpathSync(worktree);
+        const targetHead = git(worktree, "rev-parse", "HEAD");
+        const targetRef = git(worktree, "symbolic-ref", "HEAD");
+        const siblingBefore = linkedWorktreeTopology(sibling);
+        const siblingFilesBefore = physicalTreeSnapshot(sibling);
+          const siblingAdminBefore = physicalTreeSnapshot(siblingBefore.gitDir)
+          .map(({ relativePath, type, contentDigest, linkTarget }) => ({
+            relativePath,
+            type,
+            contentDigest,
+            linkTarget,
+          }));
+        let receiptPath;
+        const killed = await runKilledAtHook(
+          ["worktree-remove", target],
+          root,
+          hook,
+          (payload) => {
+            assert.ok(isAbsolute(payload.receiptPath), `${hook}: receiptPath must be absolute`);
+            receiptPath = payload.receiptPath;
+          },
+        );
+        assert.equal(killed.signal, "SIGKILL");
+        assert.ok(receiptPath && existsSync(receiptPath), hook);
+        const staleLock = join(root, ".git", "buwiz-workspace-maintenance", "lock.json");
+        if (hook === "after-worktree-removal-complete-write") {
+          const completedReceipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+          assert.equal(completedReceipt.state, "complete", hook);
+          if (existsSync(staleLock)) {
+            const staleOwner = JSON.parse(readFileSync(staleLock, "utf8"));
+            assert.equal(staleOwner.pid, killed.childPid, hook);
+            assert.equal(staleOwner.kind, "worktree-remove", hook);
+          }
+        } else {
+          assert.ok(existsSync(staleLock), `${hook}: SIGKILL must leave the owned lock`);
+          const staleOwner = JSON.parse(readFileSync(staleLock, "utf8"));
+          assert.equal(staleOwner.pid, killed.childPid, hook);
+          assert.equal(staleOwner.kind, "worktree-remove", hook);
+        }
+
+        const resumed = run(["worktree-remove", "--resume", receiptPath, "--force"], root);
+        assert.equal(resumed.status, 0, `${hook}: ${resumed.stderr}`);
+        assert.equal(existsSync(staleLock), false, hook);
+        assert.equal(existsSync(target), false, hook);
+        assert.equal(git(root, "rev-parse", targetRef), targetHead, hook);
+        assert.deepEqual(linkedWorktreeTopology(sibling), siblingBefore, hook);
+        assert.deepEqual(physicalTreeSnapshot(sibling), siblingFilesBefore, hook);
+        assert.deepEqual(
+          physicalTreeSnapshot(siblingBefore.gitDir)
+            .map(({ relativePath, type, contentDigest, linkTarget }) => ({
+              relativePath,
+              type,
+              contentDigest,
+              linkTarget,
+            })),
+          siblingAdminBefore,
+          hook,
+        );
+        const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+        assert.equal(receipt.operation, "worktree-remove", hook);
+        assert.equal(receipt.state, "complete", hook);
+        for (const path of [
+          receipt.registeredTombstone,
+          receipt.holdingPath,
+          receipt.adminHoldingPath,
+        ]) {
+          assert.equal(existsSync(path), false, `${hook}: ${path}`);
+        }
+        assert.doesNotMatch(git(root, "worktree", "list", "--porcelain"), new RegExp(target, "u"));
+
+        const second = run(["worktree-remove", "--resume", receiptPath, "--force"], root);
+        assert.equal(second.status, 0, `${hook} second resume: ${second.stderr}`);
+        assert.match(second.stdout, /already complete/u);
+        assert.deepEqual(linkedWorktreeTopology(sibling), siblingBefore, `${hook} second resume`);
+      } finally {
+        rmSync(dirname(root), { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("worktree removal resume refuses a live owner without replacing its lock", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo("workspace-maintenance-remove-live-lock-");
+  try {
+    const target = realpathSync(worktree);
+    let receiptPath;
+    const interrupted = await runPausedAtHook(
+      ["worktree-remove", target],
+      root,
+      "after-worktree-removal-journal-create",
+      (payload) => {
+        receiptPath = payload.receiptPath;
+        assert.ok(isAbsolute(receiptPath));
+        const lockPath = join(root, ".git", "buwiz-workspace-maintenance", "lock.json");
+        const lockBefore = readFileSync(lockPath, "utf8");
+        const owner = JSON.parse(lockBefore);
+        assert.equal(owner.kind, "worktree-remove");
+        const refused = run(["worktree-remove", "--resume", receiptPath, "--force"], root);
+        assert.equal(refused.status, 3);
+        assert.match(refused.stderr, /lock is already held|cannot be proven stale/u);
+        assert.equal(readFileSync(lockPath, "utf8"), lockBefore);
+      },
+      { WORKSPACE_MAINTENANCE_TEST_ACTION: "fail" },
+    );
+    assert.equal(interrupted.status, 3);
+    assert.ok(receiptPath && existsSync(receiptPath));
+    assert.ok(existsSync(target));
+
+    const resumed = run(["worktree-remove", "--resume", receiptPath, "--force"], root);
+    assert.equal(resumed.status, 0, resumed.stderr);
+    assert.equal(existsSync(target), false);
+    assert.equal(JSON.parse(readFileSync(receiptPath, "utf8")).state, "complete");
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("worktree removal resume preserves corrupt and different-operation locks", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  for (const variant of ["corrupt", "different-operation"]) {
+    await context.test(variant, async () => {
+      const { root, worktree } = makeRepo(`workspace-maintenance-remove-lock-${variant}-`);
+      try {
+        const target = realpathSync(worktree);
+        const killed = await runKilledAtHook(
+          ["worktree-remove", target],
+          root,
+          "after-worktree-removal-journal-create",
+        );
+        const receiptPath = killed.payload.receiptPath;
+        assert.ok(isAbsolute(receiptPath) && existsSync(receiptPath));
+        const lockPath = join(root, ".git", "buwiz-workspace-maintenance", "lock.json");
+        if (variant === "corrupt") {
+          writeFileSync(lockPath, "not json\n");
+        } else {
+          const owner = JSON.parse(readFileSync(lockPath, "utf8"));
+          owner.kind = "clean-purge";
+          writeFileSync(lockPath, `${JSON.stringify(owner, null, 2)}\n`);
+        }
+        const lockBefore = readFileSync(lockPath, "utf8");
+        const refused = run(["worktree-remove", "--resume", receiptPath, "--force"], root);
+        assert.equal(refused.status, 3);
+        assert.match(refused.stderr, /lock/u);
+        assert.equal(readFileSync(lockPath, "utf8"), lockBefore);
+        assert.ok(existsSync(target));
+        assert.notEqual(JSON.parse(readFileSync(receiptPath, "utf8")).state, "complete");
+      } finally {
+        rmSync(dirname(root), { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("worktree removal resume preserves content inserted after SIGKILL", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const cases = [
+    {
+      hook: "after-worktree-git-move",
+      insert(payload) {
+        mkdirSync(payload.original);
+        const sentinel = join(payload.original, "late-original.txt");
+        writeFileSync(sentinel, "late original survives\n");
+        return sentinel;
+      },
+    },
+    {
+      hook: "after-worktree-holding-rename",
+      insert(payload) {
+        const sentinel = join(payload.holdingPath, "late-held.txt");
+        writeFileSync(sentinel, "late held survives\n");
+        return sentinel;
+      },
+    },
+    {
+      hook: "after-worktree-admin-holding-rename",
+      insert(payload) {
+        const sentinel = join(payload.adminHoldingPath, "late-admin.txt");
+        writeFileSync(sentinel, "late admin survives\n");
+        return sentinel;
+      },
+    },
+    {
+      hook: "after-worktree-admin-entry-rename",
+      insert(payload) {
+        const sentinel = join(payload.root, "late-admin-leaf.txt");
+        writeFileSync(sentinel, "late admin leaf survives\n");
+        return sentinel;
+      },
+    },
+    {
+      hook: "after-worktree-root-entry-rename",
+      insert(payload) {
+        const sentinel = join(payload.root, "late-root-leaf.txt");
+        writeFileSync(sentinel, "late root leaf survives\n");
+        return sentinel;
+      },
+    },
+  ];
+  for (const crashCase of cases) {
+    await context.test(crashCase.hook, async () => {
+      const { root, worktree } = makeRepo(`workspace-maintenance-remove-insert-${crashCase.hook}-`);
+      const sibling = join(dirname(worktree), "sibling");
+      try {
+        git(root, "worktree", "add", "-b", "sibling", sibling, "main");
+        const target = realpathSync(worktree);
+        const targetRef = git(worktree, "symbolic-ref", "HEAD");
+        const targetHead = git(worktree, "rev-parse", "HEAD");
+        const siblingBefore = linkedWorktreeTopology(sibling);
+        let sentinel;
+        const killed = await runKilledAtHook(
+          ["worktree-remove", target],
+          root,
+          crashCase.hook,
+          (payload) => {
+            assert.ok(isAbsolute(payload.receiptPath));
+            sentinel = crashCase.insert(payload);
+          },
+        );
+        const receiptPath = killed.payload.receiptPath;
+        const sentinelContents = readFileSync(sentinel, "utf8");
+        const refused = run(["worktree-remove", "--resume", receiptPath, "--force"], root);
+        assert.equal(refused.status, 3);
+        assert.match(refused.stderr, /changed|repopulated|unknown content|manifest/u);
+        assert.equal(readFileSync(sentinel, "utf8"), sentinelContents);
+        assert.notEqual(JSON.parse(readFileSync(receiptPath, "utf8")).state, "complete");
+        assert.equal(git(root, "rev-parse", targetRef), targetHead);
+        assert.deepEqual(linkedWorktreeTopology(sibling), siblingBefore);
+        assert.equal(
+          existsSync(join(root, ".git", "buwiz-workspace-maintenance", "lock.json")),
+          false,
+        );
+      } finally {
+        rmSync(dirname(root), { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("worktree removal preserves a repopulated original path and its staged tree", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  for (const replacementType of ["file", "directory"]) {
+    await context.test(replacementType, async () => {
+      const { root, worktree } = makeRepo(`workspace-maintenance-original-${replacementType}-`);
+      try {
+        const original = realpathSync(worktree);
+        const result = await runPausedAtHook(
+          ["worktree-remove", original], root, "after-worktree-git-move",
+          async (marker) => {
+            assert.equal(marker.original, original);
+            assert.ok(existsSync(marker.registeredTombstone));
+            if (replacementType === "file") writeFileSync(original, "late original file\n");
+            else {
+              mkdirSync(original);
+              writeFileSync(join(original, "late.txt"), "late original directory\n");
+            }
+          },
+        );
+        assert.equal(result.status, 3);
+        assert.match(result.stderr, /original worktree path was repopulated/u);
+        if (replacementType === "file") assert.equal(readFileSync(original, "utf8"), "late original file\n");
+        else assert.equal(readFileSync(join(original, "late.txt"), "utf8"), "late original directory\n");
+        const receiptDir = join(root, ".git", "buwiz-workspace-maintenance", "receipts");
+        const receipt = readdirSync(receiptDir).map((name) => join(receiptDir, name))
+          .find((path) => JSON.parse(readFileSync(path, "utf8")).operation === "worktree-remove");
+        assert.ok(receipt);
+        const details = JSON.parse(readFileSync(receipt, "utf8"));
+        assert.equal(details.state, "root-move-intent");
+        assert.ok(existsSync(details.registeredTombstone));
+        const listed = git(root, "worktree", "list", "--porcelain");
+        assert.match(listed, new RegExp(original, "u"));
+        assert.match(listed, new RegExp(details.gitLockReason, "u"));
+      } finally {
+        rmSync(dirname(root), { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("worktree removal preserves a repopulated registered tombstone and held tree", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo("workspace-maintenance-registered-repopulation-");
+  try {
+    const result = await runPausedAtHook(
+      ["worktree-remove", realpathSync(worktree)], root, "after-worktree-holding-rename",
+      async (marker) => {
+        assert.equal(existsSync(marker.registeredTombstone), false);
+        assert.ok(existsSync(marker.holdingPath));
+        mkdirSync(marker.registeredTombstone);
+        writeFileSync(join(marker.registeredTombstone, "late.txt"), "late registered tombstone\n");
+      },
+    );
+    assert.equal(result.status, 3);
+    assert.match(result.stderr, /root topology is inconsistent or was repopulated/u);
+    const receiptDir = join(root, ".git", "buwiz-workspace-maintenance", "receipts");
+    const receipt = readdirSync(receiptDir).map((name) => join(receiptDir, name))
+      .find((path) => JSON.parse(readFileSync(path, "utf8")).operation === "worktree-remove");
+    assert.ok(receipt);
+    const details = JSON.parse(readFileSync(receipt, "utf8"));
+    assert.equal(details.state, "root-held");
+    assert.equal(readFileSync(join(details.registeredTombstone, "late.txt"), "utf8"), "late registered tombstone\n");
+    assert.ok(existsSync(details.holdingPath));
+    assert.ok(existsSync(join(details.holdingPath, ".git")));
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("worktree removal blocks an admin lock inserted at deregistration boundary", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo("workspace-maintenance-admin-lock-");
+  try {
+    const result = await runPausedAtHook(
+      ["worktree-remove", realpathSync(worktree)], root, "before-worktree-admin-delete",
+      async (marker) => { writeFileSync(join(marker.adminRoot, "late-probe.lock"), "late admin lock\n"); },
+    );
+    assert.equal(result.status, 3);
+    assert.match(result.stderr, /administration (?:contents changed during staging|directory no longer matches its authorized deletion manifest|contains lock files)/u);
+    const receiptDir = join(root, ".git", "buwiz-workspace-maintenance", "receipts");
+    const receipt = readdirSync(receiptDir).map((name) => join(receiptDir, name))
+      .find((path) => JSON.parse(readFileSync(path, "utf8")).operation === "worktree-remove");
+    assert.ok(receipt);
+    const details = JSON.parse(readFileSync(receipt, "utf8"));
+    assert.equal(details.state, "admin-move-intent");
+    assert.equal(readFileSync(join(details.targetGitDir, "late-probe.lock"), "utf8"), "late admin lock\n");
+    assert.ok(existsSync(details.holdingPath));
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("worktree removal refuses a hard-linked administration file before Git can rewrite it", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo("workspace-maintenance-admin-hardlink-");
+  try {
+    const maintenance = linkedWorktreeMaintenancePaths(root, worktree);
+    const adminGitdir = join(maintenance.gitDir, "gitdir");
+    const sentinel = join(dirname(root), "external-gitdir-sentinel");
+    linkSync(adminGitdir, sentinel);
+    const before = readFileSync(sentinel, "utf8");
+
+    const result = run(["worktree-remove", realpathSync(worktree)], root);
+    assert.equal(result.status, 3);
+    assert.match(result.stderr, /hard-linked regular files/u);
+    assert.equal(readFileSync(sentinel, "utf8"), before);
+    assert.ok(existsSync(worktree));
+    assert.match(git(root, "worktree", "list", "--porcelain"), new RegExp(realpathSync(worktree), "u"));
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("worktree removal blocks late held-tree content before final deletion", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo("workspace-maintenance-held-tree-change-");
+  try {
+    const result = await runPausedAtHook(
+      ["worktree-remove", realpathSync(worktree)], root, "before-worktree-delete",
+      async (marker) => { writeFileSync(join(marker.holdingPath, "late-held.txt"), "late held content\n"); },
+    );
+    assert.equal(result.status, 3);
+    assert.match(result.stderr, /purge tombstone contains unknown content|ENOTEMPTY/u);
+    const receiptDir = join(root, ".git", "buwiz-workspace-maintenance", "receipts");
+    const receipt = readdirSync(receiptDir).map((name) => join(receiptDir, name))
+      .find((path) => JSON.parse(readFileSync(path, "utf8")).operation === "worktree-remove");
+    assert.ok(receipt);
+    const details = JSON.parse(readFileSync(receipt, "utf8"));
+    assert.equal(details.state, "root-delete-intent");
+    assert.equal(readFileSync(join(details.holdingPath, "late-held.txt"), "utf8"), "late held content\n");
+    assert.equal(existsSync(details.targetGitDir), false);
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
 test("worktree-remove requires every cleanup receipt to be purged, even with force", (context) => {
   if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
   const { root, worktree } = makeRepo();
@@ -1165,6 +1959,131 @@ test("worktree-remove requires every cleanup receipt to be purged, even with for
     const removed = run(["worktree-remove", realpathSync(worktree)], root);
     assert.equal(removed.status, 0, removed.stderr);
     assert.equal(existsSync(worktree), false);
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("moving a worktree cannot hide its outstanding cleanup receipt", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  const movedParent = join(dirname(worktree), "moved-parent");
+  const movedWorktree = join(movedParent, "candidate");
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+    const cleaned = run(["clean", "build"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receipt);
+
+    mkdirSync(movedParent);
+    git(root, "worktree", "move", worktree, movedWorktree);
+    const blocked = run(["worktree-remove", realpathSync(movedWorktree), "--force"], root);
+    assert.equal(blocked.status, 3);
+    assert.match(blocked.stderr, /cleanup (?:intent|receipt)|unpurged cleanup/u);
+    assert.ok(blocked.stderr.includes(receipt));
+    assert.ok(existsSync(movedWorktree));
+
+    const purged = run(["clean", "purge", receipt, "--force"], root);
+    assert.equal(purged.status, 0, purged.stderr);
+    const removed = run(["worktree-remove", realpathSync(movedWorktree)], root);
+    assert.equal(removed.status, 0, removed.stderr);
+    assert.equal(existsSync(movedWorktree), false);
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("exact cross-worktree clean changes only the selected linked worktree", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  const third = join(dirname(worktree), "third");
+  try {
+    git(root, "worktree", "add", "-b", "third", third, "main");
+    mkdirSync(join(root, "zig-out", "bin"), { recursive: true });
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    mkdirSync(join(third, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(root, "zig-out", "bin", "primary"), "primary\n");
+    writeFileSync(join(worktree, "zig-out", "bin", "selected"), "selected\n");
+    writeFileSync(join(third, "zig-out", "bin", "third"), "third\n");
+    const callerBefore = linkedWorktreeTopology(worktree);
+    const thirdBefore = linkedWorktreeTopology(third);
+    const topologyBefore = git(root, "worktree", "list", "--porcelain");
+
+    const cleaned = run(["clean", "build", "--worktree", realpathSync(third), "--force"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receipt);
+    assert.ok(existsSync(join(root, "zig-out", "bin", "primary")));
+    assert.ok(existsSync(join(worktree, "zig-out", "bin", "selected")));
+    assert.equal(existsSync(join(third, "zig-out")), false);
+    assert.deepEqual(linkedWorktreeTopology(worktree), callerBefore);
+    assert.deepEqual(linkedWorktreeTopology(third), thirdBefore);
+    assert.equal(git(root, "worktree", "list", "--porcelain"), topologyBefore);
+
+    const purged = run(["clean", "purge", receipt, "--force"], root);
+    assert.equal(purged.status, 0, purged.stderr);
+    assert.ok(existsSync(join(root, "zig-out", "bin", "primary")));
+    assert.ok(existsSync(join(worktree, "zig-out", "bin", "selected")));
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("a missing outstanding cleanup state blocks removal after a worktree move", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  const movedParent = join(dirname(worktree), "moved-missing-state-parent");
+  const movedWorktree = join(movedParent, "candidate");
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+    const maintenance = linkedWorktreeMaintenancePaths(root, worktree);
+    const cleaned = run(["clean", "build"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receipt);
+    assert.equal(JSON.parse(readFileSync(maintenance.state, "utf8")).state, "receipt");
+
+    mkdirSync(movedParent);
+    git(root, "worktree", "move", worktree, movedWorktree);
+    unlinkSync(maintenance.state);
+
+    const blocked = run(["worktree-remove", realpathSync(movedWorktree), "--force"], root);
+    assert.equal(blocked.status, 3);
+    assert.match(blocked.stderr, /cleanup quarantine state is uncertain|cleanup receipt|quarantine transaction/u);
+    assert.ok(existsSync(movedWorktree));
+    assert.ok(existsSync(receipt));
+    assert.equal(existsSync(maintenance.state), false);
+    assert.match(git(root, "worktree", "list", "--porcelain"), new RegExp(realpathSync(movedWorktree), "u"));
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("a corrupt cleanup state blocks forced worktree removal and preserves its receipt", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+    const maintenance = linkedWorktreeMaintenancePaths(root, worktree);
+    const cleaned = run(["clean", "build"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receipt);
+    const state = JSON.parse(readFileSync(maintenance.state, "utf8"));
+    state.transactionRoot = join(dirname(state.transactionRoot), "wrong-transaction");
+    writeFileSync(maintenance.state, `${JSON.stringify(state, null, 2)}\n`);
+
+    const blocked = run(["worktree-remove", realpathSync(worktree), "--force"], root);
+    assert.equal(blocked.status, 3);
+    assert.match(blocked.stderr, /cleanup state does not match its receipt|cleanup quarantine state is uncertain/u);
+    assert.ok(existsSync(worktree));
+    assert.ok(existsSync(receipt));
+    assert.equal(JSON.parse(readFileSync(maintenance.state, "utf8")).transactionRoot, state.transactionRoot);
+    assert.match(git(root, "worktree", "list", "--porcelain"), new RegExp(realpathSync(worktree), "u"));
   } finally {
     rmSync(dirname(root), { recursive: true, force: true });
   }
@@ -1330,5 +2249,171 @@ test("an active process is an immutable blocker", async (context) => {
   } finally {
     processHandle?.kill("SIGTERM");
     rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("cleanup resumes safely after real SIGKILL at every durable phase", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation intentionally unsupported");
+  const checkpoints = [
+    "after-clean-journal-create",
+    "after-clean-journal-moving",
+    "after-artifact-rename-0",
+    "after-artifact-rename-1",
+    "after-clean-journal-internal-receipt",
+    "after-clean-internal-receipt",
+    "after-clean-journal-durable-receipt",
+    "after-clean-durable-receipt",
+    "after-clean-state-update",
+    "after-clean-journal-complete",
+    "after-clean-complete",
+  ];
+  for (const checkpoint of checkpoints) {
+    await context.test(checkpoint, async () => {
+      const { root, worktree } = makeRepo();
+      try {
+        mkdirSync(join(worktree, ".zig-cache"), { recursive: true });
+        mkdirSync(join(worktree, "zig-cache"), { recursive: true });
+        writeFileSync(join(worktree, ".zig-cache", "one.bin"), "one\n");
+        writeFileSync(join(worktree, "zig-cache", "two.bin"), "two\n");
+        const killed = await runKilledAtHook(["clean", "zig-cache"], worktree, checkpoint);
+        const journalRoot = join(dirname(cleanupLockPath(root)), "clean-operations");
+        const journal = killed.payload.journalPath
+          ?? (existsSync(journalRoot)
+            ? join(journalRoot, readdirSync(journalRoot)[0], "journal.json")
+            : null);
+        assert.ok(journal && existsSync(journal), `missing journal after ${checkpoint}`);
+
+        const noForce = run(["clean", "resume", journal], worktree);
+        assert.equal(noForce.status, 3);
+        assert.match(noForce.stderr, /requires --force/u);
+
+        const preview = run(["clean", "resume", journal, "--dry-run"], worktree);
+        assert.equal(preview.status, 0, preview.stderr);
+        const beforeResume = JSON.parse(readFileSync(journal, "utf8"));
+
+        const resumed = run(["clean", "resume", journal, "--force"], worktree);
+        assert.equal(resumed.status, 0, resumed.stderr);
+        const receiptPath = resumed.stdout.match(/receipt: (.+receipt\.json)/u)?.[1]
+          ?? JSON.parse(readFileSync(journal, "utf8")).durableReceiptPath;
+        assert.ok(receiptPath && existsSync(receiptPath));
+        const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+        assert.equal(receipt.moves.length, 2);
+        assert.equal(readFileSync(join(receipt.moves[0].destination, "one.bin"), "utf8"), "one\n");
+        assert.equal(readFileSync(join(receipt.moves[1].destination, "two.bin"), "utf8"), "two\n");
+        assert.equal(existsSync(join(worktree, ".zig-cache")), false);
+        assert.equal(existsSync(join(worktree, "zig-cache")), false);
+        assert.equal(beforeResume.authorizationDigest, JSON.parse(readFileSync(journal, "utf8")).authorizationDigest);
+
+        const second = run(["clean", "resume", journal, "--force"], worktree);
+        assert.equal(second.status, 0, second.stderr);
+        assert.match(second.stdout, /already complete/u);
+      } finally {
+        rmSync(dirname(root), { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("cleanup resume refuses ambiguous, missing, changed, and unknown artifact state", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation intentionally unsupported");
+  for (const variant of ["both", "neither", "source-changed", "destination-changed", "unknown"]) {
+    await context.test(variant, async () => {
+      const { root, worktree } = makeRepo(`workspace-maintenance-clean-resume-${variant}-`);
+      try {
+        mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+        writeFileSync(join(worktree, "zig-out", "bin", "app"), "authorized\n");
+        let killed;
+        if (["destination-changed", "unknown"].includes(variant)) {
+          killed = await runKilledAtHook(["clean", "build"], worktree, "after-artifact-rename-0");
+        } else {
+          killed = await runKilledAtHook(["clean", "build"], worktree, "after-clean-journal-moving");
+        }
+        const journalRoot = join(dirname(cleanupLockPath(root)), "clean-operations");
+        const journalPath = killed.payload.journalPath
+          ?? join(journalRoot, readdirSync(journalRoot)[0], "journal.json");
+        const journal = JSON.parse(readFileSync(journalPath, "utf8"));
+        const move = journal.moves[0];
+        if (variant === "both") {
+          mkdirSync(move.destination, { recursive: true });
+          writeFileSync(join(move.destination, "replacement.txt"), "keep\n");
+        } else if (variant === "neither") {
+          rmSync(move.source, { recursive: true });
+        } else if (variant === "source-changed") {
+          writeFileSync(join(move.source, "bin", "app"), "changed\n");
+        } else if (variant === "destination-changed") {
+          writeFileSync(join(move.destination, "bin", "app"), "changed\n");
+        } else {
+          writeFileSync(join(journal.transactionRoot, "unknown.bin"), "keep\n");
+        }
+        const refused = run(["clean", "resume", journalPath, "--force"], worktree);
+        assert.equal(refused.status, 3, refused.stderr);
+        assert.match(refused.stderr, /both exist|both missing|source was replaced|destination.*changed|unknown content/u);
+        if (variant === "both") assert.equal(readFileSync(join(move.destination, "replacement.txt"), "utf8"), "keep\n");
+        if (variant === "unknown") assert.equal(readFileSync(join(journal.transactionRoot, "unknown.bin"), "utf8"), "keep\n");
+      } finally {
+        rmSync(dirname(root), { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("cleanup resume refuses live, corrupt, wrong-operation, and foreign-host locks", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation intentionally unsupported");
+  for (const variant of ["live", "corrupt", "wrong-operation", "foreign-host"]) {
+    await context.test(variant, async () => {
+      const { root, worktree } = makeRepo(`workspace-maintenance-clean-lock-${variant}-`);
+      try {
+        mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+        writeFileSync(join(worktree, "zig-out", "bin", "app"), "authorized\n");
+        const killed = await runKilledAtHook(["clean", "build"], worktree, "after-clean-journal-moving");
+        const journalRoot = join(dirname(cleanupLockPath(root)), "clean-operations");
+        const journalPath = killed.payload.journalPath
+          ?? join(journalRoot, readdirSync(journalRoot)[0], "journal.json");
+        const lock = cleanupLockPath(root);
+        if (variant === "corrupt") {
+          writeFileSync(lock, "not json\n");
+        } else {
+          const owner = JSON.parse(readFileSync(lock, "utf8"));
+          if (variant === "live") owner.pid = process.pid;
+          if (variant === "wrong-operation") owner.operationId = "0".repeat(64);
+          if (variant === "foreign-host") owner.host = "foreign-host.invalid";
+          writeFileSync(lock, `${JSON.stringify(owner, null, 2)}\n`);
+        }
+        const before = readFileSync(lock, "utf8");
+        const refused = run(["clean", "resume", journalPath, "--force"], worktree);
+        assert.equal(refused.status, 3);
+        assert.match(refused.stderr, /lock is corrupt|cannot be proven stale/u);
+        assert.equal(readFileSync(lock, "utf8"), before);
+      } finally {
+        rmSync(dirname(root), { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("unknown or corrupt durable cleanup receipt metadata blocks worktree removal", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation intentionally unsupported");
+  for (const variant of ["unknown-entry", "corrupt-receipt"]) {
+    await context.test(variant, () => {
+      const { root, worktree } = makeRepo(`workspace-maintenance-durable-${variant}-`);
+      try {
+        const durableRoot = join(root, ".git", "buwiz-workspace-maintenance", "cleanup-receipts");
+        const operationRoot = join(durableRoot, "a".repeat(64));
+        mkdirSync(operationRoot, { recursive: true });
+        if (variant === "unknown-entry") {
+          writeFileSync(join(durableRoot, "unexpected"), "keep\n");
+        } else {
+          writeFileSync(join(operationRoot, "receipt.json"), "not json\n");
+        }
+        const result = run(["worktree-remove", realpathSync(worktree), "--force"], root);
+        assert.equal(result.status, 3);
+        assert.match(result.stderr, /cleanup quarantine state is uncertain|unknown entry|not valid JSON/u);
+        assert.ok(existsSync(worktree));
+        if (variant === "unknown-entry") assert.equal(readFileSync(join(durableRoot, "unexpected"), "utf8"), "keep\n");
+        else assert.equal(readFileSync(join(operationRoot, "receipt.json"), "utf8"), "not json\n");
+      } finally {
+        rmSync(dirname(root), { recursive: true, force: true });
+      }
+    });
   }
 });

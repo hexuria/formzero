@@ -105,7 +105,25 @@ just clean purge '/exact/quarantine/receipt.json' --dry-run
 just clean purge '/exact/quarantine/receipt.json' --force
 ```
 
-`purge` never accepts a directory or glob. It revalidates the receipt, every
+If cleanup is interrupted, resume only the exact operation journal printed by
+the failed command. Previewing is read-only; mutation requires `--force`:
+
+```sh
+just clean resume '/absolute/path/to/clean-operations/journal.json' --dry-run
+just clean resume '/absolute/path/to/clean-operations/journal.json' --force
+```
+
+Resume is journal-bound and idempotent: it continues only the authorized
+moves, recreates only missing transaction structure, and writes a durable
+receipt under the repository's shared Git maintenance directory. Re-running a
+completed journal is harmless. A live owner, corrupt lock, or lock for another
+operation is preserved and blocks recovery. Only a structurally valid lock for
+that exact operation may be reclaimed, and only when its recorded local PID is
+definitely absent.
+
+`purge` never accepts a directory or glob. Use the durable receipt path printed
+by cleanup or resume; unlike the transaction's internal copy, it remains
+available after a successful purge. Purge revalidates the receipt, every
 quarantined path, symlink and filesystem containment, and registered-worktree
 topology before removing that one transaction. Purge a worktree's receipt
 before removing that worktree; once the source is no longer registered, purge
@@ -119,9 +137,8 @@ make purge fail closed. This protects cooperative maintenance, but Node's
 pathname APIs cannot make the final rename, unlink, or empty-directory syscall
 atomic against a hostile same-user writer; writers must remain stopped during
 that final instant. A failure after an artifact move never automatically
-restores it: the transaction stays quarantined and a recovery receipt records
-each successful rename as verified or uncertain, including expected root
-identity and artifact-link metadata.
+restores it: the transaction stays quarantined and its operation journal
+records every authorized move for exact recovery.
 
 Artifact mutation refuses symlinked roots, ancestors, and nested links, with
 one narrow exception for Native's generated layout: an exact
@@ -151,9 +168,10 @@ The catalog contains only `.zig-cache`, `zig-cache`, `zig-pkg`, `zig-out`,
 `scripts/news-sync/work`. `all` still means only those declared roots and
 requires `--force`; it never means every ignored file. Credentials, private
 `reference/` captures, logs, `.claude/`, tracked generated sources, and
-backup-suffixed directories are outside the catalog. Cross-worktree cleanup
-requires an exact registered absolute path plus `--force`; inspect first with
-`just clean list --all-worktrees`.
+backup-suffixed directories are outside the catalog. Inventory can span every
+registered worktree with `just clean list --all-worktrees`, but each mutation
+deliberately targets one exact registered worktree. Cross-worktree cleanup
+requires that worktree's exact registered absolute path plus `--force`.
 
 Remove one linked worktree only by its exact absolute path:
 
@@ -163,15 +181,39 @@ just worktree-remove '/absolute/registered/worktree/path' --into origin/main
 just worktree-remove '/absolute/registered/worktree/path' --into origin/main --force
 ```
 
+If removal is interrupted, continue only from its exact durable receipt (the
+receipt is also the operation journal), never from the former worktree path:
+
+```sh
+just worktree-remove --resume '/absolute/path/to/worktree-removal-receipt.json' --dry-run
+just worktree-remove --resume '/absolute/path/to/worktree-removal-receipt.json' --force
+```
+
+Recovery is idempotent and remains bound to the original target identity,
+branch and commit, sibling topology, manifests, and deterministic staging
+paths. A live owner or corrupt/different-operation lock blocks recovery; only
+a stale lock for the same receipt may be reclaimed when its PID is definitely
+absent. Content created late at the original path, registered staging path,
+holding path, administration path, or a captured leaf is never adopted or
+swept: it is preserved and removal stops for review.
+
 Normal removal requires a clean, inactive worktree whose `HEAD` is an ancestor
 of the locally available integration ref (`origin/main` by default; cleanup
 never fetches). `--force` bypasses only ordinary dirty/untracked state and the
 integration proof. It cannot bypass primary/current-worktree, exact-path,
 locked/prunable/nested-worktree, active-or-unknown-process, Git-operation,
 conflict, submodule, protected-ignored-data, or state-drift guards. The command
-uses `git worktree remove`, leaves the branch intact, and never prunes metadata
-or recursively deletes a caller-supplied directory. Forced removal of a
-detached worktree first creates and prints a timestamped
+leaves an attached branch intact and never runs `git worktree remove`, globally
+prunes worktree metadata, or recursively deletes a caller-supplied directory.
+Instead, maintenance first holds Git's worktree lock, then atomically renames
+the exact worktree root to a deterministic same-parent staging path. After
+verifying the moved root, maintenance renames it to a holding path, then stages
+and unlinks identity-bound leaves from only that worktree's exact Git
+administration directory. It removes known-empty directories non-recursively,
+then deletes the held tree through its verified manifest. Late or replacement
+content at the original, staging, administration, or holding paths is preserved
+and aborts removal; the receipt identifies the retained tree for recovery.
+Forced removal of a detached worktree first creates and prints a timestamped
 `refs/buwiz/worktree-rescue/...` ref so its commit remains reachable.
 
 Worktree removal refuses every ignored path, including declared build
@@ -182,15 +224,15 @@ Artifact cleanup moves selected roots into a same-filesystem quarantine and
 prints a metadata-only receipt. Purging is a separate irreversible command as
 shown above. Mutation is currently supported on macOS and Linux hosts with
 `lsof`; unsupported or incomplete process inspection always refuses safely.
-The Node maintenance module supports Windows artifact inventory, cleanup dry
-runs, and bare worktree inventory, including paths with spaces; Windows CI
-verifies the complete Just-to-PowerShell argument forwarding path. Exact-path
-worktree-removal assessment and destructive maintenance are intentionally
-unavailable there until an equally reliable Windows process inspector is
-implemented. Process and filesystem state are rechecked immediately before
-mutation; no local tool
-can prevent a hostile external process from starting in the final instant
-before Git acts.
+The Node maintenance module supports Windows artifact inventory, cleanup and
+recovery dry runs, and bare worktree inventory, including paths with spaces;
+Windows CI verifies the complete Just-to-PowerShell argument forwarding path.
+The corresponding `--force` mutations are rejected before identity preparation.
+Exact-path worktree-removal assessment and destructive maintenance are
+intentionally unavailable there until an equally reliable Windows process
+inspector is implemented. Process and filesystem state are rechecked
+immediately before mutation; no local tool can prevent a hostile external
+process from starting in the final instant before Git acts.
 
 Each worktree intentionally keeps its own `node_modules` and local Zig cache.
 The npm download cache and Zig's default global cache are host-level and shared

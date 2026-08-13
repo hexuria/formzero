@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -95,6 +95,71 @@ for (const [name, args, expectedStatus, expectedOutput] of [
       const result = runMaintenance(root, ...args);
       assert.equal(result.status, expectedStatus, result.stderr || result.stdout);
       assert.match(`${result.stdout}\n${result.stderr}`, expectedOutput);
+      assert.deepEqual(snapshot(nativeRoot), before);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const [name, args, expectedNodeDiagnostic] of [
+  [
+    "cleanup resume dry-run",
+    ["clean", "resume", join(resolve("missing-clean-operation"), "journal.json"), "--dry-run"],
+    /clean resume requires an exact absolute journal\.json path|maintenance state directory/u,
+  ],
+  [
+    "cleanup purge dry-run",
+    ["clean", "purge", join(resolve("missing-clean-transaction"), "receipt.json"), "--dry-run"],
+    /requested cleanup receipt does not exist|cleanup receipt|maintenance state directory/u,
+  ],
+  [
+    "worktree removal resume dry-run",
+    ["worktree-remove", "--resume", resolve("missing-worktree-receipt.json"), "--dry-run"],
+    /worktree removal receipt|maintenance state directory/u,
+  ],
+]) {
+  test(`Windows maintenance forwards ${name} to Node without preparing app identity`, () => {
+    const root = makeRepository();
+    try {
+      const nativeRoot = join(root, ".native");
+      const before = snapshot(nativeRoot);
+      const result = runMaintenance(root, ...args);
+      const output = `${result.stdout}\n${result.stderr}`;
+      assert.notEqual(result.status, 0, output);
+      assert.match(output, expectedNodeDiagnostic);
+      assert.doesNotMatch(output, /Destructive workspace maintenance is unavailable on Windows/u);
+      assert.deepEqual(snapshot(nativeRoot), before);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const [name, args] of [
+  [
+    "cleanup resume force",
+    ["clean", "resume", join(resolve("missing-clean-operation"), "journal.json"), "--force"],
+  ],
+  [
+    "cleanup purge force",
+    ["clean", "purge", join(resolve("missing-clean-transaction"), "receipt.json"), "--force"],
+  ],
+  [
+    "worktree removal resume force",
+    ["worktree-remove", "--resume", resolve("missing-worktree-receipt.json"), "--force"],
+  ],
+]) {
+  test(`Windows maintenance rejects ${name} before Node or app identity preparation`, () => {
+    const root = makeRepository();
+    try {
+      const nativeRoot = join(root, ".native");
+      const before = snapshot(nativeRoot);
+      const result = runMaintenance(root, ...args);
+      const output = `${result.stdout}\n${result.stderr}`;
+      assert.notEqual(result.status, 0, output);
+      assert.match(output, /Destructive\s+workspace maintenance is unavailable on Windows/u);
+      assert.doesNotMatch(output, /requested cleanup receipt|cleanup operation journal|worktree removal receipt/u);
       assert.deepEqual(snapshot(nativeRoot), before);
     } finally {
       rmSync(root, { recursive: true, force: true });

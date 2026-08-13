@@ -113,15 +113,21 @@ just news-sync-offline
 just clean
 just clean list --all-worktrees
 just clean build --dry-run
+just clean resume C:\absolute\cleanup\journal.json --dry-run
+just clean purge C:\absolute\cleanup\receipt.json --dry-run
 just worktree-remove
+just worktree-remove --resume C:\absolute\worktree-removal-receipt.json --dry-run
 ```
 
 On Windows, workspace maintenance is inspection-only: artifact inventory,
-cleanup `--dry-run`, and bare worktree inventory are supported and do not
-prepare app identity or mutate `.native`. Exact-path worktree-removal assessment
-and all destructive maintenance fail closed until a reliable Windows process
-inspector is available. Run destructive maintenance from macOS or Linux after
-reviewing the exact target and dry-run there.
+cleanup and recovery `--dry-run`, and bare worktree inventory are supported and
+do not prepare app identity or mutate `.native`. The matching `--force` forms
+for cleanup resume, receipt-bound purge, and worktree-removal resume are rejected
+by the PowerShell wrapper before Node can prepare identity or mutate the
+checkout. Exact-path worktree-removal assessment and all destructive maintenance
+fail closed until a reliable Windows process inspector is available. Run
+destructive maintenance from macOS or Linux after reviewing the exact target
+and dry-run there.
 
 The two `news-sync` recipes run the BIR issuance pipeline. They are plain Node
 and need no Zig toolchain, so they resolve through `{{ npm_command }}` on every
