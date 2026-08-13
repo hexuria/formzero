@@ -121,7 +121,7 @@ atomic against a hostile same-user writer; writers must remain stopped during
 that final instant. A failure after an artifact move never automatically
 restores it: the transaction stays quarantined and a recovery receipt records
 each successful rename as verified or uncertain, including expected root
-identity and Native-link metadata.
+identity and artifact-link metadata.
 
 Artifact mutation refuses symlinked roots, ancestors, and nested links, with
 one narrow exception for Native's generated layout: an exact
@@ -132,6 +132,12 @@ newly inserted links fail closed; receipt-bound purge revalidates the exact
 links moved into quarantine and rejects replacements or additions. Read-only
 inventory may count any other link as a leaf so every registered worktree can
 still be reported without traversing it.
+
+Nested links inside the literal `node_modules` artifact are also treated as
+leaf entries and never followed, matching normal npm `.bin` and package-link
+layouts. Their link identity and declared target text are captured by purge's
+cleanup receipt and exact deletion manifest; changing one after quarantine
+makes purge fail closed.
 
 On Unix, `just clean` authenticates and independently walks its live launcher
 ancestry before the process guard runs. Only that causal chain is exempt, and
@@ -181,8 +187,8 @@ runs, and bare worktree inventory, including paths with spaces; Windows CI
 verifies the complete Just-to-PowerShell argument forwarding path. Exact-path
 worktree-removal assessment and destructive maintenance are intentionally
 unavailable there until an equally reliable Windows process inspector is
-implemented. Process
-and filesystem state are rechecked immediately before mutation; no local tool
+implemented. Process and filesystem state are rechecked immediately before
+mutation; no local tool
 can prevent a hostile external process from starting in the final instant
 before Git acts.
 

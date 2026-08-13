@@ -740,7 +740,11 @@ function parseReceipt(receiptPath, context) {
     fail(`cleanup receipt is not under the canonical quarantine for its source worktree: ${receiptReal}`, EXIT.safety);
   }
   const expectedDigest = createHash("sha256")
-    .update(JSON.stringify({ moves: receipt.moves, nativeSymlinks: receipt.nativeSymlinks }))
+    .update(JSON.stringify({
+      moves: receipt.moves,
+      nativeSymlinks: receipt.nativeSymlinks,
+      dependencySymlinks: receipt.dependencySymlinks,
+    }))
     .digest("hex");
   if (receipt.contentsDigest !== expectedDigest) {
     fail(`cleanup receipt digest is invalid: ${receiptReal}`, EXIT.safety);
@@ -775,7 +779,7 @@ function parseReceipt(receiptPath, context) {
     if (destination !== expectedDestination) {
       fail(`cleanup receipt destination does not match its recorded source: ${move.destination}`, EXIT.safety);
     }
-    return { move, destination };
+    return { move, destination, sourceRelative };
   });
   requireDistinctNonOverlappingPaths(plannedMoves.map(({ move }) => move.source), "move sources");
   requireDistinctNonOverlappingPaths(plannedMoves.map(({ destination }) => destination), "move destinations");
@@ -784,9 +788,15 @@ function parseReceipt(receiptPath, context) {
     receiptReal,
     plannedMoves.map(({ destination }) => destination),
   );
-  const receiptSymlinks = verifiedReceiptNativeSymlinks(receipt, receiptReal);
-  for (const { move, destination } of plannedMoves) {
-    const actual = directorySize(destination, { receiptSymlinks });
+  const receiptSymlinks = new Map([
+    ...verifiedReceiptNativeSymlinks(receipt, receiptReal),
+    ...verifiedReceiptDependencySymlinks(receipt, receiptReal),
+  ]);
+  for (const { move, destination, sourceRelative } of plannedMoves) {
+    const actual = directorySize(destination, {
+      artifactRelativePath: sourceRelative,
+      receiptSymlinks,
+    });
     if (actual.bytes !== move.bytes || actual.entries !== move.entries) {
       fail(`quarantined artifact size does not match its receipt: ${destination}`, EXIT.safety);
     }
@@ -839,12 +849,30 @@ function validateTombstonedReceipt(parsed, tombstone) {
         "cleanup receipt Native identity link",
       ),
     })),
+    dependencySymlinks: parsed.receipt.dependencySymlinks.map((link) => ({
+      ...link,
+      path: rebaseContainedPath(
+        link.path,
+        parsed.transactionRoot,
+        tombstone,
+        "cleanup receipt dependency link",
+      ),
+    })),
   };
   const destinations = rebasedMoves.map((move) => move.destination);
   validateReceiptTransactionLayout(tombstone, tombstoneReceipt, destinations);
-  const receiptSymlinks = verifiedReceiptNativeSymlinks(rebasedReceipt, tombstoneReceipt);
+  const receiptSymlinks = new Map([
+    ...verifiedReceiptNativeSymlinks(rebasedReceipt, tombstoneReceipt),
+    ...verifiedReceiptDependencySymlinks(rebasedReceipt, tombstoneReceipt),
+  ]);
   for (const move of rebasedMoves) {
-    const actual = directorySize(move.destination, { receiptSymlinks });
+    const sourceRoot = rebasedReceipt.sourceWorktrees.find((root) =>
+      typeof root === "string" && isContained(root, move.source));
+    const sourceRelative = sourceRoot ? relative(sourceRoot, move.source) : null;
+    const actual = directorySize(move.destination, {
+      artifactRelativePath: sourceRelative,
+      receiptSymlinks,
+    });
     if (actual.bytes !== move.bytes || actual.entries !== move.entries) {
       fail(`quarantined artifact changed after tombstoning; retained at ${tombstone}`, EXIT.safety);
     }
@@ -952,7 +980,10 @@ function verifiedReceiptNativeSymlinks(receipt, receiptPath) {
       || ![entry.dev, entry.ino, entry.mode, entry.mtimeMs].every((value) => typeof value === "number")) {
       fail(`cleanup receipt contains an invalid Native identity link: ${receiptPath}`, EXIT.safety);
     }
-    allowed.set(entry.path, entry);
+    if (allowed.has(entry.path)) {
+      fail(`cleanup receipt contains a duplicate Native identity link: ${entry.path}`, EXIT.safety);
+    }
+    allowed.set(entry.path, { ...entry, kind: "native" });
   }
   const discovered = new Set();
   for (const move of receipt.moves) {
@@ -998,8 +1029,70 @@ function verifiedReceiptNativeSymlinks(receipt, receiptPath) {
   return allowed;
 }
 
+function verifiedReceiptDependencySymlinks(receipt, receiptPath) {
+  const recorded = receipt.dependencySymlinks;
+  if (!Array.isArray(recorded)) {
+    fail(`cleanup receipt does not record its dependency links: ${receiptPath}`, EXIT.safety);
+  }
+  const dependencyRoots = receipt.moves.flatMap((move) => {
+    const sourceRoot = receipt.sourceWorktrees.find((root) =>
+      typeof root === "string" && isContained(root, move.source));
+    return sourceRoot && relative(sourceRoot, move.source) === "node_modules"
+      ? [move.destination]
+      : [];
+  });
+  const allowed = new Map();
+  for (const entry of recorded) {
+    if (!entry || typeof entry.path !== "string" || resolve(entry.path) !== entry.path
+      || typeof entry.target !== "string"
+      || ![entry.dev, entry.ino, entry.mode, entry.mtimeMs].every((value) => typeof value === "number")
+      || !dependencyRoots.some((root) => entry.path !== root && isContained(root, entry.path))) {
+      fail(`cleanup receipt contains an invalid dependency link: ${receiptPath}`, EXIT.safety);
+    }
+    if (allowed.has(entry.path)) {
+      fail(`cleanup receipt contains a duplicate dependency link: ${entry.path}`, EXIT.safety);
+    }
+    allowed.set(entry.path, { ...entry, kind: "dependency" });
+  }
+
+  const discovered = new Set();
+  for (const dependencyRoot of dependencyRoots) {
+    const rootDevice = lstatSync(dependencyRoot).dev;
+    const stack = [dependencyRoot];
+    while (stack.length) {
+      const current = stack.pop();
+      const stat = lstatSync(current);
+      if (stat.dev !== rootDevice) {
+        fail(`dependency artifact crosses a filesystem boundary: ${current}`, EXIT.safety);
+      }
+      if (stat.isSymbolicLink()) {
+        discovered.add(current);
+        const recordedLink = allowed.get(current);
+        if (!recordedLink || recordedLink.target !== readlinkSync(current)
+          || recordedLink.dev !== stat.dev || recordedLink.ino !== stat.ino
+          || recordedLink.mode !== stat.mode || recordedLink.mtimeMs !== stat.mtimeMs) {
+          fail(`quarantined dependency link was not recorded by the receipt or changed identity: ${current}`, EXIT.safety);
+        }
+        continue;
+      }
+      if (stat.isDirectory()) {
+        for (const name of readdirSync(current)) stack.push(join(current, name));
+      }
+    }
+  }
+  if (discovered.size !== allowed.size || [...allowed.keys()].some((path) => !discovered.has(path))) {
+    fail(`cleanup receipt records a missing dependency link: ${receiptPath}`, EXIT.safety);
+  }
+  return allowed;
+}
+
 function directorySize(path, options = {}) {
-  const { root = path, artifactRelativePath = null, inventoryOnly = false, receiptSymlinks = null } = options;
+  const {
+    root = path,
+    artifactRelativePath = null,
+    inventoryOnly = false,
+    receiptSymlinks = null,
+  } = options;
   const stack = [path];
   const rootDevice = lstatSync(path).dev;
   let bytes = 0;
@@ -1015,8 +1108,12 @@ function directorySize(path, options = {}) {
       const receiptLink = receiptSymlinks?.get(current);
       const receiptAllowsLink = receiptLink !== undefined
         && stat.dev === receiptLink.dev && stat.ino === receiptLink.ino
-        && stat.mode === receiptLink.mode && stat.mtimeMs === receiptLink.mtimeMs;
-      if (!inventoryOnly && !receiptAllowsLink && !allowedNativeIdentityLink(root, artifactRelativePath, current)) {
+        && stat.mode === receiptLink.mode && stat.mtimeMs === receiptLink.mtimeMs
+        && (receiptLink.kind !== "dependency" || readlinkSync(current) === receiptLink.target);
+      const unquarantinedDependencyLink = artifactRelativePath === "node_modules"
+        && receiptSymlinks === null;
+      if (!inventoryOnly && !receiptAllowsLink && !unquarantinedDependencyLink
+        && !allowedNativeIdentityLink(root, artifactRelativePath, current)) {
         fail(`refusing nested symbolic link inside artifact root: ${current}`, EXIT.safety);
       }
       continue;
@@ -1060,6 +1157,31 @@ function nativeSymlinkSnapshot(root, artifactRelativePath, artifactRoot) {
   return links.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 }
 
+function dependencySymlinkSnapshot(artifactRelativePath, artifactRoot) {
+  if (artifactRelativePath !== "node_modules") return [];
+  const links = [];
+  const stack = [artifactRoot];
+  while (stack.length) {
+    const current = stack.pop();
+    const stat = lstatSync(current);
+    if (stat.isSymbolicLink()) {
+      links.push({
+        relativePath: relative(artifactRoot, current),
+        target: readlinkSync(current),
+        dev: stat.dev,
+        ino: stat.ino,
+        mode: stat.mode,
+        mtimeMs: stat.mtimeMs,
+      });
+      continue;
+    }
+    if (stat.isDirectory()) {
+      for (const name of readdirSync(current)) stack.push(join(current, name));
+    }
+  }
+  return links.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+}
+
 function nativeSymlinkSnapshotsEqual(left, right) {
   return JSON.stringify(left ?? []) === JSON.stringify(right ?? []);
 }
@@ -1077,6 +1199,17 @@ function nativeSymlinksMatchAt(entry, artifactRoot) {
       return false;
     }
   });
+}
+
+function dependencySymlinksMatchAt(entry, artifactRoot) {
+  const expected = entry.dependencySymlinks ?? [];
+  let observed;
+  try {
+    observed = dependencySymlinkSnapshot(entry.relativePath, artifactRoot);
+  } catch {
+    return false;
+  }
+  return JSON.stringify(expected) === JSON.stringify(observed);
 }
 
 function snapshotEntry(root, relativePath, options = {}) {
@@ -1108,6 +1241,7 @@ function snapshotEntry(root, relativePath, options = {}) {
   }
   const size = directorySize(absolute, { root, artifactRelativePath: relativePath, inventoryOnly: options.inventoryOnly });
   const nativeSymlinks = options.inventoryOnly ? [] : nativeSymlinkSnapshot(root, relativePath, absolute);
+  const dependencySymlinks = options.inventoryOnly ? [] : dependencySymlinkSnapshot(relativePath, absolute);
   return {
     relativePath,
     absolute,
@@ -1118,6 +1252,7 @@ function snapshotEntry(root, relativePath, options = {}) {
     mtimeMs: stat.mtimeMs,
     ancestors,
     nativeSymlinks,
+    dependencySymlinks,
     ...size,
   };
 }
@@ -1138,7 +1273,8 @@ function snapshotMatches(entry) {
     && stat.ino === entry.ino
     && stat.mode === entry.mode
     && stat.mtimeMs === entry.mtimeMs
-    && nativeSymlinksMatchAt(entry, entry.absolute);
+    && nativeSymlinksMatchAt(entry, entry.absolute)
+    && dependencySymlinksMatchAt(entry, entry.absolute);
 }
 
 function snapshotsEquivalent(planned, verified) {
@@ -1146,7 +1282,8 @@ function snapshotsEquivalent(planned, verified) {
     && planned.absolute === verified.absolute
     && planned.dev === verified.dev && planned.ino === verified.ino
     && planned.mode === verified.mode && planned.mtimeMs === verified.mtimeMs
-    && nativeSymlinkSnapshotsEqual(planned.nativeSymlinks, verified.nativeSymlinks);
+    && nativeSymlinkSnapshotsEqual(planned.nativeSymlinks, verified.nativeSymlinks)
+    && nativeSymlinkSnapshotsEqual(planned.dependencySymlinks, verified.dependencySymlinks);
 }
 
 function snapshotRootMatchesAt(entry, path) {
@@ -1579,6 +1716,14 @@ function recoveryPayload(plan, moved, transactionRoot, quarantineRoot, digest, r
         mode: link.mode,
         mtimeMs: link.mtimeMs,
       })),
+      dependencySymlinks: entry.dependencySymlinks.map((link) => ({
+        relativePath: link.relativePath,
+        target: link.target,
+        dev: link.dev,
+        ino: link.ino,
+        mode: link.mode,
+        mtimeMs: link.mtimeMs,
+      })),
     })),
     nativeSymlinks: moved.flatMap(({ destination, entry }) => entry.nativeSymlinks.map((link) => ({
       path: join(destination, link.relativePath),
@@ -1588,9 +1733,21 @@ function recoveryPayload(plan, moved, transactionRoot, quarantineRoot, digest, r
       mode: link.mode,
       mtimeMs: link.mtimeMs,
     }))),
+    dependencySymlinks: moved.flatMap(({ destination, entry }) => entry.dependencySymlinks.map((link) => ({
+      path: join(destination, link.relativePath),
+      target: link.target,
+      dev: link.dev,
+      ino: link.ino,
+      mode: link.mode,
+      mtimeMs: link.mtimeMs,
+    }))),
   };
   payload.contentsDigest = createHash("sha256")
-    .update(JSON.stringify({ moves: payload.moves, nativeSymlinks: payload.nativeSymlinks }))
+    .update(JSON.stringify({
+      moves: payload.moves,
+      nativeSymlinks: payload.nativeSymlinks,
+      dependencySymlinks: payload.dependencySymlinks,
+    }))
     .digest("hex");
   return payload;
 }
@@ -1854,7 +2011,9 @@ function commandClean(args) {
         moved.push(movedEntry);
         runTestHook("after-artifact-rename", { source: entry.absolute, destination });
         injectTestFailure("after-artifact-rename");
-        if (!snapshotRootMatchesAt(entry, destination) || !nativeSymlinksMatchAt(entry, destination)) {
+        if (!snapshotRootMatchesAt(entry, destination)
+          || !nativeSymlinksMatchAt(entry, destination)
+          || !dependencySymlinksMatchAt(entry, destination)) {
           fail(`quarantined artifact identity does not match its snapshot: ${destination}`, EXIT.safety);
         }
         movedEntry.verification = "verified";
@@ -1882,9 +2041,23 @@ function commandClean(args) {
           mtimeMs: link.mtimeMs,
         }));
       }),
+      dependencySymlinks: moved.flatMap(({ destination, entry }) => {
+        return entry.dependencySymlinks.map((link) => ({
+          path: join(destination, link.relativePath),
+          target: link.target,
+          dev: link.dev,
+          ino: link.ino,
+          mode: link.mode,
+          mtimeMs: link.mtimeMs,
+        }));
+      }),
     };
     receipt.contentsDigest = createHash("sha256")
-      .update(JSON.stringify({ moves: receipt.moves, nativeSymlinks: receipt.nativeSymlinks }))
+      .update(JSON.stringify({
+        moves: receipt.moves,
+        nativeSymlinks: receipt.nativeSymlinks,
+        dependencySymlinks: receipt.dependencySymlinks,
+      }))
       .digest("hex");
     writeReceipt(join(transactionRoot, "receipt.json"), receipt);
     process.stdout.write(`Quarantined artifacts; nothing has been permanently deleted.\n  receipt: ${join(transactionRoot, "receipt.json")}\n`);

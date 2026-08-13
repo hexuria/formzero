@@ -142,7 +142,11 @@ function rewriteReceipt(receiptPath, mutate) {
   const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
   mutate(receipt);
   receipt.contentsDigest = createHash("sha256")
-    .update(JSON.stringify({ moves: receipt.moves, nativeSymlinks: receipt.nativeSymlinks }))
+    .update(JSON.stringify({
+      moves: receipt.moves,
+      nativeSymlinks: receipt.nativeSymlinks,
+      dependencySymlinks: receipt.dependencySymlinks,
+    }))
     .digest("hex");
   writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
 }
@@ -573,6 +577,66 @@ test("clean refuses a nested symlink without touching its external target", () =
     assert.match(result.stderr, /nested symbolic link/u);
     assert.equal(readFileSync(join(sentinel, "keep.txt"), "utf8"), "keep\n");
     assert.ok(existsSync(join(worktree, "zig-out", "nested", "outside")));
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("clean deps treats normal nested package links as leaves and purge never follows them", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    const external = join(root, "external-tool");
+    mkdirSync(join(worktree, "node_modules", "pkg", "bin"), { recursive: true });
+    mkdirSync(join(worktree, "node_modules", ".bin"), { recursive: true });
+    mkdirSync(external);
+    writeFileSync(join(worktree, "node_modules", "pkg", "bin", "tool.js"), "internal tool\n");
+    writeFileSync(join(external, "keep.txt"), "external target survives\n");
+    symlinkSync("../pkg/bin/tool.js", join(worktree, "node_modules", ".bin", "internal-tool"));
+    symlinkSync(external, join(worktree, "node_modules", ".bin", "external-tool"));
+
+    const preview = run(["clean", "deps", "--dry-run"], worktree);
+    assert.equal(preview.status, 0, preview.stderr);
+    const cleaned = run(["clean", "deps"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    const receiptPath = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receiptPath);
+    assert.equal(existsSync(join(worktree, "node_modules")), false);
+
+    const purged = run(["clean", "purge", receiptPath, "--force"], worktree);
+    assert.equal(purged.status, 0, purged.stderr);
+    assert.equal(existsSync(dirname(receiptPath)), false);
+    assert.equal(readFileSync(join(external, "keep.txt"), "utf8"), "external target survives\n");
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("purge refuses a dependency link changed after quarantine", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    mkdirSync(join(worktree, "node_modules", "pkg"), { recursive: true });
+    writeFileSync(join(worktree, "node_modules", "pkg", "target.js"), "target\n");
+    symlinkSync("target.js", join(worktree, "node_modules", "pkg", "link.js"));
+    const cleaned = run(["clean", "deps"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    const receiptPath = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receiptPath);
+    const destination = JSON.parse(readFileSync(receiptPath, "utf8")).moves[0].destination;
+    const link = join(destination, "pkg", "link.js");
+    unlinkSync(link);
+    const external = join(root, "replacement-target");
+    mkdirSync(external);
+    writeFileSync(join(external, "keep.txt"), "replacement target survives\n");
+    symlinkSync(external, link);
+
+    const purged = run(["clean", "purge", receiptPath, "--force"], worktree);
+    assert.equal(purged.status, 3);
+    assert.match(purged.stderr, /dependency link.*changed identity/u);
+    assert.equal(existsSync(dirname(receiptPath)), true);
+    assert.ok(lstatSync(link).isSymbolicLink());
+    assert.equal(readFileSync(join(external, "keep.txt"), "utf8"), "replacement target survives\n");
   } finally {
     rmSync(dirname(root), { recursive: true, force: true });
   }
