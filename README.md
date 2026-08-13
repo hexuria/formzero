@@ -167,16 +167,17 @@ shown above. Mutation is currently supported on macOS and Linux hosts with
 The Node maintenance module supports Windows inventory and dry runs, including
 paths with spaces; Windows CI verifies the complete Just-to-PowerShell argument
 forwarding path. Destructive maintenance is intentionally unavailable there
-until an equally reliable Windows process inspector is implemented. Process and filesystem state are
-rechecked immediately before mutation; no local tool can prevent a hostile
-external process from starting in the final instant before Git acts.
+until an equally reliable Windows process inspector is implemented. Process
+and filesystem state are rechecked immediately before mutation; no local tool
+can prevent a hostile external process from starting in the final instant
+before Git acts.
 
 Each worktree intentionally keeps its own `node_modules` and local Zig cache.
 The npm download cache and Zig's default global cache are host-level and shared
 by default. Installed dependency trees and local Zig build graphs remain
-checkout-specific because
-branches may carry different lockfiles and build state; symlinking those
-mutable directories would let one worktree alter another.
+checkout-specific because branches may carry different lockfiles and build
+state; symlinking those mutable directories would let one worktree alter
+another.
 
 `just install` keeps the previous user-level app as a timestamped sibling. On
 macOS the `main` build installs to `~/Applications/Buwiz App.app` by default. On Linux it

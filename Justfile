@@ -63,7 +63,6 @@ check: generate
     #!/usr/bin/env bash
     set -euo pipefail
     {{ npm_command }} run test:app-identity
-    {{ npm_command }} run test:windows-maintenance
     {{ npm_command }} run test:workspace-maintenance
     {{ npm_command }} run check:tax-catalog
 
@@ -79,6 +78,7 @@ check: generate
     #!/usr/bin/env bash
     set -euo pipefail
     {{ npm_command }} run test:app-identity
+    {{ npm_command }} run test:workspace-maintenance
     {{ npm_command }} run check:tax-catalog
 
     {{ npm_command }} run check:postal-reference
