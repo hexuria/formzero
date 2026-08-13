@@ -1661,7 +1661,7 @@ pub const Model = struct {
     /// default for the session, which is what an unreadable store degrades to.
     preferencesStore: ?*preferences_store.Store = null,
     taxProfiles: profile_ui.State = .{},
-    /// Process-only Tax Profile work. This is never passed to a store or
+    /// Process-only Taxpayer Profile work. This is never passed to a store or
     /// preferences effect, so quitting the app permanently removes it.
     sessionProfileDraft: profile_ui.SessionDraft = .{},
     registrationLedger: ?registration_ledger.TaxpayerRegistrationLedger = null,
@@ -1778,7 +1778,7 @@ pub const Model = struct {
     profileZipPickerVisible: bool = false,
     profileZipSelectedEntryIndex: ?usize = null,
     profileSubjectQuery: canvas.TextBuffer(64) = .{},
-    /// Presentation-only birth-date text. The Tax Profile state keeps the
+    /// Presentation-only birth-date text. The Taxpayer Profile state keeps the
     /// canonical ISO value used by persistence and form projections; this
     /// buffer is allowed to show the friendlier long label while blurred.
     profileBirthDateDisplay: canvas.TextBuffer(32) = .{},
@@ -3618,8 +3618,8 @@ pub const Model = struct {
     pub fn profileSessionDraftBlockedVisible(self: *const Model) bool {
         if (self.pendingProfileNavigation == null) return false;
         // This discard dialog is also shared by Registration/Evidence flows.
-        // A parked Tax Profile draft must not make those unrelated dialogs
-        // appear blocked; show this only when the active Tax Profile editor is
+        // A parked Taxpayer Profile draft must not make those unrelated dialogs
+        // appear blocked; show this only when the active Taxpayer Profile editor is
         // the unsaved work that could otherwise be parked.
         if (!self.taxProfiles.profileDirty()) return false;
         return self.taxProfiles.hasSessionDraft(&self.sessionProfileDraft) and
@@ -11162,6 +11162,9 @@ fn applyProfileZipQuery(model: *Model, edit: canvas.TextInputEvent) void {
         model.taxProfiles.zip_code.clear();
         model.profileZipSelectedEntryIndex = null;
     }
+
+    _ = profile_fields.ZipCode.parse(query) catch return;
+    model.taxProfiles.zip_code.set(query);
 }
 
 fn selectProfileZip(model: *Model, entry_index: usize) void {
@@ -23499,7 +23502,7 @@ test "profile combobox focus and click release keep empty pickers open" {
     try std.testing.expect(model.profileEffectiveEndYearPickerOpen());
 }
 
-test "Tax Profile markup opens every combobox on focus" {
+test "Taxpayer Profile markup opens every combobox on focus" {
     const focus_handlers = [_][]const u8{
         "on-focus=\"profile_rdo_toggle_picker\"",
         "on-focus=\"toggle_profile_subject_picker\"",
@@ -23755,6 +23758,28 @@ test "profile ZIP combobox searches the reference and accepts typed codes" {
     try std.testing.expect(switched_rows[0].selected);
 }
 
+test "profile ZIP combobox commits a typed four-digit code before blur" {
+    var model = Model{ .page = .profile_setup };
+    model.taxProfiles.zip_code.set("2600");
+    syncProfileZipControl(&model);
+    model.taxProfiles.revealProfileFieldValidation(.zip_code);
+
+    update(&model, .profile_zip_toggle_picker);
+    update(&model, .{ .profile_zip_query_input = .clear });
+    update(&model, .{ .profile_zip_query_input = .{ .insert_text = "0000" } });
+
+    try std.testing.expectEqualStrings("0000", model.profileZipQueryValue());
+    try std.testing.expectEqualStrings("0000", model.taxProfiles.zip_code.text());
+    try std.testing.expect(model.profileZipCommittedSelection());
+    try std.testing.expect(!model.profileZipErrorVisible());
+
+    update(&model, .profile_zip_close_picker);
+    try std.testing.expectEqualStrings("0000", model.profileZipQueryValue());
+    try std.testing.expectEqualStrings("0000", model.taxProfiles.zip_code.text());
+    try std.testing.expect(!model.profileZipPickerOpen());
+    try std.testing.expect(!model.profileZipErrorVisible());
+}
+
 test "profile registered-address validation is revealed on blur" {
     var model = Model{ .page = .profile_setup };
     try std.testing.expect(!model.profileAddressErrorVisible());
@@ -23895,7 +23920,7 @@ test "profile view cancel stays put and Back returns to its opening page" {
     );
 }
 
-test "Tax Profile session draft resumes without a persistent revision" {
+test "Taxpayer Profile session draft resumes without a persistent revision" {
     const allocator = std.testing.allocator;
     var store = try profile_store.Store.openMemory(allocator);
     defer store.close();
@@ -23952,7 +23977,7 @@ test "Tax Profile session draft resumes without a persistent revision" {
     try std.testing.expect(!model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
 }
 
-test "Tax Profile session draft survives another taxpayer save and resumes its context" {
+test "Taxpayer Profile session draft survives another taxpayer save and resumes its context" {
     const allocator = std.testing.allocator;
     var store = try profile_store.Store.openMemory(allocator);
     defer store.close();
@@ -24010,7 +24035,7 @@ test "Tax Profile session draft survives another taxpayer save and resumes its c
     try std.testing.expect(!model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
 }
 
-test "parked Tax Profile session draft cannot be replaced by another edit" {
+test "parked Taxpayer Profile session draft cannot be replaced by another edit" {
     const allocator = std.testing.allocator;
     var store = try profile_store.Store.openMemory(allocator);
     defer store.close();
@@ -24054,7 +24079,7 @@ test "parked Tax Profile session draft cannot be replaced by another edit" {
     try std.testing.expect(!model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
 }
 
-test "new Tax Profile session draft cannot be overwritten by another creation editor" {
+test "new Taxpayer Profile session draft cannot be overwritten by another creation editor" {
     const allocator = std.testing.allocator;
     var store = try profile_store.Store.openMemory(allocator);
     defer store.close();
@@ -24085,7 +24110,7 @@ test "new Tax Profile session draft cannot be overwritten by another creation ed
     try std.testing.expect(!model.taxProfiles.hasSessionDraft(&model.sessionProfileDraft));
 }
 
-test "new Tax Profile session draft restores its source through the creation lifecycle" {
+test "new Taxpayer Profile session draft restores its source through the creation lifecycle" {
     const allocator = std.testing.allocator;
     var store = try profile_store.Store.openMemory(allocator);
     defer store.close();

@@ -8,17 +8,17 @@ postal-code export:
 - Licence: Creative Commons Attribution 4.0,
   <https://creativecommons.org/licenses/by/4.0/>
 - Retrieved: 2026-08-13 Asia/Manila
-- Source `Last-Modified`: Wed, 12 Aug 2026 02:14:22 GMT
+- Source `Last-Modified`: Thu, 13 Aug 2026 02:23:19 GMT
 - Retrieved archive SHA-256 (refresh provenance; the checked-in `PH.txt` hash
   below is the repository-enforced integrity anchor):
-  `7027cac6b35e5f669b73a5bda14219fc1c0c6c14d1cdd45032fef35a43fe3562`
+  `a381c0529662b057b230f79c7c5a2b6b42b83171873197565ebd02ff5750d3e9`
 - Checked-in `PH.txt` SHA-256:
   `bf5e6253192fafa2885a57e47450d313d51fcf6c9454ea39ff952f31cd4919d2`
 
 The snapshot is redistributed unmodified as `PH.txt`. Buwiz transforms its
 postal code, place name, region, and province columns into an offline Zig
 suggestion catalogue. Latitude, longitude, and accuracy fields are not exposed
-by the Tax Profile UI.
+by the Taxpayer Profile UI.
 
 GeoNames supplies the data without warranty or representation of accuracy,
 timeliness, or completeness. Buwiz therefore does not use catalogue membership

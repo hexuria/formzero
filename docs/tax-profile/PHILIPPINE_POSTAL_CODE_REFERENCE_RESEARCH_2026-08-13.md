@@ -3,7 +3,7 @@
 > Superseded implementation decision: the initial PHLPost-only snapshot below
 > was replaced after the library/dataset audit in
 > [PHILIPPINE_POSTAL_LIBRARY_AUDIT_2026-08-13.md](./PHILIPPINE_POSTAL_LIBRARY_AUDIT_2026-08-13.md).
-> The app now uses the 2026-08-12 GeoNames `PH.zip` export (2,317 rows,
+> The app now uses the 2026-08-13 GeoNames `PH.zip` export (2,317 rows,
 > 2,190 unique four-digit codes, CC BY 4.0) as its offline suggestion
 > catalogue. PHLPost remains the postal-authority reconciliation baseline.
 
@@ -12,7 +12,7 @@
 Use the Philippine Postal Corporation (PHLPost) **Zip Code Locator** as the
 authoritative upstream source for a checked-in, offline-searchable Philippine
 postal-code reference. It is the national postal operator's own published
-locator and exposes the exact four columns needed by the Tax Profile UI:
+locator and exposes the exact four columns needed by the Taxpayer Profile UI:
 `Region`, `Provinces`, `City/Municipality`, and `Zip Code`.
 
 Source: <https://phlpost.gov.ph/zip-code-locator/> (retrieved 2026-08-13,

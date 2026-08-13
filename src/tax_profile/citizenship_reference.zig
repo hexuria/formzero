@@ -1,4 +1,4 @@
-//! Local, searchable country-or-area reference for the Tax Profile editor's
+//! Local, searchable country-or-area reference for the Taxpayer Profile editor's
 //! citizenship control.
 //!
 //! Source: UN Statistics Division M49 country or area standard, downloaded

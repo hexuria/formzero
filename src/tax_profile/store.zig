@@ -15213,8 +15213,8 @@ fn validateEvolutionSourceReference(value: []const u8) Error!void {
 }
 
 const RevisionValidationPolicy = enum {
-    /// New or amended Base Tax Profile revisions must be complete enough for
-    /// the current Tax Profile workflow. Storage remains nullable so older
+    /// New or amended Taxpayer Profile revisions must be complete enough for
+    /// the current Taxpayer Profile workflow. Storage remains nullable so older
     /// migrations can still be read without inventing historical facts.
     production,
     /// Migration fixtures model older physical rows. They may omit fields

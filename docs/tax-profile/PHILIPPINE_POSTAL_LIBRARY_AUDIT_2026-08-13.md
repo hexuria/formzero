@@ -3,7 +3,7 @@
 ## Scope and baseline
 
 This audit tests public libraries and downloadable datasets as candidates for
-the Tax Profile ZIP-code suggestions. The comparison baseline is the existing
+the Taxpayer Profile ZIP-code suggestions. The comparison baseline is the existing
 PHLPost Zip Code Locator snapshot retrieved on 2026-08-13:
 
 - 959 valid locality rows;
@@ -27,8 +27,12 @@ data terms.
 
 At the retrieved revision, it has **2,317 rows / 2,190 unique four-digit ZIP
 codes**. It contains all **958** unique codes in the PHLPost snapshot and adds
-**1,232** codes. Its HTTP `Last-Modified` value was `Wed, 12 Aug 2026
-02:14:22 GMT`, one day before this audit.
+**1,232** codes. A fresh retrieval on 2026-08-13 returned HTTP
+`Last-Modified: Thu, 13 Aug 2026 02:23:19 GMT`. Its archive SHA-256 changed to
+`a381c0529662b057b230f79c7c5a2b6b42b83171873197565ebd02ff5750d3e9`,
+but the embedded `PH.txt` remained byte-identical to the checked-in snapshot:
+193,104 bytes with SHA-256
+`bf5e6253192fafa2885a57e47450d313d51fcf6c9454ea39ff952f31cd4919d2`.
 
 This does not establish that GeoNames is error-free or that it supersedes
 PHLPost as the postal authority. GeoNames itself says some postal-code
@@ -42,13 +46,15 @@ refresh.
 
 | Rank | Candidate | Postal coverage observed | Freshness/provenance | Reuse terms | Decision |
 | --- | --- | --- | --- | --- | --- |
-| 1 | GeoNames `PH.zip` | 2,317 rows; 2,190 unique four-digit codes; every baseline code present | Download response last modified 2026-08-12; publisher documents the tab-delimited schema and caveats | CC BY 4.0 for postal files; attribution required | Adopt as the broader, legally reusable suggestion catalogue |
+| 1 | GeoNames `PH.zip` | 2,317 rows; 2,190 unique four-digit codes; every baseline code present | Download response last modified 2026-08-13; publisher documents the tab-delimited schema and caveats | CC BY 4.0 for postal files; attribution required | Adopt as the broader, legally reusable suggestion catalogue |
 | 2 | PHLPost Zip Code Locator | 959 rows; 958 unique codes | Postal operator's published locator, retrieved 2026-08-13 | No explicit open-data redistribution licence found on the source page | Keep as an authoritative reconciliation input, not the vendored public dataset until permission is obtained |
-| 3 | `philippines-regions-provinces-municipalities-barangays-zipcodes-api` 2.2.1 | 2,722 rows; 1,870 unique four-digit values after reading its `data/zipcodes.json` | npm publish 2026-08-09, but the archive supplies no source/provenance or dataset date for ZIP values | Manifest says MIT; source repository has no `LICENSE` file or ZIP source dataset to substantiate third-party data rights | Do not adopt: fewer codes than GeoNames and unproven provenance |
-| 4 | `zipcodes-ph` 1.1.2 | 1,830 unique four-digit codes | Dataset-file commit is 2017-10-30; npm published 2017-10-31 | MIT package licence | Do not adopt: materially stale and less complete |
-| 5 | `use-postal-ph` 1.1.14 | 2,139 rows; 1,990 distinct values after normalizing code text, but only 2,049 rows are four digits | npm published 2026-03-15; README explicitly says its geographic data is sourced from Wikipedia and says it may not be comprehensive | MIT package licence | Do not adopt: behind GeoNames and not sourced from a postal authority/open postal dataset |
-| 6 | `zipcodes-ph2` 1.0.0 | No usable ZIP data in its published tarball | npm published 2021-09-07; manifest calls itself a fork but points to the original 2017 repository | MIT manifest | Reject: package archive contains only metadata/readme/licence, no `build` data it declares as its entry point |
-| 7 | `ph-addresses-locations` 1.0.3 | 1,584 city rows; 1,045 include ZIP, only 642 unique four-digit ZIPs | npm published 2025-10-19; README calls its geographic hierarchy PSGC data but does not identify a postal-code source or dataset date | MIT package licence | Do not adopt: much less coverage and unproven postal provenance |
+| 3 | `@ph-dev-utils/postal` 0.2.0 | 2,048 rows; 1,911 unique four-digit codes | npm published 2026-05-28; archive documents a GeoNames dump joined to PSA Q4 2024 PSGC, PHLPost reconciliation, and Wikipedia/commercial top-ups | MIT code; bundled GeoNames data remains CC BY 4.0 | Do not adopt: a smaller, older derivative of the already vendored GeoNames data, with explicit gaps/exclusions |
+| 4 | `philippines-regions-provinces-municipalities-barangays-zipcodes-api` 2.2.1 | 2,722 total rows; 2,635 four-digit rows; 1,870 unique four-digit values; 87 three-digit institutional values | npm publish 2026-08-09, but the archive supplies no source/provenance or dataset date for ZIP values | Manifest says MIT; source repository has no `LICENSE` file or ZIP source dataset to substantiate third-party data rights | Do not adopt: fewer four-digit codes than GeoNames and unproven provenance |
+| 5 | `@countrystatecity/postalcodes` 1.0.2 | 1,391 rows; 1,268 unique four-digit codes, all included by GeoNames | npm published 2026-08-11; package says its upstream is the community-maintained Countries States Cities Database, whose own README says its data was last updated 2026-07-29 | ODbL 1.0; attribution and share-alike apply to derivatives | Do not adopt: materially less PH coverage, no postal-operator provenance, and a licence less suitable for a shipped derived catalogue |
+| 6 | `zipcodes-ph` 1.1.2 | 1,830 unique four-digit codes | Dataset-file commit is 2017-10-30; npm published 2017-10-31 | MIT package licence | Do not adopt: materially stale and less complete |
+| 7 | `use-postal-ph` 1.1.14 | 2,139 rows; 2,049 four-digit rows; 1,900 distinct four-digit values | npm published 2026-03-15; README explicitly says its geographic data is sourced from Wikipedia and says it may not be comprehensive | MIT package licence | Do not adopt: behind GeoNames and not sourced from a postal authority/open postal dataset |
+| 8 | `zipcodes-ph2` 1.0.0 | No usable ZIP data in its published tarball | npm published 2021-09-07; manifest calls itself a fork but points to the original 2017 repository | MIT manifest | Reject: package archive contains only metadata/readme/licence, no `build` data it declares as its entry point |
+| 9 | `ph-addresses-locations` 1.0.3 | 1,584 city rows; 1,045 include ZIP, only 642 unique four-digit ZIPs | npm published 2025-10-19; README calls its geographic hierarchy PSGC data but does not identify a postal-code source or dataset date | MIT package licence | Do not adopt: much less coverage and unproven postal provenance |
 | Not a postal candidate | `@aivangogh/ph-address` 2026.2.2 | No ZIP/postal-code data; region/province/municipality/barangay PSGC data | README says PSGC as of 2026-06-30, and repository includes that PSGC publication file | MIT | Useful only for reconciling locality names; PSGC is not a postal-code directory |
 
 ## Primary-source evidence
@@ -107,7 +113,24 @@ MIT-licensed, but the age alone rules it out as a latest reference.
 contains no `build/` directory or ZIP data and its repository/homepage points
 back to the original project. It cannot be used as a reproducible data source.
 
-### 3. `use-postal-ph`
+### 3. `@ph-dev-utils/postal`
+
+- Registry metadata: <https://registry.npmjs.org/%40ph-dev-utils%2fpostal>
+- Published archive:
+  <https://registry.npmjs.org/@ph-dev-utils/postal/-/postal-0.2.0.tgz>
+- Source repository: <https://github.com/ph-dev-utils/postal>
+
+The current version was published 2026-05-28. Its bundled
+`data/postal-codes-2024.json` has 2,048 records and 1,911 distinct four-digit
+ZIP values. Its own documentation says this is a community-sourced GeoNames
+CC BY 4.0 derivative joined to PSA Q4 2024 PSGC data and reconciled against
+PHLPost, not an official PHLPost feed. It also discloses top-ups from Wikipedia
+and commercial sources, excludes geography-less institution/PO-box ZIPs, and
+notes that some Davao City multi-ZIP areas are partial. It is a useful
+normalization-oriented library, but it is neither newer nor broader than the
+raw current GeoNames export and would make the lineage less direct.
+
+### 4. `use-postal-ph`
 
 - Registry metadata: <https://registry.npmjs.org/use-postal-ph>
 - Published archive:
@@ -115,14 +138,14 @@ back to the original project. It cannot be used as a reproducible data source.
 - Source repository: <https://github.com/blckclov3r/use-postal-ph>
 
 The current version was published 2026-03-15. The packaged function returns
-2,139 records, with 1,990 distinct normalized code values; only 2,049 records
-are four digits. Crucially, its own README identifies Wikipedia as the source
+2,139 records, of which 2,049 are four digits and 1,900 are distinct four-digit
+values. Crucially, its own README identifies Wikipedia as the source
 for its geographic information and explicitly says the library may not be
 comprehensive. The MIT software licence does not make that an authoritative or
 more complete postal dataset. It ranks below GeoNames' 2,190 all-four-digit
 codes.
 
-### 4. `philippines-regions-provinces-municipalities-barangays-zipcodes-api`
+### 5. `philippines-regions-provinces-municipalities-barangays-zipcodes-api`
 
 - Registry metadata:
   <https://registry.npmjs.org/philippines-regions-provinces-municipalities-barangays-zipcodes-api>
@@ -132,15 +155,35 @@ codes.
   <https://github.com/m4rkbello/philippine-address-selector>
 
 The npm registry reports version 2.2.1 published 2026-08-09 and an MIT
-manifest. Its published `data/zipcodes.json` contains 2,722 rows and 1,870
-unique four-digit ZIP values (after filtering to `^[0-9]{4}$`). That is still
-320 fewer codes than GeoNames. More importantly, neither its README nor its
+manifest. Its published `data/zipcodes.json` contains 2,722 rows: 2,635
+four-digit rows with 1,870 unique four-digit ZIP values, plus 87 three-digit
+institutional values. That is still 320 fewer four-digit codes than GeoNames.
+More importantly, neither its README nor its
 repository identifies a ZIP source, source revision, collection date, or the
 underlying data licence; the repository tree has no `LICENSE` file and no
 checked-in ZIP data source. A current package publication date is not evidence
 that the postal values were refreshed.
 
-### 5. `ph-addresses-locations`
+### 6. `@countrystatecity/postalcodes`
+
+- Registry metadata: <https://registry.npmjs.org/%40countrystatecity%2fpostalcodes>
+- Published archive:
+  <https://registry.npmjs.org/@countrystatecity/postalcodes/-/postalcodes-1.0.2.tgz>
+- Data upstream: <https://github.com/dr5hn/countries-states-cities-database>
+
+Version 1.0.2 was published 2026-08-11, but its Philippine package files
+contain 1,391 four-digit locality rows and only 1,268 distinct values. Every
+one of those codes is already in GeoNames; GeoNames has 922 additional codes.
+The package's claimed “official” database description is marketing, not a
+postal-operator source claim: its README identifies the community-maintained
+Countries States Cities Database as upstream. That upstream's own README
+describes it as community-maintained, records its last update as 2026-07-29,
+and asks users to verify critical data with official sources. Its ODbL 1.0
+licence permits redistribution but requires attribution and share-alike for
+derivative databases. It offers no coverage or rights advantage over the
+CC BY 4.0 GeoNames source for this application.
+
+### 7. `ph-addresses-locations`
 
 - Registry metadata: <https://registry.npmjs.org/ph-addresses-locations>
 - Published archive:
@@ -153,7 +196,7 @@ as PSGC but does not identify a postal-code source, source date, or licence for
 the ZIP fields. It is a useful example of why a current package release does
 not equal a current postal reference.
 
-### 6. `@aivangogh/ph-address`
+### 8. `@aivangogh/ph-address`
 
 - Registry metadata: <https://registry.npmjs.org/@aivangogh%2fph-address>
 - Published archive:

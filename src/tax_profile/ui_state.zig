@@ -390,7 +390,7 @@ pub const ProfileRow = struct {
     }
 };
 
-/// A bounded, process-only copy of an in-progress Tax Profile editor.  It is
+/// A bounded, process-only copy of an in-progress Taxpayer Profile editor. It is
 /// deliberately owned by `main.zig` rather than the persistence layer: a
 /// process restart starts with the default value and cannot recover it.
 pub const SessionDraft = struct {

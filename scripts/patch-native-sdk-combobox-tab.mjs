@@ -303,7 +303,7 @@ if (!focusContextUiApp.includes("fn handleFocusTransition")) {
 }
 
 // Keep this generic regression beside the existing combobox fixture. It
-// proves the public on-focus contract rather than a Tax Profile-specific
+// proves the public on-focus contract rather than a Taxpayer Profile-specific
 // presentation policy: automation focus is silent, real Tab/pointer moves
 // dispatch blur before focus, re-clicking the focused field is silent, and
 // entering a combobox-owned menu remains an internal transition.
