@@ -71,6 +71,8 @@ just run
 just run       # local Debug app with hot reload
 just build     # ReleaseFast binary in zig-out/bin/
 just identity  # show this checkout's resolved app name and bundle ID
+just clean            # list precise cleanup targets; changes nothing
+just worktree-remove  # list registered worktrees; changes nothing
 just package   # macOS .app, Linux package, or Windows ARM64 package
 just app       # package, then open/launch it
 just install   # install for the current user on macOS, Linux, or Windows
@@ -79,6 +81,94 @@ just news-sync-offline  # BIR news pipeline over the committed captures
 just test      # headless Native SDK tests
 just verify    # check, test, build, and whitespace validation
 ```
+
+### Workspace maintenance
+
+`just clean` is deliberately an inspection-only usage error. It prints the
+literal cleanup catalog without touching any file. Select one rebuildable
+artifact family in the current worktree, or preview it first:
+
+```sh
+just clean zig-cache --dry-run
+just clean zig-cache
+just clean build
+just clean standard
+just clean all --force
+```
+
+Cleanup first quarantines the selected roots so a mistaken selection remains
+recoverable. After reviewing the exact receipt path printed by the command,
+permanently reclaim that disk space with the receipt-bound purge:
+
+```sh
+just clean purge '/exact/quarantine/receipt.json' --dry-run
+just clean purge '/exact/quarantine/receipt.json' --force
+```
+
+`purge` never accepts a directory or glob. It revalidates the receipt, every
+quarantined path, symlink and filesystem containment, and registered-worktree
+topology before removing that one transaction. Purge a worktree's receipt
+before removing that worktree; once the source is no longer registered, purge
+fails closed because it can no longer independently reconstruct provenance.
+
+Artifact mutation refuses any symlink nested inside a selected root. Read-only
+inventory may count the link itself without following it, so `just clean`
+still reports every registered worktree even when an existing cache contains
+links.
+
+The process guard does not exempt `just` or any caller process. On Unix, use
+`just` for inventory and dry-runs; a mutation may refuse while Just holds the
+worktree open. After closing apps and watchers, invoke the printed Node
+maintenance command directly so only the maintenance process is exempt.
+
+The catalog contains only `.zig-cache`, `zig-cache`, `zig-pkg`, `zig-out`,
+`.native`, `node_modules`, `coverage`, `test-results`, and
+`scripts/news-sync/work`. `all` still means only those declared roots and
+requires `--force`; it never means every ignored file. Credentials, private
+`reference/` captures, logs, `.claude/`, tracked generated sources, and
+backup-suffixed directories are outside the catalog. Cross-worktree cleanup
+requires an exact registered absolute path plus `--force`; inspect first with
+`just clean list --all-worktrees`.
+
+Remove one linked worktree only by its exact absolute path:
+
+```sh
+just worktree-remove '/absolute/registered/worktree/path' --dry-run
+just worktree-remove '/absolute/registered/worktree/path' --into origin/main
+just worktree-remove '/absolute/registered/worktree/path' --into origin/main --force
+```
+
+Normal removal requires a clean, inactive worktree whose `HEAD` is an ancestor
+of the locally available integration ref (`origin/main` by default; cleanup
+never fetches). `--force` bypasses only ordinary dirty/untracked state and the
+integration proof. It cannot bypass primary/current-worktree, exact-path,
+locked/prunable/nested-worktree, active-or-unknown-process, Git-operation,
+conflict, submodule, protected-ignored-data, or state-drift guards. The command
+uses `git worktree remove`, leaves the branch intact, and never prunes metadata
+or recursively deletes a caller-supplied directory. Forced removal of a
+detached worktree first creates and prints a timestamped
+`refs/buwiz/worktree-rescue/...` ref so its commit remains reachable.
+
+Worktree removal refuses every ignored path, including declared build
+artifacts, even with `--force`. Run an explicit fine-grained cleanup first so
+the removal command never silently treats ignored data as disposable.
+
+Artifact cleanup moves selected roots into a same-filesystem quarantine and
+prints a metadata-only receipt. Purging is a separate irreversible command as
+shown above. Mutation is currently supported on macOS and Linux hosts with
+`lsof`; unsupported or incomplete process inspection always refuses safely.
+The Node maintenance module supports Windows inventory and dry runs, including
+paths with spaces; Windows CI verifies the complete Just-to-PowerShell argument
+forwarding path. Destructive maintenance is intentionally unavailable there
+until an equally reliable Windows process inspector is implemented. Process and filesystem state are
+rechecked immediately before mutation; no local tool can prevent a hostile
+external process from starting in the final instant before Git acts.
+
+Each worktree intentionally keeps its own `node_modules` and local Zig cache.
+The npm download cache and Zig global cache are already shared. Installed
+dependency trees and local Zig build graphs remain checkout-specific because
+branches may carry different lockfiles and build state; symlinking those
+mutable directories would let one worktree alter another.
 
 `just install` keeps the previous user-level app as a timestamped sibling. On
 macOS the `main` build installs to `~/Applications/Buwiz App.app` by default. On Linux it

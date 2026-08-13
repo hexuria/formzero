@@ -15,6 +15,7 @@
     "check:tax-catalog": "npm run typecheck:tax-catalog && npm run check:field-ownership-manifests && node --experimental-strip-types scripts/tax-catalog/generate.ts --check",
     "news:sync": "node --experimental-strip-types scripts/news-sync/sync.ts",
     "test:app-identity": "node --test scripts/app-identity.test.mjs",
+    "test:workspace-maintenance": "node --test scripts/workspace-maintenance.test.mjs",
     "test:news-sync": "node --experimental-strip-types --test \"scripts/news-sync/**/*.test.ts\"",
     "check:field-ownership-manifests": "node --experimental-strip-types scripts/tax-catalog/manifests/check.ts",
     "typecheck:tax-catalog": "tsc --noEmit -p tsconfig.tax-catalog.json",

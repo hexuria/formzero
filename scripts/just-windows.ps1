@@ -12,9 +12,13 @@ param(
         "doctor",
         "package",
         "app",
-        "install"
+        "install",
+        "maintenance"
     )]
-    [string]$Command
+    [string]$Command,
+
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$RemainingArguments = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -91,6 +95,17 @@ function Invoke-TargetZig {
 }
 
 switch ($Command) {
+  "maintenance" {
+    if ($RemainingArguments.Count -lt 1) {
+      throw "maintenance requires a subcommand"
+    }
+    if (($RemainingArguments -notcontains "--dry-run") -and
+        -not ($RemainingArguments[0] -eq "clean" -and
+              (($RemainingArguments.Count -eq 1) -or ($RemainingArguments[1] -eq "list")))) {
+      throw "Destructive workspace maintenance is unavailable on Windows. Use inventory or --dry-run."
+    }
+    Invoke-Checked "node" (@("scripts/workspace-maintenance.mjs") + $RemainingArguments)
+  }
     "setup" {
         Invoke-Checked "npm.cmd" @("ci")
         Write-Host "Locked npm dependencies installed."
@@ -102,6 +117,7 @@ switch ($Command) {
 
     "check" {
         Invoke-Checked "npm.cmd" @("run", "test:app-identity")
+        Invoke-Checked "npm.cmd" @("run", "test:workspace-maintenance")
         Invoke-Checked "npm.cmd" @("run", "check:tax-catalog")
         Invoke-Checked "npm.cmd" @("run", "check:postal-reference")
         Invoke-Checked "npm.cmd" @("run", "typecheck:news-sync")

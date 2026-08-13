@@ -94,6 +94,7 @@ jobs:
       - name: Check tax catalog
         run: |
           npm run test:app-identity
+          npm run test:workspace-maintenance
           npm run check:tax-catalog
           npm run check:postal-reference
 
@@ -239,3 +240,34 @@ jobs:
             echo '::error::Re-running the setup script downloaded Zig again.'
             exit 1
           fi
+
+  windows-maintenance:
+    name: Workspace maintenance forwarding (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22.15'
+
+      - name: Install Just
+        shell: powershell
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "just.zip"
+          Invoke-WebRequest \
+            -Uri "https://github.com/casey/just/releases/download/1.43.1/just-1.43.1-x86_64-pc-windows-msvc.zip" \
+            -OutFile $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $env:RUNNER_TEMP
+          Add-Content -Path $env:GITHUB_PATH -Value $env:RUNNER_TEMP
+
+      - name: Verify inventory and argument forwarding
+        shell: powershell
+        run: |
+          just clean list --json
+          just clean build --dry-run
+          npm run test:workspace-maintenance
