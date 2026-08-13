@@ -45,6 +45,8 @@ check: generate
     set -euo pipefail
     {{ npm_command }} run test:app-identity
     {{ npm_command }} run check:tax-catalog
+
+    {{ npm_command }} run check:postal-reference
     {{ npm_command }} run typecheck:news-sync
     {{ npm_command }} run test:news-sync
     eval "$(node scripts/app-identity.mjs prepare --format shell)"
@@ -57,6 +59,8 @@ check: generate
     set -euo pipefail
     {{ npm_command }} run test:app-identity
     {{ npm_command }} run check:tax-catalog
+
+    {{ npm_command }} run check:postal-reference
     bash scripts/check-linux-deps.sh
     eval "$(node scripts/app-identity.mjs prepare --format shell)"
     node scripts/patch-native-sdk-combobox-tab.mjs

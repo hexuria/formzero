@@ -672,6 +672,7 @@
                       </dropdown-menu>
                     </if>
                   </stack>
+                  <text size="sm" wrap="true" foreground="text_muted">Postal-code suggestions © GeoNames, CC BY 4.0. You may still enter any valid four-digit Philippine ZIP code.</text>
                   <if test="{profileZipErrorVisible}"><text wrap="true" foreground="destructive">{profileZipValidationMessage}</text></if>
                 </column>
               </use>

@@ -103,6 +103,7 @@ switch ($Command) {
     "check" {
         Invoke-Checked "npm.cmd" @("run", "test:app-identity")
         Invoke-Checked "npm.cmd" @("run", "check:tax-catalog")
+        Invoke-Checked "npm.cmd" @("run", "check:postal-reference")
         Invoke-Checked "npm.cmd" @("run", "typecheck:news-sync")
         Invoke-Checked "npm.cmd" @("run", "test:news-sync")
         Invoke-Checked "node" @("scripts/patch-native-sdk-combobox-tab.mjs")

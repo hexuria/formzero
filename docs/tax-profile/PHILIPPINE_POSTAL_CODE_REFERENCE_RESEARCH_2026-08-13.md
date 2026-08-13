@@ -1,5 +1,12 @@
 # Philippine Postal-Code Reference Research — 2026-08-13
 
+> Superseded implementation decision: the initial PHLPost-only snapshot below
+> was replaced after the library/dataset audit in
+> [PHILIPPINE_POSTAL_LIBRARY_AUDIT_2026-08-13.md](./PHILIPPINE_POSTAL_LIBRARY_AUDIT_2026-08-13.md).
+> The app now uses the 2026-08-12 GeoNames `PH.zip` export (2,317 rows,
+> 2,190 unique four-digit codes, CC BY 4.0) as its offline suggestion
+> catalogue. PHLPost remains the postal-authority reconciliation baseline.
+
 ## Decision
 
 Use the Philippine Postal Corporation (PHLPost) **Zip Code Locator** as the

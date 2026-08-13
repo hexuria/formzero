@@ -1527,6 +1527,27 @@ pub const ProfileZipOptionRow = struct {
         self: *const ProfileZipOptionRow,
         arena: std.mem.Allocator,
     ) []const u8 {
+        if (self.province.len == 0 and self.region.len == 0) {
+            return std.fmt.allocPrint(
+                arena,
+                "{s} · {s}",
+                .{ self.code, self.locality },
+            ) catch self.code;
+        }
+        if (self.province.len == 0) {
+            return std.fmt.allocPrint(
+                arena,
+                "{s} · {s} — {s}",
+                .{ self.code, self.locality, self.region },
+            ) catch self.code;
+        }
+        if (self.region.len == 0) {
+            return std.fmt.allocPrint(
+                arena,
+                "{s} · {s}, {s}",
+                .{ self.code, self.locality, self.province },
+            ) catch self.code;
+        }
         return std.fmt.allocPrint(
             arena,
             "{s} · {s}, {s} — {s}",
@@ -23646,22 +23667,23 @@ test "profile ZIP combobox searches geography and persists only the code" {
     update(&model, .{ .profile_zip_query_input = .{ .insert_text = "2600" } });
     const numeric_rows = model.profileZipOptionRows(arena_state.allocator());
     try std.testing.expectEqual(@as(usize, 1), numeric_rows.len);
+    try std.testing.expectEqualStrings("2600", numeric_rows[0].code);
     try std.testing.expectEqualStrings("Baguio City", numeric_rows[0].locality);
 
-    model.profileZipQuery.clear();
+    update(&model, .{ .profile_zip_query_input = .clear });
     update(&model, .{ .profile_zip_query_input = .{ .insert_text = "Baguio" } });
     const locality_rows = model.profileZipOptionRows(arena_state.allocator());
     try std.testing.expect(locality_rows.len > 0);
     try std.testing.expect(locality_rows.len <= 5);
     try std.testing.expectEqualStrings("2600", locality_rows[0].code);
 
-    model.profileZipQuery.clear();
+    update(&model, .{ .profile_zip_query_input = .clear });
     update(&model, .{ .profile_zip_query_input = .{ .insert_text = "Benguet" } });
     const province_rows = model.profileZipOptionRows(arena_state.allocator());
     try std.testing.expect(province_rows.len > 0);
     try std.testing.expect(province_rows.len <= 5);
 
-    model.profileZipQuery.clear();
+    update(&model, .{ .profile_zip_query_input = .clear });
     update(&model, .{ .profile_zip_query_input = .{ .insert_text = "Cordillera" } });
     const region_rows = model.profileZipOptionRows(arena_state.allocator());
     try std.testing.expect(region_rows.len > 0);
@@ -23673,7 +23695,7 @@ test "profile ZIP combobox searches geography and persists only the code" {
     try std.testing.expect(!model.profileZipPickerOpen());
 }
 
-test "profile ZIP combobox suppresses exact duplicates and accepts typed codes" {
+test "profile ZIP combobox searches the reference and accepts typed codes" {
     var model = Model{ .page = .profile_setup };
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -23684,7 +23706,7 @@ test "profile ZIP combobox suppresses exact duplicates and accepts typed codes" 
     try std.testing.expectEqual(@as(usize, 1), balingoan_rows.len);
     try std.testing.expectEqualStrings("9011", balingoan_rows[0].code);
 
-    model.profileZipQuery.clear();
+    update(&model, .{ .profile_zip_query_input = .clear });
     update(&model, .{ .profile_zip_query_input = .{ .insert_text = "0000" } });
     try std.testing.expectEqual(@as(usize, 0), model.profileZipOptionRows(
         arena_state.allocator(),

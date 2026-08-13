@@ -5,7 +5,11 @@
   "description": "Native Buwiz tax app with a Zig calendar engine and SQLite policy store.",
   "scripts": {
     "postinstall": "node scripts/patch-native-sdk-combobox-tab.mjs",
-    "generate": "npm run generate:tax-catalog && node scripts/flatten-native.mjs",
+    "generate": "npm run generate:tax-catalog && npm run generate:postal-reference && node scripts/flatten-native.mjs",
+    "generate:postal-reference": "node --experimental-strip-types scripts/postal-reference/generate.ts",
+    "check:postal-reference": "npm run typecheck:postal-reference && npm run test:postal-reference && node --experimental-strip-types scripts/postal-reference/generate.ts --check",
+    "test:postal-reference": "node --experimental-strip-types --test scripts/postal-reference/generate.test.ts",
+    "typecheck:postal-reference": "tsc --noEmit -p tsconfig.postal-reference.json",
     "generate:tax-catalog": "node --experimental-strip-types scripts/tax-catalog/generate.ts",
     "generate:news-sync-data": "node --experimental-strip-types scripts/news-sync/generate-data.ts",
     "check:tax-catalog": "npm run typecheck:tax-catalog && npm run check:field-ownership-manifests && node --experimental-strip-types scripts/tax-catalog/generate.ts --check",

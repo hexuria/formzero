@@ -154,6 +154,13 @@
     </card>
 
     <card>
+      <column padding="22" gap="10">
+        <text><span weight="bold">Data attribution</span></text>
+        <text wrap="true" foreground="text_muted">Philippine postal-code suggestions use GeoNames data under the Creative Commons Attribution 4.0 License. © GeoNames — www.geonames.org.</text>
+      </column>
+    </card>
+
+    <card>
       <column padding="22" gap="18">
         <if test="{constrainedLayout}">
           <column gap="12">

@@ -1,0 +1,4 @@
+# Preserve the byte-exact GeoNames TSV snapshot. Six records legitimately
+# encode an empty twelfth field with a terminal tab; its pinned SHA-256 guards
+# the upstream bytes, so Git must not rewrite or flag that field delimiter.
+scripts/postal-reference/data/PH.txt -text -whitespace

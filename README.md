@@ -150,6 +150,9 @@ deterministic and idempotent.
 - `src/tax_profile/` — reusable facts, immutable revisions, evolution,
   persistence, canonical Taxpayer/Registration Unit evidence, migration
   inventory, and profile UI state
+- `scripts/postal-reference/` — pinned GeoNames `PH.zip` snapshot, provenance
+  manifest, tests, and deterministic offline Zig catalogue generator (CC BY
+  4.0; © GeoNames, <https://www.geonames.org/>)
 - `src/filing/` — reviewed policy selection, Filing Planner resolution,
   transient scope-provenance validation, and a value-owned read-only preview
   snapshot, plus exact form projection context; immutable draft/artifact

@@ -95,6 +95,7 @@ jobs:
         run: |
           npm run test:app-identity
           npm run check:tax-catalog
+          npm run check:postal-reference
 
       # Gate 2b — the BIR news-sync pipeline is strict TypeScript too. Its
       # tests read the committed captures under scripts/news-sync/fixtures/,
