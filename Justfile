@@ -11,7 +11,7 @@ default:
 # Reclaim only declared build artifacts; no target lists choices and changes nothing.
 [unix]
 clean *args:
-    @WORKSPACE_MAINTENANCE_CWD="$(git rev-parse --show-toplevel)" node "{{justfile_directory()}}/scripts/workspace-maintenance.mjs" clean "$@"
+    @WORKSPACE_MAINTENANCE_CWD="$(git rev-parse --show-toplevel)" WORKSPACE_MAINTENANCE_JUST_PID="$PPID" WORKSPACE_MAINTENANCE_JUST_EXE="$(command -v just)" node "{{justfile_directory()}}/scripts/workspace-maintenance.mjs" clean "$@"
 
 [windows]
 clean *args:
@@ -20,7 +20,7 @@ clean *args:
 # Remove one exact registered worktree after fail-closed safety checks.
 [unix]
 worktree-remove *args:
-    @WORKSPACE_MAINTENANCE_CWD="$(git rev-parse --show-toplevel)" node "{{justfile_directory()}}/scripts/workspace-maintenance.mjs" worktree-remove "$@"
+    @WORKSPACE_MAINTENANCE_CWD="$(git rev-parse --show-toplevel)" WORKSPACE_MAINTENANCE_JUST_PID="$PPID" WORKSPACE_MAINTENANCE_JUST_EXE="$(command -v just)" node "{{justfile_directory()}}/scripts/workspace-maintenance.mjs" worktree-remove "$@"
 
 [windows]
 worktree-remove *args:
@@ -63,6 +63,7 @@ check: generate
     #!/usr/bin/env bash
     set -euo pipefail
     {{ npm_command }} run test:app-identity
+    {{ npm_command }} run test:windows-maintenance
     {{ npm_command }} run test:workspace-maintenance
     {{ npm_command }} run check:tax-catalog
 

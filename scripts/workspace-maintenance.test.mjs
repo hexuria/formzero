@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -117,7 +117,7 @@ test("clean dry-run reports exact artifacts without mutating them", () => {
   }
 });
 
-test("clean invoked from its own worktree does not mistake itself for an active app", (context) => {
+test("direct clean succeeds when its caller does not hold the worktree", (context) => {
   if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
   const { root, worktree } = makeRepo();
   try {
@@ -135,7 +135,7 @@ test("clean invoked from its own worktree does not mistake itself for an active 
   }
 });
 
-test("the public Just clean recipe fails closed while Just holds the worktree", (context) => {
+test("the public Just clean recipe trusts only its verified launcher ancestry", (context) => {
   if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
   const { root, worktree } = makeRepo();
   try {
@@ -146,16 +146,103 @@ test("the public Just clean recipe fails closed while Just holds the worktree", 
       "set positional-arguments",
       "",
       "clean *args:",
-      `    @WORKSPACE_MAINTENANCE_CWD=\"$(git rev-parse --show-toplevel)\" node ${JSON.stringify(scriptPath)} clean \"$@\"`,
+      `    @WORKSPACE_MAINTENANCE_CWD=\"$(git rev-parse --show-toplevel)\" WORKSPACE_MAINTENANCE_JUST_PID=\"$PPID\" WORKSPACE_MAINTENANCE_JUST_EXE=\"$(command -v just)\" node ${JSON.stringify(scriptPath)} clean \"$@\"`,
       "",
     ].join("\n"));
-    const result = spawnSync("just", ["-f", justfile, "clean", "build"], {
+    const result = spawnSync("/bin/sh", ["-c", 'just -f "$1" clean build; workspace_status=$?; :; exit "$workspace_status"', "workspace-maintenance-test", justfile], {
+      cwd: worktree,
+      encoding: "utf8",
+      env: process.env,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(join(worktree, "zig-out")), false);
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("the public Just clean recipe still blocks an unrelated active shell", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  let activeShell;
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+    const justfile = join(worktree, "Justfile");
+    writeFileSync(justfile, [
+      "set positional-arguments",
+      "",
+      "clean *args:",
+      `    @WORKSPACE_MAINTENANCE_CWD=\"$(git rev-parse --show-toplevel)\" WORKSPACE_MAINTENANCE_JUST_PID=\"$PPID\" WORKSPACE_MAINTENANCE_JUST_EXE=\"$(command -v just)\" node ${JSON.stringify(scriptPath)} clean \"$@\"`,
+      "",
+    ].join("\n"));
+    activeShell = spawn("/bin/sh", ["-c", "read workspace_maintenance_test_input"], {
+      cwd: worktree,
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    await new Promise((resolveReady) => setTimeout(resolveReady, 150));
+
+    const result = spawnSync("/bin/sh", ["-c", 'just -f "$1" clean build; workspace_status=$?; :; exit "$workspace_status"', "workspace-maintenance-test", justfile], {
       cwd: worktree,
       encoding: "utf8",
       env: process.env,
     });
     assert.equal(result.status, 3);
     assert.match(result.stderr, /process state.*active/u);
+    assert.equal(existsSync(join(worktree, "zig-out")), true);
+  } finally {
+    activeShell?.stdin?.end();
+    activeShell?.kill("SIGTERM");
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("launcher ancestry cannot exempt an open file inside the selected artifact", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+    const justfile = join(worktree, "Justfile");
+    writeFileSync(justfile, [
+      "set positional-arguments",
+      "",
+      "clean *args:",
+      `    @WORKSPACE_MAINTENANCE_CWD=\"$(git rev-parse --show-toplevel)\" WORKSPACE_MAINTENANCE_JUST_PID=\"$PPID\" WORKSPACE_MAINTENANCE_JUST_EXE=\"$(command -v just)\" node ${JSON.stringify(scriptPath)} clean \"$@\"`,
+      "",
+    ].join("\n"));
+    const result = spawnSync("/bin/sh", [
+      "-c",
+      'exec 9<"$2"; just -f "$1" clean build; workspace_status=$?; exec 9<&-; exit "$workspace_status"',
+      "workspace-maintenance-test",
+      justfile,
+      join(worktree, "zig-out", "bin", "app"),
+    ], {
+      cwd: worktree,
+      encoding: "utf8",
+      env: process.env,
+    });
+    assert.equal(result.status, 3);
+    assert.match(result.stderr, /process state.*active/u);
+    assert.match(result.stderr, /zig-out\/bin\/app/u);
+    assert.equal(existsSync(join(worktree, "zig-out")), true);
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("launcher trust rejects a forged Just process id", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+    const result = run(["clean", "build"], worktree, {
+      WORKSPACE_MAINTENANCE_JUST_PID: String(process.ppid),
+      WORKSPACE_MAINTENANCE_JUST_EXE: process.execPath,
+    });
+    assert.equal(result.status, 3);
+    assert.match(result.stderr, /is not Just|not the direct parent/u);
     assert.equal(existsSync(join(worktree, "zig-out")), true);
   } finally {
     rmSync(dirname(root), { recursive: true, force: true });
@@ -205,6 +292,21 @@ test("clean refuses an artifact root symlink without touching its target", () =>
   }
 });
 
+test("clean refuses a dangling artifact root symlink", () => {
+  const { root, worktree } = makeRepo();
+  try {
+    const missingTarget = join(root, "missing-sentinel-target");
+    symlinkSync(missingTarget, join(worktree, "zig-out"));
+    const result = run(["clean", "build"], worktree);
+    assert.equal(result.status, 3);
+    assert.match(result.stderr, /symbolic link artifact root/u);
+    assert.ok(lstatSync(join(worktree, "zig-out")).isSymbolicLink());
+    assert.equal(existsSync(missingTarget), false);
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
 test("clean refuses a nested symlink without touching its external target", () => {
   const { root, worktree } = makeRepo();
   try {
@@ -218,6 +320,165 @@ test("clean refuses a nested symlink without touching its external target", () =
     assert.match(result.stderr, /nested symbolic link/u);
     assert.equal(readFileSync(join(sentinel, "keep.txt"), "utf8"), "keep\n");
     assert.ok(existsSync(join(worktree, "zig-out", "nested", "outside")));
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("clean native quarantines and purges generated identity links without following them", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    const nativeIdentity = join(worktree, ".native", "identities", "fixture-identity");
+    const assets = join(worktree, "assets");
+    mkdirSync(nativeIdentity, { recursive: true });
+    mkdirSync(assets);
+    writeFileSync(join(nativeIdentity, "identity.json"), "fixture identity\n");
+    writeFileSync(join(worktree, "src", "source-sentinel.native"), "source sentinel\n");
+    writeFileSync(join(assets, "asset-sentinel.txt"), "asset sentinel\n");
+    symlinkSync(join(worktree, "src"), join(nativeIdentity, "src"));
+    symlinkSync(assets, join(nativeIdentity, "assets"));
+
+    const cleaned = run(["clean", "native"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    assert.equal(existsSync(join(worktree, ".native")), false);
+    assert.equal(readFileSync(join(worktree, "src", "source-sentinel.native"), "utf8"), "source sentinel\n");
+    assert.equal(readFileSync(join(assets, "asset-sentinel.txt"), "utf8"), "asset sentinel\n");
+
+    const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receipt);
+    const preview = run(["clean", "purge", receipt, "--dry-run"], worktree);
+    assert.equal(preview.status, 0, preview.stderr);
+    assert.ok(existsSync(dirname(receipt)));
+    const purged = run(["clean", "purge", receipt, "--force"], worktree);
+    assert.equal(purged.status, 0, purged.stderr);
+    assert.equal(existsSync(dirname(receipt)), false);
+    assert.equal(readFileSync(join(worktree, "src", "source-sentinel.native"), "utf8"), "source sentinel\n");
+    assert.equal(readFileSync(join(assets, "asset-sentinel.txt"), "utf8"), "asset sentinel\n");
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("purge refuses a replaced quarantined Native link and preserves both targets", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    const nativeIdentity = join(worktree, ".native", "identities", "fixture-identity");
+    const assets = join(worktree, "assets");
+    const attacker = join(root, "attacker-target");
+    mkdirSync(nativeIdentity, { recursive: true });
+    mkdirSync(assets);
+    mkdirSync(attacker);
+    writeFileSync(join(worktree, "src", "source-sentinel.native"), "source sentinel\n");
+    writeFileSync(join(attacker, "attacker-sentinel.txt"), "attacker sentinel\n");
+    symlinkSync(join(worktree, "src"), join(nativeIdentity, "src"));
+    symlinkSync(assets, join(nativeIdentity, "assets"));
+
+    const cleaned = run(["clean", "native"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receipt);
+    const transaction = dirname(receipt);
+    const quarantinedSrc = JSON.parse(readFileSync(receipt, "utf8")).moves[0].destination;
+    const srcLink = join(quarantinedSrc, "identities", "fixture-identity", "src");
+    assert.equal(realpathSync(srcLink), realpathSync(join(worktree, "src")));
+    unlinkSync(srcLink);
+    symlinkSync(attacker, srcLink);
+    assert.equal(readlinkSync(srcLink), attacker);
+
+    const purged = run(["clean", "purge", receipt, "--force"], worktree);
+    assert.equal(purged.status, 3);
+    assert.match(purged.stderr, /does not target its source worktree/u);
+    assert.ok(existsSync(transaction));
+    assert.equal(readFileSync(join(worktree, "src", "source-sentinel.native"), "utf8"), "source sentinel\n");
+    assert.equal(readFileSync(join(attacker, "attacker-sentinel.txt"), "utf8"), "attacker sentinel\n");
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("purge refuses a safe-looking Native link injected after quarantine", (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    const nativeIdentity = join(worktree, ".native", "identities", "fixture-identity");
+    mkdirSync(nativeIdentity, { recursive: true });
+    writeFileSync(join(nativeIdentity, "identity.json"), "fixture identity\n");
+    writeFileSync(join(worktree, "src", "source-sentinel.native"), "source sentinel\n");
+
+    const cleaned = run(["clean", "native"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receipt);
+    const transaction = dirname(receipt);
+    const nativeDestination = JSON.parse(readFileSync(receipt, "utf8")).moves[0].destination;
+    const injectedIdentity = join(nativeDestination, "identities", "injected-identity");
+    mkdirSync(injectedIdentity);
+    symlinkSync(join(worktree, "src"), join(injectedIdentity, "src"));
+
+    const purged = run(["clean", "purge", receipt, "--force"], worktree);
+    assert.equal(purged.status, 3);
+    assert.match(purged.stderr, /not recorded by the receipt|nested symbolic link/u);
+    assert.ok(existsSync(transaction));
+    assert.equal(readFileSync(join(worktree, "src", "source-sentinel.native"), "utf8"), "source sentinel\n");
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("clean native refuses generated identity links to any other target", () => {
+  const { root, worktree } = makeRepo();
+  try {
+    const nativeIdentity = join(worktree, ".native", "identities", "fixture-identity");
+    const sentinel = join(root, "external-source");
+    mkdirSync(nativeIdentity, { recursive: true });
+    mkdirSync(sentinel);
+    writeFileSync(join(sentinel, "keep.txt"), "keep\n");
+    symlinkSync(sentinel, join(nativeIdentity, "src"));
+
+    const result = run(["clean", "native"], worktree);
+    assert.equal(result.status, 3);
+    assert.match(result.stderr, /generated Native identity link|nested symbolic link/u);
+    assert.equal(readFileSync(join(sentinel, "keep.txt"), "utf8"), "keep\n");
+    assert.ok(lstatSync(join(nativeIdentity, "src")).isSymbolicLink());
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("clean native refuses a generated identity link at any other depth", () => {
+  const { root, worktree } = makeRepo();
+  try {
+    const nested = join(worktree, ".native", "identities", "fixture-identity", "nested");
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(worktree, "src", "keep.native"), "keep\n");
+    symlinkSync(join(worktree, "src"), join(nested, "src"));
+
+    const result = run(["clean", "native"], worktree);
+    assert.equal(result.status, 3);
+    assert.match(result.stderr, /nested symbolic link/u);
+    assert.equal(readFileSync(join(worktree, "src", "keep.native"), "utf8"), "keep\n");
+    assert.ok(lstatSync(join(nested, "src")).isSymbolicLink());
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("clean refuses a symlinked artifact ancestor without touching its target", () => {
+  const { root, worktree } = makeRepo();
+  try {
+    const externalNews = join(root, "external-news-sync");
+    mkdirSync(join(worktree, "scripts"));
+    mkdirSync(join(externalNews, "work"), { recursive: true });
+    writeFileSync(join(externalNews, "work", "keep.txt"), "keep\n");
+    symlinkSync(externalNews, join(worktree, "scripts", "news-sync"));
+
+    const result = run(["clean", "news-scratch"], worktree);
+    assert.equal(result.status, 3);
+    assert.match(result.stderr, /symbolic link artifact ancestor/u);
+    assert.equal(readFileSync(join(externalNews, "work", "keep.txt"), "utf8"), "keep\n");
+    assert.ok(lstatSync(join(worktree, "scripts", "news-sync")).isSymbolicLink());
   } finally {
     rmSync(dirname(root), { recursive: true, force: true });
   }

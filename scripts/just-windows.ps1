@@ -29,18 +29,6 @@ $repositoryRoot = [IO.Path]::GetFullPath(
 )
 Set-Location -LiteralPath $repositoryRoot
 
-$identityJson = & node scripts/app-identity.mjs prepare --format json
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to resolve Buwiz app identity."
-}
-$appIdentity = $identityJson | ConvertFrom-Json
-$appName = [string]$appIdentity.appName
-$displayName = [string]$appIdentity.displayName
-$bundleId = [string]$appIdentity.bundleId
-$manifestPath = [string]$appIdentity.manifestPath
-$packageRelativePath = "zig-out\package\$appName-windows"
-$resolvedPackageRoot = Join-Path $repositoryRoot $packageRelativePath
-
 function Invoke-Checked {
     param(
         [Parameter(Mandatory = $true, Position = 0)]
@@ -54,6 +42,44 @@ function Invoke-Checked {
         throw "Command failed with exit code ${LASTEXITCODE}: $Executable"
     }
 }
+
+if ($Command -eq "maintenance") {
+    if ($RemainingArguments.Count -lt 1) {
+        throw "maintenance requires a subcommand"
+    }
+    $isCleanInventory = (
+        $RemainingArguments[0] -eq "clean" -and
+        (($RemainingArguments.Count -eq 1) -or
+         ($RemainingArguments[1] -eq "list"))
+    )
+    $isWorktreeInventory = (
+        $RemainingArguments[0] -eq "worktree-remove" -and
+        $RemainingArguments.Count -eq 1
+    )
+    if (($RemainingArguments -notcontains "--dry-run") -and
+        -not ($isCleanInventory -or $isWorktreeInventory)) {
+        throw (
+            "Destructive workspace maintenance is unavailable on Windows. " +
+            "Use inventory or --dry-run."
+        )
+    }
+    Invoke-Checked "node" (
+        @("scripts/workspace-maintenance.mjs") + $RemainingArguments
+    )
+    return
+}
+
+$identityJson = & node scripts/app-identity.mjs prepare --format json
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to resolve Buwiz app identity."
+}
+$appIdentity = $identityJson | ConvertFrom-Json
+$appName = [string]$appIdentity.appName
+$displayName = [string]$appIdentity.displayName
+$bundleId = [string]$appIdentity.bundleId
+$manifestPath = [string]$appIdentity.manifestPath
+$packageRelativePath = "zig-out\package\$appName-windows"
+$resolvedPackageRoot = Join-Path $repositoryRoot $packageRelativePath
 
 function Invoke-NativeCli {
     param(
@@ -95,17 +121,6 @@ function Invoke-TargetZig {
 }
 
 switch ($Command) {
-  "maintenance" {
-    if ($RemainingArguments.Count -lt 1) {
-      throw "maintenance requires a subcommand"
-    }
-    if (($RemainingArguments -notcontains "--dry-run") -and
-        -not ($RemainingArguments[0] -eq "clean" -and
-              (($RemainingArguments.Count -eq 1) -or ($RemainingArguments[1] -eq "list")))) {
-      throw "Destructive workspace maintenance is unavailable on Windows. Use inventory or --dry-run."
-    }
-    Invoke-Checked "node" (@("scripts/workspace-maintenance.mjs") + $RemainingArguments)
-  }
     "setup" {
         Invoke-Checked "npm.cmd" @("ci")
         Write-Host "Locked npm dependencies installed."
@@ -117,6 +132,7 @@ switch ($Command) {
 
     "check" {
         Invoke-Checked "npm.cmd" @("run", "test:app-identity")
+        Invoke-Checked "npm.cmd" @("run", "test:windows-maintenance")
         Invoke-Checked "npm.cmd" @("run", "test:workspace-maintenance")
         Invoke-Checked "npm.cmd" @("run", "check:tax-catalog")
         Invoke-Checked "npm.cmd" @("run", "check:postal-reference")

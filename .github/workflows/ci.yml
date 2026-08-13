@@ -259,9 +259,11 @@ jobs:
         shell: powershell
         run: |
           $archive = Join-Path $env:RUNNER_TEMP "just.zip"
-          Invoke-WebRequest \
-            -Uri "https://github.com/casey/just/releases/download/1.43.1/just-1.43.1-x86_64-pc-windows-msvc.zip" \
-            -OutFile $archive
+          $download = @{
+            Uri = "https://github.com/casey/just/releases/download/1.43.1/just-1.43.1-x86_64-pc-windows-msvc.zip"
+            OutFile = $archive
+          }
+          Invoke-WebRequest @download
           Expand-Archive -LiteralPath $archive -DestinationPath $env:RUNNER_TEMP
           Add-Content -Path $env:GITHUB_PATH -Value $env:RUNNER_TEMP
 
@@ -270,4 +272,5 @@ jobs:
         run: |
           just clean list --json
           just clean build --dry-run
+          npm run test:windows-maintenance
           npm run test:workspace-maintenance

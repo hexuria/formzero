@@ -11,6 +11,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readlinkSync,
   readdirSync,
   realpathSync,
   renameSync,
@@ -124,6 +125,51 @@ function identityMatches(expected) {
   } catch {
     return false;
   }
+}
+
+function lstatOptional(path, label) {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    fail(`${label} could not be inspected: ${path}: ${error.message}`, EXIT.safety);
+  }
+}
+
+function physicalArtifactPath(root, relativePath, inventoryOnly = false) {
+  const absolute = resolve(root, relativePath);
+  const relativeFromRoot = relative(root, absolute);
+  if (!relativeFromRoot || relativeFromRoot === ".." || relativeFromRoot.startsWith(`..${sep}`)
+    || isAbsolute(relativeFromRoot)) {
+    fail(`artifact path escapes its registered worktree: ${relativePath}`, EXIT.safety);
+  }
+  if (realpathExisting(root, "registered worktree root") !== root) {
+    fail(`registered worktree root must be canonical and physical: ${root}`, EXIT.safety);
+  }
+
+  const parts = relativeFromRoot.split(sep);
+  const ancestors = [identity(root, "registered worktree root", "directory")];
+  let current = root;
+  for (const part of parts.slice(0, -1)) {
+    current = join(current, part);
+    const stat = lstatOptional(current, "artifact ancestor");
+    if (stat === null) return { absolute, ancestors, exists: false };
+    if (stat.isSymbolicLink()) {
+      const unsafe = `symbolic link artifact ancestor: ${current}`;
+      if (inventoryOnly) return { absolute, ancestors, exists: true, unsafe };
+      fail(`refusing ${unsafe}`, EXIT.safety);
+    }
+    if (!stat.isDirectory()) {
+      const unsafe = `non-directory artifact ancestor: ${current}`;
+      if (inventoryOnly) return { absolute, ancestors, exists: true, unsafe };
+      fail(`refusing ${unsafe}`, EXIT.safety);
+    }
+    if (realpathExisting(current, "artifact ancestor") !== current || !isContained(root, current)) {
+      fail(`artifact ancestor escapes its registered worktree: ${current}`, EXIT.safety);
+    }
+    ancestors.push(identity(current, "artifact ancestor", "directory"));
+  }
+  return { absolute, ancestors, exists: lstatOptional(absolute, "artifact root") !== null };
 }
 
 function readPhysicalText(path, label) {
@@ -417,7 +463,9 @@ function parseReceipt(receiptPath, context) {
   if (expectedBases.size !== 1 || !expectedBases.has(quarantineRoot)) {
     fail(`cleanup receipt is not under the canonical quarantine for its source worktree: ${receiptReal}`, EXIT.safety);
   }
-  const expectedDigest = createHash("sha256").update(JSON.stringify(receipt.moves)).digest("hex");
+  const expectedDigest = createHash("sha256")
+    .update(JSON.stringify({ moves: receipt.moves, nativeSymlinks: receipt.nativeSymlinks }))
+    .digest("hex");
   if (receipt.contentsDigest !== expectedDigest) {
     fail(`cleanup receipt digest is invalid: ${receiptReal}`, EXIT.safety);
   }
@@ -447,7 +495,8 @@ function parseReceipt(receiptPath, context) {
   if (actualChildren.some((name) => !allowedTop.has(name))) {
     fail(`quarantine transaction contains content not named by the receipt: ${transactionRoot}`, EXIT.safety);
   }
-  const size = directorySize(transactionRoot);
+  const receiptSymlinks = verifiedReceiptNativeSymlinks(receipt, receiptReal);
+  const size = directorySize(transactionRoot, { receiptSymlinks });
   return {
     receipt,
     receiptPath: receiptReal,
@@ -513,7 +562,84 @@ function expandTarget(target) {
   return TARGETS[target];
 }
 
-function directorySize(path, rejectSymlinks = true) {
+function allowedNativeIdentityLink(root, artifactRelativePath, linkPath) {
+  if (artifactRelativePath !== ".native") return false;
+  const linkRelative = relative(join(root, ".native"), linkPath).split(sep);
+  if (linkRelative.length !== 3 || linkRelative[0] !== "identities"
+    || !linkRelative[1] || !["src", "assets"].includes(linkRelative[2])) {
+    return false;
+  }
+  const leaf = linkRelative[2];
+  try {
+    const expectedTarget = join(root, leaf);
+    physicalStat(expectedTarget, `generated Native ${leaf} target`, "directory");
+    const declaredTarget = resolve(dirname(linkPath), readlinkSync(linkPath));
+    const expectedReal = realpathSync(expectedTarget);
+    return realpathSync(declaredTarget) === expectedReal && realpathSync(linkPath) === expectedReal;
+  } catch {
+    return false;
+  }
+}
+
+function verifiedReceiptNativeSymlinks(receipt, receiptPath) {
+  const allowed = new Map();
+  const recorded = receipt.nativeSymlinks;
+  if (!Array.isArray(recorded)) {
+    fail(`cleanup receipt does not record its Native identity links: ${receiptPath}`, EXIT.safety);
+  }
+  for (const entry of recorded) {
+    if (!entry || typeof entry.path !== "string" || typeof entry.target !== "string"
+      || ![entry.dev, entry.ino, entry.mode, entry.mtimeMs].every((value) => typeof value === "number")) {
+      fail(`cleanup receipt contains an invalid Native identity link: ${receiptPath}`, EXIT.safety);
+    }
+    allowed.set(entry.path, entry);
+  }
+  const discovered = new Set();
+  for (const move of receipt.moves) {
+    const sourceRoot = receipt.sourceWorktrees.find((root) => typeof root === "string" && isContained(root, move.source));
+    if (!sourceRoot || relative(sourceRoot, move.source) !== ".native") continue;
+    const identitiesRoot = join(move.destination, "identities");
+    const identitiesStat = lstatOptional(identitiesRoot, "quarantined Native identities directory");
+    if (identitiesStat === null) continue;
+    physicalStat(identitiesRoot, "quarantined Native identities directory", "directory");
+    if (realpathExisting(identitiesRoot, "quarantined Native identities directory") !== identitiesRoot) {
+      fail(`quarantined Native identities directory escapes its physical path: ${identitiesRoot}`, EXIT.safety);
+    }
+    for (const name of readdirSync(identitiesRoot)) {
+      const identityRoot = join(identitiesRoot, name);
+      const identityStat = lstatSync(identityRoot);
+      if (identityStat.isSymbolicLink() || !identityStat.isDirectory()) continue;
+      if (realpathExisting(identityRoot, "quarantined Native identity directory") !== identityRoot) {
+        fail(`quarantined Native identity directory escapes its physical path: ${identityRoot}`, EXIT.safety);
+      }
+      for (const leaf of ["src", "assets"]) {
+        const candidate = join(identityRoot, leaf);
+        const stat = lstatOptional(candidate, "quarantined Native identity link");
+        if (!stat?.isSymbolicLink()) continue;
+        discovered.add(candidate);
+        const expectedTarget = join(sourceRoot, leaf);
+        const expectedReal = realpathExisting(expectedTarget, `source worktree ${leaf}`);
+        if (realpathExisting(resolve(dirname(candidate), readlinkSync(candidate)), "quarantined Native identity link target") !== expectedReal
+          || realpathExisting(candidate, "quarantined Native identity link") !== expectedReal) {
+          fail(`quarantined Native identity link does not target its source worktree ${leaf}: ${candidate}`, EXIT.safety);
+        }
+        const recordedLink = allowed.get(candidate);
+        if (!recordedLink || recordedLink.target !== expectedReal
+          || recordedLink.dev !== stat.dev || recordedLink.ino !== stat.ino
+          || recordedLink.mode !== stat.mode || recordedLink.mtimeMs !== stat.mtimeMs) {
+          fail(`quarantined Native identity link was not recorded by the receipt or changed identity: ${candidate}`, EXIT.safety);
+        }
+      }
+    }
+  }
+  if ([...allowed.keys()].some((path) => !discovered.has(path))) {
+    fail(`cleanup receipt records a missing Native identity link: ${receiptPath}`, EXIT.safety);
+  }
+  return allowed;
+}
+
+function directorySize(path, options = {}) {
+  const { root = path, artifactRelativePath = null, inventoryOnly = false, receiptSymlinks = null } = options;
   const stack = [path];
   const rootDevice = lstatSync(path).dev;
   let bytes = 0;
@@ -526,7 +652,11 @@ function directorySize(path, rejectSymlinks = true) {
     }
     entries += 1;
     if (stat.isSymbolicLink()) {
-      if (rejectSymlinks) {
+      const receiptLink = receiptSymlinks?.get(current);
+      const receiptAllowsLink = receiptLink !== undefined
+        && stat.dev === receiptLink.dev && stat.ino === receiptLink.ino
+        && stat.mode === receiptLink.mode && stat.mtimeMs === receiptLink.mtimeMs;
+      if (!inventoryOnly && !receiptAllowsLink && !allowedNativeIdentityLink(root, artifactRelativePath, current)) {
         fail(`refusing nested symbolic link inside artifact root: ${current}`, EXIT.safety);
       }
       continue;
@@ -542,10 +672,61 @@ function directorySize(path, rejectSymlinks = true) {
   return { bytes, entries };
 }
 
+function nativeSymlinkSnapshot(root, artifactRelativePath, artifactRoot) {
+  if (artifactRelativePath !== ".native") return [];
+  const links = [];
+  const stack = [artifactRoot];
+  while (stack.length) {
+    const current = stack.pop();
+    const stat = lstatSync(current);
+    if (stat.isSymbolicLink()) {
+      if (!allowedNativeIdentityLink(root, artifactRelativePath, current)) {
+        fail(`refusing nested symbolic link inside artifact root: ${current}`, EXIT.safety);
+      }
+      links.push({
+        relativePath: relative(artifactRoot, current),
+        target: realpathExisting(current, "generated Native identity link"),
+        dev: stat.dev,
+        ino: stat.ino,
+        mode: stat.mode,
+        mtimeMs: stat.mtimeMs,
+      });
+      continue;
+    }
+    if (stat.isDirectory()) {
+      for (const name of readdirSync(current)) stack.push(join(current, name));
+    }
+  }
+  return links.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+}
+
+function nativeSymlinkSnapshotsEqual(left, right) {
+  return JSON.stringify(left ?? []) === JSON.stringify(right ?? []);
+}
+
+function nativeSymlinksMatchAt(entry, artifactRoot) {
+  return (entry.nativeSymlinks ?? []).every((link) => {
+    const path = join(artifactRoot, link.relativePath);
+    try {
+      const stat = lstatSync(path);
+      return stat.isSymbolicLink()
+        && stat.dev === link.dev && stat.ino === link.ino
+        && stat.mode === link.mode && stat.mtimeMs === link.mtimeMs
+        && realpathSync(path) === link.target;
+    } catch {
+      return false;
+    }
+  });
+}
+
 function snapshotEntry(root, relativePath, options = {}) {
-  const absolute = join(root, relativePath);
-  if (!existsSync(absolute)) {
-    return { relativePath, absolute, exists: false };
+  const physicalPath = physicalArtifactPath(root, relativePath, options.inventoryOnly);
+  const { absolute, ancestors } = physicalPath;
+  if (!physicalPath.exists) {
+    return { relativePath, absolute, exists: false, ancestors };
+  }
+  if (physicalPath.unsafe) {
+    return { relativePath, absolute, exists: true, unsafe: physicalPath.unsafe, bytes: 0, entries: 1, ancestors };
   }
   const stat = lstatSync(absolute);
   if (stat.isSymbolicLink()) {
@@ -557,10 +738,6 @@ function snapshotEntry(root, relativePath, options = {}) {
   if (!stat.isDirectory()) {
     fail(`artifact root must be a physical directory: ${absolute}`, EXIT.safety);
   }
-  const expected = resolve(root, relativePath);
-  if (!isContained(root, expected)) {
-    fail(`artifact path escapes its registered worktree: ${relativePath}`, EXIT.safety);
-  }
   const tracked = git(root, ["ls-files", "--error-unmatch", "--", relativePath], { allowFailure: true });
   if (tracked.status === 0) {
     fail(`refusing tracked artifact path: ${absolute}`, EXIT.safety);
@@ -569,7 +746,8 @@ function snapshotEntry(root, relativePath, options = {}) {
   if (ignored.status !== 0) {
     fail(`refusing artifact path that is not ignored: ${absolute}`, EXIT.safety);
   }
-  const size = directorySize(absolute, !options.inventoryOnly);
+  const size = directorySize(absolute, { root, artifactRelativePath: relativePath, inventoryOnly: options.inventoryOnly });
+  const nativeSymlinks = options.inventoryOnly ? [] : nativeSymlinkSnapshot(root, relativePath, absolute);
   return {
     relativePath,
     absolute,
@@ -578,11 +756,16 @@ function snapshotEntry(root, relativePath, options = {}) {
     ino: stat.ino,
     mode: stat.mode,
     mtimeMs: stat.mtimeMs,
+    ancestors,
+    nativeSymlinks,
     ...size,
   };
 }
 
 function snapshotMatches(entry) {
+  if (entry.ancestors?.some((ancestor) => !identityMatches(ancestor))) {
+    return false;
+  }
   if (!entry.exists) {
     return !existsSync(entry.absolute);
   }
@@ -594,7 +777,42 @@ function snapshotMatches(entry) {
     && stat.dev === entry.dev
     && stat.ino === entry.ino
     && stat.mode === entry.mode
-    && stat.mtimeMs === entry.mtimeMs;
+    && stat.mtimeMs === entry.mtimeMs
+    && nativeSymlinksMatchAt(entry, entry.absolute);
+}
+
+function snapshotsEquivalent(planned, verified) {
+  return verified.exists
+    && planned.absolute === verified.absolute
+    && planned.dev === verified.dev && planned.ino === verified.ino
+    && planned.mode === verified.mode && planned.mtimeMs === verified.mtimeMs
+    && nativeSymlinkSnapshotsEqual(planned.nativeSymlinks, verified.nativeSymlinks);
+}
+
+function snapshotRootMatchesAt(entry, path) {
+  try {
+    const stat = lstatSync(path);
+    return stat.isDirectory() && !stat.isSymbolicLink()
+      && stat.dev === entry.dev
+      && stat.ino === entry.ino
+      && stat.mode === entry.mode
+      && stat.mtimeMs === entry.mtimeMs;
+  } catch {
+    return false;
+  }
+}
+
+function ensurePhysicalRelativeDirectory(parent, relativePath, label) {
+  let current = parent;
+  const identities = [identity(parent, `${label} root`, "directory")];
+  for (const part of relativePath.split(sep).filter((entry) => entry && entry !== ".")) {
+    if (part === "..") {
+      fail(`${label} escapes its physical parent: ${relativePath}`, EXIT.safety);
+    }
+    current = ensurePhysicalChild(current, part, label);
+    identities.push(identity(current, label, "directory"));
+  }
+  return { path: current, identities };
 }
 
 function selectExactWorktree(context, supplied) {
@@ -636,11 +854,98 @@ function resolveRequestedWorktree(context, supplied) {
   return record;
 }
 
-function processProof(root) {
-  if (!existsSync("/usr/sbin/lsof") && !existsSync("/usr/bin/lsof")) {
-    return { state: "unknown", detail: "lsof is unavailable" };
+function parseProcessId(value, label) {
+  if (!/^[1-9][0-9]*$/u.test(value || "")) {
+    fail(`${label} must be one positive process id`, EXIT.safety);
   }
-  const lsof = existsSync("/usr/sbin/lsof") ? "/usr/sbin/lsof" : "/usr/bin/lsof";
+  const pid = Number.parseInt(value, 10);
+  if (!Number.isSafeInteger(pid)) {
+    fail(`${label} is outside the supported process id range`, EXIT.safety);
+  }
+  return pid;
+}
+
+function processRecord(pid) {
+  const result = spawnSync("ps", ["-o", "pid=,ppid=,comm=", "-p", String(pid)], { encoding: "utf8" });
+  if (result.error || result.status !== 0) {
+    fail(`could not verify maintenance launcher process ${pid}`, EXIT.safety);
+  }
+  const lines = result.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.length !== 1) {
+    fail(`maintenance launcher process ${pid} returned ambiguous process state`, EXIT.safety);
+  }
+  const match = lines[0].match(/^(\d+)\s+(\d+)\s+(.+)$/u);
+  if (!match || Number.parseInt(match[1], 10) !== pid) {
+    fail(`maintenance launcher process ${pid} returned malformed process state`, EXIT.safety);
+  }
+  return { pid, ppid: Number.parseInt(match[2], 10), command: match[3] };
+}
+
+function lsofExecutable() {
+  if (existsSync("/usr/sbin/lsof")) return "/usr/sbin/lsof";
+  if (existsSync("/usr/bin/lsof")) return "/usr/bin/lsof";
+  fail("lsof is unavailable", EXIT.safety);
+}
+
+function processExecutable(pid) {
+  const result = spawnSync(lsofExecutable(), ["-nP", "-a", "-p", String(pid), "-d", "txt", "-Fn"], { encoding: "utf8" });
+  if (result.error || result.status !== 0) {
+    fail(`could not verify maintenance launcher executable for process ${pid}`, EXIT.safety);
+  }
+  const paths = result.stdout.split("\n").filter((line) => line.startsWith("n")).map((line) => line.slice(1));
+  if (paths.length === 0) {
+    fail(`maintenance launcher process ${pid} returned no executable`, EXIT.safety);
+  }
+  return realpathExisting(paths[0], "maintenance launcher executable");
+}
+
+function trustedLauncherPids() {
+  const suppliedPid = process.env.WORKSPACE_MAINTENANCE_JUST_PID;
+  const suppliedExecutable = process.env.WORKSPACE_MAINTENANCE_JUST_EXE;
+  if (!suppliedPid && !suppliedExecutable) return new Set();
+  if (!suppliedPid || !suppliedExecutable) {
+    fail("maintenance launcher proof requires both Just process and executable", EXIT.safety);
+  }
+  const justPid = parseProcessId(suppliedPid, "WORKSPACE_MAINTENANCE_JUST_PID");
+  const declaredExecutable = realpathExisting(suppliedExecutable, "declared Just executable");
+  const just = processRecord(justPid);
+  if (basename(just.command) !== "just" || basename(declaredExecutable) !== "just") {
+    fail(`maintenance launcher process ${justPid} is not Just`, EXIT.safety);
+  }
+  if (processExecutable(justPid) !== declaredExecutable) {
+    fail(`maintenance launcher process ${justPid} does not match its declared executable`, EXIT.safety);
+  }
+  const trusted = new Set([just.pid]);
+  if (process.ppid !== justPid) {
+    const recipeShell = processRecord(process.ppid);
+    if (recipeShell.ppid !== justPid || !["bash", "dash", "ksh", "sh", "zsh"].includes(basename(recipeShell.command))) {
+      fail("maintenance process is not a direct recipe-shell child of Just", EXIT.safety);
+    }
+    trusted.add(recipeShell.pid);
+  }
+  let ancestorPid = just.ppid;
+  for (let depth = 0; ancestorPid > 1 && depth < 32; depth += 1) {
+    let ancestor;
+    try {
+      ancestor = processRecord(ancestorPid);
+    } catch (error) {
+      if (error instanceof MaintenanceError) break;
+      throw error;
+    }
+    trusted.add(ancestor.pid);
+    ancestorPid = ancestor.ppid;
+  }
+  return trusted;
+}
+
+function processProof(root, trustedPids = new Set(), artifactRoots = []) {
+  let lsof;
+  try {
+    lsof = lsofExecutable();
+  } catch (error) {
+    if (error instanceof MaintenanceError) return { state: "unknown", detail: error.message };
+    throw error;
+  }
   const marker = `WORKSPACE_MAINTENANCE_SCAN_${process.pid}_${Date.now()}`;
   const result = spawnSync(lsof, ["-nP", "-Fpcfn", "+D", root], {
     cwd: dirname(dirname(root)),
@@ -669,22 +974,31 @@ function processProof(root) {
     const type = field[0];
     const value = field.slice(1);
     if (type === "p") {
-      current = { pid: Number.parseInt(value, 10), command: "", paths: [] };
+      current = { pid: Number.parseInt(value, 10), command: "", files: [] };
       processes.push(current);
     } else if (!current) {
       return { state: "unknown", detail: `unparseable lsof field: ${field}` };
     } else if (type === "c") {
       current.command = value;
+    } else if (type === "f") {
+      current.files.push({ descriptor: value, path: null });
     } else if (type === "n") {
-      current.paths.push(value);
+      if (current.files.length === 0 || current.files.at(-1).path !== null) {
+        return { state: "unknown", detail: `unparseable lsof path field: ${field}` };
+      }
+      current.files.at(-1).path = value;
     }
   }
-  if (processes.some((entry) => Number.isNaN(entry.pid))) {
+  if (processes.some((entry) => Number.isNaN(entry.pid) || entry.files.some((file) => file.path === null))) {
     return { state: "unknown", detail: "lsof returned an invalid process id" };
   }
-  const active = processes.filter((entry) => !processHasMarker(entry.pid, marker));
+  const isSafeLauncher = (entry) => trustedPids.has(entry.pid) && entry.files.every((file) =>
+    file.descriptor === "cwd"
+      && isAbsolute(file.path)
+      && !artifactRoots.some((artifactRoot) => isContained(artifactRoot, file.path)));
+  const active = processes.filter((entry) => !isSafeLauncher(entry) && !processHasMarker(entry.pid, marker));
   return active.length > 0
-    ? { state: "active", detail: active.slice(0, 8).map((entry) => `${entry.pid} ${entry.command} ${entry.paths.join(", ")}`).join("\n") }
+    ? { state: "active", detail: active.slice(0, 8).map((entry) => `${entry.pid} ${entry.command} ${entry.files.map((file) => `${file.descriptor}:${file.path}`).join(", ")}`).join("\n") }
     : { state: "clear", detail: "no open files" };
 }
 
@@ -695,8 +1009,8 @@ function processHasMarker(pid, marker) {
   return result.stdout.includes(`${marker}=1`);
 }
 
-function requireClearProcesses(root) {
-  const proof = processProof(root);
+function requireClearProcesses(root, artifactRoots) {
+  const proof = processProof(root, trustedLauncherPids(), artifactRoots);
   if (proof.state !== "clear") {
     fail(`process state for ${root} is ${proof.state}: ${proof.detail}`, EXIT.safety);
   }
@@ -952,7 +1266,7 @@ function commandClean(args) {
   }
   requireMutationPlatform();
   for (const item of plan) {
-    requireClearProcesses(item.record.pathReal);
+    requireClearProcesses(item.record.pathReal, item.entries.map((entry) => entry.absolute));
   }
   const digest = createHash("sha256").update(JSON.stringify(plan.map((item) => ({ path: item.record.path, head: item.record.HEAD, entries: item.entries })))).digest("hex");
   const moved = [];
@@ -971,13 +1285,13 @@ function commandClean(args) {
       if (!freshRecord || freshRecord.HEAD !== item.record.HEAD || freshRecord.locked || freshRecord.prunable || freshRecord.missing) {
         fail("worktree state changed after planning; nothing was deleted", EXIT.safety);
       }
-      requireClearProcesses(item.record.pathReal);
+      requireClearProcesses(item.record.pathReal, item.entries.map((entry) => entry.absolute));
       if (!item.entries.every(snapshotMatches)) {
         fail("artifact state changed after planning; nothing was deleted", EXIT.safety);
       }
       for (const entry of item.entries) {
         const verified = snapshotEntry(item.record.pathReal, entry.relativePath);
-        if (!verified.exists || !snapshotMatches(entry)) {
+        if (!snapshotsEquivalent(entry, verified) || !snapshotMatches(entry)) {
           fail(`artifact eligibility changed after planning: ${entry.absolute}`, EXIT.safety);
         }
       }
@@ -997,15 +1311,29 @@ function commandClean(args) {
           fail(`artifact changed immediately before quarantine: ${entry.absolute}`, EXIT.safety);
         }
         const verified = snapshotEntry(item.record.pathReal, entry.relativePath);
-        if (!verified.exists || !snapshotMatches(entry)) {
+        if (!snapshotsEquivalent(entry, verified) || !snapshotMatches(entry)) {
           fail(`artifact eligibility changed immediately before quarantine: ${entry.absolute}`, EXIT.safety);
         }
         const destination = join(transactionRoot, createHash("sha256").update(item.record.path).digest("hex").slice(0, 12), entry.relativePath);
         if (!isContained(transactionRoot, destination)) {
           fail(`quarantine destination escaped its transaction: ${destination}`, EXIT.safety);
         }
-        mkdirSync(dirname(destination), { recursive: true });
+        const destinationParent = ensurePhysicalRelativeDirectory(
+          transactionRoot,
+          relative(transactionRoot, dirname(destination)),
+          "quarantine destination directory",
+        );
+        if (destinationParent.path !== dirname(destination)
+          || !destinationParent.identities.every(identityMatches)
+          || !identityMatches(transactionIdentity)
+          || !entry.ancestors.every(identityMatches)
+          || !snapshotRootMatchesAt(entry, entry.absolute)) {
+          fail(`artifact or quarantine identity changed at rename boundary: ${entry.absolute}`, EXIT.safety);
+        }
         renameSync(entry.absolute, destination);
+        if (!snapshotRootMatchesAt(entry, destination) || !nativeSymlinksMatchAt(entry, destination)) {
+          fail(`quarantined artifact identity does not match its snapshot: ${destination}`, EXIT.safety);
+        }
         moved.push({ source: entry.absolute, destination });
       }
     }
@@ -1014,6 +1342,7 @@ function commandClean(args) {
       operation: "clean",
       createdAt: new Date().toISOString(),
       digest,
+      contentsDigest: null,
       transactionRoot,
       quarantineRoot,
       sourceWorktrees: plan.map((item) => item.record.path),
@@ -1021,8 +1350,21 @@ function commandClean(args) {
         const original = plan.flatMap((item) => item.entries).find((entry) => entry.absolute === source);
         return { source, destination, bytes: original.bytes, entries: original.entries };
       }),
+      nativeSymlinks: moved.flatMap(({ source, destination }) => {
+        const original = plan.flatMap((item) => item.entries).find((entry) => entry.absolute === source);
+        return original.nativeSymlinks.map((link) => ({
+          path: join(destination, link.relativePath),
+          target: link.target,
+          dev: link.dev,
+          ino: link.ino,
+          mode: link.mode,
+          mtimeMs: link.mtimeMs,
+        }));
+      }),
     };
-    receipt.contentsDigest = createHash("sha256").update(JSON.stringify(receipt.moves)).digest("hex");
+    receipt.contentsDigest = createHash("sha256")
+      .update(JSON.stringify({ moves: receipt.moves, nativeSymlinks: receipt.nativeSymlinks }))
+      .digest("hex");
     writeReceipt(join(transactionRoot, "receipt.json"), receipt);
     process.stdout.write(`Quarantined artifacts; nothing has been permanently deleted.\n  receipt: ${join(transactionRoot, "receipt.json")}\n`);
     process.stdout.write(`Review it, then reclaim disk with: just clean purge '${join(transactionRoot, "receipt.json")}' --force\n`);

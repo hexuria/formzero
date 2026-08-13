@@ -111,15 +111,22 @@ topology before removing that one transaction. Purge a worktree's receipt
 before removing that worktree; once the source is no longer registered, purge
 fails closed because it can no longer independently reconstruct provenance.
 
-Artifact mutation refuses any symlink nested inside a selected root. Read-only
-inventory may count the link itself without following it, so `just clean`
-still reports every registered worktree even when an existing cache contains
-links.
+Artifact mutation refuses symlinked roots, ancestors, and nested links, with
+one narrow exception for Native's generated layout: an exact
+`.native/identities/<identity>/{src,assets}` link may point only to the same
+registered worktree's physical `src/` or `assets/` directory. Those links are
+counted as leaf entries and never followed. Wrong-target, deeper, dangling, or
+newly inserted links fail closed; receipt-bound purge revalidates the exact
+links moved into quarantine and rejects replacements or additions. Read-only
+inventory may count any other link as a leaf so every registered worktree can
+still be reported without traversing it.
 
-The process guard does not exempt `just` or any caller process. On Unix, use
-`just` for inventory and dry-runs; a mutation may refuse while Just holds the
-worktree open. After closing apps and watchers, invoke the printed Node
-maintenance command directly so only the maintenance process is exempt.
+On Unix, `just clean` authenticates and independently walks its live launcher
+ancestry before the process guard runs. Only that causal chain is exempt, and
+only when each process's sole handle in the worktree is a current directory
+outside the selected artifact roots. A forged launcher PID, an open artifact
+file, or any unrelated shell, app, watcher, or unknown process still refuses
+mutation.
 
 The catalog contains only `.zig-cache`, `zig-cache`, `zig-pkg`, `zig-out`,
 `.native`, `node_modules`, `coverage`, `test-results`, and
@@ -165,8 +172,9 @@ rechecked immediately before mutation; no local tool can prevent a hostile
 external process from starting in the final instant before Git acts.
 
 Each worktree intentionally keeps its own `node_modules` and local Zig cache.
-The npm download cache and Zig global cache are already shared. Installed
-dependency trees and local Zig build graphs remain checkout-specific because
+The npm download cache and Zig's default global cache are host-level and shared
+by default. Installed dependency trees and local Zig build graphs remain
+checkout-specific because
 branches may carry different lockfiles and build state; symlinking those
 mutable directories would let one worktree alter another.
 
