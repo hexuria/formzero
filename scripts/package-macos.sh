@@ -8,7 +8,7 @@ eval "$(node scripts/app-identity.mjs prepare --format shell)"
 
 package_root="zig-out/package"
 app_bundle="$package_root/$BUWIZ_APP_NAME.app"
-runtime_assets=".zig-cache/$BUWIZ_APP_NAME-package-assets"
+runtime_assets="$repository_root/.zig-cache/$BUWIZ_APP_NAME-package-assets"
 
 # Package only assets declared by app.zon. The workspace can contain unrelated
 # design-review artifacts under assets/; copying the entire tree makes the
