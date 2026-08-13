@@ -111,6 +111,18 @@ topology before removing that one transaction. Purge a worktree's receipt
 before removing that worktree; once the source is no longer registered, purge
 fails closed because it can no longer independently reconstruct provenance.
 
+Purge authorizes deletion from an exact pre-tombstone manifest, stages each
+known leaf by identity, unlinks only that staged leaf, and removes directories
+bottom-up with non-recursive empty-directory removal. It never performs a
+recursive sweep. Unknown replacements and late insertions are retained and
+make purge fail closed. This protects cooperative maintenance, but Node's
+pathname APIs cannot make the final rename, unlink, or empty-directory syscall
+atomic against a hostile same-user writer; writers must remain stopped during
+that final instant. A failure after an artifact move never automatically
+restores it: the transaction stays quarantined and a recovery receipt records
+each successful rename as verified or uncertain, including expected root
+identity and Native-link metadata.
+
 Artifact mutation refuses symlinked roots, ancestors, and nested links, with
 one narrow exception for Native's generated layout: an exact
 `.native/identities/<identity>/{src,assets}` link may point only to the same
@@ -164,10 +176,12 @@ Artifact cleanup moves selected roots into a same-filesystem quarantine and
 prints a metadata-only receipt. Purging is a separate irreversible command as
 shown above. Mutation is currently supported on macOS and Linux hosts with
 `lsof`; unsupported or incomplete process inspection always refuses safely.
-The Node maintenance module supports Windows inventory and dry runs, including
-paths with spaces; Windows CI verifies the complete Just-to-PowerShell argument
-forwarding path. Destructive maintenance is intentionally unavailable there
-until an equally reliable Windows process inspector is implemented. Process
+The Node maintenance module supports Windows artifact inventory, cleanup dry
+runs, and bare worktree inventory, including paths with spaces; Windows CI
+verifies the complete Just-to-PowerShell argument forwarding path. Exact-path
+worktree-removal assessment and destructive maintenance are intentionally
+unavailable there until an equally reliable Windows process inspector is
+implemented. Process
 and filesystem state are rechecked immediately before mutation; no local tool
 can prevent a hostile external process from starting in the final instant
 before Git acts.

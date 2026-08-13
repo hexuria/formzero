@@ -3,7 +3,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readlinkSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -25,6 +25,13 @@ async function waitForPath(path) {
   }
 }
 
+function releaseTestHook(release) {
+  if (existsSync(release)) return;
+  const pending = `${release}.pending`;
+  writeFileSync(pending, "continue\n", { mode: 0o600 });
+  renameSync(pending, release);
+}
+
 async function runPausedAtHook(args, cwd, hook, mutate, extraEnv = {}) {
   const hookRoot = mkdtempSync(join(tmpdir(), "workspace-maintenance-hook-"));
   const marker = join(hookRoot, "marker.json");
@@ -35,6 +42,7 @@ async function runPausedAtHook(args, cwd, hook, mutate, extraEnv = {}) {
       ...process.env,
       ...extraEnv,
       NODE_ENV: "test",
+      NODE_TEST_CONTEXT: "child-v8",
       WORKSPACE_MAINTENANCE_TEST_HOOK: hook,
       WORKSPACE_MAINTENANCE_TEST_MARKER: marker,
       WORKSPACE_MAINTENANCE_TEST_RELEASE: release,
@@ -54,11 +62,11 @@ async function runPausedAtHook(args, cwd, hook, mutate, extraEnv = {}) {
   try {
     await waitForPath(marker);
     await mutate(JSON.parse(readFileSync(marker, "utf8")));
-    writeFileSync(release, "continue\n");
+    releaseTestHook(release);
     const result = await completed;
     return { ...result, stdout, stderr };
   } finally {
-    if (!existsSync(release)) writeFileSync(release, "continue\n");
+    releaseTestHook(release);
     if (child.exitCode === null) child.kill("SIGTERM");
     await completed.catch(() => {});
     rmSync(hookRoot, { recursive: true, force: true });
@@ -175,6 +183,27 @@ test("clean dry-run reports exact artifacts without mutating them", () => {
   }
 });
 
+test("test hooks stay inactive without the complete test-only gate", () => {
+  const { root, worktree } = makeRepo();
+  const hookRoot = mkdtempSync(join(tmpdir(), "workspace-maintenance-inactive-hook-"));
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+    const marker = join(hookRoot, "marker.json");
+    const result = run(["clean", "build", "--dry-run"], worktree, {
+      NODE_ENV: "test",
+      WORKSPACE_MAINTENANCE_TEST_HOOK: "before-artifact-rename",
+      WORKSPACE_MAINTENANCE_TEST_MARKER: marker,
+      WORKSPACE_MAINTENANCE_TEST_RELEASE: join(hookRoot, "release"),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(marker), false);
+  } finally {
+    rmSync(hookRoot, { recursive: true, force: true });
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
 test("printed purge command safely quotes receipt paths containing apostrophes", (context) => {
   if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
   const { root, worktree } = makeRepo("workspace-maintenance-'test-");
@@ -196,7 +225,7 @@ test("printed purge command safely quotes receipt paths containing apostrophes",
   }
 });
 
-test("post-rename failure records the move and rolls the artifact back", (context) => {
+test("post-rename failure retains every moved artifact in a recovery transaction", (context) => {
   if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
   const { root, worktree } = makeRepo();
   try {
@@ -204,23 +233,114 @@ test("post-rename failure records the move and rolls the artifact back", (contex
     writeFileSync(join(worktree, "zig-out", "bin", "app"), "rollback sentinel\n");
     const result = run(["clean", "build"], worktree, {
       NODE_ENV: "test",
+      NODE_TEST_CONTEXT: "child-v8",
       WORKSPACE_MAINTENANCE_TEST_FAIL_AT: "after-artifact-rename",
     });
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /injected test failure/u);
-    assert.equal(readFileSync(join(worktree, "zig-out", "bin", "app"), "utf8"), "rollback sentinel\n");
+    assert.match(result.stderr, /no automatic rollback was attempted/u);
+    assert.equal(existsSync(join(worktree, "zig-out")), false);
+    const recovery = result.stderr.match(/recovery retained at (.+recovery\.json):/u)?.[1];
+    assert.ok(recovery);
+    const recoveryReceipt = JSON.parse(readFileSync(recovery, "utf8"));
+    assert.equal(recoveryReceipt.operation, "clean-partial");
+    assert.equal(recoveryReceipt.moves.length, 1);
+    assert.equal(recoveryReceipt.moves[0].verification, "uncertain");
+    assert.equal(recoveryReceipt.moves[0].expectedRootIdentity.type, "directory");
+    assert.ok(Number.isInteger(recoveryReceipt.moves[0].expectedRootIdentity.ino));
+    assert.deepEqual(recoveryReceipt.moves[0].nativeSymlinks, []);
+    assert.equal(readFileSync(join(recoveryReceipt.moves[0].destination, "bin", "app"), "utf8"), "rollback sentinel\n");
     const quarantineNamespace = join(dirname(worktree), ".buwiz-workspace-maintenance");
     const quarantineFiles = existsSync(quarantineNamespace)
       ? readdirSync(quarantineNamespace, { recursive: true })
       : [];
-    assert.equal(quarantineFiles.some((name) => name.endsWith("receipt.json")), false);
+    assert.equal(quarantineFiles.some((name) => name.endsWith("recovery.json")), true);
     assert.equal(quarantineFiles.some((name) => name.includes(".deleting-")), false);
   } finally {
     rmSync(dirname(root), { recursive: true, force: true });
   }
 });
 
-test("rollback refuses source-ancestor symlink drift and retains quarantine", async (context) => {
+test("post-rename destination replacement is retained with an uncertain recovery record", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "original\n");
+    let replacement;
+    const result = await runPausedAtHook(
+      ["clean", "build"],
+      worktree,
+      "after-artifact-rename",
+      ({ destination }) => {
+        renameSync(destination, `${destination}.original`);
+        mkdirSync(destination);
+        replacement = join(destination, "external-sentinel.txt");
+        writeFileSync(replacement, "replacement survives\n");
+      },
+    );
+    assert.equal(result.status, 3);
+    const recovery = result.stderr.match(/recovery retained at (.+?recovery\.json):/u)?.[1];
+    assert.ok(recovery && existsSync(recovery));
+    const receipt = JSON.parse(readFileSync(recovery, "utf8"));
+    assert.equal(receipt.moves[0].verification, "uncertain");
+    assert.equal(readFileSync(replacement, "utf8"), "replacement survives\n");
+    assert.equal(readFileSync(`${receipt.moves[0].destination}.original/bin/app`, "utf8"), "original\n");
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("zero-move failure removes only empty command-created scaffolding", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "original\n");
+    let transactionRoot;
+    const result = await runPausedAtHook(
+      ["clean", "build"],
+      worktree,
+      "before-artifact-rename",
+      (payload) => { transactionRoot = payload.transactionRoot; },
+      { WORKSPACE_MAINTENANCE_TEST_ACTION: "fail" },
+    );
+    assert.equal(result.status, 3);
+    assert.equal(existsSync(transactionRoot), false);
+    assert.equal(readFileSync(join(worktree, "zig-out", "bin", "app"), "utf8"), "original\n");
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("zero-move failure retains unknown scaffolding content and reports its transaction", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "original\n");
+    let sentinel;
+    let transactionRoot;
+    const result = await runPausedAtHook(
+      ["clean", "build"],
+      worktree,
+      "before-artifact-rename",
+      (payload) => {
+        transactionRoot = payload.transactionRoot;
+        sentinel = join(payload.transactionRoot, "unknown-sentinel.txt");
+        writeFileSync(sentinel, "must survive\n");
+      },
+      { WORKSPACE_MAINTENANCE_TEST_ACTION: "fail" },
+    );
+    assert.equal(result.status, 3);
+    assert.ok(result.stderr.includes(transactionRoot));
+    assert.match(result.stderr, /no unknown content was deleted/u);
+    assert.equal(readFileSync(sentinel, "utf8"), "must survive\n");
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("post-rename failure does not follow a changed source ancestor", async (context) => {
   if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
   const { root, worktree } = makeRepo();
   try {
@@ -241,10 +361,9 @@ test("rollback refuses source-ancestor symlink drift and retains quarantine", as
       { WORKSPACE_MAINTENANCE_TEST_ACTION: "fail" },
     );
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /rollback was incomplete|source ancestors changed|ENOTDIR/u);
+    assert.match(result.stderr, /no automatic rollback was attempted/u);
     assert.equal(existsSync(join(external, "work", "download.pdf")), false);
-    assert.match(result.stderr, /quarantine retained at (.+)/u);
-    const retained = result.stderr.match(/quarantine retained at (.+?)(?::|\n)/u)?.[1];
+    const retained = result.stderr.match(/recovery retained at (.+?recovery\.json):/u)?.[1];
     assert.ok(retained && existsSync(retained));
   } finally {
     rmSync(dirname(root), { recursive: true, force: true });
@@ -624,6 +743,9 @@ test("purge requires an exact receipt and force, then reclaims only its quaranti
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
     writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+    mkdirSync(join(worktree, "zig-out", "share", "nested"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "share", "nested", "data.bin"), "data\n");
+    writeFileSync(join(worktree, "zig-out", "root.txt"), "root\n");
     const cleaned = run(["clean", "build"], worktree);
     assert.equal(cleaned.status, 0, cleaned.stderr);
     const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
@@ -673,9 +795,174 @@ test("purge tombstone boundary refuses a replacement transaction", async (contex
       },
     );
     assert.equal(purged.status, 3);
-    assert.match(purged.stderr, /identity changed at tombstone boundary/u);
+    assert.match(purged.stderr, /authorized deletion manifest|identity changed at tombstone boundary/u);
     assert.equal(readFileSync(replacementSentinel, "utf8"), "must survive\n");
     assert.ok(existsSync(join(original, "receipt.json")));
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("purge refuses content inserted after its pre-tombstone manifest", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+    const cleaned = run(["clean", "build"], worktree);
+    const receiptPath = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receiptPath);
+    const transaction = dirname(receiptPath);
+    const sentinel = join(transaction, "late-before-tombstone.bin");
+    const result = await runPausedAtHook(
+      ["clean", "purge", receiptPath, "--force"],
+      worktree,
+      "before-purge-tombstone",
+      () => { writeFileSync(sentinel, "must survive\n"); },
+    );
+    assert.equal(result.status, 3);
+    assert.match(result.stderr, /authorized deletion manifest/u);
+    assert.equal(readFileSync(sentinel, "utf8"), "must survive\n");
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("purge revalidates receipt-bound contents after tombstoning", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  let tombstone;
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+    const cleaned = run(["clean", "build"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    const receiptPath = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receiptPath);
+    const transaction = dirname(receiptPath);
+    const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+    const injectedRelative = relative(transaction, join(dirname(receipt.moves[0].destination), "late-unrecorded.bin"));
+    const purged = await runPausedAtHook(
+      ["clean", "purge", receiptPath, "--force"],
+      worktree,
+      "after-purge-tombstone",
+      (payload) => {
+        tombstone = payload.tombstone;
+        writeFileSync(join(payload.tombstone, injectedRelative), "must survive\n");
+      },
+    );
+    assert.equal(purged.status, 3);
+    assert.match(purged.stderr, /not named by the receipt/u);
+    assert.ok(tombstone);
+    assert.equal(readFileSync(join(tombstone, injectedRelative), "utf8"), "must survive\n");
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("purge retains a replacement introduced before leaf capture", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "original\n");
+    const cleaned = run(["clean", "build"], worktree);
+    const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receipt);
+    const result = await runPausedAtHook(
+      ["clean", "purge", receipt, "--force"],
+      worktree,
+      "before-delete-entry-rename",
+      ({ path }) => {
+        unlinkSync(path);
+        writeFileSync(path, "replacement survives\n");
+      },
+    );
+    assert.equal(result.status, 3);
+    assert.match(result.stderr, /retained at/u);
+    assert.match(result.stderr, /entry changed before capture/u);
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("purge retains a replacement capture introduced after leaf rename", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  let capture;
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "original\n");
+    const cleaned = run(["clean", "build"], worktree);
+    const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receipt);
+    const result = await runPausedAtHook(
+      ["clean", "purge", receipt, "--force"],
+      worktree,
+      "after-delete-entry-rename",
+      (payload) => {
+        capture = payload.capture;
+        renameSync(payload.capture, `${payload.capture}.original`);
+        writeFileSync(payload.capture, "replacement capture survives\n");
+      },
+    );
+    assert.equal(result.status, 3);
+    assert.match(result.stderr, /capture does not match/u);
+    assert.equal(readFileSync(capture, "utf8"), "replacement capture survives\n");
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("purge preserves a replacement created at the original leaf name after staging", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  let replacement;
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "original\n");
+    const cleaned = run(["clean", "build"], worktree);
+    const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receipt);
+    const result = await runPausedAtHook(
+      ["clean", "purge", receipt, "--force"],
+      worktree,
+      "after-delete-entry-rename",
+      ({ path }) => {
+        replacement = path;
+        writeFileSync(path, "replacement survives\n");
+      },
+    );
+    assert.equal(result.status, 3);
+    assert.match(result.stderr, /not recursively deleted|retained at/u);
+    assert.equal(readFileSync(replacement, "utf8"), "replacement survives\n");
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("purge retains late unknown content when directory removal is not empty", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo();
+  let sentinel;
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "original\n");
+    const cleaned = run(["clean", "build"], worktree);
+    const receipt = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receipt);
+    const result = await runPausedAtHook(
+      ["clean", "purge", receipt, "--force"],
+      worktree,
+      "before-delete-directory-rmdir",
+      ({ path }) => {
+        sentinel = join(path, "late-unknown.bin");
+        writeFileSync(sentinel, "unknown survives\n");
+      },
+    );
+    assert.equal(result.status, 3);
+    assert.match(result.stderr, /retained at/u);
+    assert.equal(readFileSync(sentinel, "utf8"), "unknown survives\n");
   } finally {
     rmSync(dirname(root), { recursive: true, force: true });
   }

@@ -113,14 +113,15 @@ just news-sync-offline
 just clean
 just clean list --all-worktrees
 just clean build --dry-run
-just worktree-remove 'C:\exact\registered\worktree' --dry-run
+just worktree-remove
 ```
 
-On Windows, workspace maintenance is inspection-only: the bare commands,
-inventory, and `--dry-run` are supported and do not prepare app identity or
-mutate `.native`. Destructive cleanup and worktree removal fail closed until a
-reliable Windows process inspector is available. Run destructive maintenance
-from macOS or Linux after reviewing the exact target and dry-run there.
+On Windows, workspace maintenance is inspection-only: artifact inventory,
+cleanup `--dry-run`, and bare worktree inventory are supported and do not
+prepare app identity or mutate `.native`. Exact-path worktree-removal assessment
+and all destructive maintenance fail closed until a reliable Windows process
+inspector is available. Run destructive maintenance from macOS or Linux after
+reviewing the exact target and dry-run there.
 
 The two `news-sync` recipes run the BIR issuance pipeline. They are plain Node
 and need no Zig toolchain, so they resolve through `{{ npm_command }}` on every

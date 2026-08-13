@@ -15,7 +15,7 @@ import {
   readdirSync,
   realpathSync,
   renameSync,
-  rmSync,
+  rmdirSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -62,8 +62,13 @@ function posixShellQuote(value) {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
+function testHooksEnabled() {
+  return process.env.NODE_ENV === "test"
+    && /^child(?:-|$)/u.test(process.env.NODE_TEST_CONTEXT || "");
+}
+
 function runTestHook(name, payload = {}) {
-  if (process.env.NODE_ENV !== "test"
+  if (!testHooksEnabled()
     || process.env.WORKSPACE_MAINTENANCE_TEST_HOOK !== name
     || executedTestHooks.has(name)) {
     return;
@@ -74,12 +79,16 @@ function runTestHook(name, payload = {}) {
   const action = process.env.WORKSPACE_MAINTENANCE_TEST_ACTION || "continue";
   if (!marker || !release || !isAbsolute(marker) || !isAbsolute(release)
     || resolve(marker) !== marker || resolve(release) !== release
-    || dirname(marker) !== dirname(release) || !["continue", "fail"].includes(action)) {
+    || dirname(marker) !== dirname(release)
+    || basename(marker) !== "marker.json" || basename(release) !== "release"
+    || !["continue", "fail"].includes(action)) {
     fail(`invalid test-hook configuration for ${name}`, EXIT.safety);
   }
   const temporaryRoot = realpathExisting(tmpdir(), "system temporary directory");
   const hookRoot = realpathExisting(dirname(marker), "test-hook directory");
-  if (!isContained(temporaryRoot, hookRoot)) {
+  const hookRootStat = physicalStat(hookRoot, "test-hook directory", "directory");
+  const wrongOwner = typeof process.getuid === "function" && hookRootStat.uid !== process.getuid();
+  if (!isContained(temporaryRoot, hookRoot) || (hookRootStat.mode & 0o777) !== 0o700 || wrongOwner) {
     fail(`test-hook directory is outside the system temporary directory: ${hookRoot}`, EXIT.safety);
   }
   let fd;
@@ -100,14 +109,20 @@ function runTestHook(name, payload = {}) {
     }
     Atomics.wait(signal, 0, 0, 20);
   }
-  physicalStat(release, "test-hook release", "file");
+  const releaseIdentity = identity(release, "test-hook release", "file");
+  const releaseStat = lstatSync(release);
+  const releaseWrongOwner = typeof process.getuid === "function" && releaseStat.uid !== process.getuid();
+  if ((releaseStat.mode & 0o077) !== 0 || releaseWrongOwner
+    || readFileSync(release, "utf8") !== "continue\n" || !identityMatches(releaseIdentity)) {
+    fail(`test-hook release is not an exact private signal: ${release}`, EXIT.safety);
+  }
   if (action === "fail") {
     fail(`injected test failure at ${name}`, EXIT.safety);
   }
 }
 
 function injectTestFailure(name) {
-  if (process.env.NODE_ENV === "test"
+  if (testHooksEnabled()
     && process.env.WORKSPACE_MAINTENANCE_TEST_FAIL_AT === name) {
     fail(`injected test failure at ${name}`, EXIT.safety);
   }
@@ -510,6 +525,167 @@ function validateReceiptTransactionLayout(transactionRoot, receiptPath, destinat
   }
 }
 
+function rebaseContainedPath(path, originalRoot, replacementRoot, label) {
+  const relativePath = relative(originalRoot, path);
+  if (!relativePath || relativePath === ".." || relativePath.startsWith(`..${sep}`)
+    || isAbsolute(relativePath)) {
+    fail(`${label} is not below its transaction root: ${path}`, EXIT.safety);
+  }
+  return join(replacementRoot, relativePath);
+}
+
+function fileIdentityMatchesAt(expected, path) {
+  try {
+    const stat = lstatSync(path);
+    return stat.isFile() && !stat.isSymbolicLink()
+      && stat.dev === expected.dev && stat.ino === expected.ino
+      && stat.mode === expected.mode && stat.mtimeMs === expected.mtimeMs;
+  } catch {
+    return false;
+  }
+}
+
+function manifestType(stat) {
+  if (stat.isDirectory()) return "directory";
+  if (stat.isFile()) return "file";
+  if (stat.isSymbolicLink()) return "symlink";
+  fail("cleanup manifest encountered an unsupported filesystem entry", EXIT.safety);
+}
+
+function manifestEntry(root, path) {
+  const stat = lstatSync(path);
+  const type = manifestType(stat);
+  return {
+    relativePath: relative(root, path),
+    type,
+    dev: stat.dev,
+    ino: stat.ino,
+    mode: stat.mode,
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    linkTarget: type === "symlink" ? readlinkSync(path) : null,
+  };
+}
+
+function manifestEntryMatchesAt(entry, path, options = {}) {
+  const { allowDirectoryMetadataChange = false } = options;
+  try {
+    const stat = lstatSync(path);
+    return manifestType(stat) === entry.type
+      && stat.dev === entry.dev && stat.ino === entry.ino && stat.mode === entry.mode
+      && (allowDirectoryMetadataChange && entry.type === "directory"
+        || (stat.mtimeMs === entry.mtimeMs && stat.size === entry.size))
+      && (entry.type !== "symlink" || readlinkSync(path) === entry.linkTarget);
+  } catch {
+    return false;
+  }
+}
+
+function buildDeletionManifest(root) {
+  const entries = [];
+  const stack = [root];
+  while (stack.length) {
+    const path = stack.pop();
+    const entry = manifestEntry(root, path);
+    entries.push(entry);
+    if (entry.type === "directory") {
+      for (const name of readdirSync(path)) stack.push(join(path, name));
+    }
+  }
+  return entries;
+}
+
+function deletionManifestsEqual(left, right) {
+  if (left.length !== right.length) return false;
+  const rightByPath = new Map(right.map((entry) => [entry.relativePath, entry]));
+  return rightByPath.size === right.length && left.every((entry) => {
+    const candidate = rightByPath.get(entry.relativePath);
+    return candidate && JSON.stringify(candidate) === JSON.stringify(entry);
+  });
+}
+
+function captureStableDeletionManifest(root, label) {
+  const manifest = buildDeletionManifest(root);
+  if (!deletionManifestsEqual(manifest, buildDeletionManifest(root))) {
+    fail(`${label} changed while its deletion manifest was captured: ${root}`, EXIT.safety);
+  }
+  return manifest;
+}
+
+function requireExactDeletionManifest(root, manifest, label) {
+  const observed = buildDeletionManifest(root);
+  if (!deletionManifestsEqual(manifest, observed)) {
+    fail(`${label} no longer matches its authorized deletion manifest; retained at ${root}`, EXIT.safety);
+  }
+}
+
+function deletionDepth(entry) {
+  return entry.relativePath ? entry.relativePath.split(sep).length : 0;
+}
+
+function deleteIdentityManifest(root, manifest) {
+  const byRelativePath = new Map(manifest.map((entry) => [entry.relativePath, entry]));
+  if (byRelativePath.size !== manifest.length || byRelativePath.get("")?.type !== "directory") {
+    fail(`deletion manifest is incomplete; retained at ${root}`, EXIT.safety);
+  }
+  const parentIdentity = identity(dirname(root), "purge tombstone parent", "directory");
+  const verifyParents = (path) => {
+    if (!identityMatches(parentIdentity)) return false;
+    let current = dirname(path);
+    while (isContained(root, current)) {
+      const entry = byRelativePath.get(relative(root, current));
+      if (!entry || entry.type !== "directory"
+        || !manifestEntryMatchesAt(entry, current, { allowDirectoryMetadataChange: true })) return false;
+      if (current === root) break;
+      current = dirname(current);
+    }
+    return true;
+  };
+
+  const leaves = manifest
+    .filter((entry) => entry.type !== "directory")
+    .sort((left, right) => deletionDepth(right) - deletionDepth(left)
+      || left.relativePath.localeCompare(right.relativePath));
+  const directories = manifest
+    .filter((entry) => entry.type === "directory")
+    .sort((left, right) => deletionDepth(right) - deletionDepth(left)
+      || left.relativePath.localeCompare(right.relativePath));
+
+  try {
+    for (const entry of leaves) {
+      const path = join(root, entry.relativePath);
+      const capture = join(dirname(path), `.${basename(path)}.deleting-${randomUUID()}`);
+      runTestHook("before-delete-entry-rename", { relativePath: entry.relativePath, path, capture, root });
+      if (!verifyParents(path) || !manifestEntryMatchesAt(entry, path)
+        || lstatOptional(capture, "purge capture") !== null) {
+        fail(`purge entry changed before capture: ${path}`, EXIT.safety);
+      }
+      renameSync(path, capture);
+      runTestHook("after-delete-entry-rename", { relativePath: entry.relativePath, path, capture, root });
+      if (!verifyParents(capture) || !manifestEntryMatchesAt(entry, capture)) {
+        fail(`purge capture does not match its manifest entry: ${capture}`, EXIT.safety);
+      }
+      runTestHook("before-delete-entry-unlink", { relativePath: entry.relativePath, path, capture, root });
+      if (!verifyParents(capture) || !manifestEntryMatchesAt(entry, capture)) {
+        fail(`purge capture changed before unlink: ${capture}`, EXIT.safety);
+      }
+      unlinkSync(capture);
+    }
+    for (const entry of directories) {
+      const path = join(root, entry.relativePath);
+      runTestHook("before-delete-directory-rmdir", { relativePath: entry.relativePath, path, root });
+      if ((path === root ? !identityMatches(parentIdentity) : !verifyParents(path))
+        || !manifestEntryMatchesAt(entry, path, { allowDirectoryMetadataChange: true })) {
+        fail(`purge directory changed before removal: ${path}`, EXIT.safety);
+      }
+      rmdirSync(path);
+    }
+  } catch (error) {
+    const detail = error instanceof MaintenanceError ? error.message : error?.message || String(error);
+    fail(`purge stopped; unverified content was not recursively deleted; retained at ${root}: ${detail}`, EXIT.safety);
+  }
+}
+
 function parseReceipt(receiptPath, context) {
   if (!isAbsolute(receiptPath) || resolve(receiptPath) !== receiptPath || basename(receiptPath) !== "receipt.json") {
     fail(`purge requires an exact absolute receipt.json path: ${receiptPath}`, EXIT.safety);
@@ -518,12 +694,17 @@ function parseReceipt(receiptPath, context) {
   if (receiptReal !== receiptPath) {
     fail(`cleanup receipt must be canonical and not a symlink: ${receiptPath}`, EXIT.safety);
   }
-  physicalStat(receiptReal, "cleanup receipt", "file");
+  const receiptIdentity = identity(receiptReal, "cleanup receipt", "file");
+  let receiptText;
   let receipt;
   try {
-    receipt = JSON.parse(readFileSync(receiptReal, "utf8"));
+    receiptText = readFileSync(receiptReal, "utf8");
+    receipt = JSON.parse(receiptText);
   } catch {
     fail(`cleanup receipt is not valid JSON: ${receiptReal}`, EXIT.safety);
+  }
+  if (!identityMatches(receiptIdentity)) {
+    fail(`cleanup receipt changed while it was being read: ${receiptReal}`, EXIT.safety);
   }
   const transactionRoot = dirname(receiptReal);
   physicalStat(transactionRoot, "quarantine transaction", "directory");
@@ -611,15 +792,66 @@ function parseReceipt(receiptPath, context) {
     }
   }
   const size = directorySize(transactionRoot, { receiptSymlinks });
+  const deletionManifest = captureStableDeletionManifest(transactionRoot, "quarantine transaction");
   return {
     receipt,
     receiptPath: receiptReal,
+    receiptIdentity,
+    receiptFileDigest: createHash("sha256").update(receiptText).digest("hex"),
     transactionRoot,
     quarantineRoot,
     transactionIdentity: identity(transactionRoot, "quarantine transaction", "directory"),
     quarantineIdentity: identity(quarantineRoot, "quarantine root", "directory"),
+    deletionManifest,
     size,
   };
+}
+
+function validateTombstonedReceipt(parsed, tombstone) {
+  const tombstoneReceipt = join(tombstone, relative(parsed.transactionRoot, parsed.receiptPath));
+  if (!fileIdentityMatchesAt(parsed.receiptIdentity, tombstoneReceipt)) {
+    fail(`cleanup receipt identity changed after tombstoning; retained at ${tombstone}`, EXIT.safety);
+  }
+  const receiptText = readFileSync(tombstoneReceipt, "utf8");
+  if (createHash("sha256").update(receiptText).digest("hex") !== parsed.receiptFileDigest
+    || !fileIdentityMatchesAt(parsed.receiptIdentity, tombstoneReceipt)) {
+    fail(`cleanup receipt changed after tombstoning; retained at ${tombstone}`, EXIT.safety);
+  }
+  const rebasedMoves = parsed.receipt.moves.map((move) => ({
+    ...move,
+    destination: rebaseContainedPath(
+      move.destination,
+      parsed.transactionRoot,
+      tombstone,
+      "cleanup receipt destination",
+    ),
+  }));
+  const rebasedReceipt = {
+    ...parsed.receipt,
+    transactionRoot: tombstone,
+    moves: rebasedMoves,
+    nativeSymlinks: parsed.receipt.nativeSymlinks.map((link) => ({
+      ...link,
+      path: rebaseContainedPath(
+        link.path,
+        parsed.transactionRoot,
+        tombstone,
+        "cleanup receipt Native identity link",
+      ),
+    })),
+  };
+  const destinations = rebasedMoves.map((move) => move.destination);
+  validateReceiptTransactionLayout(tombstone, tombstoneReceipt, destinations);
+  const receiptSymlinks = verifiedReceiptNativeSymlinks(rebasedReceipt, tombstoneReceipt);
+  for (const move of rebasedMoves) {
+    const actual = directorySize(move.destination, { receiptSymlinks });
+    if (actual.bytes !== move.bytes || actual.entries !== move.entries) {
+      fail(`quarantined artifact changed after tombstoning; retained at ${tombstone}`, EXIT.safety);
+    }
+  }
+  directorySize(tombstone, { receiptSymlinks });
+  requireExactDeletionManifest(tombstone, parsed.deletionManifest, "tombstoned quarantine transaction");
+  return parsed.deletionManifest;
 }
 
 function commandCleanPurge(positionals, options) {
@@ -650,15 +882,24 @@ function commandCleanPurge(positionals, options) {
       || !topologyIdentitiesEqual({ transaction: planned.transactionIdentity, quarantine: planned.quarantineIdentity },
         { transaction: verified.transactionIdentity, quarantine: verified.quarantineIdentity })
       || verified.size.bytes !== planned.size.bytes
-      || verified.size.entries !== planned.size.entries) {
+      || verified.size.entries !== planned.size.entries
+      || !deletionManifestsEqual(verified.deletionManifest, planned.deletionManifest)) {
       fail("quarantine changed after planning; nothing was purged", EXIT.safety);
     }
+    runTestHook("before-purge-tombstone", { path: verified.transactionRoot });
+    requireExactDeletionManifest(
+      verified.transactionRoot,
+      planned.deletionManifest,
+      "quarantine transaction",
+    );
     const tombstone = moveVerifiedDirectoryToTombstone(
       verified.transactionRoot,
       verified.transactionIdentity,
       "purge",
     );
-    rmSync(tombstone, { recursive: true, force: false });
+    const manifest = validateTombstonedReceipt(verified, tombstone);
+    runTestHook("after-purge-manifest", { root: tombstone });
+    deleteIdentityManifest(tombstone, manifest);
     if (existsSync(tombstone)) {
       fail(`quarantine purge did not complete: ${tombstone}`);
     }
@@ -954,6 +1195,7 @@ function moveVerifiedDirectoryToTombstone(path, expectedIdentity, label) {
   if (lstatOptional(path, `${label} original path`) !== null) {
     fail(`${label} original path was repopulated during tombstoning; retained at ${tombstone}`, EXIT.safety);
   }
+  runTestHook(`after-${label}-tombstone`, { path, tombstone });
   return tombstone;
 }
 
@@ -1273,6 +1515,11 @@ function outstandingCleanupReceipts(context, target) {
       if (realpathExisting(transactionRoot, "quarantine transaction") !== transactionRoot) {
         fail(`quarantine transaction escapes its physical path: ${transactionRoot}`, EXIT.safety);
       }
+      const recoveryPath = join(transactionRoot, "recovery.json");
+      if (lstatOptional(recoveryPath, "cleanup recovery receipt") !== null) {
+        physicalStat(recoveryPath, "cleanup recovery receipt", "file");
+        fail(`cleanup transaction requires manual recovery: ${recoveryPath}`, EXIT.safety);
+      }
       const receiptPath = join(transactionRoot, "receipt.json");
       physicalStat(receiptPath, "cleanup receipt", "file");
       const parsed = parseReceipt(receiptPath, context);
@@ -1298,6 +1545,72 @@ function writeReceipt(path, receipt) {
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
+}
+
+function recoveryPayload(plan, moved, transactionRoot, quarantineRoot, digest, reason) {
+  const payload = {
+    version: VERSION,
+    operation: "clean-partial",
+    recovery: true,
+    createdAt: new Date().toISOString(),
+    digest,
+    transactionRoot,
+    quarantineRoot,
+    sourceWorktrees: plan.map((item) => item.record.path),
+    reason,
+    moves: moved.map(({ source, destination, entry, verification }) => ({
+      source,
+      destination,
+      verification,
+      expectedRootIdentity: {
+        type: "directory",
+        dev: entry.dev,
+        ino: entry.ino,
+        mode: entry.mode,
+        mtimeMs: entry.mtimeMs,
+      },
+      bytes: entry.bytes,
+      entries: entry.entries,
+      nativeSymlinks: entry.nativeSymlinks.map((link) => ({
+        relativePath: link.relativePath,
+        target: link.target,
+        dev: link.dev,
+        ino: link.ino,
+        mode: link.mode,
+        mtimeMs: link.mtimeMs,
+      })),
+    })),
+    nativeSymlinks: moved.flatMap(({ destination, entry }) => entry.nativeSymlinks.map((link) => ({
+      path: join(destination, link.relativePath),
+      target: link.target,
+      dev: link.dev,
+      ino: link.ino,
+      mode: link.mode,
+      mtimeMs: link.mtimeMs,
+    }))),
+  };
+  payload.contentsDigest = createHash("sha256")
+    .update(JSON.stringify({ moves: payload.moves, nativeSymlinks: payload.nativeSymlinks }))
+    .digest("hex");
+  return payload;
+}
+
+function removeKnownEmptyDirectories(identities) {
+  const unique = new Map(identities.map((entry) => [entry.path, entry]));
+  const ordered = [...unique.values()].sort((left, right) =>
+    right.path.split(sep).length - left.path.split(sep).length
+      || left.path.localeCompare(right.path));
+  for (const expected of ordered) {
+    if (!identityMatches(expected)) {
+      return `structural directory identity changed: ${expected.path}`;
+    }
+    try {
+      rmdirSync(expected.path);
+    } catch (error) {
+      return `structural directory was not empty or could not be removed: ${expected.path}: ${error.message}`;
+    }
+  }
+  return null;
 }
 
 function lockPath(commonDir) {
@@ -1471,6 +1784,7 @@ function commandClean(args) {
   const quarantineNamespaceIdentity = identity(dirname(quarantineRoot), "quarantine namespace", "directory");
   const release = acquireLock(context.commonDir, digest);
   let transactionIdentity = null;
+  const transactionDirectories = [];
   try {
     const fresh = repoContext(invocationCwd());
     if (!contextTopologyEqual(context, fresh)) {
@@ -1498,6 +1812,7 @@ function commandClean(args) {
     }
     const transactionReal = ensurePhysicalChild(quarantineRoot, basename(transactionRoot), "quarantine transaction");
     transactionIdentity = identity(transactionReal, "quarantine transaction", "directory");
+    transactionDirectories.push(transactionIdentity);
     for (const item of plan) {
       for (const entry of item.entries) {
         if (!identityMatches(quarantineIdentity) || !identityMatches(quarantineNamespaceIdentity) || !identityMatches(transactionIdentity)) {
@@ -1519,6 +1834,14 @@ function commandClean(args) {
           relative(transactionRoot, dirname(destination)),
           "quarantine destination directory",
         );
+        transactionDirectories.push(...destinationParent.identities.filter((entry) =>
+          entry.path !== transactionRoot && isContained(transactionRoot, entry.path)));
+        runTestHook("before-artifact-rename", {
+          source: entry.absolute,
+          destination,
+          destinationParent: destinationParent.path,
+          transactionRoot,
+        });
         if (destinationParent.path !== dirname(destination)
           || !destinationParent.identities.every(identityMatches)
           || !identityMatches(transactionIdentity)
@@ -1527,12 +1850,14 @@ function commandClean(args) {
           fail(`artifact or quarantine identity changed at rename boundary: ${entry.absolute}`, EXIT.safety);
         }
         renameSync(entry.absolute, destination);
-        moved.push({ source: entry.absolute, destination, entry });
+        const movedEntry = { source: entry.absolute, destination, entry, verification: "uncertain" };
+        moved.push(movedEntry);
         runTestHook("after-artifact-rename", { source: entry.absolute, destination });
         injectTestFailure("after-artifact-rename");
         if (!snapshotRootMatchesAt(entry, destination) || !nativeSymlinksMatchAt(entry, destination)) {
           fail(`quarantined artifact identity does not match its snapshot: ${destination}`, EXIT.safety);
         }
+        movedEntry.verification = "verified";
       }
     }
     const receipt = {
@@ -1565,43 +1890,30 @@ function commandClean(args) {
     process.stdout.write(`Quarantined artifacts; nothing has been permanently deleted.\n  receipt: ${join(transactionRoot, "receipt.json")}\n`);
     process.stdout.write(`Review it, then reclaim disk with: just clean purge ${posixShellQuote(join(transactionRoot, "receipt.json"))} --force\n`);
   } catch (error) {
-    let rollbackFailure = null;
-    for (const move of [...moved].reverse()) {
-      try {
-        runTestHook("before-artifact-rollback", { source: move.source, destination: move.destination });
-        if (!move.entry.ancestors.every(identityMatches)) {
-          fail(`source ancestors changed before rollback: ${move.source}`, EXIT.safety);
-        }
-        if (lstatOptional(move.source, "rollback source") !== null) {
-          fail(`rollback source path is no longer empty: ${move.source}`, EXIT.safety);
-        }
-        if (!snapshotRootMatchesAt(move.entry, move.destination)
-          || !nativeSymlinksMatchAt(move.entry, move.destination)) {
-          fail(`rollback destination no longer matches quarantined artifact: ${move.destination}`, EXIT.safety);
-        }
-        renameSync(move.destination, move.source);
-        if (!snapshotRootMatchesAt(move.entry, move.source)
-          || !nativeSymlinksMatchAt(move.entry, move.source)) {
-          fail(`rolled-back artifact does not match its snapshot: ${move.source}`, EXIT.safety);
-        }
-      } catch (rollbackError) {
-        rollbackFailure = rollbackFailure || rollbackError;
+    if (moved.length > 0 && transactionIdentity && existsSync(transactionRoot)) {
+      const reason = error instanceof MaintenanceError ? error.message : error?.message || String(error);
+      const recoveryPath = join(transactionRoot, "recovery.json");
+      if (!identityMatches(quarantineNamespaceIdentity)
+        || !identityMatches(quarantineIdentity)
+        || !identityMatches(transactionIdentity)) {
+        fail(`artifact cleanup failed; moved artifacts retained at ${transactionRoot}; recovery receipt was not written because the quarantine identity changed: ${reason}`, EXIT.safety);
       }
-    }
-    if (existsSync(transactionRoot) && !rollbackFailure && transactionIdentity) {
       try {
-        const tombstone = moveVerifiedDirectoryToTombstone(
-          transactionRoot,
-          transactionIdentity,
-          "rollback-cleanup",
+        writeReceipt(
+          recoveryPath,
+          recoveryPayload(plan, moved, transactionRoot, quarantineRoot, digest, reason),
         );
-        rmSync(tombstone, { recursive: true, force: false });
-      } catch (cleanupError) {
-        rollbackFailure = cleanupError;
+      } catch (receiptError) {
+        fail(`artifact cleanup failed; moved artifacts retained at ${transactionRoot}; recovery receipt could not be written: ${receiptError.message}`, EXIT.safety);
       }
+      fail(`artifact cleanup failed after moving artifacts; no automatic rollback was attempted; recovery retained at ${recoveryPath}: ${reason}`, EXIT.safety);
     }
-    if (rollbackFailure) {
-      fail(`artifact cleanup failed and rollback was incomplete; quarantine retained at ${transactionRoot}: ${rollbackFailure.message}`);
+    if (transactionIdentity && existsSync(transactionRoot)) {
+      const cleanupFailure = removeKnownEmptyDirectories(transactionDirectories);
+      if (cleanupFailure) {
+        const reason = error instanceof MaintenanceError ? error.message : error?.message || String(error);
+        fail(`artifact cleanup failed before any artifact moved; no unknown content was deleted; transaction retained at ${transactionRoot}: ${cleanupFailure}; original failure: ${reason}`, EXIT.safety);
+      }
     }
     throw error;
   } finally {
