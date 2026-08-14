@@ -2270,6 +2270,27 @@
       "extractedAtUnix": 0,
       "feedRev": 0
     },
+    "bir:rmc:2026:095": {
+      "pdfSha256": "5fd208f5d6dc3b2a4dc5cfab15a513de3d9f23fb2220401f944afedd01202aea",
+      "pdfBytes": 1253502,
+      "firstSeenAtUnix": 1786704540,
+      "extractedAtUnix": 1786704540,
+      "feedRev": 4,
+      "extraction": {
+        "externalId": "bir:rmc:2026:095",
+        "headerDateIssued": null,
+        "globalExtendedDate": null,
+        "window": null,
+        "statedOfficeCount": null,
+        "rdos": [],
+        "rdoCodes": [],
+        "rows": [],
+        "needsManualReview": true,
+        "notes": [
+          "text layer unusable: 24 characters over 5 page(s), below the 200 characters/page floor — no extraction attempted (plan decision D3)"
+        ]
+      }
+    },
     "bir:rmo:2026:001": {
       "pdfSha256": null,
       "pdfBytes": null,
