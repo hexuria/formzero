@@ -286,6 +286,100 @@ function rewriteReceipt(receiptPath, mutate) {
   writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
 }
 
+function writeJson(path, value) {
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function cloneManifestLeaf(manifest) {
+  const leaf = manifest.find((entry) => entry.type === "file" || entry.type === "symlink");
+  assert.ok(leaf, "expected a deletion-manifest leaf");
+  return { ...leaf };
+}
+
+function purgeCaptureRelativePathFor(operationId, relativePath) {
+  const digest = createHash("sha256").update(relativePath).digest("hex");
+  const name = `.buwiz-purge-${operationId.slice(0, 16)}-${digest}`;
+  const slash = relativePath.lastIndexOf("/");
+  return slash === -1 ? name : `${relativePath.slice(0, slash)}/${name}`;
+}
+
+function recomputePurgeJournalDigests(journal) {
+  journal.manifestDigest = createHash("sha256").update(JSON.stringify(journal.manifest)).digest("hex");
+  journal.authorizationDigest = createHash("sha256").update(JSON.stringify({
+    version: journal.version,
+    operation: journal.operation,
+    operationId: journal.operationId,
+    commonDir: journal.commonDir,
+    durableReceiptPath: journal.durableReceiptPath,
+    durableReceiptIdentity: journal.durableReceiptIdentity,
+    internalReceiptPath: journal.internalReceiptPath,
+    receiptDigest: journal.receiptDigest,
+    transactionRoot: journal.transactionRoot,
+    tombstonePath: journal.tombstonePath,
+    sourceWorktreeGitDirs: journal.sourceWorktreeGitDirs,
+    manifest: journal.manifest,
+    manifestDigest: journal.manifestDigest,
+    createdAt: journal.createdAt,
+  })).digest("hex");
+}
+
+function recomputeCleanJournalAuthorization(journal) {
+  for (const move of journal.moves ?? []) {
+    if (Array.isArray(move.manifest)) {
+      move.manifestDigest = createHash("sha256").update(JSON.stringify(move.manifest)).digest("hex");
+    }
+  }
+  journal.authorizationDigest = createHash("sha256").update(JSON.stringify({
+    version: journal.version,
+    operation: journal.operation,
+    operationId: journal.operationId,
+    commonDir: journal.commonDir,
+    transactionRoot: journal.transactionRoot,
+    quarantineRoot: journal.quarantineRoot,
+    sourceWorktrees: journal.sourceWorktrees,
+    sourceWorktreeGitDirs: journal.sourceWorktreeGitDirs,
+    sourceHeads: journal.sourceHeads,
+    moves: journal.moves,
+    createdAt: journal.createdAt,
+  })).digest("hex");
+}
+
+function recomputeWorktreeRemovalAuthorization(journal) {
+  journal.authorizationDigest = createHash("sha256").update(JSON.stringify({
+    version: journal.version,
+    operation: journal.operation,
+    operationId: journal.operationId,
+    commonDir: journal.commonDir,
+    primaryWorktree: journal.primaryWorktree,
+    target: journal.target,
+    targetGitDir: journal.targetGitDir,
+    head: journal.head,
+    branch: journal.branch,
+    detached: journal.detached,
+    integrationRef: journal.integrationRef,
+    integrationOid: journal.integrationOid,
+    forced: journal.forced,
+    rescueRef: journal.rescueRef,
+    snapshotDigest: journal.snapshotDigest,
+    gitLockReason: journal.gitLockReason,
+    registeredTombstone: journal.registeredTombstone,
+    holdingPath: journal.holdingPath,
+    adminHoldingPath: journal.adminHoldingPath,
+    rootManifest: journal.rootManifest,
+    adminManifest: journal.adminManifest,
+    siblingTopology: journal.siblingTopology,
+    createdAt: journal.createdAt,
+  })).digest("hex");
+}
+
+function forgeTraversalManifestEntry(manifest, relativePath, captureRelativePath = undefined) {
+  const forged = cloneManifestLeaf(manifest);
+  forged.relativePath = relativePath;
+  if (captureRelativePath !== undefined) forged.captureRelativePath = captureRelativePath;
+  manifest.push(forged);
+  return forged;
+}
+
 test("clean with no target lists choices, exits 2, and changes nothing", () => {
   const { root, worktree } = makeRepo();
   try {
@@ -2415,5 +2509,256 @@ test("unknown or corrupt durable cleanup receipt metadata blocks worktree remova
         rmSync(dirname(root), { recursive: true, force: true });
       }
     });
+  }
+});
+
+test("purge after tombstone refuses a forged traversal manifest and leaves the sentinel unchanged", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo("workspace-maintenance-purge-forge-");
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+    const cleaned = run(["clean", "build"], worktree);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+    const receiptPath = cleaned.stdout.match(/receipt: (.+receipt\.json)/u)?.[1];
+    assert.ok(receiptPath);
+    let tombstone;
+    await runKilledAtHook(
+      ["clean", "purge", receiptPath, "--force"],
+      worktree,
+      "after-purge-tombstone",
+      (payload) => { tombstone = payload.tombstone; },
+    );
+    assert.ok(tombstone && existsSync(tombstone));
+    const sentinel = join(dirname(tombstone), "external-sentinel");
+    writeFileSync(sentinel, "purge sentinel must survive\n");
+    const journalPath = join(dirname(receiptPath), "purge.json");
+    const journal = JSON.parse(readFileSync(journalPath, "utf8"));
+    forgeTraversalManifestEntry(
+      journal.manifest,
+      "../external-sentinel",
+      purgeCaptureRelativePathFor(journal.operationId, "../external-sentinel"),
+    );
+    recomputePurgeJournalDigests(journal);
+    writeJson(journalPath, journal);
+
+    const refused = run(["clean", "purge", receiptPath, "--force"], worktree);
+    assert.equal(refused.status, 3);
+    assert.match(refused.stderr, /canonical deletion-manifest descendant|orphaned path|escapes its deletion root/u);
+    assert.equal(readFileSync(sentinel, "utf8"), "purge sentinel must survive\n");
+    assert.ok(existsSync(tombstone));
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
+  }
+});
+
+test("worktree resume after holding transitions refuses forged root and admin manifests", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const cases = [
+    {
+      hook: "after-worktree-holding-rename",
+      namespace: "root",
+      manifestKey: "rootManifest",
+      holdingKey: "holdingPath",
+    },
+    {
+      hook: "after-worktree-admin-holding-rename",
+      namespace: "admin",
+      manifestKey: "adminManifest",
+      holdingKey: "adminHoldingPath",
+    },
+  ];
+  for (const crashCase of cases) {
+    await context.test(crashCase.hook, async () => {
+      const { root, worktree } = makeRepo(`workspace-maintenance-worktree-forge-${crashCase.namespace}-`);
+      try {
+        const target = realpathSync(worktree);
+        const killed = await runKilledAtHook(["worktree-remove", target], root, crashCase.hook);
+        const receiptPath = killed.payload.receiptPath;
+        const holdingPath = killed.payload[crashCase.holdingKey];
+        assert.ok(isAbsolute(receiptPath) && existsSync(receiptPath));
+        assert.ok(holdingPath && existsSync(holdingPath));
+        const sentinel = join(dirname(holdingPath), "external-sentinel");
+        writeFileSync(sentinel, `${crashCase.namespace} sentinel must survive\n`);
+        const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+        forgeTraversalManifestEntry(
+          receipt[crashCase.manifestKey],
+          "../external-sentinel",
+          purgeCaptureRelativePathFor(`${receipt.operationId}-${crashCase.namespace}`, "../external-sentinel"),
+        );
+        recomputeWorktreeRemovalAuthorization(receipt);
+        writeJson(receiptPath, receipt);
+        const holdingBefore = physicalTreeSnapshot(holdingPath);
+
+        const refused = run(["worktree-remove", "--resume", receiptPath, "--force"], root);
+        assert.equal(refused.status, 3);
+        assert.match(refused.stderr, /canonical deletion-manifest descendant|orphaned path|escapes its deletion root/u);
+        assert.equal(readFileSync(sentinel, "utf8"), `${crashCase.namespace} sentinel must survive\n`);
+        assert.ok(existsSync(holdingPath));
+        assert.deepEqual(physicalTreeSnapshot(holdingPath), holdingBefore);
+        assert.notEqual(JSON.parse(readFileSync(receiptPath, "utf8")).state, "complete");
+      } finally {
+        rmSync(dirname(root), { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("worktree resume refuses a forged foreign receipt without moving a stale lock", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const victim = makeRepo("workspace-maintenance-foreign-lock-victim-");
+  const attacker = makeRepo("workspace-maintenance-foreign-lock-attacker-");
+  try {
+    const target = realpathSync(victim.worktree);
+    const killed = await runKilledAtHook(
+      ["worktree-remove", target],
+      victim.root,
+      "after-worktree-git-move",
+      (payload) => {
+        mkdirSync(payload.original);
+        writeFileSync(join(payload.original, "late.txt"), "repopulated\n");
+      },
+    );
+    const receiptPath = killed.payload.receiptPath;
+    const lockPath = join(victim.root, ".git", "buwiz-workspace-maintenance", "lock.json");
+    assert.ok(existsSync(lockPath));
+    const lockBefore = readFileSync(lockPath, "utf8");
+
+    const foreignResume = run(["worktree-remove", "--resume", receiptPath, "--force"], attacker.root);
+    assert.equal(foreignResume.status, 3);
+    assert.equal(readFileSync(lockPath, "utf8"), lockBefore);
+
+    const attackerReceiptDir = join(attacker.root, ".git", "buwiz-workspace-maintenance", "receipts");
+    mkdirSync(attackerReceiptDir, { recursive: true });
+    const forgedPath = join(attackerReceiptDir, "forged-foreign.json");
+    const forged = JSON.parse(readFileSync(receiptPath, "utf8"));
+    forged.commonDir = realpathSync(join(victim.root, ".git"));
+    recomputeWorktreeRemovalAuthorization(forged);
+    writeJson(forgedPath, forged);
+    const forgedResume = run(["worktree-remove", "--resume", forgedPath, "--force"], attacker.root);
+    assert.equal(forgedResume.status, 3);
+    assert.equal(readFileSync(lockPath, "utf8"), lockBefore);
+    assert.equal(readFileSync(join(killed.payload.original, "late.txt"), "utf8"), "repopulated\n");
+    assert.ok(existsSync(killed.payload.registeredTombstone));
+  } finally {
+    rmSync(dirname(victim.root), { recursive: true, force: true });
+    rmSync(dirname(attacker.root), { recursive: true, force: true });
+  }
+});
+
+test("cleanup resume rejects malformed manifest and symlink relative paths before any rename", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const variants = ["manifest", "symlink"];
+  for (const variant of variants) {
+    await context.test(variant, async () => {
+      const { root, worktree } = makeRepo(`workspace-maintenance-clean-forge-${variant}-`);
+      try {
+        mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+        writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+        mkdirSync(join(worktree, "node_modules", "pkg"), { recursive: true });
+        writeFileSync(join(worktree, "node_modules", "pkg", "index.js"), "pkg\n");
+        symlinkSync("index.js", join(worktree, "node_modules", "pkg", "self"));
+        const target = variant === "symlink" ? "deps" : "build";
+        const source = variant === "symlink"
+          ? join(worktree, "node_modules")
+          : join(worktree, "zig-out");
+        const killed = await runKilledAtHook(
+          ["clean", target],
+          worktree,
+          "after-clean-journal-create",
+        );
+        const journalPath = killed.payload.journalPath;
+        assert.ok(isAbsolute(journalPath) && existsSync(journalPath));
+        const journal = JSON.parse(readFileSync(journalPath, "utf8"));
+        if (variant === "manifest") {
+          forgeTraversalManifestEntry(journal.moves[0].manifest, "../external-sentinel");
+        } else {
+          assert.ok(journal.moves[0].dependencySymlinks.length > 0);
+          journal.moves[0].dependencySymlinks[0].relativePath = "../evil";
+        }
+        recomputeCleanJournalAuthorization(journal);
+        writeJson(journalPath, journal);
+
+        const refused = run(["clean", "resume", journalPath, "--force"], worktree);
+        assert.equal(refused.status, 3);
+        assert.match(refused.stderr, /canonical deletion-manifest descendant|invalid symlink relative path/u);
+        assert.ok(existsSync(source));
+        assert.equal(existsSync(journal.moves[0].destination), false);
+      } finally {
+        rmSync(dirname(root), { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("deletion manifests reject malformed relative paths, roots, orphans, and capture collisions", async (context) => {
+  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  const { root, worktree } = makeRepo("workspace-maintenance-manifest-table-");
+  try {
+    mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
+    writeFileSync(join(worktree, "zig-out", "bin", "app"), "app\n");
+    writeFileSync(join(worktree, "zig-out", "root.txt"), "root\n");
+    const killed = await runKilledAtHook(
+      ["clean", "build"],
+      worktree,
+      "after-clean-journal-create",
+    );
+    const journalPath = killed.payload.journalPath;
+    const originalBytes = readFileSync(journalPath);
+    const source = join(worktree, "zig-out");
+    const cases = [
+      ["traversal", (journal) => forgeTraversalManifestEntry(journal.moves[0].manifest, "../external-sentinel")],
+      ["absolute", (journal) => forgeTraversalManifestEntry(journal.moves[0].manifest, "/tmp/external-sentinel")],
+      ["a/../../x", (journal) => forgeTraversalManifestEntry(journal.moves[0].manifest, "a/../../x")],
+      ["a/../b", (journal) => forgeTraversalManifestEntry(journal.moves[0].manifest, "a/../b")],
+      ["repeated separators", (journal) => forgeTraversalManifestEntry(journal.moves[0].manifest, "a//b")],
+      ["trailing separator", (journal) => forgeTraversalManifestEntry(journal.moves[0].manifest, "a/b/")],
+      ["backslash traversal", (journal) => forgeTraversalManifestEntry(journal.moves[0].manifest, "..\\external-sentinel")],
+      ["drive", (journal) => forgeTraversalManifestEntry(journal.moves[0].manifest, "C:/Windows/system32")],
+      ["UNC", (journal) => forgeTraversalManifestEntry(journal.moves[0].manifest, "//server/share/victim")],
+      ["duplicate root", (journal) => {
+        const rootEntry = journal.moves[0].manifest.find((entry) => entry.relativePath === "");
+        journal.moves[0].manifest.push({ ...rootEntry });
+      }],
+      ["missing root", (journal) => {
+        journal.moves[0].manifest = journal.moves[0].manifest.filter((entry) => entry.relativePath !== "");
+      }],
+      ["orphan child", (journal) => {
+        const forged = cloneManifestLeaf(journal.moves[0].manifest);
+        forged.relativePath = "no-such-parent/child";
+        journal.moves[0].manifest.push(forged);
+      }],
+      ["capture collisions", (journal) => {
+        const move = journal.moves[0];
+        const leaf = move.manifest.find((entry) => entry.type === "file" && !entry.relativePath.includes("/"));
+        assert.ok(leaf);
+        for (const entry of move.manifest) {
+          if (entry.type === "directory") {
+            entry.captureRelativePath = null;
+            continue;
+          }
+          const slash = entry.relativePath.lastIndexOf("/");
+          const parent = slash === -1 ? "" : entry.relativePath.slice(0, slash);
+          const name = `.cap-${slash === -1 ? entry.relativePath : entry.relativePath.slice(slash + 1)}`;
+          entry.captureRelativePath = parent ? `${parent}/${name}` : name;
+        }
+        move.manifest.push({ ...leaf, relativePath: "collision-sibling", captureRelativePath: leaf.captureRelativePath });
+      }],
+    ];
+    for (const [name, mutate] of cases) {
+      await context.test(name, () => {
+        writeFileSync(journalPath, originalBytes);
+        const journal = JSON.parse(readFileSync(journalPath, "utf8"));
+        mutate(journal);
+        recomputeCleanJournalAuthorization(journal);
+        writeJson(journalPath, journal);
+        const refused = run(["clean", "resume", journalPath, "--force"], worktree);
+        assert.equal(refused.status, 3, `${name}: ${refused.stderr}`);
+        assert.ok(existsSync(source), name);
+        assert.equal(existsSync(journal.moves[0].destination), false, name);
+      });
+    }
+  } finally {
+    rmSync(dirname(root), { recursive: true, force: true });
   }
 });

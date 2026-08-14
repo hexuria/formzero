@@ -20,7 +20,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 
 const EXIT = Object.freeze({ operational: 1, usage: 2, safety: 3 });
 const TARGETS = Object.freeze({
@@ -390,6 +390,17 @@ function repoContext(cwd = process.cwd()) {
   return { top, commonDir, records, primary, current };
 }
 
+function invocationCommonDir(cwd = invocationCwd()) {
+  const top = realpathExisting(gitText(cwd, ["rev-parse", "--show-toplevel"]), "repository root");
+  const commonRaw = gitText(top, ["rev-parse", "--git-common-dir"]);
+  const commonDir = realpathExisting(resolve(top, commonRaw), "Git common directory");
+  physicalStat(commonDir, "Git common directory", "directory");
+  if (realpathExisting(commonDir, "Git common directory") !== commonDir) {
+    fail(`Git common directory escapes its physical path: ${commonDir}`, EXIT.safety);
+  }
+  return { cwd, top, commonDir };
+}
+
 function invocationCwd() {
   const actual = realpathExisting(process.cwd(), "process working directory");
   const supplied = process.env.WORKSPACE_MAINTENANCE_CWD;
@@ -734,6 +745,7 @@ function deletionManifestsEqual(left, right) {
 }
 
 function deletionManifestDigest(manifest) {
+  validateDeletionManifest(manifest);
   return createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
 }
 
@@ -791,10 +803,12 @@ function captureStableDeletionManifest(root, label) {
   if (!deletionManifestsEqual(manifest, buildDeletionManifest(root))) {
     fail(`${label} changed while its deletion manifest was captured: ${root}`, EXIT.safety);
   }
+  validateDeletionManifest(manifest, { label: `${label} deletion manifest` });
   return manifest;
 }
 
 function requireExactDeletionManifest(root, manifest, label) {
+  validateDeletionManifest(manifest, { label });
   const observed = buildDeletionManifest(root);
   if (!deletionManifestsEqual(manifest, observed)) {
     fail(`${label} no longer matches its authorized deletion manifest; retained at ${root}`, EXIT.safety);
@@ -802,21 +816,167 @@ function requireExactDeletionManifest(root, manifest, label) {
 }
 
 function deletionDepth(entry) {
-  return entry.relativePath ? entry.relativePath.split(sep).length : 0;
+  return entry.relativePath ? entry.relativePath.split("/").length : 0;
+}
+
+function isCanonicalDeletionRelativePath(relativePath) {
+  if (typeof relativePath !== "string" || relativePath.length === 0 || relativePath.includes("\0")) {
+    return false;
+  }
+  if (relativePath.includes("\\") || relativePath.startsWith("/") || relativePath.endsWith("/")
+    || relativePath.includes("//") || posix.isAbsolute(relativePath) || isAbsolute(relativePath)
+    || /^[A-Za-z]:/u.test(relativePath)) {
+    return false;
+  }
+  const segments = relativePath.split("/");
+  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+    return false;
+  }
+  return posix.normalize(relativePath) === relativePath;
+}
+
+function requireCanonicalDeletionRelativePath(relativePath, label) {
+  if (!isCanonicalDeletionRelativePath(relativePath)) {
+    fail(`${label} is not a canonical deletion-manifest descendant: ${JSON.stringify(relativePath)}`, EXIT.safety);
+  }
+  return relativePath;
+}
+
+function deletionManifestParentPath(relativePath) {
+  if (relativePath === "") return null;
+  const parent = posix.dirname(relativePath);
+  return parent === "." ? "" : parent;
+}
+
+function validateDeletionManifest(manifest, options = {}) {
+  const { label = "deletion manifest", requireCaptures = false } = options;
+  if (!Array.isArray(manifest) || manifest.length === 0) {
+    fail(`${label} is missing or empty`, EXIT.safety);
+  }
+
+  const byRelativePath = new Map();
+  let rootCount = 0;
+  const captureDeclared = [];
+  for (const entry of manifest) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      fail(`${label} contains an invalid entry`, EXIT.safety);
+    }
+    if (typeof entry.relativePath !== "string" || entry.relativePath.includes("\0")) {
+      fail(`${label} contains a non-canonical relative path`, EXIT.safety);
+    }
+    if (!["directory", "file", "symlink"].includes(entry.type)) {
+      fail(`${label} contains an unsupported entry type`, EXIT.safety);
+    }
+    if (![entry.dev, entry.ino, entry.mode, entry.nlink, entry.mtimeMs, entry.size]
+      .every((value) => typeof value === "number" && Number.isFinite(value))) {
+      fail(`${label} contains invalid entry metadata`, EXIT.safety);
+    }
+    if (entry.type === "file") {
+      if (typeof entry.contentDigest !== "string" || entry.contentDigest.length === 0 || entry.linkTarget !== null) {
+        fail(`${label} contains invalid file metadata`, EXIT.safety);
+      }
+    } else if (entry.type === "symlink") {
+      if (typeof entry.linkTarget !== "string" || entry.contentDigest !== null) {
+        fail(`${label} contains invalid symlink metadata`, EXIT.safety);
+      }
+    } else if (entry.contentDigest !== null || entry.linkTarget !== null) {
+      fail(`${label} contains invalid directory metadata`, EXIT.safety);
+    }
+    if (entry.relativePath === "") {
+      if (entry.type !== "directory") fail(`${label} root entry must be a directory`, EXIT.safety);
+      rootCount += 1;
+    } else {
+      requireCanonicalDeletionRelativePath(entry.relativePath, label);
+    }
+    if (byRelativePath.has(entry.relativePath)) {
+      fail(`${label} contains a duplicate path: ${entry.relativePath || "."}`, EXIT.safety);
+    }
+    byRelativePath.set(entry.relativePath, entry);
+    captureDeclared.push(Object.hasOwn(entry, "captureRelativePath"));
+  }
+  if (rootCount !== 1 || byRelativePath.get("")?.type !== "directory") {
+    fail(`${label} must contain exactly one directory root entry`, EXIT.safety);
+  }
+
+  for (const entry of manifest) {
+    if (entry.relativePath === "") continue;
+    const parent = byRelativePath.get(deletionManifestParentPath(entry.relativePath));
+    if (!parent || parent.type !== "directory") {
+      fail(`${label} contains an orphaned path: ${entry.relativePath}`, EXIT.safety);
+    }
+  }
+
+  for (const entry of manifest) {
+    if (entry.type === "directory") continue;
+    const prefix = `${entry.relativePath}/`;
+    if ([...byRelativePath.keys()].some((candidate) => candidate.startsWith(prefix))) {
+      fail(`${label} contains descendants of a non-directory path: ${entry.relativePath}`, EXIT.safety);
+    }
+  }
+
+  const hasCaptures = captureDeclared.some(Boolean);
+  if (hasCaptures && !captureDeclared.every(Boolean)) {
+    fail(`${label} has inconsistent capture path metadata`, EXIT.safety);
+  }
+  if (requireCaptures && !hasCaptures) {
+    fail(`${label} is missing deterministic capture paths`, EXIT.safety);
+  }
+  if (!hasCaptures) return manifest;
+
+  const captures = new Map();
+  for (const entry of manifest) {
+    if (entry.type === "directory") {
+      if (entry.captureRelativePath !== null) {
+        fail(`${label} directory capture must be null: ${entry.relativePath || "."}`, EXIT.safety);
+      }
+      continue;
+    }
+    if (typeof entry.captureRelativePath !== "string") {
+      fail(`${label} leaf is missing a deterministic capture path: ${entry.relativePath}`, EXIT.safety);
+    }
+    requireCanonicalDeletionRelativePath(entry.captureRelativePath, `${label} capture`);
+    if (deletionManifestParentPath(entry.captureRelativePath) !== deletionManifestParentPath(entry.relativePath)) {
+      fail(`${label} capture is not in the same parent as ${entry.relativePath}`, EXIT.safety);
+    }
+    if (byRelativePath.has(entry.captureRelativePath) || captures.has(entry.captureRelativePath)) {
+      fail(`${label} contains a colliding capture path: ${entry.captureRelativePath}`, EXIT.safety);
+    }
+    captures.set(entry.captureRelativePath, entry);
+  }
+  return manifest;
+}
+
+function resolveDeletionManifestPath(root, relativePath, label) {
+  if (typeof root !== "string" || !isAbsolute(root) || resolve(root) !== root) {
+    fail(`${label} root is not a canonical absolute path: ${root}`, EXIT.safety);
+  }
+  if (relativePath === "") return root;
+  requireCanonicalDeletionRelativePath(relativePath, label);
+  const resolved = resolve(root, relativePath);
+  const fromRoot = relative(root, resolved);
+  if (fromRoot !== relativePath || isAbsolute(fromRoot) || fromRoot === ".." || fromRoot.startsWith(`..${sep}`)
+    || resolved === root || !isContained(root, resolved)) {
+    fail(`${label} escapes its deletion root: ${relativePath}`, EXIT.safety);
+  }
+  return resolved;
 }
 
 function purgeCaptureRelativePath(operationId, entry) {
   const digest = createHash("sha256").update(entry.relativePath).digest("hex");
-  return join(dirname(entry.relativePath), `.buwiz-purge-${operationId.slice(0, 16)}-${digest}`);
+  const name = `.buwiz-purge-${operationId.slice(0, 16)}-${digest}`;
+  const parent = posix.dirname(entry.relativePath);
+  return parent === "." ? name : posix.join(parent, name);
 }
 
 function authorizedPurgeManifest(manifest, operationId) {
+  validateDeletionManifest(manifest);
   const authorized = manifest.map((entry) => ({
     ...entry,
     captureRelativePath: entry.type === "directory"
       ? null
       : purgeCaptureRelativePath(operationId, entry),
   }));
+  validateDeletionManifest(authorized, { requireCaptures: true });
   const paths = new Set(manifest.map(({ relativePath }) => relativePath));
   const captures = authorized.filter(({ captureRelativePath }) => captureRelativePath !== null)
     .map(({ captureRelativePath }) => captureRelativePath);
@@ -863,10 +1023,11 @@ function validatePartialPurgeTree(root, manifest) {
 function deleteIdentityManifest(root, manifest, options = {}) {
   const operationId = options.operationId ?? null;
   const resumable = operationId !== null;
+  validateDeletionManifest(manifest, {
+    label: `deletion manifest for ${root}`,
+    requireCaptures: resumable,
+  });
   const byRelativePath = new Map(manifest.map((entry) => [entry.relativePath, entry]));
-  if (byRelativePath.size !== manifest.length || byRelativePath.get("")?.type !== "directory") {
-    fail(`deletion manifest is incomplete; retained at ${root}`, EXIT.safety);
-  }
   const parentIdentity = identity(dirname(root), "purge tombstone parent", "directory");
   const verifyParents = (path) => {
     if (!identityMatches(parentIdentity)) return false;
@@ -893,10 +1054,17 @@ function deleteIdentityManifest(root, manifest, options = {}) {
   try {
     if (resumable) validatePartialPurgeTree(root, manifest);
     for (const entry of leaves) {
-      const path = join(root, entry.relativePath);
+      const path = resolveDeletionManifestPath(root, entry.relativePath, "purge entry");
       const capture = resumable
-        ? join(root, entry.captureRelativePath)
+        ? resolveDeletionManifestPath(root, entry.captureRelativePath, "purge capture")
         : join(dirname(path), `.${basename(path)}.deleting-${randomUUID()}`);
+      if (!resumable) {
+        const captureRelative = relative(root, capture);
+        if (!captureRelative || captureRelative === ".." || captureRelative.startsWith(`..${sep}`)
+          || isAbsolute(captureRelative) || !isContained(root, capture)) {
+          fail(`purge capture escapes its deletion root: ${capture}`, EXIT.safety);
+        }
+      }
       runTestHook("before-delete-entry-rename", { relativePath: entry.relativePath, path, capture, root });
       const originalStat = lstatOptional(path, "purge entry");
       const captureStat = lstatOptional(capture, "purge capture");
@@ -924,7 +1092,7 @@ function deleteIdentityManifest(root, manifest, options = {}) {
       runTestHook("after-delete-entry-unlink", { relativePath: entry.relativePath, path, capture, root });
     }
     for (const entry of directories) {
-      const path = join(root, entry.relativePath);
+      const path = resolveDeletionManifestPath(root, entry.relativePath, "purge directory");
       runTestHook("before-delete-directory-rmdir", { relativePath: entry.relativePath, path, root });
       if (lstatOptional(path, "purge directory") === null) continue;
       if ((path === root ? !identityMatches(parentIdentity) : !verifyParents(path))
@@ -2306,9 +2474,15 @@ function validatePurgeJournalSchema(journal, path, context, handle) {
     || !Array.isArray(journal.sourceWorktreeGitDirs)
     || JSON.stringify(journal.sourceWorktreeGitDirs) !== JSON.stringify(handle.receipt.sourceWorktreeGitDirs)
     || !Array.isArray(journal.manifest) || journal.manifest.length === 0
-    || journal.manifestDigest !== deletionManifestDigest(journal.manifest)
-    || journal.authorizationDigest !== purgeAuthorizationDigest(journal)
     || typeof journal.createdAt !== "string" || typeof journal.updatedAt !== "string") {
+    fail(`purge journal is invalid or changed: ${path}`, EXIT.safety);
+  }
+  validateDeletionManifest(journal.manifest, {
+    label: `purge journal manifest ${path}`,
+    requireCaptures: true,
+  });
+  if (journal.manifestDigest !== deletionManifestDigest(journal.manifest)
+    || journal.authorizationDigest !== purgeAuthorizationDigest(journal)) {
     fail(`purge journal is invalid or changed: ${path}`, EXIT.safety);
   }
   const expectedOperationId = createHash("sha256")
@@ -2666,7 +2840,8 @@ function validateWorktreeRemovalJournal(journal, path, context) {
   ];
   if (!journal || journal.version !== WORKTREE_REMOVAL_JOURNAL_VERSION
     || journal.operation !== "worktree-remove" || !states.includes(journal.state)
-    || journal.commonDir !== context.commonDir || journal.primaryWorktree !== context.primary.path
+    || journal.commonDir !== context.commonDir
+    || (context.primary != null && journal.primaryWorktree !== context.primary.path)
     || typeof journal.operationId !== "string" || typeof journal.gitLockReason !== "string"
     || !isAbsolute(journal.target) || resolve(journal.target) !== journal.target
     || !isAbsolute(journal.targetGitDir) || resolve(journal.targetGitDir) !== journal.targetGitDir
@@ -2676,8 +2851,18 @@ function validateWorktreeRemovalJournal(journal, path, context) {
     || !Array.isArray(journal.rootManifest) || journal.rootManifest.length === 0
     || !Array.isArray(journal.adminManifest) || journal.adminManifest.length === 0
     || !Array.isArray(journal.siblingTopology)
-    || journal.authorizationDigest !== worktreeRemovalAuthorizationDigest(journal)
     || typeof journal.createdAt !== "string" || typeof journal.updatedAt !== "string") {
+    fail(`worktree removal receipt is invalid or changed: ${path}`, EXIT.safety);
+  }
+  validateDeletionManifest(journal.rootManifest, {
+    label: `worktree root deletion manifest ${path}`,
+    requireCaptures: true,
+  });
+  validateDeletionManifest(journal.adminManifest, {
+    label: `worktree administration deletion manifest ${path}`,
+    requireCaptures: true,
+  });
+  if (journal.authorizationDigest !== worktreeRemovalAuthorizationDigest(journal)) {
     fail(`worktree removal receipt is invalid or changed: ${path}`, EXIT.safety);
   }
   const expectedOperationId = createHash("sha256")
@@ -2736,32 +2921,6 @@ function readWorktreeRemovalJournal(path, context) {
     fail(`worktree removal receipt changed while it was read: ${real}`, EXIT.safety);
   }
   validateWorktreeRemovalJournal(journal, real, context);
-  return { path: real, identity: receiptIdentity, journal };
-}
-
-function readWorktreeRemovalJournalEnvelope(path) {
-  if (!isAbsolute(path) || resolve(path) !== path || basename(path) === "") {
-    fail(`worktree removal resume requires one exact absolute receipt path: ${path}`, EXIT.safety);
-  }
-  const real = realpathExisting(path, "worktree removal receipt");
-  const receiptIdentity = identity(real, "worktree removal receipt", "file");
-  let journal;
-  try {
-    journal = JSON.parse(readFileSync(real, "utf8"));
-  } catch {
-    fail(`worktree removal receipt is not valid JSON: ${real}`, EXIT.safety);
-  }
-  if (!fileIdentityMatchesAt(receiptIdentity, real)
-    || !journal || journal.version !== WORKTREE_REMOVAL_JOURNAL_VERSION
-    || journal.operation !== "worktree-remove"
-    || !isAbsolute(journal.commonDir) || resolve(journal.commonDir) !== journal.commonDir
-    || !isAbsolute(journal.target) || resolve(journal.target) !== journal.target
-    || !isAbsolute(journal.targetGitDir) || resolve(journal.targetGitDir) !== journal.targetGitDir
-    || !isAbsolute(journal.registeredTombstone) || !isAbsolute(journal.holdingPath)
-    || !isContained(join(journal.commonDir, "buwiz-workspace-maintenance", "receipts"), real)
-    || journal.authorizationDigest !== worktreeRemovalAuthorizationDigest(journal)) {
-    fail(`worktree removal receipt is invalid or changed: ${real}`, EXIT.safety);
-  }
   return { path: real, identity: receiptIdentity, journal };
 }
 
@@ -3199,8 +3358,27 @@ function validateCleanJournal(journal, path, context) {
     || journal.sourceHeads.length !== journal.sourceWorktrees.length
     || !Array.isArray(journal.moves) || journal.moves.length === 0
     || journal.internalReceiptPath !== join(journal.transactionRoot, "receipt.json")
-    || journal.durableReceiptPath !== durableCleanupReceiptPath(context.commonDir, journal.internalReceiptPath, false)
-    || journal.authorizationDigest !== cleanJournalAuthorizationDigest(journal)) {
+    || journal.durableReceiptPath !== durableCleanupReceiptPath(context.commonDir, journal.internalReceiptPath, false)) {
+    fail(`cleanup operation journal is invalid or changed: ${path}`, EXIT.safety);
+  }
+  for (const move of journal.moves) {
+    if (!move || !Array.isArray(move.manifest) || move.manifest.length === 0) {
+      fail(`cleanup operation journal contains an invalid move: ${path}`, EXIT.safety);
+    }
+    validateDeletionManifest(move.manifest, { label: `cleanup journal manifest ${path}` });
+    const nativeSymlinks = move.nativeSymlinks ?? [];
+    const dependencySymlinks = move.dependencySymlinks ?? [];
+    if (!Array.isArray(nativeSymlinks) || !Array.isArray(dependencySymlinks)) {
+      fail(`cleanup operation journal contains an invalid symlink relative path: ${path}`, EXIT.safety);
+    }
+    for (const link of [...nativeSymlinks, ...dependencySymlinks]) {
+      if (!link || typeof link.relativePath !== "string") {
+        fail(`cleanup operation journal contains an invalid symlink relative path: ${path}`, EXIT.safety);
+      }
+      requireCanonicalDeletionRelativePath(link.relativePath, `cleanup journal symlink ${path}`);
+    }
+  }
+  if (journal.authorizationDigest !== cleanJournalAuthorizationDigest(journal)) {
     fail(`cleanup operation journal is invalid or changed: ${path}`, EXIT.safety);
   }
   const expectedOperationId = createHash("sha256")
@@ -3954,10 +4132,11 @@ function verifyWorktreeRemovalTopology(entry, context) {
 }
 
 function runWorktreeRemovalDeletion(root, manifest, journal, receiptPath, namespace) {
+  validateDeletionManifest(manifest, {
+    label: `worktree ${namespace} deletion manifest for ${root}`,
+    requireCaptures: true,
+  });
   const byRelativePath = new Map(manifest.map((entry) => [entry.relativePath, entry]));
-  if (byRelativePath.size !== manifest.length || byRelativePath.get("")?.type !== "directory") {
-    fail(`worktree deletion manifest is incomplete; retained at ${root}`, EXIT.safety);
-  }
   const parentIdentity = identity(dirname(root), "worktree deletion parent", "directory");
   const verifyParents = (path) => {
     if (!identityMatches(parentIdentity)) return false;
@@ -3989,8 +4168,8 @@ function runWorktreeRemovalDeletion(root, manifest, journal, receiptPath, namesp
   try {
     validatePartialPurgeTree(root, manifest);
     for (const entry of leaves) {
-      const path = join(root, entry.relativePath);
-      const capture = join(root, entry.captureRelativePath);
+      const path = resolveDeletionManifestPath(root, entry.relativePath, "worktree deletion entry");
+      const capture = resolveDeletionManifestPath(root, entry.captureRelativePath, "worktree deletion capture");
       const originalStat = lstatOptional(path, "worktree deletion entry");
       const captureStat = lstatOptional(capture, "worktree deletion capture");
       if (originalStat !== null && captureStat !== null) {
@@ -4013,7 +4192,7 @@ function runWorktreeRemovalDeletion(root, manifest, journal, receiptPath, namesp
       runTestHook(`after-worktree-${namespace}-entry-unlink`, hookPayload(entry, path, capture));
     }
     for (const entry of directories) {
-      const path = join(root, entry.relativePath);
+      const path = resolveDeletionManifestPath(root, entry.relativePath, "worktree deletion directory");
       if (lstatOptional(path, "worktree deletion directory") === null) continue;
       if ((path === root ? !identityMatches(parentIdentity) : !verifyParents(path))
         || !manifestEntryMatchesAt(entry, path, { allowDirectoryMetadataChange: true })) {
@@ -4191,22 +4370,21 @@ function commandWorktreeRemove(args) {
     if (!remaining.includes("--dry-run") && !remaining.includes("--force")) {
       fail("worktree-remove --resume requires --force (or use --dry-run)", EXIT.safety);
     }
-    const envelope = readWorktreeRemovalJournalEnvelope(resumePath);
-    const targetPresent = lstatOptional(envelope.journal.target, "original worktree path") !== null;
+    const bound = invocationCommonDir();
+    const entry = readWorktreeRemovalJournal(resumePath, bound);
+    const targetPresent = lstatOptional(entry.journal.target, "original worktree path") !== null;
     const targetStaged = lstatOptional(
-      envelope.journal.registeredTombstone,
+      entry.journal.registeredTombstone,
       "registered worktree tombstone",
-    ) !== null || lstatOptional(envelope.journal.holdingPath, "worktree holding path") !== null;
+    ) !== null || lstatOptional(entry.journal.holdingPath, "worktree holding path") !== null;
     const adminGone = lstatOptional(
-      envelope.journal.targetGitDir,
+      entry.journal.targetGitDir,
       "worktree administration directory",
     ) === null;
     if (targetPresent && (targetStaged || adminGone)) {
-      if (!remaining.includes("--dry-run")) releaseStaleWorktreeRemovalLockForRefusal(envelope);
+      if (!remaining.includes("--dry-run")) releaseStaleWorktreeRemovalLockForRefusal(entry);
       fail("original worktree path was repopulated after staging; staged content was retained", EXIT.safety);
     }
-    const context = repoContext(invocationCwd());
-    const entry = readWorktreeRemovalJournal(resumePath, context);
     if (remaining.includes("--dry-run")) {
       process.stdout.write(`Would resume worktree removal ${entry.journal.operationId}\n`);
       process.stdout.write(`  phase: ${entry.journal.state}\n`);
@@ -4214,9 +4392,11 @@ function commandWorktreeRemove(args) {
       return;
     }
     requireMutationPlatform();
-    const release = acquireWorktreeRemovalLock(entry, true);
+    const context = repoContext(invocationCwd());
+    const validated = readWorktreeRemovalJournal(resumePath, context);
+    const release = acquireWorktreeRemovalLock(validated, true);
     try {
-      completeWorktreeRemoval(entry, repoContext(invocationCwd()));
+      completeWorktreeRemoval(validated, context);
     } finally {
       release();
     }
