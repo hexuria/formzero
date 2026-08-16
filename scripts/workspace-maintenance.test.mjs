@@ -394,7 +394,12 @@ test("clean with no target lists choices, exits 2, and changes nothing", () => {
     const result = run(["clean"], worktree);
     assert.equal(result.status, 2);
     assert.match(result.stderr, /choose a cleanup target; nothing was deleted/u);
-    assert.match(result.stderr, new RegExp(worktree, "u"));
+    assert.ok(
+      result.stderr.includes(worktree)
+        || result.stderr.includes(worktree.replaceAll("\\", "/"))
+        || result.stderr.includes(worktree.replaceAll("/", "\\")),
+      result.stderr,
+    );
     assert.match(result.stderr, /zig-cache: 2 roots/u);
     for (const target of ["zig-cache", "zig-packages", "build", "native", "deps", "reports", "news-scratch", "standard", "all"]) {
       assert.match(result.stderr, new RegExp(`\\b${target}\\b`, "u"));
@@ -775,7 +780,8 @@ test("clean all requires force and never widens the literal artifact catalog", (
   }
 });
 
-test("clean refuses an artifact root symlink without touching its target", () => {
+test("clean refuses an artifact root symlink without touching its target", (context) => {
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     const sentinel = join(root, "sentinel");
@@ -792,7 +798,8 @@ test("clean refuses an artifact root symlink without touching its target", () =>
   }
 });
 
-test("clean refuses a dangling artifact root symlink", () => {
+test("clean refuses a dangling artifact root symlink", (context) => {
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     const missingTarget = join(root, "missing-sentinel-target");
@@ -807,7 +814,8 @@ test("clean refuses a dangling artifact root symlink", () => {
   }
 });
 
-test("clean refuses a nested symlink without touching its external target", () => {
+test("clean refuses a nested symlink without touching its external target", (context) => {
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     const sentinel = join(root, "external-sentinel");
@@ -1049,7 +1057,8 @@ test("purge refuses a safe-looking Native link injected after quarantine", (cont
   }
 });
 
-test("clean native refuses generated identity links to any other target", () => {
+test("clean native refuses generated identity links to any other target", (context) => {
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     const nativeIdentity = join(worktree, ".native", "identities", "fixture-identity");
@@ -1069,7 +1078,8 @@ test("clean native refuses generated identity links to any other target", () => 
   }
 });
 
-test("clean native refuses a generated identity link at any other depth", () => {
+test("clean native refuses a generated identity link at any other depth", (context) => {
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     const nested = join(worktree, ".native", "identities", "fixture-identity", "nested");
@@ -1087,7 +1097,8 @@ test("clean native refuses a generated identity link at any other depth", () => 
   }
 });
 
-test("clean refuses a symlinked artifact ancestor without touching its target", () => {
+test("clean refuses a symlinked artifact ancestor without touching its target", (context) => {
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     const externalNews = join(root, "external-news-sync");
@@ -1530,7 +1541,8 @@ test("purge refuses corrupt or different-operation locks without replacing them"
   }
 });
 
-test("worktree-remove requires one exact absolute registered path", () => {
+test("worktree-remove requires one exact absolute registered path", (context) => {
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     for (const target of ["candidate", `${worktree}/..`, join(root, "missing")]) {
@@ -2247,7 +2259,8 @@ test("forced detached removal retains the commit through a rescue ref", (context
   }
 });
 
-test("force cannot remove the current worktree or a worktree in an in-progress Git operation", () => {
+test("force cannot remove the current worktree or a worktree in an in-progress Git operation", (context) => {
+  if (skipWindowsMutation(context)) return;
   const current = makeRepo();
   try {
     const currentResult = run(["worktree-remove", realpathSync(current.worktree), "--force"], current.worktree);
@@ -2271,7 +2284,8 @@ test("force cannot remove the current worktree or a worktree in an in-progress G
   }
 });
 
-test("protected ignored data blocks worktree removal even with force", () => {
+test("protected ignored data blocks worktree removal even with force", (context) => {
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     writeFileSync(join(worktree, ".env"), "SECRET=fixture-only\n");
@@ -2284,7 +2298,8 @@ test("protected ignored data blocks worktree removal even with force", () => {
   }
 });
 
-test("any ignored content blocks worktree removal, including catalog artifacts and local backups", () => {
+test("any ignored content blocks worktree removal, including catalog artifacts and local backups", (context) => {
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, ".zig-cache"));
@@ -2302,7 +2317,8 @@ test("any ignored content blocks worktree removal, including catalog artifacts a
   }
 });
 
-test("cross-worktree clean rejects primary, current, and a parent with a registered descendant", () => {
+test("cross-worktree clean rejects primary, current, and a parent with a registered descendant", (context) => {
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });

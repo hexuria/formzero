@@ -1795,9 +1795,6 @@ function directorySize(path, options = {}) {
   while (stack.length) {
     const current = stack.pop();
     const stat = lstatSync(current);
-    if (stat.dev !== rootDevice) {
-      fail(`artifact crosses a filesystem boundary: ${current}`, EXIT.safety);
-    }
     entries += 1;
     if (stat.isSymbolicLink()) {
       const receiptLink = receiptSymlinks?.get(current);
@@ -1812,6 +1809,9 @@ function directorySize(path, options = {}) {
         fail(`refusing nested symbolic link inside artifact root: ${current}`, EXIT.safety);
       }
       continue;
+    }
+    if (stat.dev !== rootDevice) {
+      fail(`artifact crosses a filesystem boundary: ${current}`, EXIT.safety);
     }
     if (stat.isDirectory()) {
       for (const name of readdirSync(current)) {
