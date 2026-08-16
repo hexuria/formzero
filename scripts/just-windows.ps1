@@ -43,7 +43,36 @@ function Invoke-Checked {
     }
 }
 
+function Repair-MaintenanceArguments {
+    param([string[]]$Values)
+    if (-not $Values -or $Values.Count -eq 0) {
+        return @()
+    }
+    $head = $Values[0]
+    if ($head -ne "clean" -and $head -ne "worktree-remove") {
+        return $Values
+    }
+    if ($Values.Count -ge 2 -and $Values[1] -eq $head) {
+        $Values = @($Values[0]) + @($Values[2..($Values.Count - 1)])
+    }
+    $repeatAt = [Array]::IndexOf($Values, $head, 1)
+    if ($repeatAt -gt 0 -and ($Values.Count - $repeatAt) -eq $repeatAt) {
+        $same = $true
+        for ($i = 0; $i -lt $repeatAt; $i++) {
+            if ($Values[$i] -ne $Values[$repeatAt + $i]) {
+                $same = $false
+                break
+            }
+        }
+        if ($same) {
+            return $Values[0..($repeatAt - 1)]
+        }
+    }
+    return $Values
+}
+
 if ($Command -eq "maintenance") {
+    $RemainingArguments = @(Repair-MaintenanceArguments $RemainingArguments)
     if ($RemainingArguments.Count -lt 1) {
         throw "maintenance requires a subcommand"
     }

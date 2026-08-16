@@ -15,7 +15,7 @@ clean *args:
 
 [windows]
 clean *args:
-    & scripts/just-windows.ps1 maintenance clean @($args | Select-Object -Skip 1)
+    & scripts/just-windows.ps1 maintenance clean {{args}}
 
 # Remove one exact registered worktree after fail-closed safety checks.
 [unix]
@@ -24,7 +24,7 @@ worktree-remove *args:
 
 [windows]
 worktree-remove *args:
-    & scripts/just-windows.ps1 maintenance worktree-remove @($args | Select-Object -Skip 1)
+    & scripts/just-windows.ps1 maintenance worktree-remove {{args}}
 
 # Prepare the branch-qualified manifest and print its resolved identity.
 identity:

@@ -86,6 +86,9 @@ for (const [name, args, expectedStatus, expectedOutput] of [
   ["inventory", ["clean", "list", "--json"], 0, /"artifacts"/u],
   ["cleanup dry-run", ["clean", "build", "--dry-run"], 0, /Would clean/u],
   ["worktree inventory", ["worktree-remove"], 1, /Registered worktrees:/u],
+  ["duplicated inventory leftovers", ["clean", "list", "--json", "clean", "list", "--json"], 0, /"artifacts"/u],
+  ["duplicated recipe name", ["clean", "clean", "list", "--json"], 0, /"artifacts"/u],
+  ["duplicated dry-run leftovers", ["clean", "build", "--dry-run", "clean", "build", "--dry-run"], 0, /Would clean/u],
 ]) {
   test(`Windows maintenance ${name} does not prepare app identity or mutate .native`, () => {
     const root = makeRepository();
