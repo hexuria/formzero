@@ -17,6 +17,12 @@ function run(args, cwd, env = {}) {
   });
 }
 
+function skipWindowsMutation(context, reason = "Windows mutation is intentionally unsupported") {
+  if (process.platform !== "win32") return false;
+  context.skip(reason);
+  return true;
+}
+
 async function waitForPath(path) {
   const deadline = Date.now() + 10_000;
   while (!existsSync(path)) {
@@ -438,7 +444,7 @@ test("test hooks stay inactive without the complete test-only gate", () => {
 });
 
 test("printed purge command safely quotes receipt paths containing apostrophes", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo("workspace-maintenance-'test-");
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
@@ -459,7 +465,7 @@ test("printed purge command safely quotes receipt paths containing apostrophes",
 });
 
 test("post-rename failure prints an exact resumable cleanup journal", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
@@ -486,7 +492,7 @@ test("post-rename failure prints an exact resumable cleanup journal", (context) 
 });
 
 test("post-rename destination replacement is preserved and blocks resume", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
@@ -518,7 +524,7 @@ test("post-rename destination replacement is preserved and blocks resume", async
 });
 
 test("pre-first-move failure leaves an exact resumable cleanup journal", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
@@ -544,7 +550,7 @@ test("pre-first-move failure leaves an exact resumable cleanup journal", async (
 });
 
 test("zero-move failure retains unknown scaffolding content and reports its transaction", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
@@ -575,7 +581,7 @@ test("zero-move failure retains unknown scaffolding content and reports its tran
 });
 
 test("post-rename failure does not follow a changed source ancestor", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     const artifact = join(worktree, "scripts", "news-sync", "work", "download.pdf");
@@ -612,7 +618,7 @@ test("post-rename failure does not follow a changed source ancestor", async (con
 });
 
 test("direct clean succeeds when its caller does not hold the worktree", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
@@ -630,7 +636,7 @@ test("direct clean succeeds when its caller does not hold the worktree", (contex
 });
 
 test("the public Just clean recipe trusts only its verified launcher ancestry", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
@@ -656,7 +662,7 @@ test("the public Just clean recipe trusts only its verified launcher ancestry", 
 });
 
 test("the public Just clean recipe still blocks an unrelated active shell", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   let activeShell;
   try {
@@ -692,7 +698,7 @@ test("the public Just clean recipe still blocks an unrelated active shell", asyn
 });
 
 test("launcher ancestry cannot exempt an open file inside the selected artifact", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
@@ -726,7 +732,7 @@ test("launcher ancestry cannot exempt an open file inside the selected artifact"
 });
 
 test("launcher trust rejects a forged Just process id", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
@@ -744,7 +750,7 @@ test("launcher trust rejects a forged Just process id", (context) => {
 });
 
 test("clean all requires force and never widens the literal artifact catalog", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     seedArtifacts(worktree);
@@ -820,7 +826,7 @@ test("clean refuses a nested symlink without touching its external target", () =
 });
 
 test("clean deps treats normal nested package links as leaves and purge never follows them", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     const external = join(root, "external-tool");
@@ -852,7 +858,7 @@ test("clean deps treats normal nested package links as leaves and purge never fo
 });
 
 test("purge refuses a dependency link changed after quarantine", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "node_modules", "pkg"), { recursive: true });
@@ -882,7 +888,7 @@ test("purge refuses a dependency link changed after quarantine", (context) => {
 });
 
 test("clean native quarantines and purges generated identity links without following them", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     const nativeIdentity = join(worktree, ".native", "identities", "fixture-identity");
@@ -947,7 +953,7 @@ test("clean native dry-run accepts generated identity links without changing the
 });
 
 test("purge refuses a replaced quarantined Native link and preserves both targets", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     const nativeIdentity = join(worktree, ".native", "identities", "fixture-identity");
@@ -985,7 +991,7 @@ test("purge refuses a replaced quarantined Native link and preserves both target
 });
 
 test("moving a worktree leaves quarantined Native links purgeable without following them", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   const movedParent = join(dirname(worktree), "moved-native-parent");
   const movedWorktree = join(movedParent, "candidate");
@@ -1015,7 +1021,7 @@ test("moving a worktree leaves quarantined Native links purgeable without follow
 });
 
 test("purge refuses a safe-looking Native link injected after quarantine", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     const nativeIdentity = join(worktree, ".native", "identities", "fixture-identity");
@@ -1101,7 +1107,7 @@ test("clean refuses a symlinked artifact ancestor without touching its target", 
 });
 
 test("purge requires an exact receipt and force, then reclaims only its quarantine", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
@@ -1135,7 +1141,7 @@ test("purge requires an exact receipt and force, then reclaims only its quaranti
 });
 
 test("purge tombstone boundary refuses a replacement transaction", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
@@ -1167,7 +1173,7 @@ test("purge tombstone boundary refuses a replacement transaction", async (contex
 });
 
 test("purge refuses content inserted after its pre-tombstone manifest", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
@@ -1192,7 +1198,7 @@ test("purge refuses content inserted after its pre-tombstone manifest", async (c
 });
 
 test("purge revalidates receipt-bound contents after tombstoning", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   let tombstone;
   try {
@@ -1224,7 +1230,7 @@ test("purge revalidates receipt-bound contents after tombstoning", async (contex
 });
 
 test("purge retains a replacement introduced before leaf capture", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
@@ -1250,7 +1256,7 @@ test("purge retains a replacement introduced before leaf capture", async (contex
 });
 
 test("purge retains a replacement capture introduced after leaf rename", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   let capture;
   try {
@@ -1278,7 +1284,7 @@ test("purge retains a replacement capture introduced after leaf rename", async (
 });
 
 test("purge preserves a replacement created at the original leaf name after staging", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   let replacement;
   try {
@@ -1305,7 +1311,7 @@ test("purge preserves a replacement created at the original leaf name after stag
 });
 
 test("purge retains late unknown content when directory removal is not empty", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   let sentinel;
   try {
@@ -1332,7 +1338,7 @@ test("purge retains late unknown content when directory removal is not empty", a
 });
 
 test("purge refuses an unrecorded regular file inside a destination bucket", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
@@ -1356,7 +1362,7 @@ test("purge refuses an unrecorded regular file inside a destination bucket", (co
 });
 
 test("purge refuses a same-bucket artifact omitted from the receipt", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "coverage"));
@@ -1385,7 +1391,7 @@ test("purge refuses a same-bucket artifact omitted from the receipt", (context) 
 });
 
 test("purge refuses a receipt whose recorded artifact size was tampered", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
@@ -1408,7 +1414,7 @@ test("purge refuses a receipt whose recorded artifact size was tampered", (conte
 });
 
 test("purge resumes safely after real SIGKILL at every durable deletion phase", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const hooks = [
     "after-purge-journal-create",
     "after-purge-journal-deleting",
@@ -1446,7 +1452,7 @@ test("purge resumes safely after real SIGKILL at every durable deletion phase", 
 });
 
 test("purge refuses a live same-operation lock and preserves it", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   let paused;
   try {
@@ -1488,7 +1494,7 @@ test("purge refuses a live same-operation lock and preserves it", async (context
 });
 
 test("purge refuses corrupt or different-operation locks without replacing them", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   for (const variant of ["corrupt", "different-operation"]) {
     await context.test(variant, async () => {
       const { root, worktree } = makeRepo(`workspace-maintenance-purge-lock-${variant}-`);
@@ -1541,7 +1547,7 @@ test("worktree-remove requires one exact absolute registered path", () => {
 });
 
 test("worktree-remove removes a clean merged fixture through Git and preserves its branch", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     const result = run(["worktree-remove", realpathSync(worktree)], root);
@@ -1555,7 +1561,7 @@ test("worktree-remove removes a clean merged fixture through Git and preserves i
 });
 
 test("worktree-remove preserves target branch history and exact sibling topology", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   const sibling = join(dirname(worktree), "sibling");
   try {
@@ -1590,7 +1596,7 @@ test("worktree-remove preserves target branch history and exact sibling topology
 });
 
 test("worktree removal lock protects staged administration data from Git prune", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo("workspace-maintenance-prune-protection-");
   const sibling = join(dirname(worktree), "sibling");
   try {
@@ -1631,7 +1637,7 @@ test("worktree removal lock protects staged administration data from Git prune",
 });
 
 test("worktree removal resumes after SIGKILL at every durable boundary", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const hooks = [
     "after-worktree-removal-journal-create",
     "after-worktree-git-move",
@@ -1733,7 +1739,7 @@ test("worktree removal resumes after SIGKILL at every durable boundary", async (
 });
 
 test("worktree removal resume refuses a live owner without replacing its lock", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo("workspace-maintenance-remove-live-lock-");
   try {
     const target = realpathSync(worktree);
@@ -1770,7 +1776,7 @@ test("worktree removal resume refuses a live owner without replacing its lock", 
 });
 
 test("worktree removal resume preserves corrupt and different-operation locks", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   for (const variant of ["corrupt", "different-operation"]) {
     await context.test(variant, async () => {
       const { root, worktree } = makeRepo(`workspace-maintenance-remove-lock-${variant}-`);
@@ -1806,7 +1812,7 @@ test("worktree removal resume preserves corrupt and different-operation locks", 
 });
 
 test("worktree removal resume preserves content inserted after SIGKILL", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const cases = [
     {
       hook: "after-worktree-git-move",
@@ -1891,7 +1897,7 @@ test("worktree removal resume preserves content inserted after SIGKILL", async (
 });
 
 test("worktree removal preserves a repopulated original path and its staged tree", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   for (const replacementType of ["file", "directory"]) {
     await context.test(replacementType, async () => {
       const { root, worktree } = makeRepo(`workspace-maintenance-original-${replacementType}-`);
@@ -1931,7 +1937,7 @@ test("worktree removal preserves a repopulated original path and its staged tree
 });
 
 test("worktree removal preserves a repopulated registered tombstone and held tree", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo("workspace-maintenance-registered-repopulation-");
   try {
     const result = await runPausedAtHook(
@@ -1960,7 +1966,7 @@ test("worktree removal preserves a repopulated registered tombstone and held tre
 });
 
 test("worktree removal blocks an admin lock inserted at deregistration boundary", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo("workspace-maintenance-admin-lock-");
   try {
     const result = await runPausedAtHook(
@@ -1983,7 +1989,7 @@ test("worktree removal blocks an admin lock inserted at deregistration boundary"
 });
 
 test("worktree removal refuses a hard-linked administration file before Git can rewrite it", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo("workspace-maintenance-admin-hardlink-");
   try {
     const maintenance = linkedWorktreeMaintenancePaths(root, worktree);
@@ -2004,7 +2010,7 @@ test("worktree removal refuses a hard-linked administration file before Git can 
 });
 
 test("worktree removal blocks late held-tree content before final deletion", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo("workspace-maintenance-held-tree-change-");
   try {
     const result = await runPausedAtHook(
@@ -2027,7 +2033,7 @@ test("worktree removal blocks late held-tree content before final deletion", asy
 });
 
 test("worktree-remove requires every cleanup receipt to be purged, even with force", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
@@ -2059,7 +2065,7 @@ test("worktree-remove requires every cleanup receipt to be purged, even with for
 });
 
 test("moving a worktree cannot hide its outstanding cleanup receipt", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   const movedParent = join(dirname(worktree), "moved-parent");
   const movedWorktree = join(movedParent, "candidate");
@@ -2090,7 +2096,7 @@ test("moving a worktree cannot hide its outstanding cleanup receipt", (context) 
 });
 
 test("exact cross-worktree clean changes only the selected linked worktree", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   const third = join(dirname(worktree), "third");
   try {
@@ -2126,7 +2132,7 @@ test("exact cross-worktree clean changes only the selected linked worktree", (co
 });
 
 test("a missing outstanding cleanup state blocks removal after a worktree move", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   const movedParent = join(dirname(worktree), "moved-missing-state-parent");
   const movedWorktree = join(movedParent, "candidate");
@@ -2157,7 +2163,7 @@ test("a missing outstanding cleanup state blocks removal after a worktree move",
 });
 
 test("a corrupt cleanup state blocks forced worktree removal and preserves its receipt", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
@@ -2184,7 +2190,7 @@ test("a corrupt cleanup state blocks forced worktree removal and preserves its r
 });
 
 test("dirty and unmerged worktrees require force, while immutable guards still hold", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const dirty = makeRepo();
   try {
     writeFileSync(join(dirty.worktree, "dirty.txt"), "dirty\n");
@@ -2217,7 +2223,7 @@ test("dirty and unmerged worktrees require force, while immutable guards still h
 });
 
 test("forced detached removal retains the commit through a rescue ref", (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   try {
     git(worktree, "checkout", "--detach");
@@ -2327,7 +2333,7 @@ test("cross-worktree clean rejects primary, current, and a parent with a registe
 });
 
 test("an active process is an immutable blocker", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo();
   let processHandle;
   try {
@@ -2347,7 +2353,7 @@ test("an active process is an immutable blocker", async (context) => {
 });
 
 test("cleanup resumes safely after real SIGKILL at every durable phase", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation intentionally unsupported");
+  if (skipWindowsMutation(context, "Windows mutation intentionally unsupported")) return;
   const checkpoints = [
     "after-clean-journal-create",
     "after-clean-journal-moving",
@@ -2409,7 +2415,7 @@ test("cleanup resumes safely after real SIGKILL at every durable phase", async (
 });
 
 test("cleanup resume refuses ambiguous, missing, changed, and unknown artifact state", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation intentionally unsupported");
+  if (skipWindowsMutation(context, "Windows mutation intentionally unsupported")) return;
   for (const variant of ["both", "neither", "source-changed", "destination-changed", "unknown"]) {
     await context.test(variant, async () => {
       const { root, worktree } = makeRepo(`workspace-maintenance-clean-resume-${variant}-`);
@@ -2452,7 +2458,7 @@ test("cleanup resume refuses ambiguous, missing, changed, and unknown artifact s
 });
 
 test("cleanup resume refuses live, corrupt, wrong-operation, and foreign-host locks", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation intentionally unsupported");
+  if (skipWindowsMutation(context, "Windows mutation intentionally unsupported")) return;
   for (const variant of ["live", "corrupt", "wrong-operation", "foreign-host"]) {
     await context.test(variant, async () => {
       const { root, worktree } = makeRepo(`workspace-maintenance-clean-lock-${variant}-`);
@@ -2486,7 +2492,7 @@ test("cleanup resume refuses live, corrupt, wrong-operation, and foreign-host lo
 });
 
 test("unknown or corrupt durable cleanup receipt metadata blocks worktree removal", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation intentionally unsupported");
+  if (skipWindowsMutation(context, "Windows mutation intentionally unsupported")) return;
   for (const variant of ["unknown-entry", "corrupt-receipt"]) {
     await context.test(variant, () => {
       const { root, worktree } = makeRepo(`workspace-maintenance-durable-${variant}-`);
@@ -2513,7 +2519,7 @@ test("unknown or corrupt durable cleanup receipt metadata blocks worktree remova
 });
 
 test("purge after tombstone refuses a forged traversal manifest and leaves the sentinel unchanged", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo("workspace-maintenance-purge-forge-");
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });
@@ -2553,7 +2559,7 @@ test("purge after tombstone refuses a forged traversal manifest and leaves the s
 });
 
 test("worktree resume after holding transitions refuses forged root and admin manifests", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const cases = [
     {
       hook: "after-worktree-holding-rename",
@@ -2605,7 +2611,7 @@ test("worktree resume after holding transitions refuses forged root and admin ma
 });
 
 test("worktree resume refuses a forged foreign receipt without moving a stale lock", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const victim = makeRepo("workspace-maintenance-foreign-lock-victim-");
   const attacker = makeRepo("workspace-maintenance-foreign-lock-attacker-");
   try {
@@ -2647,7 +2653,7 @@ test("worktree resume refuses a forged foreign receipt without moving a stale lo
 });
 
 test("cleanup resume rejects malformed manifest and symlink relative paths before any rename", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const variants = ["manifest", "symlink"];
   for (const variant of variants) {
     await context.test(variant, async () => {
@@ -2692,7 +2698,7 @@ test("cleanup resume rejects malformed manifest and symlink relative paths befor
 });
 
 test("deletion manifests reject malformed relative paths, roots, orphans, and capture collisions", async (context) => {
-  if (process.platform === "win32") context.skip("Windows mutation is intentionally unsupported");
+  if (skipWindowsMutation(context)) return;
   const { root, worktree } = makeRepo("workspace-maintenance-manifest-table-");
   try {
     mkdirSync(join(worktree, "zig-out", "bin"), { recursive: true });

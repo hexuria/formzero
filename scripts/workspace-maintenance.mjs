@@ -164,9 +164,35 @@ function realpathExisting(path, label) {
   }
 }
 
-function isContained(parent, child) {
+function containedByRelative(parent, child) {
   const rel = relative(parent, child);
   return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
+}
+
+function windowsCanonicalPath(path) {
+  return realpathSync.native(path).replace(/^\\\\\?\\/u, "").replaceAll("/", "\\");
+}
+
+function isContained(parent, child) {
+  if (containedByRelative(parent, child)) return true;
+  if (process.platform !== "win32") return false;
+  try {
+    const canonicalParent = windowsCanonicalPath(parent);
+    const canonicalChild = windowsCanonicalPath(child);
+    if (containedByRelative(canonicalParent, canonicalChild)) return true;
+    const parentStat = lstatSync(canonicalParent);
+    if (parentStat.ino === 0) return false;
+    let current = canonicalChild;
+    while (true) {
+      const stat = lstatSync(current);
+      if (stat.dev === parentStat.dev && stat.ino === parentStat.ino) return true;
+      const next = dirname(current);
+      if (next === current) return false;
+      current = next;
+    }
+  } catch {
+    return false;
+  }
 }
 
 function physicalStat(path, label, type) {

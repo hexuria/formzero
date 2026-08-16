@@ -42,6 +42,23 @@ jobs:
           node-version: '22.15'
           cache: npm
 
+      # The Just-launcher ancestry tests invoke just on PATH. Linux installs
+      # the same pinned 1.43.1 via cargo; macOS hosted images do not ship it.
+      - name: Install Just
+        run: |
+          case "$(uname -m)" in
+            arm64|aarch64) target="aarch64-apple-darwin" ;;
+            x86_64) target="x86_64-apple-darwin" ;;
+            *) echo "::error::unsupported macOS architecture $(uname -m)"; exit 1 ;;
+          esac
+          curl --fail --location --silent --show-error \
+            "https://github.com/casey/just/releases/download/1.43.1/just-1.43.1-${target}.tar.gz" \
+            --output "${RUNNER_TEMP}/just.tar.gz"
+          mkdir -p "${HOME}/.local/bin"
+          tar -xzf "${RUNNER_TEMP}/just.tar.gz" -C "${HOME}/.local/bin" just
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+          "${HOME}/.local/bin/just" --version
+
       - name: Restore pinned Zig toolchain
         uses: actions/cache@v4
         with:
@@ -70,6 +87,7 @@ jobs:
 
       - name: Report toolchain
         run: |
+          just --version
           zig version
           node --version
           npx native --version || true

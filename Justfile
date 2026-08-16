@@ -15,7 +15,7 @@ clean *args:
 
 [windows]
 clean *args:
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/just-windows.ps1 maintenance clean (Get-Variable args).Value
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/just-windows.ps1 maintenance clean {{args}}
 
 # Remove one exact registered worktree after fail-closed safety checks.
 [unix]
@@ -24,7 +24,7 @@ worktree-remove *args:
 
 [windows]
 worktree-remove *args:
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/just-windows.ps1 maintenance worktree-remove (Get-Variable args).Value
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/just-windows.ps1 maintenance worktree-remove {{args}}
 
 # Prepare the branch-qualified manifest and print its resolved identity.
 identity:
