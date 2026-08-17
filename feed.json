@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1786704540,
+  "generated_at_unix": 1786941086,
   "source_label": "BIR",
   "notices": [
     {
@@ -9,7 +9,7 @@
       "title": "RMC No. 95-2026",
       "summary": "Providing Extension of the Deadlines for the Filing of Tax Returns of Corresponding Taxes due Thereon, Including Submission of Required Documents for Taxpayers due to Unavailability of eBIRForms Offline Package",
       "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.95-2026_redacted_compressed.pdf",
-      "published_at_unix": 1786704540,
+      "published_at_unix": 1786636800,
       "month_bucket": "2026-08"
     },
     {
@@ -79,7 +79,7 @@
       "external_id": "bir:rmc:2026:089",
       "kind": "RMC",
       "title": "RMC No. 89-2026",
-      "summary": "Providing Extension of the Deadlines for the Filing of Tax Retums and Payment of Conesponding Taxes Due Thereon, Including Submission of Required Documents for Taxpayers within the Jurisdiction of Revenue District Offices of the Bureau of Intemal Revenue that were Affected by the Continued Heavy Rainfall brought about by Southwest Monsoon",
+      "summary": "Providing Extension of the Deadlines for the Filing of Tax Retums and Payment of Corresponding Taxes Due Thereon, Including Submission of Required Documents for Taxpayers within the Jurisdiction of Revenue District Offices of the Bureau of Intemal Revenue that were Affected by the Continued Heavy Rainfall brought about by Southwest Monsoon",
       "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2089-2026_redacted.pdf",
       "published_at_unix": 1786291200,
       "month_bucket": "2026-08"
