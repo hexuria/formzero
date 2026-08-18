@@ -7,6 +7,7 @@
 //! inside one Zig module while avoiding the GUI and SQLite build cost.
 
 test "core logic modules remain in the headless test root" {
+    _ = @import("navigation.zig");
     _ = @import("domain/date.zig");
     _ = @import("domain/money.zig");
     _ = @import("tax_profile/field.zig");

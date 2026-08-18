@@ -10,7 +10,7 @@ global form/deadline dashboard, and a functional tax-calendar engine.
 
 | Area | Status |
 | --- | --- |
-| Navigation, themes, responsive layouts | Functional; the theme and sidebar width are remembered across launches |
+| Navigation, themes, responsive layouts | Functional; the theme and sidebar width are remembered across launches. Screen Gallery, Import, and Background Tasks remain reachable by message for tests but are not in the product sidebar |
 | Global Dashboard calendar | Functional; complete resolved schedule, never profile-filtered, with an optional RDO context view that is remembered across launches |
 | Important News | Functional; BIR issuances compiled four times a day by the `scripts/news-sync/` pipeline from BIR's own publication API, shown for the calendar month in view, cached in SQLite with the last good copy retained when a refresh fails |
 | Tax deadline calculation | Functional; 20 compiled rule groups |
@@ -22,7 +22,7 @@ global form/deadline dashboard, and a functional tax-calendar engine.
 | Recurring form drafts | Existing 2551Q/1701Q save/resume plus a grounded, ordered 1701Q exact-core integration in progress |
 | Grounded 1701Q core | Exact 173-control contract, calculations, ordered validation, immutable profile mapping, candidate plaintext codecs, decrypt-only Artifact Lab, and schema-v4 draft streams under test |
 | Other form editors and print previews | UI/projection coverage only; not filing-ready |
-| Import, authentication, filing payment, and submission | UI only |
+| Import, authentication, filing payment, and submission | UI only; Import is not offered from the product sidebar |
 | Distribution | macOS development bundle, Linux package, and Windows ARM64 directory package; none is signed or production-ready |
 
 **Do not use this app as an authoritative filing plan yet.** The taxpayer

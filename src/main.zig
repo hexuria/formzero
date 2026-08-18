@@ -1,9 +1,9 @@
 //! Buwiz App state and Native SDK wiring.
 //!
 //! The screens remain declarative `.native` templates. Zig owns the small
-//! application state: navigation, appearance and accessibility preferences,
-//! plus the tested calendar resolver, SQLite policy store, and native
-//! calendar-handoff effects.
+//! application state: appearance and accessibility preferences, plus the
+//! tested calendar resolver, SQLite policy store, and native calendar-handoff
+//! effects. Page identity and dirty-leave guards live in `navigation.zig`.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -65,6 +65,7 @@ const draft_provenance_runtime = @import(
     "forms/draft_provenance_runtime.zig",
 );
 const form_ids = @import("forms/id.zig");
+const navigation = @import("navigation.zig");
 const form_persistence = @import("forms/persistence_adapter.zig");
 const form_runtime = @import("forms/runtime.zig");
 const form_period = @import("forms/filing_period.zig");
@@ -234,34 +235,7 @@ const shell_windows = [_]native_sdk.ShellWindow{.{
 }};
 const shell_scene: native_sdk.ShellConfig = .{ .windows = &shell_windows };
 
-pub const Page = enum {
-    global_dashboard,
-    taxpayer_dashboard,
-    profile_setup,
-    tax_form_profile,
-    import_data,
-    background_tasks,
-    tax_calendar,
-    settings,
-    screen_gallery,
-    form_0605,
-    form_0619_e,
-    form_0619_f,
-    form_1601_c,
-    form_1701,
-    form_1701q,
-    form_1702_rt,
-    form_1702_mx,
-    form_2550q,
-    form_2551q,
-    aux_lock_screen,
-    aux_profile_auth,
-    aux_admin_auth,
-    aux_command_palette,
-    aux_html_preview,
-    aux_email_confirmation,
-    aux_debug_log,
-};
+pub const Page = navigation.Page;
 
 pub const ThemePreference = enum {
     system,
@@ -275,52 +249,12 @@ pub const SidebarPreference = enum {
     hidden,
 };
 
-pub const DashboardSection = enum {
-    calendar,
-    forms,
-    profile_settings,
-};
+pub const DashboardSection = navigation.DashboardSection;
+pub const ProfileSetupSection = navigation.ProfileSetupSection;
 
-pub const ProfileSetupSection = enum {
-    tax_profile,
-    reg_filing,
-    tax_forms,
-    email,
-};
-
-const PendingProfileNavigation = union(enum) {
-    page: Page,
-    profile_view,
-    profile_section: ProfileSetupSection,
-    dashboard_section: DashboardSection,
-    taxpayer_slot: usize,
-    new_taxpayer,
-    add_branch,
-    registration_taxpayer: usize,
-    registration_unit: usize,
-    registration_create_taxpayer,
-    registration_create_branch,
-};
-
-const PendingTaxFormProfileNavigation = union(enum) {
-    page: Page,
-    return_context,
-    taxpayer_slot: usize,
-    new_taxpayer,
-    add_branch,
-    activation_segment: struct {
-        form_index: usize,
-        tax_year: u16,
-        viewed_on: profile_model.Date,
-        filing: ?form_period.FilingPeriod,
-    },
-};
-
-const TaxpayerContextMutation = union(enum) {
-    taxpayer_slot: usize,
-    new_taxpayer,
-    add_branch,
-};
+const PendingProfileNavigation = navigation.PendingProfileNavigation;
+const PendingTaxFormProfileNavigation = navigation.PendingTaxFormProfileNavigation;
+const TaxpayerContextMutation = navigation.TaxpayerContextMutation;
 
 pub const TaxCalendarSection = enum {
     rules,
@@ -2286,37 +2220,20 @@ pub const Model = struct {
     /// Auxiliary surfaces sit above the shell while the page that opened
     /// them remains visible underneath.
     pub fn contentPage(self: *const Model) Page {
-        return if (isAuxiliaryPage(self.page))
-            self.overlayReturnPage
-        else
-            self.page;
+        return navigationSnapshot(self).contentPage();
     }
 
     /// Sidebar selection is context, not a permanent decoration. Global tools
     /// must not imply that their data is filtered by whichever profile was
     /// selected most recently.
     pub fn taxpayerNavigationSelectionVisible(self: *const Model) bool {
-        return switch (self.contentPage()) {
-            .taxpayer_dashboard,
-            .tax_form_profile,
-            .form_0605,
-            .form_0619_e,
-            .form_0619_f,
-            .form_1601_c,
-            .form_1701,
-            .form_1701q,
-            .form_1702_rt,
-            .form_1702_mx,
-            .form_2550q,
-            .form_2551q,
-            => true,
-            .profile_setup => !self.taxProfiles.editing_new,
-            else => false,
-        };
+        return navigationSnapshot(self).taxpayerSelectionVisible(
+            self.taxProfiles.editing_new,
+        );
     }
 
     pub fn shellVisible(self: *const Model) bool {
-        return !isAuxiliaryPage(self.page);
+        return navigationSnapshot(self).shellVisible();
     }
 
     fn isConstrainedViewport(self: *const Model) bool {
@@ -13124,7 +13041,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
                 model.registrationWorkspace.selected_taxpayer_index,
                 model.registrationWorkspace.selected_registration_unit_index,
             ) == .deferred) {
-                model.pendingProfileNavigation = .registration_create_taxpayer;
+                parkProfileNavigation(model, .registration_create_taxpayer);
                 return;
             }
             const ledger = if (model.registrationLedger) |*value| value else {
@@ -13153,9 +13070,9 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             )) {
                 .unchanged => return,
                 .deferred => {
-                    model.pendingProfileNavigation = .{
+                    parkProfileNavigation(model, .{
                         .registration_taxpayer = index,
-                    };
+                    });
                     return;
                 },
                 .apply => selectRegistrationTaxpayer(model, index, true),
@@ -13172,9 +13089,9 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             )) {
                 .unchanged => return,
                 .deferred => {
-                    model.pendingProfileNavigation = .{
+                    parkProfileNavigation(model, .{
                         .registration_unit = index,
-                    };
+                    });
                     return;
                 },
                 .apply => selectRegistrationUnit(model, index, true),
@@ -13205,7 +13122,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
                 model.registrationWorkspace.selected_taxpayer_index,
                 model.registrationWorkspace.selected_registration_unit_index,
             ) == .deferred) {
-                model.pendingProfileNavigation = .registration_create_branch;
+                parkProfileNavigation(model, .registration_create_branch);
                 return;
             }
             const ledger = if (model.registrationLedger) |*value| value else {
@@ -13817,16 +13734,10 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.taxFormProfileNextSegmentDate,
         ),
         .tax_form_profile_keep_editing => {
-            model.taxFormProfilePendingNavigation = null;
-            model.taxFormProfileDiscardPromptOpen = false;
+            keepTaxFormProfileEditing(model);
         },
         .tax_form_profile_discard_navigation => {
-            const pending = model.taxFormProfilePendingNavigation orelse
-                PendingTaxFormProfileNavigation{
-                    .return_context = {},
-                };
-            model.taxFormProfilePendingNavigation = null;
-            model.taxFormProfileDiscardPromptOpen = false;
+            const pending = takePendingTaxFormProfile(model);
             model.taxFormProfilePage.reset();
             model.taxpayerYearPage.reset();
             model.taxFormProfileFormIndex = null;
@@ -13887,15 +13798,14 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             if (model.taxFormProfilePage.dirty() or
                 model.taxpayerYearPage.dirty())
             {
-                model.taxFormProfilePendingNavigation = .{
+                parkTaxFormProfileNavigation(model, .{
                     .activation_segment = .{
                         .form_index = form_index,
                         .tax_year = identity.tax_year,
                         .viewed_on = viewed_on,
                         .filing = filing,
                     },
-                };
-                model.taxFormProfileDiscardPromptOpen = true;
+                });
                 return;
             }
             // Re-open the exact stream and activation interval to leave Edit
@@ -14270,10 +14180,10 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             const mode = model.taxProfiles.profileMode();
             if (mode == .viewing) return;
             if (profileNavigationRequiresDiscard(model)) {
-                model.pendingProfileNavigation = if (mode == .creating)
+                parkProfileNavigation(model, if (mode == .creating)
                     .{ .page = model.profileEditorOrigin }
                 else
-                    .profile_view;
+                    .profile_view);
                 return;
             }
             model.taxProfiles.cancelEdit();
@@ -14297,15 +14207,14 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             }
         },
         .profile_keep_editing => {
-            model.pendingProfileNavigation = null;
+            keepProfileEditing(model);
         },
         .profile_save_session_draft_navigation => {
             if (!model.taxProfiles.saveSessionDraft(&model.sessionProfileDraft)) return;
             updateCore(model, .profile_discard_navigation, fx);
         },
         .profile_discard_navigation => {
-            const pending = model.pendingProfileNavigation orelse return;
-            model.pendingProfileNavigation = null;
+            const pending = takePendingProfile(model) orelse return;
             model.taxProfiles.cancelEdit();
             syncProfileIdentityControls(model);
             switch (pending) {
@@ -14371,7 +14280,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .resume_profile_session_draft => {
             if (!prepareSessionDraftResume(model, fx)) return;
             if (!model.taxProfiles.resumeSessionDraft(&model.sessionProfileDraft)) return;
-            model.pendingProfileNavigation = null;
+            keepProfileEditing(model);
             model.profileSetupSection = .tax_profile;
             if (model.page == .taxpayer_dashboard) {
                 model.dashboardSection = .profile_settings;
@@ -17451,8 +17360,7 @@ fn openTaxFormProfileForYearAt(
         model.taxFormProfileReturnDashboardSection = model.dashboardSection;
         model.taxFormProfileReturnProfileSection = model.profileSetupSection;
     }
-    model.taxFormProfilePendingNavigation = null;
-    model.taxFormProfileDiscardPromptOpen = false;
+    keepTaxFormProfileEditing(model);
     // Every open (including segment switches and reloads) starts at Details;
     // an audit section must never become a sticky navigation destination.
     model.taxFormProfileSection = .details;
@@ -17496,15 +17404,14 @@ fn requestTaxFormProfileSegment(
         .quarter = model.taxFormProfileFilingQuarter,
     } } else null;
     if (model.taxFormProfilePage.dirty() or model.taxpayerYearPage.dirty()) {
-        model.taxFormProfilePendingNavigation = .{
+        parkTaxFormProfileNavigation(model, .{
             .activation_segment = .{
                 .form_index = form_index,
                 .tax_year = identity.tax_year,
                 .viewed_on = viewed_on,
                 .filing = filing,
             },
-        };
-        model.taxFormProfileDiscardPromptOpen = true;
+        });
         return;
     }
     openTaxFormProfileForYearAt(
@@ -17527,8 +17434,7 @@ fn closeTaxFormProfile(model: *Model) void {
     if (model.taxFormProfilePage.dirty() or
         model.taxpayerYearPage.dirty())
     {
-        model.taxFormProfilePendingNavigation = .{ .return_context = {} };
-        model.taxFormProfileDiscardPromptOpen = true;
+        parkTaxFormProfileNavigation(model, .{ .return_context = {} });
         return;
     }
     model.taxFormProfilePage.reset();
@@ -17537,8 +17443,7 @@ fn closeTaxFormProfile(model: *Model) void {
     model.taxFormProfileViewedDate = null;
     model.taxFormProfilePreviousSegmentDate = null;
     model.taxFormProfileNextSegmentDate = null;
-    model.taxFormProfilePendingNavigation = null;
-    model.taxFormProfileDiscardPromptOpen = false;
+    keepTaxFormProfileEditing(model);
     model.taxFormProfilePickerField = null;
     model.taxFormProfileChoiceCount = 0;
     model.taxFormProfileInherited = .{};
@@ -18691,22 +18596,134 @@ fn reopenIncomeTaxQuarter(model: *Model, quarter: u8) void {
     }
 }
 
+fn navigationSnapshot(model: *const Model) navigation.State {
+    return .{
+        .page = model.page,
+        .profile_editor_origin = model.profileEditorOrigin,
+        .overlay_return_page = model.overlayReturnPage,
+        .pending_profile = model.pendingProfileNavigation,
+        .pending_tax_form_profile = model.taxFormProfilePendingNavigation,
+        .tax_form_profile_discard_open = model.taxFormProfileDiscardPromptOpen,
+    };
+}
+
+fn writeNavigation(model: *Model, state: navigation.State) void {
+    model.page = state.page;
+    model.profileEditorOrigin = state.profile_editor_origin;
+    model.overlayReturnPage = state.overlay_return_page;
+    model.pendingProfileNavigation = state.pending_profile;
+    model.taxFormProfilePendingNavigation = state.pending_tax_form_profile;
+    model.taxFormProfileDiscardPromptOpen = state.tax_form_profile_discard_open;
+}
+
+fn navigationDirty(model: *const Model) navigation.Dirty {
+    return .{
+        .profile = model.taxProfiles.profileDirty(),
+        .tax_form_profile = model.taxFormProfilePage.dirty(),
+        .taxpayer_year = model.taxpayerYearPage.dirty(),
+        .forms = model.taxProfiles.formsDirty(),
+    };
+}
+
+fn navigationContext(model: *const Model) navigation.Context {
+    return .{
+        .dashboard_section = model.dashboardSection,
+        .profile_viewing = model.taxProfiles.profileViewing(),
+        .profile_creating = model.taxProfiles.editing_new,
+    };
+}
+
+fn applyNavigationLeave(model: *Model, leave: navigation.LeaveWork) void {
+    if (leave.set_dashboard_section_calendar) model.dashboardSection = .calendar;
+    if (leave.reset_form_filters) model.taxProfiles.resetFormFilters();
+    if (leave.clear_2550q_preview) model.resolved2550QPreview = null;
+    if (leave.close_chrome) {
+        model.sidebarOverlayOpen = false;
+        model.profileSubjectPickerVisible = false;
+        model.profileClassificationPickerVisible = false;
+        model.profileEoptPickerVisible = false;
+        model.libraryFilter.filter_picker_visible = false;
+        model.libraryFilter.period_picker_visible = false;
+        model.libraryFilter.info_index = null;
+    }
+    if (leave.reset_library_filters) {
+        model.libraryFilter.period_filter = .all;
+        resetProfileFormsBrowseFilters(model);
+    }
+}
+
+/// Inline profile-settings cleanup inspects the page being left, so it must
+/// run before the navigation session is written back onto the model.
+fn commitNavigation(
+    model: *Model,
+    state: navigation.State,
+    leave: navigation.LeaveWork,
+) void {
+    if (leave.leave_inline_profile_settings) leaveInlineProfileSettings(model);
+    writeNavigation(model, state);
+    applyNavigationLeave(model, leave);
+}
+
 fn profileNavigationRequiresDiscard(model: *const Model) bool {
-    const profile_surface = model.page == .profile_setup or
-        (model.page == .taxpayer_dashboard and
-            model.dashboardSection == .profile_settings);
-    if (!profile_surface) return false;
-    return !model.taxProfiles.profileViewing() and
-        model.taxProfiles.profileDirty();
+    return navigationSnapshot(model).profileSurfaceRequiresDiscard(
+        navigationDirty(model),
+        navigationContext(model),
+    );
+}
+
+fn parkProfileNavigation(model: *Model, target: PendingProfileNavigation) void {
+    var state = navigationSnapshot(model);
+    state.parkProfile(target);
+    writeNavigation(model, state);
+}
+
+fn keepProfileEditing(model: *Model) void {
+    var state = navigationSnapshot(model);
+    state.keepProfileEditing();
+    writeNavigation(model, state);
+}
+
+fn takePendingProfile(model: *Model) ?PendingProfileNavigation {
+    var state = navigationSnapshot(model);
+    const pending = state.takePendingProfile();
+    writeNavigation(model, state);
+    return pending;
+}
+
+fn parkTaxFormProfileNavigation(
+    model: *Model,
+    target: PendingTaxFormProfileNavigation,
+) void {
+    var state = navigationSnapshot(model);
+    state.deferTaxFormProfile(target);
+    writeNavigation(model, state);
+}
+
+fn keepTaxFormProfileEditing(model: *Model) void {
+    var state = navigationSnapshot(model);
+    state.keepTaxFormProfileEditing();
+    writeNavigation(model, state);
+}
+
+fn takePendingTaxFormProfile(model: *Model) PendingTaxFormProfileNavigation {
+    var state = navigationSnapshot(model);
+    const pending = state.takePendingTaxFormProfile();
+    writeNavigation(model, state);
+    return pending;
 }
 
 fn deferProfileNavigation(
     model: *Model,
     target: PendingProfileNavigation,
 ) bool {
-    if (!profileNavigationRequiresDiscard(model)) return false;
-    model.pendingProfileNavigation = target;
-    return true;
+    var state = navigationSnapshot(model);
+    const deferred = state.deferProfile(
+        target,
+        navigationDirty(model),
+        navigationContext(model),
+    );
+    writeNavigation(model, state);
+    return deferred;
 }
 
 /// Taxpayer-context actions must be rejected or deferred before they mutate
@@ -18717,27 +18734,18 @@ fn deferTaxpayerContextMutation(
     model: *Model,
     target: TaxpayerContextMutation,
 ) bool {
-    if (model.page == .tax_form_profile and
-        (model.taxFormProfilePage.dirty() or
-            model.taxpayerYearPage.dirty()))
-    {
-        model.taxFormProfilePendingNavigation = switch (target) {
-            .taxpayer_slot => |slot| .{ .taxpayer_slot = slot },
-            .new_taxpayer => .new_taxpayer,
-            .add_branch => .add_branch,
-        };
-        model.taxFormProfileDiscardPromptOpen = true;
-        return true;
-    }
-    if (profileNavigationRequiresDiscard(model)) {
-        model.pendingProfileNavigation = switch (target) {
-            .taxpayer_slot => |slot| .{ .taxpayer_slot = slot },
-            .new_taxpayer => .new_taxpayer,
-            .add_branch => .add_branch,
-        };
-        return true;
-    }
-    return model.taxProfiles.rejectIfFormsDirty();
+    var state = navigationSnapshot(model);
+    const attempt = state.guardTaxpayerContext(
+        target,
+        navigationDirty(model),
+        navigationContext(model),
+    );
+    writeNavigation(model, state);
+    return switch (attempt) {
+        .completed => false,
+        .deferred_tax_form_profile, .deferred_profile => true,
+        .rejected_forms_dirty => model.taxProfiles.rejectIfFormsDirty(),
+    };
 }
 
 /// Select a parked draft's source profile without depending on whichever
@@ -18812,48 +18820,13 @@ fn prepareSessionDraftResume(model: *Model, fx: ?*Effects) bool {
 }
 
 fn navigate(model: *Model, page: Page) void {
-    if (model.page == .tax_form_profile and
-        page != .tax_form_profile and
-        !isAuxiliaryPage(page) and
-        (model.taxFormProfilePage.dirty() or
-            model.taxpayerYearPage.dirty()))
-    {
-        model.taxFormProfilePendingNavigation = .{ .page = page };
-        model.taxFormProfileDiscardPromptOpen = true;
-        return;
-    }
-    if (page != model.page and
-        !isAuxiliaryPage(page) and
-        deferProfileNavigation(model, .{ .page = page }))
-    {
-        return;
-    }
-    if (model.page == .taxpayer_dashboard and
-        model.dashboardSection == .profile_settings and
-        page != .taxpayer_dashboard and
-        !isAuxiliaryPage(page))
-    {
-        leaveInlineProfileSettings(model);
-        model.dashboardSection = .calendar;
-    }
-    if (model.page == .taxpayer_dashboard and page != .taxpayer_dashboard) {
-        model.taxProfiles.resetFormFilters();
-    }
-    if (page != .form_2550q) {
-        model.resolved2550QPreview = null;
-    }
-    model.page = page;
-    model.sidebarOverlayOpen = false;
-    model.profileSubjectPickerVisible = false;
-    model.profileClassificationPickerVisible = false;
-    model.profileEoptPickerVisible = false;
-    model.libraryFilter.filter_picker_visible = false;
-    model.libraryFilter.period_picker_visible = false;
-    model.libraryFilter.info_index = null;
-    if (page != .taxpayer_dashboard) {
-        model.libraryFilter.period_filter = .all;
-        resetProfileFormsBrowseFilters(model);
-    }
+    var state = navigationSnapshot(model);
+    const result = state.requestPage(
+        page,
+        navigationDirty(model),
+        navigationContext(model),
+    );
+    commitNavigation(model, state, result.leave);
 }
 
 fn bumpSidebarActionEpoch(model: *Model) void {
@@ -18861,21 +18834,31 @@ fn bumpSidebarActionEpoch(model: *Model) void {
 }
 
 fn openTransient(model: *Model, page: Page) void {
-    if (model.page != page) model.overlayReturnPage = model.contentPage();
-    navigate(model, page);
+    var state = navigationSnapshot(model);
+    const result = state.openTransient(
+        page,
+        navigationDirty(model),
+        navigationContext(model),
+    );
+    commitNavigation(model, state, result.leave);
 }
 
 fn closeTransient(model: *Model) void {
-    const destination = model.overlayReturnPage;
-    model.overlayReturnPage = .global_dashboard;
-    navigate(model, destination);
+    var state = navigationSnapshot(model);
+    const result = state.closeTransient(
+        navigationDirty(model),
+        navigationContext(model),
+    );
+    commitNavigation(model, state, result.leave);
 }
 
 fn openProfileEditor(model: *Model) void {
-    if (model.page != .profile_setup) {
-        model.profileEditorOrigin = model.contentPage();
-    }
-    navigate(model, .profile_setup);
+    var state = navigationSnapshot(model);
+    const result = state.openProfileEditor(
+        navigationDirty(model),
+        navigationContext(model),
+    );
+    commitNavigation(model, state, result.leave);
 }
 
 fn leaveInlineProfileSettings(model: *Model) void {
@@ -18893,23 +18876,24 @@ fn leaveInlineProfileSettings(model: *Model) void {
 }
 
 fn closeProfileEditor(model: *Model) void {
-    const destination = model.profileEditorOrigin;
     // Back is navigation, not the editor's Cancel action. A dirty editor must
     // stay intact until the user confirms the shared discard prompt; a clean
     // editor can safely restore view mode before leaving the page.
-    if (deferProfileNavigation(model, .{ .page = destination })) return;
+    var state = navigationSnapshot(model);
+    const result = state.closeProfileEditor(
+        navigationDirty(model),
+        navigationContext(model),
+    );
+    if (result.attempt != .completed) {
+        writeNavigation(model, state);
+        return;
+    }
     model.taxProfiles.cancelEdit();
     syncProfileIdentityControls(model);
     model.profileCompletionTarget = null;
     model.profileCompletionFormIndex = null;
     model.pendingProfileFormLaunch = null;
-    navigate(model, destination);
-    // A dirty navigation guard deliberately keeps the editor open. Preserve
-    // its origin until the deferred discard completes so Back still has a
-    // truthful destination.
-    if (model.page != .profile_setup) {
-        model.profileEditorOrigin = .global_dashboard;
-    }
+    commitNavigation(model, state, result.leave);
 }
 
 fn profileCompletionFieldLabel(
@@ -18935,20 +18919,6 @@ fn profileCompletionFieldLabel(
         .tax_type => "the registered tax type",
         .government_withholding_agent => "the government withholding-agent choice",
         .special_rate_basis => "the special-rate basis",
-    };
-}
-
-fn isAuxiliaryPage(page: Page) bool {
-    return switch (page) {
-        .aux_lock_screen,
-        .aux_profile_auth,
-        .aux_admin_auth,
-        .aux_command_palette,
-        .aux_html_preview,
-        .aux_email_confirmation,
-        .aux_debug_log,
-        => true,
-        else => false,
     };
 }
 
@@ -20347,6 +20317,7 @@ test "2550Q resolved preview identifies fixture-only source metadata" {
 }
 
 test "tax-profile domain modules remain in the repository test root" {
+    _ = @import("navigation.zig");
     _ = @import("domain/date.zig");
     _ = @import("domain/money.zig");
     _ = @import("tax_profile/field.zig");
@@ -26119,6 +26090,41 @@ test "settings visibly binds the source-selected storage classification" {
         app_markup,
         "Storage: {artifactStorageClassification}",
     ) == null);
+}
+
+test "product sidebar omits costume destinations" {
+    const shell_source = @embedFile("components/shell.native");
+
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        shell_source,
+        "on-press=\"show_screen_gallery\"",
+    ) == null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        shell_source,
+        "on-press=\"show_import_data\"",
+    ) == null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        shell_source,
+        "on-press=\"show_background_tasks\"",
+    ) == null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        shell_source,
+        "on-press=\"show_tax_calendar\"",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        shell_source,
+        "on-press=\"show_settings\"",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        shell_source,
+        "on-press=\"show_global_dashboard\"",
+    ) != null);
 }
 
 test "compact header keeps navigation leftmost without duplicate branding" {

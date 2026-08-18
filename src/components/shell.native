@@ -66,20 +66,6 @@
 <template name="sidebar-dock-full">
   <column width="232" gap="8">
     <row width="232" height="48" cross="center">
-      <list-item
-        key="{sidebarActionEpoch}"
-        width="232"
-        height="44"
-        padding="12"
-        radius="md"
-        icon="download"
-        selected="false"
-        on-press="show_import_data">
-        Import Data
-      </list-item>
-    </row>
-
-    <row width="232" height="48" cross="center">
       <if test="{darkThemeActive}">
         <list-item
           key="{sidebarActionEpoch}"
@@ -117,20 +103,6 @@
         height="44"
         padding="12"
         radius="md"
-        icon="clock"
-        selected="false"
-        on-press="show_background_tasks">
-        Background Tasks
-      </list-item>
-    </row>
-
-    <row width="232" height="48" cross="center">
-      <list-item
-        key="{sidebarActionEpoch}"
-        width="232"
-        height="44"
-        padding="12"
-        radius="md"
         icon="file-text"
         selected="false"
         on-press="show_tax_calendar">
@@ -156,17 +128,6 @@
 
 <template name="sidebar-dock-rail">
   <column width="48" gap="8" cross="center">
-    <button
-      width="48"
-      height="48"
-      size="icon"
-      variant="ghost"
-      radius="xl"
-      icon="download"
-      label="Import Data"
-      on-press="show_import_data">
-    </button>
-
     <if test="{darkThemeActive}">
       <button
         width="48"
@@ -191,17 +152,6 @@
         on-press="toggle_theme">
       </button>
     </if>
-
-    <button
-      width="48"
-      height="48"
-      size="icon"
-      variant="ghost"
-      radius="xl"
-      icon="clock"
-      label="Background Tasks"
-      on-press="show_background_tasks">
-    </button>
 
     <button
       width="48"
@@ -335,20 +285,6 @@
               active="{profile.active and taxpayerNavigationSelectionVisible}"/>
           </for>
 
-          <row width="232" height="48" cross="center">
-            <list-item
-              key="{sidebarActionEpoch}"
-              width="232"
-              height="44"
-              padding="12"
-              radius="md"
-              icon="folder-open"
-              selected="false"
-              on-press="show_screen_gallery">
-              Screen Gallery
-            </list-item>
-          </row>
-
           <spacer grow="1"/>
           <separator/>
           <spacer height="8"/>
@@ -469,19 +405,6 @@
               profile="{profile.slot}"
               active="{profile.active and taxpayerNavigationSelectionVisible}"/>
           </for>
-
-          <row width="48" height="64" main="center" cross="center">
-            <button
-              width="48"
-              height="48"
-              size="icon"
-              variant="ghost"
-              radius="xl"
-              icon="folder-open"
-              label="Screen Gallery"
-              on-press="show_screen_gallery">
-            </button>
-          </row>
 
           <spacer grow="1"/>
           <separator/>
