@@ -26092,6 +26092,41 @@ test "settings visibly binds the source-selected storage classification" {
     ) == null);
 }
 
+test "product sidebar omits costume destinations" {
+    const shell_source = @embedFile("components/shell.native");
+
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        shell_source,
+        "on-press=\"show_screen_gallery\"",
+    ) == null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        shell_source,
+        "on-press=\"show_import_data\"",
+    ) == null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        shell_source,
+        "on-press=\"show_background_tasks\"",
+    ) == null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        shell_source,
+        "on-press=\"show_tax_calendar\"",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        shell_source,
+        "on-press=\"show_settings\"",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        shell_source,
+        "on-press=\"show_global_dashboard\"",
+    ) != null);
+}
+
 test "compact header keeps navigation leftmost without duplicate branding" {
     const shell_source = @embedFile("components/shell.native");
     const header_start = std.mem.indexOf(
