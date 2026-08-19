@@ -1659,6 +1659,10 @@ pub const Model = struct {
     pendingProfileFormLaunch: ?PendingProfileFormLaunch = null,
     profileFormLaunchAssessments: [form_catalog.registry_count]form_ui.LaunchAssessment = undefined,
     profileFormLaunchAssessmentsReady: bool = false,
+    /// Period slot backing `profileFormLaunchAssessments`. A unique
+    /// `ready_resume` slot wins; otherwise the first active period.
+    profileFormLaunchSlots: [form_catalog.registry_count]?u8 =
+        [_]?u8{null} ** form_catalog.registry_count,
     profilePeriodLaunchAssessments: [form_catalog.registry_count][12]form_ui.LaunchAssessment = undefined,
     profilePeriodLaunchAssessmentsReady: [form_catalog.registry_count][12]bool =
         [_][12]bool{[_]bool{false} ** 12} ** form_catalog.registry_count,
@@ -1799,6 +1803,7 @@ pub const Model = struct {
         "profileDeadlineStubDeadlineId",
         "profileFormLaunchAssessments",
         "profileFormLaunchAssessmentsReady",
+        "profileFormLaunchSlots",
         "profilePeriodLaunchAssessments",
         "profilePeriodLaunchAssessmentsReady",
         "profilePeriodExactLaunchReadiness",
@@ -15491,7 +15496,12 @@ fn refreshProfileFormLaunchAssessments(model: *Model) void {
     model.profileFormAvailabilityYear = year_value;
     for (&form_catalog.forms, 0..) |*definition, index| {
         model.profileFormLaunchAssessments[index] = .{};
-        var captured_first_active_assessment = false;
+        model.profileFormLaunchSlots[index] = null;
+        var first_active_slot: ?u8 = null;
+        var first_active_launch: form_ui.LaunchAssessment = .{};
+        var unique_resume_slot: ?u8 = null;
+        var unique_resume_launch: form_ui.LaunchAssessment = .{};
+        var resume_count: u8 = 0;
         for (0..12) |slot| {
             const filing = if (definition.cadence == .on_demand)
                 (if (slot == 0)
@@ -15544,10 +15554,22 @@ fn refreshProfileFormLaunchAssessments(model: *Model) void {
             model.profilePeriodExactLaunchReadiness[index][slot] = exact;
             model.profilePeriodLaunchAssessments[index][slot] = exact.launch;
             model.profilePeriodLaunchAssessmentsReady[index][slot] = true;
-            if (!captured_first_active_assessment) {
-                model.profileFormLaunchAssessments[index] = exact.launch;
-                captured_first_active_assessment = true;
+            if (first_active_slot == null) {
+                first_active_slot = @intCast(slot);
+                first_active_launch = exact.launch;
             }
+            if (exact.launch.status == .ready_resume) {
+                resume_count += 1;
+                unique_resume_slot = @intCast(slot);
+                unique_resume_launch = exact.launch;
+            }
+        }
+        if (resume_count == 1) {
+            model.profileFormLaunchAssessments[index] = unique_resume_launch;
+            model.profileFormLaunchSlots[index] = unique_resume_slot;
+        } else {
+            model.profileFormLaunchAssessments[index] = first_active_launch;
+            model.profileFormLaunchSlots[index] = first_active_slot;
         }
     }
     model.profileFormLaunchAssessmentsReady = can_assess_launch;
@@ -17724,7 +17746,10 @@ fn openLibraryForm(model: *Model, index: usize) void {
     const tax_year = profileBrowseAvailabilityYear(model);
     if (tax_year < 1 or tax_year > 9999) return;
     const year: u16 = @intCast(tax_year);
-    const filing = libraryFilingPeriod(model, definition, year);
+    const filing = if (model.profileFormLaunchSlots[index]) |slot|
+        libraryPeriodForSlot(definition, year, slot) orelse return
+    else
+        libraryFilingPeriod(model, definition, year);
     const occurrence_date = switch (filing) {
         .on_demand => currentOccurrenceDate(model, year),
         .monthly, .quarterly, .annual => null,
@@ -22667,6 +22692,38 @@ test "exact 1701Q persists through the app loop and resumes after discard" {
     try std.testing.expectEqual(
         form_ui.LaunchStatus.ready_new,
         model.profilePeriodLaunchAssessments[form_index][0].status,
+    );
+    try std.testing.expectEqual(
+        form_ui.LaunchStatus.ready_resume,
+        model.profileFormLaunchAssessments[form_index].status,
+    );
+    try std.testing.expectEqual(@as(?u8, 1), model.profileFormLaunchSlots[form_index]);
+
+    var row_arena = std.heap.ArenaAllocator.init(allocator);
+    defer row_arena.deinit();
+    model.libraryFilter.visible_limit = form_catalog.registry_count;
+    const rows = model.profileFormRows(row_arena.allocator());
+    var card: ?*const TaxFormLibraryRow = null;
+    for (rows) |*row| {
+        if (std.mem.eql(u8, row.code(), "1701Q")) {
+            card = row;
+            break;
+        }
+    }
+    const library_card = card orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("Resume Draft", library_card.launchLabel());
+    try std.testing.expect(library_card.launchReadyVisible());
+
+    update(&model, .exact_1701q_discard_workspace);
+    model.page = .taxpayer_dashboard;
+    model.dashboardSection = .forms;
+    update(&model, .{ .open_library_form = form_index });
+    try std.testing.expectEqual(Page.form_1701q, model.page);
+    try std.testing.expectEqual(@as(u8, 2), model.formProfiles.quarter());
+    try std.testing.expect(model.exact1701Q.ready());
+    try std.testing.expectEqual(
+        exact_1701q_native.PersistenceStatus.development_plaintext_resumed,
+        model.exact1701Q.persistence_status,
     );
 }
 

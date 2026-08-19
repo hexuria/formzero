@@ -400,6 +400,16 @@ pub const TaxFormLibraryRow = struct {
         return self.active and self.editorAvailable();
     }
 
+    /// Card-level Open Form / Resume Draft. Hidden while a period cannot
+    /// actually open so it does not duplicate Tax Form Profile remediation.
+    pub fn launchReadyVisible(self: *const TaxFormLibraryRow) bool {
+        if (!self.launchActionVisible() or self.launch_disabled) return false;
+        return switch (self.launch_assessment.status) {
+            .ready_new, .ready_resume => true,
+            else => false,
+        };
+    }
+
     pub fn launchDisabled(self: *const TaxFormLibraryRow) bool {
         return self.launch_disabled;
     }
@@ -739,4 +749,10 @@ test "library launch labels use only canonical readiness layers" {
         "Filing period unavailable",
         row.launchStatus(),
     );
+    try std.testing.expect(!row.launchReadyVisible());
+
+    row.launch_disabled = false;
+    row.launch_assessment.status = .ready_resume;
+    try std.testing.expectEqualStrings("Resume Draft", row.launchLabel());
+    try std.testing.expect(row.launchReadyVisible());
 }
