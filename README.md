@@ -19,7 +19,7 @@ global form/deadline dashboard, and a functional tax-calendar engine.
 | Calendar export | Functional `.ics` handoff to the default calendar app, scoped to the profile's Forms Set |
 | Tax profiles and Forms Set | Persisted, revisioned, effective-dated, and the sole source of form availability for the taxpayer calendar and its export |
 | Canonical TIN root, Registration Units, and filing scope | Isolated session-only fixture-preview vertical slice: evidence-gated head office/branch lifecycle, fail-closed 2550Q planning, transient scope-provenance validation, and a value-owned read-only preview snapshot; immutable draft/artifact provenance remains deferred, while legacy cutover and the production policy catalog remain blocked |
-| Recurring form drafts | Existing 2551Q/1701Q save/resume plus a grounded, ordered 1701Q exact-core integration in progress |
+| Recurring form drafts | 2551Q still uses the coarse recurring draft. 1701Q save, close, and reopen go through the exact occurrence path only; the coarse 1701Q draft stays disabled |
 | Grounded 1701Q core | Exact 173-control contract, calculations, ordered validation, immutable profile mapping, candidate plaintext codecs, decrypt-only Artifact Lab, and schema-v4 draft streams under test |
 | Other form editors and print previews | UI/projection coverage only; not filing-ready |
 | Import, authentication, filing payment, and submission | UI only; Import is not offered from the product sidebar |

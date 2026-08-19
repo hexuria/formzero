@@ -12719,9 +12719,9 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.exact1701QFrozenProvenance = null;
             model.exact1701QHistoricalProfile = null;
         },
-        .income_tax_quarter_q1 => reopenIncomeTaxQuarter(model, 1),
-        .income_tax_quarter_q2 => reopenIncomeTaxQuarter(model, 2),
-        .income_tax_quarter_q3 => reopenIncomeTaxQuarter(model, 3),
+        .income_tax_quarter_q1 => reopenExact1701QQuarter(model, 1),
+        .income_tax_quarter_q2 => reopenExact1701QQuarter(model, 2),
+        .income_tax_quarter_q3 => reopenExact1701QQuarter(model, 3),
         .income_tax_sheets_attached_input => |edit| {
             model.incomeTax.applyInput(.sheets_attached, edit);
         },
@@ -18569,7 +18569,7 @@ fn reconcileExact1701QTaxpayerSelection(model: *Model) void {
     }
 }
 
-fn reopenIncomeTaxQuarter(model: *Model, quarter: u8) void {
+fn reopenExact1701QQuarter(model: *Model, quarter: u8) void {
     if (quarter < 1 or quarter > 3) return;
     if (rejectExact1701QContextChange(model)) return;
     var spouse_profile_id: ?profile_model.ProfileId = null;
@@ -22487,6 +22487,78 @@ test "1701Q opens exact state and coarse draft persistence stays disabled" {
         app_markup,
         "exact_1701q_generate_editable_candidate",
     ) != null);
+}
+
+test "exact 1701Q persists through the app loop and resumes after discard" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try addTestProfile(
+        &store,
+        "44444444444444444444444444444444",
+        "Exact Resume Filer",
+        "123-456-780-000",
+        .individual,
+    );
+
+    var model = Model{};
+    model.calendar.selected_year = 2026;
+    model.calendar.selected_month = 6;
+    try model.taxProfiles.attach(allocator, &store, "2026-07-29", 2026);
+    model.taxProfiles.select(
+        profileSlotNamed(&model, "Exact Resume Filer").?,
+    );
+    model.formProfiles.attach(allocator, &store);
+    defer model.formProfiles.deinit();
+    model.exact1701Q.attach(allocator, .{
+        .current_year = 2026,
+        .schedule_date = .{
+            .current_date = .{ .year = 2026, .month = 7, .day = 30 },
+            .empty_default_input_was_later = false,
+        },
+    });
+    defer model.exact1701Q.deinit();
+    model.exact1701QDevelopmentPlaintext =
+        key_custody.bootstrapCurrentArtifactStorage().development_plaintext;
+
+    update(&model, .show_form_1701q);
+    update(&model, .income_tax_quarter_q2);
+    try std.testing.expect(model.exact1701Q.ready());
+    try std.testing.expect(model.formProfiles.projectionAccepted());
+
+    update(&model, .exact_1701q_calculate);
+    update(&model, .exact_1701q_validate_save);
+    try std.testing.expect(model.exact1701Q.canGenerateEditableCandidate());
+    update(&model, .exact_1701q_generate_editable_candidate);
+    try std.testing.expect(model.exact1701Q.candidateVisible());
+    try std.testing.expectEqual(
+        exact_1701q_native.PersistenceStatus.development_plaintext_saved,
+        model.exact1701Q.persistence_status,
+    );
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        model.exact1701Q.noticeText(),
+        "revision 1 saved",
+    ) != null);
+    try std.testing.expect(model.formProfiles.draftId() == null);
+
+    const first_summary = try model.exact1701Q.exact.?.candidateSummary();
+    update(&model, .exact_1701q_discard_workspace);
+    try std.testing.expect(!model.exact1701Q.ready());
+
+    update(&model, .show_form_1701q);
+    try std.testing.expect(model.exact1701Q.ready());
+    try std.testing.expectEqual(
+        exact_1701q_native.PersistenceStatus.development_plaintext_resumed,
+        model.exact1701Q.persistence_status,
+    );
+    try std.testing.expect(model.exact1701Q.candidateVisible());
+    const resumed_summary = try model.exact1701Q.exact.?.candidateSummary();
+    try std.testing.expectEqualSlices(
+        u8,
+        &first_summary.sha256,
+        &resumed_summary.sha256,
+    );
 }
 
 test "exact 1701Q survives navigation and only explicit discard permits replacement" {
