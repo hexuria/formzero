@@ -11504,6 +11504,9 @@ fn appendLibraryPeriodCell(
         LibraryDraftStatus{ .label = "Deadline only", .tone = "outline" }
     else if (force_new_status)
         LibraryDraftStatus{ .label = "New", .tone = "outline" }
+    else if (std.mem.eql(u8, form_code, "1701Q") and
+        readiness.launch.status == .ready_resume)
+        LibraryDraftStatus{ .label = "Draft", .tone = "secondary" }
     else
         libraryDraftStatus(
             drafts,
@@ -12719,9 +12722,9 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
             model.exact1701QFrozenProvenance = null;
             model.exact1701QHistoricalProfile = null;
         },
-        .income_tax_quarter_q1 => reopenIncomeTaxQuarter(model, 1),
-        .income_tax_quarter_q2 => reopenIncomeTaxQuarter(model, 2),
-        .income_tax_quarter_q3 => reopenIncomeTaxQuarter(model, 3),
+        .income_tax_quarter_q1 => reopenExact1701QQuarter(model, 1),
+        .income_tax_quarter_q2 => reopenExact1701QQuarter(model, 2),
+        .income_tax_quarter_q3 => reopenExact1701QQuarter(model, 3),
         .income_tax_sheets_attached_input => |edit| {
             model.incomeTax.applyInput(.sheets_attached, edit);
         },
@@ -15350,7 +15353,44 @@ fn assessExactPeriodLaunch(
     if (result.form_profile_state == .needs_setup) {
         captureMissingTaxFormProfileFields(&result, definition);
     }
+    if (std.mem.eql(u8, definition.code, "1701Q") and
+        result.launch.status == .ready_new and
+        (result.form_profile_state == .ready or
+            result.form_profile_state == .inherited_only_ready) and
+        exact1701QOriginalWorkspaceIsUnique(model, year, quarter))
+    {
+        result.launch.status = .ready_resume;
+    }
     return result;
+}
+
+fn exact1701QOriginalWorkspaceIsUnique(
+    model: *const Model,
+    tax_year: u16,
+    quarter: u8,
+) bool {
+    const capability = model.exact1701QDevelopmentPlaintext orelse return false;
+    const store = model.taxProfiles.store orelse return false;
+    const allocator = model.taxProfiles.allocator orelse return false;
+    const filer = model.taxProfiles.selectedProfileDomainId() orelse return false;
+    const filer_id = filer.asSlice();
+    const exact_quarter: exact_1701q_ui.Quarter = switch (quarter) {
+        1 => .first,
+        2 => .second,
+        3 => .third,
+        else => return false,
+    };
+    return exact_1701q_runtime.matchDevelopmentPlaintextWorkspaces(
+        capability,
+        store,
+        allocator,
+        filer_id,
+        .{
+            .tax_year = tax_year,
+            .quarter = exact_quarter,
+            .amended = false,
+        },
+    ) == .unique;
 }
 
 fn refreshTaxFormProfileCardStates(model: *Model) void {
@@ -16108,10 +16148,13 @@ fn persistExact1701QCandidate(model: *Model) void {
         frozen,
         @intCast(c_time.time(null)),
     )) {
-        .saved => |receipt| model.exact1701Q.reportDevelopmentPersistenceSaved(
-            receipt.revision.value,
-            receipt.shape,
-        ),
+        .saved => |receipt| {
+            model.exact1701Q.reportDevelopmentPersistenceSaved(
+                receipt.revision.value,
+                receipt.shape,
+            );
+            refreshProfileFormLaunchAssessments(model);
+        },
         .blocked => |failure| model.exact1701Q.reportDevelopmentPersistenceFailure(
             @tagName(failure.stage),
             failure.reason,
@@ -18505,10 +18548,11 @@ fn refreshExact1701QFromCurrentProjection(
             blockExact1701QOpen(model, err);
             return;
         };
-    _ = model.exact1701Q.open(workspace_id, snapshot, filing_context) catch |err| {
+    const opened = model.exact1701Q.open(workspace_id, snapshot, filing_context) catch |err| {
         blockExact1701QOpen(model, err);
         return;
     };
+    if (!opened) return;
     _ = model.exact1701Q.applyOrValidateAnnualFilerElection(
         expected_election,
     ) catch |err| {
@@ -18569,7 +18613,7 @@ fn reconcileExact1701QTaxpayerSelection(model: *Model) void {
     }
 }
 
-fn reopenIncomeTaxQuarter(model: *Model, quarter: u8) void {
+fn reopenExact1701QQuarter(model: *Model, quarter: u8) void {
     if (quarter < 1 or quarter > 3) return;
     if (rejectExact1701QContextChange(model)) return;
     var spouse_profile_id: ?profile_model.ProfileId = null;
@@ -20063,6 +20107,52 @@ fn addTest2551QTaxFormProfile(
         .confirmed_at_unix = 1,
         .source = .manual_entry,
         .values = &values,
+    };
+    try profile_persistence.appendTaxFormProfileRevision(
+        store,
+        std.testing.allocator,
+        0,
+        &revision,
+    );
+}
+
+fn addTest1701QTaxFormProfile(
+    store: *profile_store.Store,
+    raw_profile_id: []const u8,
+    tax_year: u16,
+    effective_from: []const u8,
+    effective_until: []const u8,
+) !void {
+    const definition = form_catalog.findForm("1701Q") orelse
+        return error.TestUnexpectedResult;
+    const generated_id = try store.generateOpaqueId();
+    const revision: tax_form_profile_domain.Revision = .{
+        .id = try tax_form_profile_domain.RevisionId.parse(&generated_id),
+        .stream = .{
+            .profile_id = try profile_model.ProfileId.parse(raw_profile_id),
+            .tax_year = tax_year,
+            .form_code = try tax_form_profile_domain.FormCode.parse(
+                definition.code,
+            ),
+            .form_revision = try tax_form_profile_domain.FormRevision.parse(
+                definition.revision orelse return error.TestUnexpectedResult,
+            ),
+        },
+        .sequence = 1,
+        .effective = try tax_form_profile_domain.EffectivePeriod.init(
+            try tax_form_profile_domain.Date.parseIso(effective_from),
+            try tax_form_profile_domain.Date.parseIso(effective_until),
+        ),
+        .spec_revision = definition.tax_form_profile.spec_revision orelse
+            return error.TestUnexpectedResult,
+        .spec_hash = try tax_form_profile_domain.SpecHash.parse(
+            definition.tax_form_profile.spec_hash orelse
+                return error.TestUnexpectedResult,
+        ),
+        .review_state = .confirmed,
+        .confirmed_at_unix = 1,
+        .source = .manual_entry,
+        .values = &.{},
     };
     try profile_persistence.appendTaxFormProfileRevision(
         store,
@@ -22487,6 +22577,97 @@ test "1701Q opens exact state and coarse draft persistence stays disabled" {
         app_markup,
         "exact_1701q_generate_editable_candidate",
     ) != null);
+}
+
+test "exact 1701Q persists through the app loop and resumes after discard" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    const profile_id = "44444444444444444444444444444444";
+    try addTestProfile(
+        &store,
+        profile_id,
+        "Exact Resume Filer",
+        "123-456-780-000",
+        .individual,
+    );
+    try addTest1701QTaxFormProfile(
+        &store,
+        profile_id,
+        2026,
+        "2026-01-01",
+        "2026-12-31",
+    );
+
+    var model = Model{};
+    model.calendar.selected_year = 2026;
+    model.calendar.selected_month = 6;
+    try model.taxProfiles.attach(allocator, &store, "2026-07-29", 2026);
+    model.taxProfiles.select(
+        profileSlotNamed(&model, "Exact Resume Filer").?,
+    );
+    refreshSelectedProfileFormSet(&model);
+    model.formProfiles.attach(allocator, &store);
+    defer model.formProfiles.deinit();
+    model.exact1701Q.attach(allocator, .{
+        .current_year = 2026,
+        .schedule_date = .{
+            .current_date = .{ .year = 2026, .month = 7, .day = 30 },
+            .empty_default_input_was_later = false,
+        },
+    });
+    defer model.exact1701Q.deinit();
+    model.exact1701QDevelopmentPlaintext =
+        key_custody.bootstrapCurrentArtifactStorage().development_plaintext;
+
+    update(&model, .show_form_1701q);
+    update(&model, .income_tax_quarter_q2);
+    try std.testing.expect(model.exact1701Q.ready());
+    try std.testing.expect(model.formProfiles.projectionAccepted());
+
+    update(&model, .exact_1701q_calculate);
+    update(&model, .exact_1701q_validate_save);
+    try std.testing.expect(model.exact1701Q.canGenerateEditableCandidate());
+    update(&model, .exact_1701q_generate_editable_candidate);
+    try std.testing.expect(model.exact1701Q.candidateVisible());
+    try std.testing.expectEqual(
+        exact_1701q_native.PersistenceStatus.development_plaintext_saved,
+        model.exact1701Q.persistence_status,
+    );
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        model.exact1701Q.noticeText(),
+        "revision 1 saved",
+    ) != null);
+    try std.testing.expect(model.formProfiles.draftId() == null);
+
+    const first_summary = try model.exact1701Q.exact.?.candidateSummary();
+    update(&model, .exact_1701q_discard_workspace);
+    try std.testing.expect(!model.exact1701Q.ready());
+
+    update(&model, .show_form_1701q);
+    try std.testing.expect(model.exact1701Q.ready());
+    try std.testing.expectEqual(
+        exact_1701q_native.PersistenceStatus.development_plaintext_resumed,
+        model.exact1701Q.persistence_status,
+    );
+    try std.testing.expect(model.exact1701Q.candidateVisible());
+    const resumed_summary = try model.exact1701Q.exact.?.candidateSummary();
+    try std.testing.expectEqualSlices(
+        u8,
+        &first_summary.sha256,
+        &resumed_summary.sha256,
+    );
+
+    const form_index = formCatalogIndex("1701Q").?;
+    try std.testing.expectEqual(
+        form_ui.LaunchStatus.ready_resume,
+        model.profilePeriodLaunchAssessments[form_index][1].status,
+    );
+    try std.testing.expectEqual(
+        form_ui.LaunchStatus.ready_new,
+        model.profilePeriodLaunchAssessments[form_index][0].status,
+    );
 }
 
 test "exact 1701Q survives navigation and only explicit discard permits replacement" {

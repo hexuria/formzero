@@ -360,7 +360,7 @@ pub fn splitTin(
     switch (role) {
         .filer => {
             if (branch == null) return error.FilerBranchRequired;
-            if (branch.?.len > 3) {
+            if (branch.?.len > 5) {
                 return error.FilerBranchExceedsLegacyControl;
             }
         },
@@ -385,6 +385,23 @@ pub fn splitTin(
         result.branch_len = @intCast(present.len);
     }
     return result;
+}
+
+fn clipTinBranch(
+    branch: []const u8,
+    maximum_length: u8,
+    role: ids.Role,
+) RenderError![]const u8 {
+    if (branch.len <= maximum_length) return branch;
+    const extra = branch.len - maximum_length;
+    if (!std.mem.allEqual(u8, branch[0..extra], '0')) {
+        return switch (role) {
+            .filer => error.FilerBranchExceedsLegacyControl,
+            .spouse => error.SpouseBranchExceedsLegacyControl,
+            else => error.UnsupportedRole,
+        };
+    }
+    return branch[extra..];
 }
 
 pub fn joinTin(
@@ -815,7 +832,11 @@ fn renderControl(
                 .tin_segment_1 => parts.segment(0),
                 .tin_segment_2 => parts.segment(1),
                 .tin_segment_3 => parts.segment(2),
-                .tin_branch => parts.branchSlice(),
+                .tin_branch => clipTinBranch(
+                    parts.branchSlice(),
+                    mapping.maximum_length,
+                    mapping.role,
+                ) catch |err| return err,
                 else => unreachable,
             };
         },
@@ -1042,6 +1063,32 @@ test "one filer maps an owned exact-control snapshot with provenance" {
         "revision-filer-1",
         snapshot.get("frm1701q:txtTaxpayerName").?
             .provenance.revision_id.asSlice(),
+    );
+}
+
+test "five-digit head-office branch maps into the 3-char page-1 control" {
+    var filer = try individualRevision(
+        "profile-filer",
+        "revision-filer-1",
+        1,
+        "123-456-789-00000",
+        "019",
+        "DELA CRUZ, JUAN M",
+        "SYNTHETIC FILER ADDRESS",
+    );
+    const on = try model.Date.parseIso("2026-03-31");
+    const result = try composeProfileControls(
+        &.{.{ .role = .filer, .revision = &filer }},
+        on,
+    );
+    const snapshot = result.accepted;
+    try std.testing.expectEqualStrings(
+        "000",
+        snapshot.get("frm1701q:txtBranchCode").?.value.asSlice(),
+    );
+    try std.testing.expectEqualStrings(
+        "00000",
+        snapshot.get("frm1701q:txtPg2BranchCode").?.value.asSlice(),
     );
 }
 
