@@ -690,6 +690,13 @@
                     disabled="{form.taxFormProfileActionDisabled}"
                     on-press="open_tax_form_profile:{form.id}">{form.taxFormProfileAction}</button>
                 </if>
+                <if test="{form.launchReadyVisible}">
+                  <button
+                    height="36"
+                    variant="primary"
+                    disabled="{form.launchDisabled}"
+                    on-press="open_library_form:{form.id}">{form.launchLabel}</button>
+                </if>
                 <if test="{form.hasPeriodCells}">
                   <grid columns="{form.periodGridColumns}" gap="6">
                     <if test="{form.period1.available}"><use template="t-fp" a="{form.period1.actionLabel}" i="{form.period1.actionId}" x="{form.period1.selected}" d="{form.period1.disabled}" l="{form.period1.label}" s="{form.period1.visualStatus}" v="{form.period1.visible}" c="{form.period1.statusColor}" w="{form.period1.tileWidth}"/></if>
