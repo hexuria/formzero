@@ -18548,10 +18548,11 @@ fn refreshExact1701QFromCurrentProjection(
             blockExact1701QOpen(model, err);
             return;
         };
-    _ = model.exact1701Q.open(workspace_id, snapshot, filing_context) catch |err| {
+    const opened = model.exact1701Q.open(workspace_id, snapshot, filing_context) catch |err| {
         blockExact1701QOpen(model, err);
         return;
     };
+    if (!opened) return;
     _ = model.exact1701Q.applyOrValidateAnnualFilerElection(
         expected_election,
     ) catch |err| {
