@@ -825,6 +825,35 @@ fn snapshotValueEql(
     };
 }
 
+/// How many exact workspaces match one filer, form revision, period, and
+/// filing intent. Listing failures stay fail-closed as `none` so a library
+/// tile never claims a draft it cannot reopen.
+pub const WorkspaceMatch = enum { none, unique, multiple };
+
+pub fn matchDevelopmentPlaintextWorkspaces(
+    plaintext_capability: *const key_custody.DevelopmentPlaintextStorageCapability,
+    repository: *store.Store,
+    allocator: std.mem.Allocator,
+    filer_profile_id: []const u8,
+    context: exact_ui.FilingContext,
+) WorkspaceMatch {
+    var matches = exact_persistence
+        .listAlternateWorkspacesDevelopmentPlaintext(
+        plaintext_capability,
+        repository,
+        allocator,
+        filer_profile_id,
+        context,
+        null,
+    ) catch return .none;
+    defer matches.deinit(allocator);
+    return switch (matches.items.len) {
+        0 => .none,
+        1 => .unique,
+        else => .multiple,
+    };
+}
+
 /// Reopens only when the canonical exact filing key identifies one and only
 /// one persisted workspace. Zero matches are a normal `not_found`; multiple
 /// matches are surfaced and none is chosen implicitly. The returned state is

@@ -11504,6 +11504,9 @@ fn appendLibraryPeriodCell(
         LibraryDraftStatus{ .label = "Deadline only", .tone = "outline" }
     else if (force_new_status)
         LibraryDraftStatus{ .label = "New", .tone = "outline" }
+    else if (std.mem.eql(u8, form_code, "1701Q") and
+        readiness.launch.status == .ready_resume)
+        LibraryDraftStatus{ .label = "Draft", .tone = "secondary" }
     else
         libraryDraftStatus(
             drafts,
@@ -15350,7 +15353,44 @@ fn assessExactPeriodLaunch(
     if (result.form_profile_state == .needs_setup) {
         captureMissingTaxFormProfileFields(&result, definition);
     }
+    if (std.mem.eql(u8, definition.code, "1701Q") and
+        result.launch.status == .ready_new and
+        (result.form_profile_state == .ready or
+            result.form_profile_state == .inherited_only_ready) and
+        exact1701QOriginalWorkspaceIsUnique(model, year, quarter))
+    {
+        result.launch.status = .ready_resume;
+    }
     return result;
+}
+
+fn exact1701QOriginalWorkspaceIsUnique(
+    model: *const Model,
+    tax_year: u16,
+    quarter: u8,
+) bool {
+    const capability = model.exact1701QDevelopmentPlaintext orelse return false;
+    const store = model.taxProfiles.store orelse return false;
+    const allocator = model.taxProfiles.allocator orelse return false;
+    const filer = model.taxProfiles.selectedProfileDomainId() orelse return false;
+    const filer_id = filer.asSlice();
+    const exact_quarter: exact_1701q_ui.Quarter = switch (quarter) {
+        1 => .first,
+        2 => .second,
+        3 => .third,
+        else => return false,
+    };
+    return exact_1701q_runtime.matchDevelopmentPlaintextWorkspaces(
+        capability,
+        store,
+        allocator,
+        filer_id,
+        .{
+            .tax_year = tax_year,
+            .quarter = exact_quarter,
+            .amended = false,
+        },
+    ) == .unique;
 }
 
 fn refreshTaxFormProfileCardStates(model: *Model) void {
@@ -16108,10 +16148,13 @@ fn persistExact1701QCandidate(model: *Model) void {
         frozen,
         @intCast(c_time.time(null)),
     )) {
-        .saved => |receipt| model.exact1701Q.reportDevelopmentPersistenceSaved(
-            receipt.revision.value,
-            receipt.shape,
-        ),
+        .saved => |receipt| {
+            model.exact1701Q.reportDevelopmentPersistenceSaved(
+                receipt.revision.value,
+                receipt.shape,
+            );
+            refreshProfileFormLaunchAssessments(model);
+        },
         .blocked => |failure| model.exact1701Q.reportDevelopmentPersistenceFailure(
             @tagName(failure.stage),
             failure.reason,
@@ -20072,6 +20115,52 @@ fn addTest2551QTaxFormProfile(
     );
 }
 
+fn addTest1701QTaxFormProfile(
+    store: *profile_store.Store,
+    raw_profile_id: []const u8,
+    tax_year: u16,
+    effective_from: []const u8,
+    effective_until: []const u8,
+) !void {
+    const definition = form_catalog.findForm("1701Q") orelse
+        return error.TestUnexpectedResult;
+    const generated_id = try store.generateOpaqueId();
+    const revision: tax_form_profile_domain.Revision = .{
+        .id = try tax_form_profile_domain.RevisionId.parse(&generated_id),
+        .stream = .{
+            .profile_id = try profile_model.ProfileId.parse(raw_profile_id),
+            .tax_year = tax_year,
+            .form_code = try tax_form_profile_domain.FormCode.parse(
+                definition.code,
+            ),
+            .form_revision = try tax_form_profile_domain.FormRevision.parse(
+                definition.revision orelse return error.TestUnexpectedResult,
+            ),
+        },
+        .sequence = 1,
+        .effective = try tax_form_profile_domain.EffectivePeriod.init(
+            try tax_form_profile_domain.Date.parseIso(effective_from),
+            try tax_form_profile_domain.Date.parseIso(effective_until),
+        ),
+        .spec_revision = definition.tax_form_profile.spec_revision orelse
+            return error.TestUnexpectedResult,
+        .spec_hash = try tax_form_profile_domain.SpecHash.parse(
+            definition.tax_form_profile.spec_hash orelse
+                return error.TestUnexpectedResult,
+        ),
+        .review_state = .confirmed,
+        .confirmed_at_unix = 1,
+        .source = .manual_entry,
+        .values = &.{},
+    };
+    try profile_persistence.appendTaxFormProfileRevision(
+        store,
+        std.testing.allocator,
+        0,
+        &revision,
+    );
+}
+
 fn addTestProfileWithRdoWithoutYearSettings(
     store: *profile_store.Store,
     id: []const u8,
@@ -22493,12 +22582,20 @@ test "exact 1701Q persists through the app loop and resumes after discard" {
     const allocator = std.testing.allocator;
     var store = try profile_store.Store.openMemory(allocator);
     defer store.close();
+    const profile_id = "44444444444444444444444444444444";
     try addTestProfile(
         &store,
-        "44444444444444444444444444444444",
+        profile_id,
         "Exact Resume Filer",
         "123-456-780-000",
         .individual,
+    );
+    try addTest1701QTaxFormProfile(
+        &store,
+        profile_id,
+        2026,
+        "2026-01-01",
+        "2026-12-31",
     );
 
     var model = Model{};
@@ -22508,6 +22605,7 @@ test "exact 1701Q persists through the app loop and resumes after discard" {
     model.taxProfiles.select(
         profileSlotNamed(&model, "Exact Resume Filer").?,
     );
+    refreshSelectedProfileFormSet(&model);
     model.formProfiles.attach(allocator, &store);
     defer model.formProfiles.deinit();
     model.exact1701Q.attach(allocator, .{
@@ -22558,6 +22656,16 @@ test "exact 1701Q persists through the app loop and resumes after discard" {
         u8,
         &first_summary.sha256,
         &resumed_summary.sha256,
+    );
+
+    const form_index = formCatalogIndex("1701Q").?;
+    try std.testing.expectEqual(
+        form_ui.LaunchStatus.ready_resume,
+        model.profilePeriodLaunchAssessments[form_index][1].status,
+    );
+    try std.testing.expectEqual(
+        form_ui.LaunchStatus.ready_new,
+        model.profilePeriodLaunchAssessments[form_index][0].status,
     );
 }
 
