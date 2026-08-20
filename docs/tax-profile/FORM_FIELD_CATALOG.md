@@ -12,7 +12,7 @@ exists yet; it does not imply filing support.
 - Registry codes: 51
 - Native editor revisions: 11
 - Calendar-only codes: 40
-- Native input controls inventoried: 372
+- Native input controls inventoried: 389
 - Meaningful static-table fields inventoried: 63
 - Direct profile projection targets: 99
 - Optional profile projection targets: 35
@@ -72,7 +72,7 @@ exists yet; it does not imply filing support.
 | 2200C | Excise Tax Return for Coal and Coke | excise_tax | — | calendar_only | calendar_only | — | monthly | 1-12 | 0 | 0 | — |
 | 2200S | Excise Tax Return for Sweetened Beverages | excise_tax | — | calendar_only | calendar_only | — | monthly | 1-12 | 0 | 0 | — |
 | 0619E | Monthly Remittance Form for Creditable Income Taxes Withheld (Expanded) | withholding_tax | 2018-01-ENCS | static_layout | no_setup | — | monthly | 1-12 | 24 | 4 | src/pages/forms/0619-e.native |
-| 1601EQ | Quarterly Remittance Return of Creditable Income Taxes Withheld (Expanded) | withholding_tax | 2018-01-ENCS | static_layout | no_setup | — | quarterly | 1-4 | 46 | 0 | src/pages/forms/1601-eq.native |
+| 1601EQ | Quarterly Remittance Return of Creditable Income Taxes Withheld (Expanded) | withholding_tax | 2018-01-ENCS | static_layout | no_setup | — | quarterly | 1-4 | 63 | 0 | src/pages/forms/1601-eq.native |
 | 1701MS | Annual Income Tax Return for Micro and Small Taxpayers | income_tax | — | calendar_only | calendar_only | — | annual | — | 0 | 0 | — |
 | 1706 | Capital Gains Tax Return (Real Properties) | capital_gains_tax | — | calendar_only | calendar_only | — | on_demand | — | 0 | 0 | — |
 | 1707A | Annual Capital Gains Tax Return (Shares of Stock Not Traded) | capital_gains_tax | — | calendar_only | calendar_only | — | on_demand | — | 0 | 0 | — |
@@ -118,7 +118,7 @@ transaction defaults; this is intentional rather than an inferred omission.
 | 2550Q 2024-04-ENCS | no_setup | 1 | `49363b23a0fd60148850df5a6f3b162b907e95840efc80af3c7a60700e3ab7f6` | 0 | 0 | 0 | Ownership matrix § 2550Q finds no genuine form-specific annual setup value |
 | 2551Q 2018-01-ENCS | setup | 2 | `7f3df1b82f7d72e8e9b29ff01e10b086e0a6b1a1d4702861cd9f8d175f62cef4` | 1 | 1 | 0 | 2551Q January 2018 ENCS Item 13 is a form-specific yearly choice projected only on the initial applicable quarter |
 | 0619E 2018-01-ENCS | no_setup | 1 | `0bbca08d13a26690fb24c819c36c4c83aafe1e150ee6b4aef10fd4bce16d3579` | 0 | 0 | 0 | Line of business is inherited from the Base Tax Profile; 0619E has no form-specific yearly setup |
-| 1601EQ 2018-01-ENCS | no_setup | 1 | `00da4f31d7e8646a51315909b4eadf20feaf1bd8b7d8127158bf0475bed3be1a` | 0 | 0 | 0 | Identity, filing choices, unbound ATC rows 13-18, and remittance totals; save stays disabled until an exact 1601EQ path exists |
+| 1601EQ 2018-01-ENCS | no_setup | 1 | `00da4f31d7e8646a51315909b4eadf20feaf1bd8b7d8127158bf0475bed3be1a` | 0 | 0 | 0 | Identity, filing choices, unbound ATC rows 13-18, remittance totals, and payment rows 33-36; save stays disabled until an exact 1601EQ path exists |
 
 | Form revision | Semantic key | Value type | Role | Presence | Validation | Ownership | Source kind | Availability | Source evidence | Blocking evidence gate |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -839,7 +839,7 @@ Tax Form Profile: `no_setup`, spec revision 1, SHA-256 `00da4f31d7e8646a51315909
 
 Consumed taxpayer-year settings: none
 
-Named roles: `filer`, `filing`, `evidence`, `system`
+Named roles: `filer`, `filing`, `payment`, `evidence`, `system`
 
 Profile binding policy:
 
@@ -895,3 +895,20 @@ Profile binding policy:
 | `1601EQ.2018-01-ENCS.input.interest` | 27 Interest | derived | — | — | — | — | system | money | unbound_input | `src/pages/forms/1601-eq.native:61` |
 | `1601EQ.2018-01-ENCS.input.compromise` | 28 Compromise | derived | — | — | — | — | system | money | unbound_input | `src/pages/forms/1601-eq.native:62` |
 | `1601EQ.2018-01-ENCS.input.total_amount_payable` | 31 Total amount payable | derived | — | — | — | — | system | money | unbound_input | `src/pages/forms/1601-eq.native:63` |
+| `1601EQ.2018-01-ENCS.input.item_33_agency` | Item 33 agency | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:72` |
+| `1601EQ.2018-01-ENCS.input.item_33_date_paid` | Item 33 date paid | external | — | — | — | — | payment | date | unbound_input | `src/pages/forms/1601-eq.native:73` |
+| `1601EQ.2018-01-ENCS.input.item_33_number` | Item 33 number | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:74` |
+| `1601EQ.2018-01-ENCS.input.item_33_amount` | Item 33 amount | external | — | — | — | — | payment | money | unbound_input | `src/pages/forms/1601-eq.native:75` |
+| `1601EQ.2018-01-ENCS.input.item_34_agency` | Item 34 agency | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:81` |
+| `1601EQ.2018-01-ENCS.input.item_34_date_paid` | Item 34 date paid | external | — | — | — | — | payment | date | unbound_input | `src/pages/forms/1601-eq.native:82` |
+| `1601EQ.2018-01-ENCS.input.item_34_number` | Item 34 number | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:83` |
+| `1601EQ.2018-01-ENCS.input.item_34_amount` | Item 34 amount | external | — | — | — | — | payment | money | unbound_input | `src/pages/forms/1601-eq.native:84` |
+| `1601EQ.2018-01-ENCS.input.item_35_agency` | Item 35 agency | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:90` |
+| `1601EQ.2018-01-ENCS.input.item_35_date_paid` | Item 35 date paid | external | — | — | — | — | payment | date | unbound_input | `src/pages/forms/1601-eq.native:91` |
+| `1601EQ.2018-01-ENCS.input.item_35_number` | Item 35 number | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:92` |
+| `1601EQ.2018-01-ENCS.input.item_35_amount` | Item 35 amount | external | — | — | — | — | payment | money | unbound_input | `src/pages/forms/1601-eq.native:93` |
+| `1601EQ.2018-01-ENCS.input.item_36_agency` | Item 36 agency | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:99` |
+| `1601EQ.2018-01-ENCS.input.item_36_date_paid` | Item 36 date paid | external | — | — | — | — | payment | date | unbound_input | `src/pages/forms/1601-eq.native:100` |
+| `1601EQ.2018-01-ENCS.input.item_36_number` | Item 36 number | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:101` |
+| `1601EQ.2018-01-ENCS.input.item_36_amount` | Item 36 amount | external | — | — | — | — | payment | money | unbound_input | `src/pages/forms/1601-eq.native:102` |
+| `1601EQ.2018-01-ENCS.input.item_36_particular` | Item 36 particular | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:103` |

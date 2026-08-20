@@ -22223,6 +22223,21 @@ test "1601EQ opens from the library with Tax Profile identity and save disabled"
     try std.testing.expect(try appMarkupHasWidgetText(
         &model,
         .text,
+        "PART III - DETAILS OF PAYMENT",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        "33 Cash / Bank Debit Memo",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        "Item 36 particular",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
         "20 Less: tax remitted first month (0619E)",
     ));
     try std.testing.expect(try appMarkupHasWidgetText(

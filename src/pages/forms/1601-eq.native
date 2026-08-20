@@ -64,6 +64,48 @@
   </grid>
 </template>
 
+<template name="form-1601-eq-payment" args="columns">
+  <column gap="16">
+    <column gap="8">
+      <text>33 Cash / Bank Debit Memo</text>
+      <grid columns="{columns}" gap="12">
+        <!-- @include-template form-field label="Item 33 agency" ph="Bank / Agency" -->
+        <!-- @include-template form-field label="Item 33 date paid" ph="MM / DD / YYYY" -->
+        <!-- @include-template form-field label="Item 33 number" ph="Reference number" -->
+        <!-- @include-template form-field label="Item 33 amount" ph="Enter amount" -->
+      </grid>
+    </column>
+    <column gap="8">
+      <text>34 Check</text>
+      <grid columns="{columns}" gap="12">
+        <!-- @include-template form-field label="Item 34 agency" ph="Bank / Agency" -->
+        <!-- @include-template form-field label="Item 34 date paid" ph="MM / DD / YYYY" -->
+        <!-- @include-template form-field label="Item 34 number" ph="Reference number" -->
+        <!-- @include-template form-field label="Item 34 amount" ph="Enter amount" -->
+      </grid>
+    </column>
+    <column gap="8">
+      <text>35 Tax Debit Memo</text>
+      <grid columns="{columns}" gap="12">
+        <!-- @include-template form-field label="Item 35 agency" ph="Bank / Agency" -->
+        <!-- @include-template form-field label="Item 35 date paid" ph="MM / DD / YYYY" -->
+        <!-- @include-template form-field label="Item 35 number" ph="Reference number" -->
+        <!-- @include-template form-field label="Item 35 amount" ph="Enter amount" -->
+      </grid>
+    </column>
+    <column gap="8">
+      <text>36 Others</text>
+      <grid columns="{columns}" gap="12">
+        <!-- @include-template form-field label="Item 36 agency" ph="Bank / Agency" -->
+        <!-- @include-template form-field label="Item 36 date paid" ph="MM / DD / YYYY" -->
+        <!-- @include-template form-field label="Item 36 number" ph="Reference number" -->
+        <!-- @include-template form-field label="Item 36 amount" ph="Enter amount" -->
+        <!-- @include-template form-field label="Item 36 particular" ph="Particulars" -->
+      </grid>
+    </column>
+  </column>
+</template>
+
 <template name="form-1601-eq-masthead">
   <column>
     <if test="{constrainedLayout}">
@@ -137,7 +179,7 @@
       <card>
         <column padding="20" gap="12">
           <text size="heading">PART II - COMPUTATION OF TAX</text>
-          <text wrap="true" foreground="text_muted">Unbound January 2018 ENCS ATC rows 13-18 and remittance totals. Rates are not looked up, amounts are not calculated, and nothing can be saved. Payment details stay off this slice.</text>
+          <text wrap="true" foreground="text_muted">Unbound January 2018 ENCS ATC rows 13-18 and remittance totals. Rates are not looked up, amounts are not calculated, and nothing can be saved.</text>
           <if test="{constrainedLayout}">
             <use template="form-1601-eq-atc-schedule" columns="1"/>
           </if>
@@ -156,6 +198,21 @@
           </if>
           <if test="{desktopLayout}">
             <use template="form-1601-eq-remittance" columns="2"/>
+          </if>
+        </column>
+      </card>
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART III - DETAILS OF PAYMENT</text>
+          <text wrap="true" foreground="text_muted">Unbound January 2018 ENCS payment rows 33-36. These are not a filing receipt and cannot be saved.</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1601-eq-payment" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1601-eq-payment" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1601-eq-payment" columns="4"/>
           </if>
         </column>
       </card>
