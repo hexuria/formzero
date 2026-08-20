@@ -7,8 +7,8 @@
 //! - Every live form prefill is projected through the generated catalog.
 //! - Draft-backed opens resume a recurring original's immutable snapshot and
 //!   lock profile-role selectors.
-//! - Exact 1701Q uses an explicit projection-only open boundary which never
-//!   looks up or persists the older coarse recurring-draft representation.
+//! - Exact 1701Q uses an explicit projection-only open boundary. Draft-backed
+//!   open and recurring-draft persistence are retired for 1701Q.
 //!
 //! Transaction controls live in separate form-specific states. This module
 //! never invents a 2551Q ATC schedule row or rate, but it can atomically carry
@@ -417,6 +417,11 @@ pub const State = struct {
             !request.form.eql(&form_1701q.revision))
         {
             return error.WrongFormRevision;
+        }
+        if (request.form.eql(&form_1701q.revision) and
+            open_policy != .exact_1701q_projection_only)
+        {
+            return error.DraftPersistenceDisabled;
         }
 
         self.clearOwnedRevisions();
@@ -1103,6 +1108,7 @@ pub const State = struct {
 
     fn openExistingOriginal(self: *State) !bool {
         const form = self.opened_form orelse return false;
+        if (form.eql(&form_1701q.revision)) return false;
         const allocator = self.allocator.?;
         const store = self.store.?;
         const filer_id = self.selected_filer_id orelse return false;
@@ -1774,12 +1780,17 @@ test "all ten static editors project catalog profile targets and cache values" {
             corporation
         else
             person;
-        try state.open(.{
+        const request: OpenRequest = .{
             .form = form,
             .filer_profile_id = filer,
             .tax_year = 2026,
             .quarter = 1,
-        });
+        };
+        if (form.eql(&form_1701q.revision)) {
+            try state.openExact1701QProjectionOnly(request);
+        } else {
+            try state.open(request);
+        }
         try std.testing.expect(state.projectionAccepted());
         try std.testing.expect(state.snapshot().?.len > 0);
         try std.testing.expectEqual(
@@ -2273,7 +2284,7 @@ test "failed period validation clears prior form context instead of leaking it" 
     try std.testing.expectEqual(NoticeKind.failure, state.noticeKind());
 }
 
-test "1701Q optional spouse projects named role while coarse draft persistence stays disabled" {
+test "1701Q optional spouse projects named role while draft-backed open stays retired" {
     const allocator = std.testing.allocator;
     var store = try store_module.Store.openMemory(allocator);
     defer store.close();
@@ -2300,7 +2311,17 @@ test "1701Q optional spouse projects named role while coarse draft persistence s
 
     var state = State.init(allocator, &store);
     defer state.deinit();
-    try state.open(.{
+    try std.testing.expectError(
+        error.DraftPersistenceDisabled,
+        state.open(.{
+            .form = form_1701q.revision,
+            .filer_profile_id = filer,
+            .tax_year = 2026,
+            .quarter = 2,
+        }),
+    );
+    try std.testing.expect(state.formRevision() == null);
+    try state.openExact1701QProjectionOnly(.{
         .form = form_1701q.revision,
         .filer_profile_id = filer,
         .tax_year = 2026,
@@ -2323,7 +2344,7 @@ test "1701Q optional spouse projects named role while coarse draft persistence s
 
     var rejected = State.init(allocator, &store);
     defer rejected.deinit();
-    try rejected.open(.{
+    try rejected.openExact1701QProjectionOnly(.{
         .form = form_1701q.revision,
         .filer_profile_id = filer,
         .tax_year = 2026,
