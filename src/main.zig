@@ -2263,6 +2263,7 @@ pub const Model = struct {
             .form_0619_e => "BIR Form 0619-E",
             .form_0619_f => "BIR Form 0619-F",
             .form_1601_c => "BIR Form 1601-C",
+            .form_1601_eq => "BIR Form 1601EQ",
             .form_1701 => "BIR Form 1701",
             .form_1701q => "BIR Form 1701Q",
             .form_1702_rt => "BIR Form 1702-RT",
@@ -3376,6 +3377,9 @@ pub const Model = struct {
             return self.percentageTax.canBuild();
         }
         if (std.mem.eql(u8, revision.code.asSlice(), "1701Q")) {
+            return false;
+        }
+        if (std.mem.eql(u8, revision.code.asSlice(), "1601EQ")) {
             return false;
         }
         return true;
@@ -11775,6 +11779,7 @@ pub const Msg = union(enum) {
     show_form_0619_e,
     show_form_0619_f,
     show_form_1601_c,
+    show_form_1601_eq,
     show_form_1701,
     show_form_1701q,
     show_form_1702_rt,
@@ -12640,6 +12645,7 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .show_form_0619_e => openGalleryOrProfileBoundForm(model, .form_0619_e, "0619E"),
         .show_form_0619_f => openGalleryOrProfileBoundForm(model, .form_0619_f, "0619F"),
         .show_form_1601_c => openGalleryOrProfileBoundForm(model, .form_1601_c, "1601C"),
+        .show_form_1601_eq => openGalleryOrProfileBoundForm(model, .form_1601_eq, "1601EQ"),
         .show_form_1701 => openGalleryOrProfileBoundForm(model, .form_1701, "1701"),
         .show_form_1701q => openGalleryOrProfileBoundForm(model, .form_1701q, "1701Q"),
         .show_form_1702_rt => openGalleryOrProfileBoundForm(model, .form_1702_rt, "1702RT"),
@@ -15993,6 +15999,9 @@ fn saveRecurringFormDraft(model: *Model) void {
     if (std.mem.eql(u8, revision.code.asSlice(), "1701Q")) {
         return;
     }
+    if (std.mem.eql(u8, revision.code.asSlice(), "1601EQ")) {
+        return;
+    }
     _ = model.formProfiles.saveRecurringDraft() catch return;
     model.taxProfiles.refreshDraftSummariesForYear(
         model.calendar.selected_year,
@@ -16225,6 +16234,7 @@ fn profileFormRoute(form_code: []const u8) ?ProfileFormRoute {
         .{ .page = .form_0619_e, .form_code = "0619E" },
         .{ .page = .form_0619_f, .form_code = "0619F" },
         .{ .page = .form_1601_c, .form_code = "1601C" },
+        .{ .page = .form_1601_eq, .form_code = "1601EQ" },
         .{ .page = .form_1701, .form_code = "1701" },
         .{ .page = .form_1701q, .form_code = "1701Q" },
         .{ .page = .form_1702_rt, .form_code = "1702RT" },
@@ -22088,6 +22098,7 @@ test "Screen Gallery form buttons open static editor pages directly" {
         .{ .message = .show_form_0619_e, .page = .form_0619_e },
         .{ .message = .show_form_0619_f, .page = .form_0619_f },
         .{ .message = .show_form_1601_c, .page = .form_1601_c },
+        .{ .message = .show_form_1601_eq, .page = .form_1601_eq },
         .{ .message = .show_form_1701, .page = .form_1701 },
         .{ .message = .show_form_1701q, .page = .form_1701q },
         .{ .message = .show_form_1702_rt, .page = .form_1702_rt },
@@ -22102,6 +22113,108 @@ test "Screen Gallery form buttons open static editor pages directly" {
         try std.testing.expect(model.profileCompletionTarget == null);
         try std.testing.expect(model.pendingProfileFormLaunch == null);
     }
+}
+
+test "1601EQ opens from the library with Tax Profile identity and save disabled" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    try persistTestSoleProprietorRevision(
+        &store,
+        "77777777777777777777777777777777",
+        "rev-1601eq-first-page",
+        1,
+        "2026-01-01",
+        "Expanded Withholding Filer",
+        "123-456-783-000",
+        "Wholesale trade",
+    );
+
+    var model = Model{
+        .page = .taxpayer_dashboard,
+        .dashboardSection = .forms,
+    };
+    model.calendar.selected_year = 2026;
+    model.calendar.selected_month = 6;
+    model.calendarToday = try calendar_domain.Date.init(2026, 6, 30);
+    try model.taxProfiles.attach(allocator, &store, "2026-06-30", 2026);
+    model.taxProfiles.select(
+        profileSlotNamed(&model, "Expanded Withholding Filer").?,
+    );
+    model.formProfiles.attach(allocator, &store);
+    defer model.formProfiles.deinit();
+    refreshSelectedProfileFormSet(&model);
+
+    try std.testing.expect(formCatalogIndex("1601EQ") != null);
+    var row_arena = std.heap.ArenaAllocator.init(allocator);
+    defer row_arena.deinit();
+    model.libraryFilter.visible_limit = form_catalog.registry_count;
+    const rows = model.profileFormRows(row_arena.allocator());
+    var card: ?*const TaxFormLibraryRow = null;
+    for (rows) |*row| {
+        if (std.mem.eql(u8, row.code(), "1601EQ")) {
+            card = row;
+            break;
+        }
+    }
+    const library_card = card orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("Editor available", library_card.capability());
+    try std.testing.expect(library_card.launchReadyVisible());
+    const q2 = library_card.periodCells()[1];
+    try std.testing.expect(!q2.disabled());
+
+    update(&model, .{ .open_library_period = q2.actionId() });
+    try std.testing.expectEqual(Page.form_1601_eq, model.page);
+    try std.testing.expect(model.formProfiles.projectionAccepted());
+    try std.testing.expectEqualStrings(
+        "1601EQ",
+        model.formProfiles.formRevision().?.code.asSlice(),
+    );
+    try std.testing.expectEqual(@as(u8, 2), model.formProfiles.quarter());
+    try std.testing.expectEqualStrings(
+        "Expanded Withholding Filer",
+        model.formFilerTaxpayerName(),
+    );
+    try std.testing.expectEqualStrings(
+        "123-456-783-000",
+        model.formFilerTin(row_arena.allocator()),
+    );
+    try std.testing.expectEqualStrings(
+        "Wholesale trade",
+        model.formProfiles.filerText(.line_of_business),
+    );
+    try std.testing.expectEqualStrings(
+        "2026",
+        model.formFilingYear(row_arena.allocator()),
+    );
+    try std.testing.expectEqualStrings(
+        "2026 Q2",
+        model.formFilingPeriodLabel(row_arena.allocator()),
+    );
+    try std.testing.expect(!model.formProfileCanSaveDraft());
+    update(&model, .save_recurring_form_draft);
+    try std.testing.expect(model.formProfiles.draftId() == null);
+    try expectAppMarkupBuilds(&model);
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        "BIR Form No. 1601EQ",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .button,
+        "Save Draft",
+    ));
+    try std.testing.expect(!try appMarkupHasWidgetText(
+        &model,
+        .button,
+        "Print",
+    ));
+    try std.testing.expect(!try appMarkupHasWidgetText(
+        &model,
+        .button,
+        "Submit",
+    ));
 }
 
 test "library period tile opens the exact quarterly filing identity" {

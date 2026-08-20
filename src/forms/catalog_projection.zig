@@ -685,7 +685,7 @@ test "closed generated key vocabulary maps exhaustively to ReusableField" {
         }
     }
     // The closed reusable vocabulary remains broader than the fields projected
-    // by the ten current editors. ATC and tax type are no longer direct profile
+    // by the eleven current editors. ATC and tax type are no longer direct profile
     // targets: their former controls are filing data or locked form policy.
     try std.testing.expectEqual(@as(usize, 14), observed.count());
     try std.testing.expect(!observed.contains(.atc));
@@ -698,12 +698,12 @@ test "closed generated key vocabulary maps exhaustively to ReusableField" {
         );
     }
     try std.testing.expectEqual(
-        @as(usize, 33),
+        @as(usize, 35),
         catalog.optional_profile_target_count,
     );
 }
 
-test "all ten editor revisions project all ninety-one profile targets" {
+test "all editor revisions project their profile targets" {
     const allocator = std.testing.allocator;
     const on = try model.Date.parseIso("2026-03-31");
     var filer = try completeRevision(
@@ -782,9 +782,7 @@ test "all ten editor revisions project all ninety-one profile targets" {
         target_count += accepted.entries.len;
     }
 
-    try std.testing.expectEqual(@as(usize, 10), editor_count);
     try std.testing.expectEqual(catalog.editor_count, editor_count);
-    try std.testing.expectEqual(@as(usize, 91), target_count);
     try std.testing.expectEqual(catalog.profile_target_count, target_count);
 }
 

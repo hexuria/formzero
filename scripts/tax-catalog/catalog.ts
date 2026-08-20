@@ -472,7 +472,7 @@ function supportedSetupValue(
 }
 
 /**
- * Exhaustive ownership/type review of the 326 Native input controls.
+ * Exhaustive ownership/type review of the 336 Native input controls.
  *
  * Grouping keeps the source reviewable without weakening exact-ID coverage:
  * the generator rejects a discovered control missing from this table and an
@@ -665,6 +665,7 @@ const explicitInputFields = defineInputFields([
     ids: [
       "0605.1999-07-ENCS.input.year_ended_month_independent",
       "1601C.2018-01-ENCS.input.for_the_month_of",
+      "1601EQ.2018-01-ENCS.input.quarter",
       "0619F.2018-01-ENCS.input.for_the_month_of_mm_yyyy",
       "1701Q.2018-01-ENCS.input.quarter",
       "2550Q.2024-04-ENCS.input.year_end_month",
@@ -676,6 +677,7 @@ const explicitInputFields = defineInputFields([
   {
     provenance: "filing_context", role: "filing", valueType: "year",
     ids: [
+      "1601EQ.2018-01-ENCS.input.taxable_year",
       "1701Q.2018-01-ENCS.input.taxable_year",
       "1701.2018-01-ENCS.input.taxable_year",
       "1702RT.2018-01-ENCS.input.taxable_year",
@@ -716,6 +718,7 @@ const explicitInputFields = defineInputFields([
     ids: [
       "0605.1999-07-ENCS.input.email_address",
       "1601C.2018-01-ENCS.input.email_address",
+      "1601EQ.2018-01-ENCS.input.email_address",
       "0619E.2018-01-ENCS.input.email_address",
       "0619F.2018-01-ENCS.input.email_address",
       "1701Q.2018-01-ENCS.input.email_address",
@@ -731,6 +734,7 @@ const explicitInputFields = defineInputFields([
     ids: [
       "0605.1999-07-ENCS.input.contact_number",
       "1601C.2018-01-ENCS.input.contact_number",
+      "1601EQ.2018-01-ENCS.input.contact_number",
       "0619E.2018-01-ENCS.input.contact_number",
       "0619F.2018-01-ENCS.input.contact_number",
       "1701.2018-01-ENCS.input.contact_number",
@@ -745,6 +749,7 @@ const explicitInputFields = defineInputFields([
     ids: [
       "0605.1999-07-ENCS.input.zip_code",
       "1601C.2018-01-ENCS.input.zip_code",
+      "1601EQ.2018-01-ENCS.input.zip_code",
       "0619E.2018-01-ENCS.input.zip_code",
       "0619F.2018-01-ENCS.input.zip_code",
       "1701Q.2018-01-ENCS.input.zip_code",
@@ -760,6 +765,7 @@ const explicitInputFields = defineInputFields([
     ids: [
       "0605.1999-07-ENCS.input.rdo_code",
       "1601C.2018-01-ENCS.input.rdo_code",
+      "1601EQ.2018-01-ENCS.input.rdo_code",
       "0619F.2018-01-ENCS.input.rdo_code",
       "1701Q.2018-01-ENCS.input.rdo_code",
       "1701.2018-01-ENCS.input.rdo_code",
@@ -788,6 +794,7 @@ const explicitInputFields = defineInputFields([
     provenance: "profile", role: "filer", valueType: "text", profileField: "line_of_business",
     ids: [
       "1601C.2018-01-ENCS.input.line_of_business",
+      "1601EQ.2018-01-ENCS.input.line_of_business",
       "0619E.2018-01-ENCS.input.line_of_business",
       "0619F.2018-01-ENCS.input.line_of_business",
       "1702RT.2018-01-ENCS.input.line_of_business",
@@ -804,6 +811,7 @@ const explicitInputFields = defineInputFields([
     ids: [
       "0605.1999-07-ENCS.input.registered_address",
       "1601C.2018-01-ENCS.input.registered_address",
+      "1601EQ.2018-01-ENCS.input.registered_address",
       "0619E.2018-01-ENCS.input.registered_address",
       "0619F.2018-01-ENCS.input.registered_address",
       "1701Q.2018-01-ENCS.input.registered_address",
@@ -831,6 +839,7 @@ const explicitInputFields = defineInputFields([
     ids: [
       "0605.1999-07-ENCS.input.taxpayer_name",
       "1601C.2018-01-ENCS.input.taxpayer_name",
+      "1601EQ.2018-01-ENCS.input.taxpayer_name",
       "0619E.2018-01-ENCS.input.registered_taxpayer_name",
       "0619F.2018-01-ENCS.input.registered_taxpayer_name",
       "1701Q.2018-01-ENCS.input.taxpayer_filer_name",
@@ -844,6 +853,7 @@ const explicitInputFields = defineInputFields([
     ids: [
       "0605.1999-07-ENCS.input.tin",
       "1601C.2018-01-ENCS.input.tin",
+      "1601EQ.2018-01-ENCS.input.tin",
       "0619F.2018-01-ENCS.input.tin",
       "1701Q.2018-01-ENCS.input.tin",
       "1701.2018-01-ENCS.input.tin",
@@ -1231,6 +1241,31 @@ export const editorForms: readonly EditorFormSpec[] = [
         status: "derived_display",
       },
     ],
+  },
+  {
+    code: "1601EQ",
+    revision: "2018-01-ENCS",
+    revisionLabel: "January 2018 (ENCS)",
+    sourcePath: "src/pages/forms/1601-eq.native",
+    inputFields: inputFieldsFor("1601EQ", "2018-01-ENCS"),
+    expectedInputCount: 10,
+    expectedTableCount: 0,
+    expectedTableHeaders: [],
+    roles: ["filer", "filing"],
+    profileRoles: [exactlyOneFiler()],
+    consumedTaxpayerYearSettings: [],
+    taxFormProfile: {
+      mode: "no_setup",
+      specRevision: 1,
+      sourceEvidence:
+        "First editor slice: identity and filing period only; remittance stays disabled until an exact 1601EQ path exists",
+      values: [],
+    },
+    profileTargetPresence: {
+      "1601EQ.2018-01-ENCS.input.zip_code": "optional",
+      "1601EQ.2018-01-ENCS.input.email_address": "optional",
+    },
+    tableFields: [],
   },
   {
     code: "1701",

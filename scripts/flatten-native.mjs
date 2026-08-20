@@ -12,7 +12,7 @@ const maxRuntimeWatchedMarkupBytes = 256 * 1024;
 
 // Native markup templates must be defined before their first use. Keep this
 // order explicit and stable: shared components, seven main pages plus the
-// reviewer gallery, ten form pages, and seven auxiliary surfaces. Each group
+// reviewer gallery, eleven form pages, and seven auxiliary surfaces. Each group
 // becomes one bounded Native import; the editable root stays in app.native.
 const sourceGroups = [
   {
@@ -50,6 +50,7 @@ const sourceGroups = [
       "src/pages/forms/0619-e.native",
       "src/pages/forms/0619-f.native",
       "src/pages/forms/1601-c.native",
+      "src/pages/forms/1601-eq.native",
       "src/pages/forms/1701.native",
       "src/pages/forms/1701q.native",
       "src/pages/forms/1702-mx.native",

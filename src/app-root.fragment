@@ -46,6 +46,9 @@
     <if test="{contentPage == 'form_1601_c'}">
       <use template="form-1601-c"/>
     </if>
+    <if test="{contentPage == 'form_1601_eq'}">
+      <use template="form-1601-eq"/>
+    </if>
     <if test="{contentPage == 'form_1701'}">
       <use template="form-1701"/>
     </if>

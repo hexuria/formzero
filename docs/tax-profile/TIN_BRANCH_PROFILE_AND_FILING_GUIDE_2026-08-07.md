@@ -284,7 +284,7 @@ Evidence labels:
 | `2200C` | Calendar | `ReviewRequired` — blocked | **Severe identity drift:** current official list describes cosmetic procedures; the local catalog says coal and coke. Correct/prove the form identity before any obligation or editor work. |
 | `2200S` | Calendar | `ReviewRequired` | Excise requires sweetened-beverage/product, premises, and removal context. |
 | `0619E` | Editor | `RegistrationDriven` | **Family** and present in current list; verify exact period/revision. |
-| `1601EQ` | Calendar | `RegistrationDriven` | **Family** and present in current list. |
+| `1601EQ` | Editor | `RegistrationDriven` | **Family** and present in current list. Identity page only; remittance stays disabled until an exact path exists. |
 | `1701MS` | Calendar | `HeadOfficeConsolidated` / `ReviewRequired` | Income-family scope is head office, but exact `1701-MS` eligibility and instructions were not independently proven here. |
 | `1706` | Calendar | `TransactionSpecific` / `ReviewRequired` | Real-property transaction identity/context; current venue policy must be resolved separately. |
 | `1707A` | Calendar | `TransactionSpecific` / `ReviewRequired` | Annual aggregation of applicable share transactions is not ordinary branch consolidation. |

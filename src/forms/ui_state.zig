@@ -49,6 +49,7 @@ pub const editor_revisions = [_]ids.FormRevision{
     ids.FormRevision.initComptime("0619E", "2018-01-ENCS"),
     ids.FormRevision.initComptime("0619F", "2018-01-ENCS"),
     ids.FormRevision.initComptime("1601C", "2018-01-ENCS"),
+    ids.FormRevision.initComptime("1601EQ", "2018-01-ENCS"),
     ids.FormRevision.initComptime("1701", "2018-01-ENCS"),
     ids.FormRevision.initComptime("1701Q", "2018-01-ENCS"),
     ids.FormRevision.initComptime("1702MX", "2018-01-ENCS"),
@@ -587,7 +588,9 @@ pub const State = struct {
         // Exact 1701Q owns a separate occurrence/revision persistence model.
         // Never mint or resume its retired coarse deterministic draft even if
         // a caller accidentally used the general `open` boundary.
-        if (form.eql(&form_1701q.revision)) {
+        if (form.eql(&form_1701q.revision) or
+            std.mem.eql(u8, form.code.asSlice(), "1601EQ"))
+        {
             self.setErrorNotice(error.DraftPersistenceDisabled);
             return error.DraftPersistenceDisabled;
         }
@@ -1735,7 +1738,7 @@ fn configure2551QDraftProvenanceSources(
     );
 }
 
-test "all ten static editors project catalog profile targets and cache values" {
+test "all static editors project catalog profile targets and cache values" {
     const allocator = std.testing.allocator;
     var store = try store_module.Store.openMemory(allocator);
     defer store.close();
@@ -1835,7 +1838,7 @@ test "all ten static editors project catalog profile targets and cache values" {
     try std.testing.expect(found_line_of_business);
 
     try state.open(.{
-        .form = editor_revisions[3],
+        .form = ids.FormRevision.initComptime("1601C", "2018-01-ENCS"),
         .filer_profile_id = person,
         .tax_year = 2026,
         .quarter = 1,
@@ -1847,7 +1850,24 @@ test "all ten static editors project catalog profile targets and cache values" {
     try std.testing.expectEqualStrings("", state.filerText(.atc));
 
     try state.open(.{
-        .form = editor_revisions[4],
+        .form = ids.FormRevision.initComptime("1601EQ", "2018-01-ENCS"),
+        .filer_profile_id = person,
+        .tax_year = 2026,
+        .quarter = 2,
+    });
+    try std.testing.expectEqualStrings(
+        "Software consulting",
+        state.filerText(.line_of_business),
+    );
+    try std.testing.expectEqual(@as(usize, 0), state.spouseCandidates().len);
+    try std.testing.expectError(
+        error.DraftPersistenceDisabled,
+        state.saveRecurringDraft(),
+    );
+    try std.testing.expect(state.draftId() == null);
+
+    try state.open(.{
+        .form = ids.FormRevision.initComptime("1701", "2018-01-ENCS"),
         .filer_profile_id = person,
         .tax_year = 2026,
         .quarter = 1,
@@ -2359,7 +2379,7 @@ test "1701Q optional spouse projects named role while draft-backed open stays re
     try std.testing.expectEqual(NoticeKind.failure, rejected.noticeKind());
 
     try rejected.open(.{
-        .form = editor_revisions[4],
+        .form = ids.FormRevision.initComptime("1701", "2018-01-ENCS"),
         .filer_profile_id = filer,
         .spouse_profile_id = filer,
         .tax_year = 2026,
