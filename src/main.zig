@@ -17382,8 +17382,7 @@ fn openTaxFormProfileForYearAt(
         .activation_period = activation_period,
         .history_exists = history_exists,
         .inherited = inherited,
-        .annual_setup_required = definition.tax_form_profile.mode == .setup and
-            definition.tax_form_profile.values.len != 0,
+        .annual_setup_required = formRequiresAnnualSetup(definition),
         .saved_revision = saved_revision,
         .expected_current_sequence = stream_sequence,
         .copy_offer = copy_offer,
@@ -17488,6 +17487,16 @@ fn openTaxFormProfile(model: *Model, index: usize) void {
     const year_value = profileBrowseAvailabilityYear(model);
     if (year_value < 1 or year_value > 9999) return;
     openTaxFormProfileForYear(model, index, @intCast(year_value));
+}
+
+fn formRequiresAnnualSetup(definition: *const form_catalog.FormDefinition) bool {
+    if (definition.tax_form_profile.mode != .setup) return false;
+    for (definition.tax_form_profile.values) |value| {
+        if (value.availability == .supported and value.presence == .required) {
+            return true;
+        }
+    }
+    return false;
 }
 
 fn closeTaxFormProfile(model: *Model) void {
@@ -22836,6 +22845,83 @@ test "Tax Form Profile yearly settings save makes exact 1701Q launchable" {
         .text,
         "Itemized deduction",
     ));
+}
+
+test "optional-only 1701Q Tax Form Profile can first-save an empty spouse" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    const profile_id = "66666666666666666666666666666666";
+    try addTestProfile(
+        &store,
+        profile_id,
+        "Optional Spouse Filer",
+        "123-456-782-000",
+        .individual,
+    );
+
+    var model = Model{
+        .page = .taxpayer_dashboard,
+        .dashboardSection = .forms,
+    };
+    model.calendar.selected_year = 2026;
+    model.calendar.selected_month = 6;
+    model.calendarToday = try calendar_domain.Date.init(2026, 6, 30);
+    try model.taxProfiles.attach(allocator, &store, "2026-06-30", 2026);
+    model.taxProfiles.select(
+        profileSlotNamed(&model, "Optional Spouse Filer").?,
+    );
+    model.formProfiles.attach(allocator, &store);
+    defer model.formProfiles.deinit();
+    refreshSelectedProfileFormSet(&model);
+
+    const form_index = formCatalogIndex("1701Q").?;
+    try std.testing.expectEqual(
+        TaxFormProfileCardState.ready,
+        model.profilePeriodExactLaunchReadiness[form_index][1]
+            .form_profile_state,
+    );
+    try std.testing.expectEqual(
+        form_ui.LaunchStatus.ready_new,
+        model.profilePeriodLaunchAssessments[form_index][1].status,
+    );
+
+    update(&model, .{ .open_tax_form_profile = form_index });
+    try std.testing.expectEqual(Page.tax_form_profile, model.page);
+    try std.testing.expectEqual(
+        tax_form_profile_ui.PageState.needs_setup,
+        model.taxFormProfilePage.page().?,
+    );
+    try std.testing.expectEqual(
+        tax_form_profile_ui.FilingReadiness.ready,
+        model.taxFormProfilePage.filingReadiness(),
+    );
+    try std.testing.expect(model.taxFormProfileEditVisible());
+    try expectAppMarkupBuilds(&model);
+
+    update(&model, .edit_tax_form_profile);
+    try std.testing.expect(model.taxFormProfileEditing());
+    try std.testing.expect(!model.taxFormProfilePage.dirty());
+    try std.testing.expect(!model.taxFormProfileSaveDisabled());
+    try expectAppMarkupBuilds(&model);
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .button,
+        "Save Tax Form Profile",
+    ));
+
+    update(&model, .save_tax_form_profile);
+    try std.testing.expect(!model.taxFormProfileEditing());
+    try std.testing.expectEqual(
+        tax_form_profile_ui.PageState.viewing_ready,
+        model.taxFormProfilePage.page().?,
+    );
+    try std.testing.expectEqual(@as(usize, 0), model.taxFormProfilePage.baselineValues().len);
+    try std.testing.expectEqual(
+        form_ui.LaunchStatus.ready_new,
+        model.profilePeriodLaunchAssessments[form_index][1].status,
+    );
+    try expectAppMarkupBuilds(&model);
 }
 
 test "exact 1701Q survives navigation and only explicit discard permits replacement" {

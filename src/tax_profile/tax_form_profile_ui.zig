@@ -302,9 +302,10 @@ pub const OpenArgs = struct {
     activation_period: ?tax_form_profile.EffectivePeriod = null,
     history_exists: bool = false,
     inherited: InheritedReadiness = .{},
-    /// True when the generated form contract requires an explicit annual
-    /// candidate. Optional-only contracts otherwise remain filing-ready
-    /// without an empty fabricated revision.
+    /// Kept for source compatibility. `State.open` derives the real value
+    /// from the generated form contract: a required supported annual value.
+    /// Optional-only contracts remain filing-ready without a revision, and
+    /// a brand-new empty editor may still confirm that choice with Save.
     annual_setup_required: bool = false,
     saved_revision: ?*const tax_form_profile.Revision = null,
     /// Stream-wide optimistic head. This is separate from the revision shown
@@ -367,7 +368,7 @@ pub const State = struct {
         result.history_exists = args.history_exists or
             args.saved_revision != null;
         result.inherited = args.inherited;
-        result.annual_setup_required = args.annual_setup_required;
+        result.annual_setup_required = formRequiresAnnualCandidate(form);
         result.identity = try identityFor(form, args.profile_id, args.tax_year);
         result.copy_offer = args.copy_offer;
 
@@ -857,9 +858,13 @@ pub const State = struct {
         const editing = self.page_state == .editing;
         const form_supports_setup = self.setup_mode == .setup;
         const annual = self.annualReadiness();
-        // A saved optional-only setup can be cleared.  The resulting empty
-        // revision is meaningful append-only history, not a fabricated first
-        // setup: a brand-new optional form remains clean and cannot save.
+        // A saved optional-only setup can be cleared. The empty revision is
+        // append-only history. A brand-new optional-only editor may also
+        // Save an empty first revision to confirm that no optional values
+        // apply; filing is already ready without that revision.
+        const first_optional_confirm = !self.baseline_confirmed and
+            !self.annual_setup_required and
+            !annual.has_nonempty_candidate;
         const draft_complete = annual.applicable and
             annual.missing_required_count == 0 and
             (annual.has_nonempty_candidate or !self.annual_setup_required);
@@ -887,7 +892,8 @@ pub const State = struct {
                 self.setup_mode != .calendar_only and
                 !self.inherited.ready(),
             .can_edit_tax_form_profile = mutable and !editing,
-            .can_save = mutable and editing and self.dirty() and
+            .can_save = mutable and editing and
+                (self.dirty() or first_optional_confirm) and
                 draft_complete and review_complete and idle_enough and
                 !has_conflict,
             .can_cancel = mutable and editing and self.dirty() and
@@ -1479,6 +1485,18 @@ fn incomeRateValue(raw: []const u8) !tax_form_profile.SetupValue {
     };
 }
 
+fn formRequiresAnnualCandidate(form: *const catalog.FormDefinition) bool {
+    if (form.tax_form_profile.mode != .setup) return false;
+    for (form.tax_form_profile.values) |definition| {
+        if (definition.availability == .supported and
+            definition.presence == .required)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 fn fullYearActivation(tax_year: u16) !tax_form_profile.EffectivePeriod {
     return tax_form_profile.EffectivePeriod.init(
         try tax_form_profile.Date.init(tax_year, 1, 1),
@@ -1750,7 +1768,7 @@ test "inactive history has no current activation and active revisions must match
     }));
 }
 
-test "optional-only setup is ready without an empty annual revision" {
+test "optional-only setup can first-save an empty confirmed revision" {
     const profile_id = try model.ProfileId.parse("profile-optional");
     var state = try State.open(.{
         .profile_id = profile_id,
@@ -1766,8 +1784,22 @@ test "optional-only setup is ready without an empty annual revision" {
     try std.testing.expectEqual(@as(usize, 0), state.baselineValues().len);
 
     try state.beginEdit();
-    try std.testing.expect(!state.affordances().can_save);
-    try std.testing.expectError(error.ActionDisabled, state.beginSave());
+    try std.testing.expect(!state.dirty());
+    try std.testing.expect(state.affordances().can_save);
+    const intent = try state.beginSave();
+    try std.testing.expectEqual(@as(usize, 0), intent.values.len);
+    const saved = try fixtureRevision(
+        "1701Q",
+        profile_id,
+        2026,
+        "optional-first-r1",
+        1,
+        .confirmed,
+        &.{},
+    );
+    try state.saveSucceeded(&saved);
+    try std.testing.expectEqual(PageState.viewing_ready, state.page().?);
+    try std.testing.expectEqual(FilingReadiness.ready, state.filingReadiness());
 }
 
 test "required 2551Q setup cannot be cleared and saved" {
