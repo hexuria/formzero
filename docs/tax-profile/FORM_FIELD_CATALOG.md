@@ -10,18 +10,18 @@ exists yet; it does not imply filing support.
 ## Coverage
 
 - Registry codes: 51
-- Native editor revisions: 10
-- Calendar-only codes: 41
-- Native input controls inventoried: 326
+- Native editor revisions: 11
+- Calendar-only codes: 40
+- Native input controls inventoried: 336
 - Meaningful static-table fields inventoried: 63
-- Direct profile projection targets: 91
-- Optional profile projection targets: 33
+- Direct profile projection targets: 99
+- Optional profile projection targets: 35
 - Visible taxpayer-year setting targets: 1
 - Taxpayer-year consumer forms: 2
 - Declared taxpayer-year setting consumptions: 4
 - Fixed form-policy targets: 4
 - Nonempty Tax Form Profile setup contracts: 4
-- Explicit `no_setup` editor contracts: 6
+- Explicit `no_setup` editor contracts: 7
 - Tax Form Profile semantic values: 4
 - Evidence-required (unsupported) setup values: 0
 
@@ -72,7 +72,7 @@ exists yet; it does not imply filing support.
 | 2200C | Excise Tax Return for Coal and Coke | excise_tax | — | calendar_only | calendar_only | — | monthly | 1-12 | 0 | 0 | — |
 | 2200S | Excise Tax Return for Sweetened Beverages | excise_tax | — | calendar_only | calendar_only | — | monthly | 1-12 | 0 | 0 | — |
 | 0619E | Monthly Remittance Form for Creditable Income Taxes Withheld (Expanded) | withholding_tax | 2018-01-ENCS | static_layout | no_setup | — | monthly | 1-12 | 24 | 4 | src/pages/forms/0619-e.native |
-| 1601EQ | Quarterly Remittance Return of Creditable Income Taxes Withheld (Expanded) | withholding_tax | — | calendar_only | calendar_only | — | quarterly | 1-4 | 0 | 0 | — |
+| 1601EQ | Quarterly Remittance Return of Creditable Income Taxes Withheld (Expanded) | withholding_tax | 2018-01-ENCS | static_layout | no_setup | — | quarterly | 1-4 | 10 | 0 | src/pages/forms/1601-eq.native |
 | 1701MS | Annual Income Tax Return for Micro and Small Taxpayers | income_tax | — | calendar_only | calendar_only | — | annual | — | 0 | 0 | — |
 | 1706 | Capital Gains Tax Return (Real Properties) | capital_gains_tax | — | calendar_only | calendar_only | — | on_demand | — | 0 | 0 | — |
 | 1707A | Annual Capital Gains Tax Return (Shares of Stock Not Traded) | capital_gains_tax | — | calendar_only | calendar_only | — | on_demand | — | 0 | 0 | — |
@@ -118,6 +118,7 @@ transaction defaults; this is intentional rather than an inferred omission.
 | 2550Q 2024-04-ENCS | no_setup | 1 | `49363b23a0fd60148850df5a6f3b162b907e95840efc80af3c7a60700e3ab7f6` | 0 | 0 | 0 | Ownership matrix § 2550Q finds no genuine form-specific annual setup value |
 | 2551Q 2018-01-ENCS | setup | 2 | `7f3df1b82f7d72e8e9b29ff01e10b086e0a6b1a1d4702861cd9f8d175f62cef4` | 1 | 1 | 0 | 2551Q January 2018 ENCS Item 13 is a form-specific yearly choice projected only on the initial applicable quarter |
 | 0619E 2018-01-ENCS | no_setup | 1 | `0bbca08d13a26690fb24c819c36c4c83aafe1e150ee6b4aef10fd4bce16d3579` | 0 | 0 | 0 | Line of business is inherited from the Base Tax Profile; 0619E has no form-specific yearly setup |
+| 1601EQ 2018-01-ENCS | no_setup | 1 | `00da4f31d7e8646a51315909b4eadf20feaf1bd8b7d8127158bf0475bed3be1a` | 0 | 0 | 0 | First editor slice: identity and filing period only; remittance stays disabled until an exact 1601EQ path exists |
 
 | Form revision | Semantic key | Value type | Role | Presence | Validation | Ownership | Source kind | Availability | Source evidence | Blocking evidence gate |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -240,6 +241,14 @@ excluded even when a selected registration may help compose a row.
 | 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `zip_code` | `0619E.2018-01-ENCS.input.zip_code` |
 | 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `contact_number` | `0619E.2018-01-ENCS.input.contact_number` |
 | 0619E 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `email_address` | `0619E.2018-01-ENCS.input.email_address` |
+| 1601EQ 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `tin` | `1601EQ.2018-01-ENCS.input.tin` |
+| 1601EQ 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `rdo_code` | `1601EQ.2018-01-ENCS.input.rdo_code` |
+| 1601EQ 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `taxpayer_name` | `1601EQ.2018-01-ENCS.input.taxpayer_name` |
+| 1601EQ 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `registered_address` | `1601EQ.2018-01-ENCS.input.registered_address` |
+| 1601EQ 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `zip_code` | `1601EQ.2018-01-ENCS.input.zip_code` |
+| 1601EQ 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `line_of_business` | `1601EQ.2018-01-ENCS.input.line_of_business` |
+| 1601EQ 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | required | `contact_number` | `1601EQ.2018-01-ENCS.input.contact_number` |
+| 1601EQ 2018-01-ENCS | filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity | optional | `email_address` | `1601EQ.2018-01-ENCS.input.email_address` |
 
 ## 0605 — 1999-07-ENCS
 
@@ -821,3 +830,32 @@ Profile binding policy:
 | `0619E.2018-01-ENCS.table.payment.bank_agency` | Drawee bank or collecting agency | external | — | — | — | — | payment | text | static_table | `src/pages/forms/0619-e.native (table schema)` |
 | `0619E.2018-01-ENCS.table.payment.reference_number` | Payment reference number | external | — | — | — | — | payment | text | static_table | `src/pages/forms/0619-e.native (table schema)` |
 | `0619E.2018-01-ENCS.table.payment.amount` | Payment amount | external | — | — | — | — | payment | money | static_table | `src/pages/forms/0619-e.native (table schema)` |
+
+## 1601EQ — 2018-01-ENCS
+
+Source: `src/pages/forms/1601-eq.native`
+
+Tax Form Profile: `no_setup`, spec revision 1, SHA-256 `00da4f31d7e8646a51315909b4eadf20feaf1bd8b7d8127158bf0475bed3be1a`
+
+Consumed taxpayer-year settings: none
+
+Named roles: `filer`, `filing`
+
+Profile binding policy:
+
+| Profile role | Cardinality | Allowed subject kinds |
+|---|---|---|
+| filer | exactly_one | individual, sole_proprietor, corporation, partnership, cooperative, estate, trust, other_legal_entity |
+
+| Stable field ID | Label | Provenance | Profile key | Presence | Source key | Fixed value | Role | Type | Status | Source |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `1601EQ.2018-01-ENCS.input.tin` | TIN | profile | tin | required | — | — | filer | tin | unbound_input | `src/pages/forms/1601-eq.native:3` |
+| `1601EQ.2018-01-ENCS.input.rdo_code` | RDO Code | profile | rdo_code | required | — | — | filer | rdo_code | unbound_input | `src/pages/forms/1601-eq.native:4` |
+| `1601EQ.2018-01-ENCS.input.taxpayer_name` | Taxpayer Name | profile | taxpayer_name | required | — | — | filer | text | unbound_input | `src/pages/forms/1601-eq.native:5` |
+| `1601EQ.2018-01-ENCS.input.registered_address` | Registered Address | profile | registered_address | required | — | — | filer | text | unbound_input | `src/pages/forms/1601-eq.native:6` |
+| `1601EQ.2018-01-ENCS.input.zip_code` | ZIP Code | profile | zip_code | optional | — | — | filer | postal_code | unbound_input | `src/pages/forms/1601-eq.native:7` |
+| `1601EQ.2018-01-ENCS.input.line_of_business` | Line of Business | profile | line_of_business | required | — | — | filer | text | unbound_input | `src/pages/forms/1601-eq.native:8` |
+| `1601EQ.2018-01-ENCS.input.contact_number` | Contact Number | profile | contact_number | required | — | — | filer | phone | unbound_input | `src/pages/forms/1601-eq.native:9` |
+| `1601EQ.2018-01-ENCS.input.email_address` | Email Address | profile | email_address | optional | — | — | filer | email | unbound_input | `src/pages/forms/1601-eq.native:10` |
+| `1601EQ.2018-01-ENCS.input.taxable_year` | Taxable Year | filing_context | — | — | — | — | filing | year | unbound_input | `src/pages/forms/1601-eq.native:16` |
+| `1601EQ.2018-01-ENCS.input.quarter` | Quarter | filing_context | — | — | — | — | filing | tax_period | unbound_input | `src/pages/forms/1601-eq.native:17` |

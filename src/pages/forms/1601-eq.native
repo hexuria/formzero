@@ -1,0 +1,93 @@
+<template name="form-1601-eq-identity" args="columns">
+  <grid columns="{columns}" gap="12">
+    <!-- @include-template form-field-bound label="TIN" v="{formFilerTin}" ph="000-000-000-000" -->
+    <!-- @include-template form-field-bound label="RDO Code" v="{formFilerRdo}" ph="RDO" -->
+    <!-- @include-template form-field-bound label="Taxpayer Name" v="{formFilerTaxpayerName}" ph="Registered taxpayer name" -->
+    <!-- @include-template form-field-bound label="Registered Address" v="{formFilerRegisteredAddress}" ph="Registered address" -->
+    <!-- @include-template form-field-bound label="ZIP Code" v="{formFilerZipCode}" ph="-" -->
+    <!-- @include-template form-field-bound label="Line of Business" v="{formFilerLineOfBusiness}" ph="Primary Line of Business" -->
+    <!-- @include-template form-field-bound label="Contact Number" v="{formFilerContactNumber}" ph="Contact number" -->
+    <!-- @include-template form-field-bound label="Email Address" v="{formFilerEmailAddress}" ph="-" -->
+  </grid>
+</template>
+
+<template name="form-1601-eq-period" args="columns">
+  <grid columns="{columns}" gap="12">
+    <!-- @include-template form-field-bound label="Taxable Year" v="{formFilingYear}" ph="YYYY" -->
+    <!-- @include-template form-field-bound label="Quarter" v="{formFilingPeriodLabel}" ph="Q1 / Q2 / Q3 / Q4" -->
+  </grid>
+</template>
+
+<template name="form-1601-eq-masthead">
+  <column>
+    <if test="{constrainedLayout}">
+      <column gap="16">
+        <column gap="6">
+          <text size="heading">BIR Form No. 1601EQ</text>
+          <text>Quarterly Remittance Return of Creditable Income Taxes Withheld (Expanded)</text>
+          <row gap="8" cross="center">
+            <text foreground="text_muted" grow="1">January 2018 (ENCS)</text>
+            <badge>Draft</badge>
+          </row>
+        </column>
+        <column gap="8">
+          <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+          <separator/>
+          <button variant="secondary" disabled="true">Save Draft</button>
+        </column>
+      </column>
+    </if>
+    <else>
+      <column gap="16">
+        <row gap="16" cross="center">
+          <column gap="4" grow="1">
+            <text size="heading">BIR Form No. 1601EQ</text>
+            <text>Quarterly Remittance Return of Creditable Income Taxes Withheld (Expanded)</text>
+            <text foreground="text_muted">January 2018 (ENCS)</text>
+          </column>
+          <badge>Draft</badge>
+        </row>
+        <row gap="8">
+          <button variant="ghost" on-press="show_taxpayer_dashboard">Back</button>
+          <spacer/>
+          <button variant="secondary" disabled="true">Save Draft</button>
+        </row>
+      </column>
+    </else>
+  </column>
+</template>
+
+<template name="form-1601-eq">
+  <scroll grow="1" global-key="page-form-1601-eq">
+    <column padding="32" gap="24">
+      <use template="form-1601-eq-masthead"/>
+      <!-- @include-template tax-profile-form-context -->
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Taxpayer identity</text>
+          <text wrap="true" foreground="text_muted">These values come from the saved Tax Profile for this filing period. Save and remittance remain disabled until an exact 1601EQ path exists.</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1601-eq-identity" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1601-eq-identity" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1601-eq-identity" columns="3"/>
+          </if>
+        </column>
+      </card>
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">Filing period</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1601-eq-period" columns="1"/>
+          </if>
+          <else>
+            <use template="form-1601-eq-period" columns="2"/>
+          </else>
+        </column>
+      </card>
+    </column>
+  </scroll>
+</template>

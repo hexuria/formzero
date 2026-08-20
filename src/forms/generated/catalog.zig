@@ -5,7 +5,7 @@
 const std = @import("std");
 
 pub const catalog_revision = "tax-catalog-v2";
-pub const catalog_sha256 = "41200bec527266932e14c05df492710fa118dd82c0203d30c7fd77444f33b571";
+pub const catalog_sha256 = "c7e4c4b26fd2f273bdad134c0659e9d4f8eb23278800b6519d93b98f7aafa996";
 
 pub const Provenance = enum { profile, tax_form_profile, taxpayer_year, form_policy, transaction, derived, filing_context, external };
 pub const Role = enum { filer, spouse, filing, payment, preparer, employer, withholding_agent, attachment, evidence, system };
@@ -6302,6 +6302,184 @@ const fields_0619e_2018_01_encs = [_]FieldDefinition{
     },
 };
 
+const roles_1601eq_2018_01_encs = [_]Role{
+    .filer,
+    .filing,
+};
+
+const profile_roles_1601eq_2018_01_encs = [_]ProfileRoleDefinition{
+    .{
+        .role = .filer,
+        .cardinality = .exactly_one,
+        .allowed_subjects = &.{ .individual, .sole_proprietor, .corporation, .partnership, .cooperative, .estate, .trust, .other_legal_entity },
+        .distinct_from = &.{},
+    },
+};
+
+const tax_form_profile_values_1601eq_2018_01_encs = [_]TaxFormProfileValueDefinition{
+};
+
+const tax_form_profile_spec_1601eq_2018_01_encs = TaxFormProfileSpec{
+    .mode = .no_setup,
+    .spec_revision = 1,
+    .spec_hash = "00da4f31d7e8646a51315909b4eadf20feaf1bd8b7d8127158bf0475bed3be1a",
+    .source_evidence = "First editor slice: identity and filing period only; remittance stays disabled until an exact 1601EQ path exists",
+    .values = &tax_form_profile_values_1601eq_2018_01_encs,
+};
+
+const fields_1601eq_2018_01_encs = [_]FieldDefinition{
+    .{
+        .id = "1601EQ.2018-01-ENCS.input.tin",
+        .label = "TIN",
+        .provenance = .profile,
+        .role = .filer,
+        .value_type = .tin,
+        .status = .unbound_input,
+        .profile_key = "tin",
+        .profile_presence = .required,
+        .source_key = null,
+        .fixed_value = null,
+        .source_path = "src/pages/forms/1601-eq.native",
+        .source_line = 3,
+        .control = .input,
+    },
+    .{
+        .id = "1601EQ.2018-01-ENCS.input.rdo_code",
+        .label = "RDO Code",
+        .provenance = .profile,
+        .role = .filer,
+        .value_type = .rdo_code,
+        .status = .unbound_input,
+        .profile_key = "rdo_code",
+        .profile_presence = .required,
+        .source_key = null,
+        .fixed_value = null,
+        .source_path = "src/pages/forms/1601-eq.native",
+        .source_line = 4,
+        .control = .input,
+    },
+    .{
+        .id = "1601EQ.2018-01-ENCS.input.taxpayer_name",
+        .label = "Taxpayer Name",
+        .provenance = .profile,
+        .role = .filer,
+        .value_type = .text,
+        .status = .unbound_input,
+        .profile_key = "taxpayer_name",
+        .profile_presence = .required,
+        .source_key = null,
+        .fixed_value = null,
+        .source_path = "src/pages/forms/1601-eq.native",
+        .source_line = 5,
+        .control = .input,
+    },
+    .{
+        .id = "1601EQ.2018-01-ENCS.input.registered_address",
+        .label = "Registered Address",
+        .provenance = .profile,
+        .role = .filer,
+        .value_type = .text,
+        .status = .unbound_input,
+        .profile_key = "registered_address",
+        .profile_presence = .required,
+        .source_key = null,
+        .fixed_value = null,
+        .source_path = "src/pages/forms/1601-eq.native",
+        .source_line = 6,
+        .control = .input,
+    },
+    .{
+        .id = "1601EQ.2018-01-ENCS.input.zip_code",
+        .label = "ZIP Code",
+        .provenance = .profile,
+        .role = .filer,
+        .value_type = .postal_code,
+        .status = .unbound_input,
+        .profile_key = "zip_code",
+        .profile_presence = .optional,
+        .source_key = null,
+        .fixed_value = null,
+        .source_path = "src/pages/forms/1601-eq.native",
+        .source_line = 7,
+        .control = .input,
+    },
+    .{
+        .id = "1601EQ.2018-01-ENCS.input.line_of_business",
+        .label = "Line of Business",
+        .provenance = .profile,
+        .role = .filer,
+        .value_type = .text,
+        .status = .unbound_input,
+        .profile_key = "line_of_business",
+        .profile_presence = .required,
+        .source_key = null,
+        .fixed_value = null,
+        .source_path = "src/pages/forms/1601-eq.native",
+        .source_line = 8,
+        .control = .input,
+    },
+    .{
+        .id = "1601EQ.2018-01-ENCS.input.contact_number",
+        .label = "Contact Number",
+        .provenance = .profile,
+        .role = .filer,
+        .value_type = .phone,
+        .status = .unbound_input,
+        .profile_key = "contact_number",
+        .profile_presence = .required,
+        .source_key = null,
+        .fixed_value = null,
+        .source_path = "src/pages/forms/1601-eq.native",
+        .source_line = 9,
+        .control = .input,
+    },
+    .{
+        .id = "1601EQ.2018-01-ENCS.input.email_address",
+        .label = "Email Address",
+        .provenance = .profile,
+        .role = .filer,
+        .value_type = .email,
+        .status = .unbound_input,
+        .profile_key = "email_address",
+        .profile_presence = .optional,
+        .source_key = null,
+        .fixed_value = null,
+        .source_path = "src/pages/forms/1601-eq.native",
+        .source_line = 10,
+        .control = .input,
+    },
+    .{
+        .id = "1601EQ.2018-01-ENCS.input.taxable_year",
+        .label = "Taxable Year",
+        .provenance = .filing_context,
+        .role = .filing,
+        .value_type = .year,
+        .status = .unbound_input,
+        .profile_key = null,
+        .profile_presence = null,
+        .source_key = null,
+        .fixed_value = null,
+        .source_path = "src/pages/forms/1601-eq.native",
+        .source_line = 16,
+        .control = .input,
+    },
+    .{
+        .id = "1601EQ.2018-01-ENCS.input.quarter",
+        .label = "Quarter",
+        .provenance = .filing_context,
+        .role = .filing,
+        .value_type = .tax_period,
+        .status = .unbound_input,
+        .profile_key = null,
+        .profile_presence = null,
+        .source_key = null,
+        .fixed_value = null,
+        .source_path = "src/pages/forms/1601-eq.native",
+        .source_line = 17,
+        .control = .input,
+    },
+};
+
 pub const forms = [_]FormDefinition{
     .{
         .code = "0605",
@@ -7237,23 +7415,17 @@ pub const forms = [_]FormDefinition{
         .code = "1601EQ",
         .display_title = "Quarterly Remittance Return of Creditable Income Taxes Withheld (Expanded)",
         .tax_category = .withholding_tax,
-        .revision = null,
-        .status = .calendar_only,
+        .revision = "2018-01-ENCS",
+        .status = .static_layout,
         .cadence = .quarterly,
         .min_period = 1,
         .max_period = 4,
-        .source_path = null,
-        .roles = &.{},
-        .profile_roles = &.{},
+        .source_path = "src/pages/forms/1601-eq.native",
+        .roles = &roles_1601eq_2018_01_encs,
+        .profile_roles = &profile_roles_1601eq_2018_01_encs,
         .consumed_taxpayer_year_settings = &.{},
-        .tax_form_profile = .{
-            .mode = .calendar_only,
-            .spec_revision = null,
-            .spec_hash = null,
-            .source_evidence = "calendar_only: no Native editor contract",
-            .values = &.{},
-        },
-        .fields = &.{},
+        .tax_form_profile = tax_form_profile_spec_1601eq_2018_01_encs,
+        .fields = &fields_1601eq_2018_01_encs,
     },
     .{
         .code = "1701MS",
@@ -7368,18 +7540,18 @@ pub const forms = [_]FormDefinition{
 };
 
 pub const registry_count: usize = 51;
-pub const editor_count: usize = 10;
-pub const calendar_only_count: usize = 41;
-pub const native_input_count: usize = 326;
+pub const editor_count: usize = 11;
+pub const calendar_only_count: usize = 40;
+pub const native_input_count: usize = 336;
 pub const table_field_count: usize = 63;
-pub const profile_target_count: usize = 91;
-pub const optional_profile_target_count: usize = 33;
+pub const profile_target_count: usize = 99;
+pub const optional_profile_target_count: usize = 35;
 pub const taxpayer_year_target_count: usize = 1;
 pub const taxpayer_year_consumer_form_count: usize = 2;
 pub const taxpayer_year_consumption_count: usize = 4;
 pub const form_policy_target_count: usize = 4;
 pub const tax_form_profile_setup_count: usize = 4;
-pub const tax_form_profile_no_setup_count: usize = 6;
+pub const tax_form_profile_no_setup_count: usize = 7;
 pub const tax_form_profile_value_count: usize = 4;
 pub const tax_form_profile_evidence_required_value_count: usize = 0;
 

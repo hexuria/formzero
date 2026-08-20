@@ -16,6 +16,7 @@
     <button variant="secondary" on-press="show_form_0619_e">0619-E - Creditable Income Taxes Withheld</button>
     <button variant="secondary" on-press="show_form_0619_f">0619-F - Final Income Taxes Withheld</button>
     <button variant="secondary" on-press="show_form_1601_c">1601C - Compensation Withholding</button>
+    <button variant="secondary" on-press="show_form_1601_eq">1601EQ - Expanded Withholding Quarterly</button>
     <button variant="secondary" on-press="show_form_1701">1701 - Annual Individual ITR</button>
     <button variant="secondary" on-press="show_form_1701q">1701Q - Quarterly Individual ITR</button>
     <button variant="secondary" on-press="show_form_1702_rt">1702-RT - Regular-Rate Corporation ITR</button>
