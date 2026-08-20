@@ -13,8 +13,25 @@
 
 <template name="form-1601-eq-period" args="columns">
   <grid columns="{columns}" gap="12">
-    <!-- @include-template form-field-bound label="Taxable Year" v="{formFilingYear}" ph="YYYY" -->
-    <!-- @include-template form-field-bound label="Quarter" v="{formFilingPeriodLabel}" ph="Q1 / Q2 / Q3 / Q4" -->
+    <!-- @include-template form-field-bound label="1 Taxable Year" v="{formFilingYear}" ph="YYYY" -->
+    <!-- @include-template form-field-bound label="2 Quarter" v="{formFilingPeriodLabel}" ph="Q1 / Q2 / Q3 / Q4" -->
+    <!-- @include-template form-field label="3 Amended Return?" ph="No" -->
+    <!-- @include-template form-field label="4 Any Taxes Withheld?" ph="Yes / No" -->
+    <!-- @include-template form-field label="5 Number of Sheets Attached" ph="Enter number" -->
+    <!-- @include-template form-field label="Withholding Agent Category" ph="Private / Government" -->
+  </grid>
+</template>
+
+<template name="form-1601-eq-remittance" args="columns">
+  <grid columns="{columns}" gap="12">
+    <!-- @include-template form-field label="19 Total tax withheld this quarter" ph="Enter amount" -->
+    <!-- @include-template form-field label="20 Less: tax remitted first month (0619E)" ph="Enter amount" -->
+    <!-- @include-template form-field label="21 Less: tax remitted second month (0619E)" ph="Enter amount" -->
+    <!-- @include-template form-field label="25 Tax still due" ph="Enter amount" -->
+    <!-- @include-template form-field label="26 Surcharge" ph="Enter amount" -->
+    <!-- @include-template form-field label="27 Interest" ph="Enter amount" -->
+    <!-- @include-template form-field label="28 Compromise" ph="Enter amount" -->
+    <!-- @include-template form-field label="31 Total amount payable" ph="Enter amount" -->
   </grid>
 </template>
 
@@ -65,7 +82,7 @@
       <card>
         <column padding="20" gap="12">
           <text size="heading">Taxpayer identity</text>
-          <text wrap="true" foreground="text_muted">These values come from the saved Tax Profile for this filing period. Save and remittance remain disabled until an exact 1601EQ path exists.</text>
+          <text wrap="true" foreground="text_muted">These values come from the saved Tax Profile for this filing period. Save stays disabled until an exact 1601EQ path exists.</text>
           <if test="{constrainedLayout}">
             <use template="form-1601-eq-identity" columns="1"/>
           </if>
@@ -79,13 +96,28 @@
       </card>
       <card>
         <column padding="20" gap="12">
-          <text size="heading">Filing period</text>
+          <text size="heading">PART I - BACKGROUND INFORMATION</text>
           <if test="{constrainedLayout}">
             <use template="form-1601-eq-period" columns="1"/>
           </if>
           <else>
             <use template="form-1601-eq-period" columns="2"/>
           </else>
+        </column>
+      </card>
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">PART II - COMPUTATION OF TAX</text>
+          <text wrap="true" foreground="text_muted">Unbound remittance totals from the January 2018 ENCS return. ATC rows 13-18 and payment details stay off this slice. Amounts are not calculated and cannot be saved.</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1601-eq-remittance" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1601-eq-remittance" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1601-eq-remittance" columns="2"/>
+          </if>
         </column>
       </card>
     </column>
