@@ -472,7 +472,7 @@ function supportedSetupValue(
 }
 
 /**
- * Exhaustive ownership/type review of the 348 Native input controls.
+ * Exhaustive ownership/type review of the 372 Native input controls.
  *
  * Grouping keeps the source reviewable without weakening exact-ID coverage:
  * the generator rejects a discovered control missing from this table and an
@@ -558,6 +558,12 @@ const explicitInputFields = defineInputFields([
       "1601EQ.2018-01-ENCS.input.interest",
       "1601EQ.2018-01-ENCS.input.compromise",
       "1601EQ.2018-01-ENCS.input.total_amount_payable",
+      "1601EQ.2018-01-ENCS.input.item_13_tax_withheld",
+      "1601EQ.2018-01-ENCS.input.item_14_tax_withheld",
+      "1601EQ.2018-01-ENCS.input.item_15_tax_withheld",
+      "1601EQ.2018-01-ENCS.input.item_16_tax_withheld",
+      "1601EQ.2018-01-ENCS.input.item_17_tax_withheld",
+      "1601EQ.2018-01-ENCS.input.item_18_tax_withheld",
     ],
   },
   {
@@ -609,6 +615,17 @@ const explicitInputFields = defineInputFields([
       "1702MX.2018-01-ENCS.input.special_preferential_tax_rate",
       "2551Q.2018-01-ENCS.input.schedule_1_line_1_policy_supplied_tax_rate",
       "2551Q.2018-01-ENCS.input.schedule_1_line_2_policy_supplied_tax_rate",
+    ],
+  },
+  {
+    provenance: "transaction", role: "filing", valueType: "percent",
+    ids: [
+      "1601EQ.2018-01-ENCS.input.item_13_tax_rate",
+      "1601EQ.2018-01-ENCS.input.item_14_tax_rate",
+      "1601EQ.2018-01-ENCS.input.item_15_tax_rate",
+      "1601EQ.2018-01-ENCS.input.item_16_tax_rate",
+      "1601EQ.2018-01-ENCS.input.item_17_tax_rate",
+      "1601EQ.2018-01-ENCS.input.item_18_tax_rate",
     ],
   },
   {
@@ -918,6 +935,12 @@ const explicitInputFields = defineInputFields([
       "0605.1999-07-ENCS.input.atc_only_source_proven_pairs",
       "2551Q.2018-01-ENCS.input.schedule_1_line_1_percentage_tax_code",
       "2551Q.2018-01-ENCS.input.schedule_1_line_2_percentage_tax_code",
+      "1601EQ.2018-01-ENCS.input.item_13_atc",
+      "1601EQ.2018-01-ENCS.input.item_14_atc",
+      "1601EQ.2018-01-ENCS.input.item_15_atc",
+      "1601EQ.2018-01-ENCS.input.item_16_atc",
+      "1601EQ.2018-01-ENCS.input.item_17_atc",
+      "1601EQ.2018-01-ENCS.input.item_18_atc",
     ],
   },
   {
@@ -1012,6 +1035,12 @@ const explicitInputFields = defineInputFields([
       "2551Q.2018-01-ENCS.input.compromise_manual",
       "0619E.2018-01-ENCS.input.amount_of_remittance",
       "1601EQ.2018-01-ENCS.input.total_tax_withheld_this_quarter",
+      "1601EQ.2018-01-ENCS.input.item_13_tax_base",
+      "1601EQ.2018-01-ENCS.input.item_14_tax_base",
+      "1601EQ.2018-01-ENCS.input.item_15_tax_base",
+      "1601EQ.2018-01-ENCS.input.item_16_tax_base",
+      "1601EQ.2018-01-ENCS.input.item_17_tax_base",
+      "1601EQ.2018-01-ENCS.input.item_18_tax_base",
     ],
   },
   {
@@ -1260,7 +1289,7 @@ export const editorForms: readonly EditorFormSpec[] = [
     revisionLabel: "January 2018 (ENCS)",
     sourcePath: "src/pages/forms/1601-eq.native",
     inputFields: inputFieldsFor("1601EQ", "2018-01-ENCS"),
-    expectedInputCount: 22,
+    expectedInputCount: 46,
     expectedTableCount: 0,
     expectedTableHeaders: [],
     roles: ["filer", "filing", "evidence", "system"],
@@ -1270,7 +1299,7 @@ export const editorForms: readonly EditorFormSpec[] = [
       mode: "no_setup",
       specRevision: 1,
       sourceEvidence:
-        "Identity, filing choices, and unbound remittance totals; exact ATC schedule and save stay disabled until an exact 1601EQ path exists",
+        "Identity, filing choices, unbound ATC rows 13-18, and remittance totals; save stays disabled until an exact 1601EQ path exists",
       values: [],
     },
     profileTargetPresence: {

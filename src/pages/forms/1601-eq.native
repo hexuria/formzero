@@ -22,6 +22,35 @@
   </grid>
 </template>
 
+<template name="form-1601-eq-atc-schedule" args="columns">
+  <grid columns="{columns}" gap="12">
+    <!-- @include-template form-field label="Item 13 ATC" ph="Select ATC" -->
+    <!-- @include-template form-field label="Item 13 tax base" ph="Enter amount" -->
+    <!-- @include-template form-field label="Item 13 tax rate" ph="Enter rate" -->
+    <!-- @include-template form-field label="Item 13 tax withheld" ph="Enter amount" -->
+    <!-- @include-template form-field label="Item 14 ATC" ph="Select ATC" -->
+    <!-- @include-template form-field label="Item 14 tax base" ph="Enter amount" -->
+    <!-- @include-template form-field label="Item 14 tax rate" ph="Enter rate" -->
+    <!-- @include-template form-field label="Item 14 tax withheld" ph="Enter amount" -->
+    <!-- @include-template form-field label="Item 15 ATC" ph="Select ATC" -->
+    <!-- @include-template form-field label="Item 15 tax base" ph="Enter amount" -->
+    <!-- @include-template form-field label="Item 15 tax rate" ph="Enter rate" -->
+    <!-- @include-template form-field label="Item 15 tax withheld" ph="Enter amount" -->
+    <!-- @include-template form-field label="Item 16 ATC" ph="Select ATC" -->
+    <!-- @include-template form-field label="Item 16 tax base" ph="Enter amount" -->
+    <!-- @include-template form-field label="Item 16 tax rate" ph="Enter rate" -->
+    <!-- @include-template form-field label="Item 16 tax withheld" ph="Enter amount" -->
+    <!-- @include-template form-field label="Item 17 ATC" ph="Select ATC" -->
+    <!-- @include-template form-field label="Item 17 tax base" ph="Enter amount" -->
+    <!-- @include-template form-field label="Item 17 tax rate" ph="Enter rate" -->
+    <!-- @include-template form-field label="Item 17 tax withheld" ph="Enter amount" -->
+    <!-- @include-template form-field label="Item 18 ATC" ph="Select ATC" -->
+    <!-- @include-template form-field label="Item 18 tax base" ph="Enter amount" -->
+    <!-- @include-template form-field label="Item 18 tax rate" ph="Enter rate" -->
+    <!-- @include-template form-field label="Item 18 tax withheld" ph="Enter amount" -->
+  </grid>
+</template>
+
 <template name="form-1601-eq-remittance" args="columns">
   <grid columns="{columns}" gap="12">
     <!-- @include-template form-field label="19 Total tax withheld this quarter" ph="Enter amount" -->
@@ -108,7 +137,17 @@
       <card>
         <column padding="20" gap="12">
           <text size="heading">PART II - COMPUTATION OF TAX</text>
-          <text wrap="true" foreground="text_muted">Unbound remittance totals from the January 2018 ENCS return. ATC rows 13-18 and payment details stay off this slice. Amounts are not calculated and cannot be saved.</text>
+          <text wrap="true" foreground="text_muted">Unbound January 2018 ENCS ATC rows 13-18 and remittance totals. Rates are not looked up, amounts are not calculated, and nothing can be saved. Payment details stay off this slice.</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1601-eq-atc-schedule" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1601-eq-atc-schedule" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1601-eq-atc-schedule" columns="4"/>
+          </if>
+          <separator/>
           <if test="{constrainedLayout}">
             <use template="form-1601-eq-remittance" columns="1"/>
           </if>
