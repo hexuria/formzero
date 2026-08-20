@@ -7121,12 +7121,7 @@ pub const Model = struct {
     }
 
     pub fn taxpayerYearSettingsVisible(self: *const Model) bool {
-        const form_index = self.taxFormProfileFormIndex orelse return false;
-        if (form_index >= form_catalog.registry_count) return false;
-        for (form_catalog.forms[form_index].fields) |field| {
-            if (field.provenance == .taxpayer_year) return true;
-        }
-        return false;
+        return self.taxpayerYearPage.opened;
     }
 
     pub fn taxpayerYearStatus(self: *const Model) []const u8 {
@@ -22725,6 +22720,122 @@ test "exact 1701Q persists through the app loop and resumes after discard" {
         exact_1701q_native.PersistenceStatus.development_plaintext_resumed,
         model.exact1701Q.persistence_status,
     );
+}
+
+test "Tax Form Profile yearly settings save makes exact 1701Q launchable" {
+    const allocator = std.testing.allocator;
+    var store = try profile_store.Store.openMemory(allocator);
+    defer store.close();
+    const profile_id = "55555555555555555555555555555555";
+    try addTestProfileWithoutYearSettings(
+        &store,
+        profile_id,
+        "Yearly Settings Filer",
+        "123-456-781-000",
+        .individual,
+    );
+    try addTest1701QTaxFormProfile(
+        &store,
+        profile_id,
+        2026,
+        "2026-01-01",
+        "2026-12-31",
+    );
+
+    var model = Model{
+        .page = .taxpayer_dashboard,
+        .dashboardSection = .forms,
+    };
+    model.calendar.selected_year = 2026;
+    model.calendar.selected_month = 6;
+    model.calendarToday = try calendar_domain.Date.init(2026, 6, 30);
+    try model.taxProfiles.attach(allocator, &store, "2026-06-30", 2026);
+    model.taxProfiles.select(
+        profileSlotNamed(&model, "Yearly Settings Filer").?,
+    );
+    model.formProfiles.attach(allocator, &store);
+    defer model.formProfiles.deinit();
+    refreshSelectedProfileFormSet(&model);
+
+    const form_index = formCatalogIndex("1701Q").?;
+    try std.testing.expectEqual(
+        TaxFormProfileCardState.needs_setup,
+        model.profilePeriodExactLaunchReadiness[form_index][1]
+            .form_profile_state,
+    );
+
+    update(&model, .{ .open_tax_form_profile = form_index });
+    try std.testing.expectEqual(Page.tax_form_profile, model.page);
+    try std.testing.expect(model.taxpayerYearSettingsVisible());
+    try std.testing.expectEqualStrings(
+        "Yearly setting required",
+        model.taxpayerYearStatus(),
+    );
+    try std.testing.expect(model.taxpayerYearEditVisible());
+    try std.testing.expect(!model.taxpayerYearEditing());
+    try expectAppMarkupBuilds(&model);
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        "Yearly income-tax settings",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .button,
+        "Edit Yearly Settings",
+    ));
+
+    update(&model, .taxpayer_year_edit);
+    try std.testing.expect(model.taxpayerYearEditing());
+    try std.testing.expect(!model.taxFormProfileEditVisible());
+    try std.testing.expect(model.taxpayerYearSaveDisabled());
+    try expectAppMarkupBuilds(&model);
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .button,
+        "Graduated income-tax rates",
+    ));
+
+    update(&model, .taxpayer_year_rate_graduated);
+    try std.testing.expect(model.taxpayerYearGraduatedSelected());
+    try std.testing.expect(model.taxpayerYearDeductionVisible());
+    try std.testing.expect(model.taxpayerYearSaveDisabled());
+
+    update(&model, .taxpayer_year_deduction_itemized);
+    try std.testing.expect(model.taxpayerYearItemizedSelected());
+    try std.testing.expect(!model.taxpayerYearSaveDisabled());
+
+    update(&model, .taxpayer_year_save);
+    try std.testing.expect(!model.taxpayerYearEditing());
+    try std.testing.expectEqualStrings("Ready", model.taxpayerYearStatus());
+    try std.testing.expectEqualStrings(
+        "Graduated income-tax rates",
+        model.taxpayerYearRateLabel(),
+    );
+    try std.testing.expectEqualStrings(
+        "Itemized deduction",
+        model.taxpayerYearDeductionLabel(),
+    );
+    try std.testing.expectEqual(
+        TaxFormProfileCardState.ready,
+        model.profilePeriodExactLaunchReadiness[form_index][1]
+            .form_profile_state,
+    );
+    try std.testing.expectEqual(
+        form_ui.LaunchStatus.ready_new,
+        model.profilePeriodLaunchAssessments[form_index][1].status,
+    );
+    try expectAppMarkupBuilds(&model);
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        "Graduated income-tax rates",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        "Itemized deduction",
+    ));
 }
 
 test "exact 1701Q survives navigation and only explicit discard permits replacement" {

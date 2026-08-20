@@ -21,10 +21,27 @@
   </column>
 </template>
 
+<template name="taxpayer-year-settings-actions">
+  <column>
+    <if test="{constrainedLayout}">
+      <column gap="10">
+        <if test="{taxpayerYearEditing}"><column gap="10"><button height="44" variant="outline" disabled="{taxpayerYearCancelDisabled}" on-press="taxpayer_year_cancel">Cancel</button><button height="44" variant="primary" disabled="{taxpayerYearSaveDisabled}" on-press="taxpayer_year_save">Save Yearly Settings</button></column></if>
+        <else><if test="{taxpayerYearEditVisible}"><button height="44" variant="primary" on-press="taxpayer_year_edit">Edit Yearly Settings</button></if></else>
+      </column>
+    </if>
+    <else>
+      <row gap="10" main="end">
+        <if test="{taxpayerYearEditing}"><row gap="10"><button height="44" variant="outline" disabled="{taxpayerYearCancelDisabled}" on-press="taxpayer_year_cancel">Cancel</button><button height="44" variant="primary" disabled="{taxpayerYearSaveDisabled}" on-press="taxpayer_year_save">Save Yearly Settings</button></row></if>
+        <else><if test="{taxpayerYearEditVisible}"><button height="44" variant="primary" on-press="taxpayer_year_edit">Edit Yearly Settings</button></if></else>
+      </row>
+    </else>
+  </column>
+</template>
+
 <template name="tax-form-profile-discard-content">
   <column padding="20" gap="14">
     <text><span weight="bold" scale="1.25">Discard unsaved changes?</span></text>
-    <text wrap="true" foreground="text_muted">Leaving restores the saved Tax Form Profile.</text>
+    <text wrap="true" foreground="text_muted">Leaving restores the last saved Tax Form Profile and yearly settings.</text>
     <if test="{constrainedLayout}">
       <column gap="8">
         <button height="44" variant="outline" on-press="tax_form_profile_keep_editing">Keep editing</button>
@@ -75,6 +92,60 @@
             <if test="{constrainedLayout}"><column gap="8"><button height="44" variant="primary" disabled="{taxFormProfileConflictKeepDraftDisabled}" on-press="tax_form_profile_keep_draft_after_conflict">Keep my draft</button><button height="44" variant="outline" disabled="{taxFormProfileConflictReloadDisabled}" on-press="tax_form_profile_reload_after_conflict">Reload this interval</button></column></if>
             <else><row gap="8"><button height="44" variant="primary" disabled="{taxFormProfileConflictKeepDraftDisabled}" on-press="tax_form_profile_keep_draft_after_conflict">Keep my draft</button><button height="44" variant="outline" disabled="{taxFormProfileConflictReloadDisabled}" on-press="tax_form_profile_reload_after_conflict">Reload this interval</button></row></else>
           </column></card>
+        </if>
+
+        <if test="{taxpayerYearSettingsVisible}">
+          <card padding="0">
+            <column padding="16" gap="12">
+              <column gap="4">
+                <row gap="8" cross="center"><text grow="1"><span weight="bold">Yearly income-tax settings</span></text><badge variant="{taxpayerYearStatusTone}">{taxpayerYearStatus}</badge></row>
+                <text wrap="true" foreground="text_muted">These settings apply to 1701Q and 1701 for this tax year. They are not copied into a Tax Form Profile.</text>
+              </column>
+              <if test="{taxpayerYearConflictVisible}">
+                <card padding="0"><column padding="12" gap="10">
+                  <text><span weight="bold">A newer yearly revision was saved</span></text>
+                  <text wrap="true" foreground="text_muted">Your draft is preserved. Keep it against the latest sequence, or reload the saved yearly settings.</text>
+                  <if test="{constrainedLayout}"><column gap="8"><button height="44" variant="primary" disabled="{taxpayerYearConflictKeepDraftDisabled}" on-press="taxpayer_year_keep_draft_after_conflict">Keep my draft</button><button height="44" variant="outline" disabled="{taxpayerYearConflictReloadDisabled}" on-press="taxpayer_year_reload_after_conflict">Reload yearly settings</button></column></if>
+                  <else><row gap="8"><button height="44" variant="primary" disabled="{taxpayerYearConflictKeepDraftDisabled}" on-press="taxpayer_year_keep_draft_after_conflict">Keep my draft</button><button height="44" variant="outline" disabled="{taxpayerYearConflictReloadDisabled}" on-press="taxpayer_year_reload_after_conflict">Reload yearly settings</button></row></else>
+                </column></card>
+              </if>
+              <if test="{taxpayerYearEditing}">
+                <column gap="10">
+                  <column gap="6">
+                    <text><span weight="bold">Income-tax rate</span></text>
+                    <if test="{constrainedLayout}"><column gap="8"><button height="44" variant="outline" selected="{taxpayerYearGraduatedSelected}" on-press="taxpayer_year_rate_graduated">Graduated income-tax rates</button><button height="44" variant="outline" selected="{taxpayerYearEightPercentSelected}" on-press="taxpayer_year_rate_eight_percent">8% income-tax rate</button></column></if>
+                    <else><row gap="8"><button grow="1" height="44" variant="outline" selected="{taxpayerYearGraduatedSelected}" on-press="taxpayer_year_rate_graduated">Graduated income-tax rates</button><button grow="1" height="44" variant="outline" selected="{taxpayerYearEightPercentSelected}" on-press="taxpayer_year_rate_eight_percent">8% income-tax rate</button></row></else>
+                  </column>
+                  <if test="{taxpayerYearDeductionVisible}">
+                    <column gap="6">
+                      <text><span weight="bold">Deduction method</span></text>
+                      <if test="{constrainedLayout}"><column gap="8"><button height="44" variant="outline" selected="{taxpayerYearItemizedSelected}" on-press="taxpayer_year_deduction_itemized">Itemized deduction</button><button height="44" variant="outline" selected="{taxpayerYearOsdSelected}" on-press="taxpayer_year_deduction_osd">Optional standard deduction</button></column></if>
+                      <else><row gap="8"><button grow="1" height="44" variant="outline" selected="{taxpayerYearItemizedSelected}" on-press="taxpayer_year_deduction_itemized">Itemized deduction</button><button grow="1" height="44" variant="outline" selected="{taxpayerYearOsdSelected}" on-press="taxpayer_year_deduction_osd">Optional standard deduction</button></row></else>
+                    </column>
+                  </if>
+                </column>
+              </if>
+              <else>
+                <grid columns="{profileReadColumns}" gap="12">
+                  <use template="tax-form-read-value" label="Income-tax rate" value="{taxpayerYearRateLabel}"/>
+                  <if test="{taxpayerYearDeductionVisible}"><use template="tax-form-read-value" label="Deduction method" value="{taxpayerYearDeductionLabel}"/></if>
+                </grid>
+              </else>
+              <if test="{taxpayerYearReviewVisible}">
+                <card padding="0">
+                  <if test="{constrainedLayout}"><column padding="12" gap="10"><text wrap="true">Copied or unconfirmed yearly settings must be reviewed before Save.</text><button height="44" variant="outline" on-press="taxpayer_year_acknowledge_review">Mark reviewed</button></column></if>
+                  <else><row padding="12" gap="10" cross="center"><text grow="1" wrap="true">Copied or unconfirmed yearly settings must be reviewed before Save.</text><button height="44" variant="outline" on-press="taxpayer_year_acknowledge_review">Mark reviewed</button></row></else>
+                </card>
+              </if>
+              <if test="{taxpayerYearCopyPriorYearVisible}">
+                <card padding="0">
+                  <if test="{constrainedLayout}"><column padding="12" gap="10"><text wrap="true" foreground="text_muted">Reuse is never automatic. The prior-year settings open as an unsaved draft and must be reviewed before Save.</text><button height="44" variant="outline" on-press="taxpayer_year_copy_prior_year">{taxpayerYearCopyPriorYearLabel}</button></column></if>
+                  <else><row padding="12" gap="10" cross="center"><text grow="1" wrap="true" foreground="text_muted">Reuse is never automatic. The prior-year settings open as an unsaved draft and must be reviewed before Save.</text><button height="44" variant="outline" on-press="taxpayer_year_copy_prior_year">{taxpayerYearCopyPriorYearLabel}</button></row></else>
+                </card>
+              </if>
+              <use template="taxpayer-year-settings-actions"/>
+            </column>
+          </card>
         </if>
 
         <if test="{taxFormProfileInheritedOnlyVisible}">
