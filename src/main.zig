@@ -1867,11 +1867,9 @@ pub const Model = struct {
         "taxProfiles",
         "formProfiles",
         "incomeTax",
-        // Compatibility/test-only coarse 1701Q surface. It remains
-        // deliberately unbound: the exact state is the only visible UI and
-        // payload authority. Removing this obsolete model surface is tracked
-        // as follow-up work; markup must never be resurrected to silence the
-        // contract checker.
+        // Retired coarse 1701Q editor. Bindings stay compiled and unbound so
+        // the contract checker does not resurrect markup. Dispatch is inert:
+        // exact projection-only open is the only 1701Q app path.
         "incomeTaxYear",
         "incomeTaxQuarter",
         "incomeTaxQuarterQ1Selected",
@@ -3378,8 +3376,6 @@ pub const Model = struct {
             return self.percentageTax.canBuild();
         }
         if (std.mem.eql(u8, revision.code.asSlice(), "1701Q")) {
-            // The exact occurrence persistence adapter is intentionally not
-            // wired yet. Never authorize the older coarse 1701Q draft path.
             return false;
         }
         return true;
@@ -12238,9 +12234,8 @@ pub const Msg = union(enum) {
         "profile_forms_period_on_demand",
         "open_library_form",
 
-        // The coarse 1701Q editor remains compiled only for compatibility
-        // and focused Zig tests. The Native 1701Q page is exclusively bound
-        // to the exact adapter and must not dispatch these legacy actions.
+        // Retired coarse 1701Q editor. Quarter messages reopen exact work;
+        // every other legacy income-tax action is inert.
         "income_tax_quarter_q1",
         "income_tax_quarter_q2",
         "income_tax_quarter_q3",
@@ -12725,120 +12720,34 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .income_tax_quarter_q1 => reopenExact1701QQuarter(model, 1),
         .income_tax_quarter_q2 => reopenExact1701QQuarter(model, 2),
         .income_tax_quarter_q3 => reopenExact1701QQuarter(model, 3),
-        .income_tax_sheets_attached_input => |edit| {
-            model.incomeTax.applyInput(.sheets_attached, edit);
-        },
-        .income_tax_election_graduated => {
-            model.incomeTax.setElection(.graduated) catch {};
-        },
-        .income_tax_election_eight_percent => {
-            model.incomeTax.setElection(.eight_percent) catch {};
-        },
-        .income_tax_graduated_sales_input => |edit| {
-            model.incomeTax.applyInput(
-                .graduated_sales_revenues_receipts,
-                edit,
-            );
-        },
-        .income_tax_graduated_cost_input => |edit| {
-            model.incomeTax.applyInput(
-                .graduated_cost_of_sales_or_services,
-                edit,
-            );
-        },
-        .income_tax_graduated_deductions_input => |edit| {
-            model.incomeTax.applyInput(
-                .graduated_allowable_deductions,
-                edit,
-            );
-        },
-        .income_tax_graduated_taxable_income_input => |edit| {
-            model.incomeTax.applyInput(.graduated_taxable_income, edit);
-        },
-        .income_tax_graduated_tax_due_input => |edit| {
-            model.incomeTax.applyInput(.graduated_income_tax_due, edit);
-        },
-        .income_tax_eight_gross_sales_input => |edit| {
-            model.incomeTax.applyInput(
-                .eight_percent_gross_sales_or_receipts,
-                edit,
-            );
-        },
-        .income_tax_eight_non_operating_input => |edit| {
-            model.incomeTax.applyInput(
-                .eight_percent_non_operating_income,
-                edit,
-            );
-        },
-        .income_tax_eight_tax_due_input => |edit| {
-            model.incomeTax.applyInput(.eight_percent_tax_due, edit);
-        },
-        .income_tax_prior_payments_input => |edit| {
-            model.incomeTax.applyInput(
-                .prior_quarter_income_tax_payments,
-                edit,
-            );
-        },
-        .income_tax_withheld_2307_input => |edit| {
-            model.incomeTax.applyInput(
-                .creditable_tax_withheld_2307,
-                edit,
-            );
-        },
-        .income_tax_other_credits_input => |edit| {
-            model.incomeTax.applyInput(
-                .other_tax_credits_or_payments,
-                edit,
-            );
-        },
-        .income_tax_payable_input => |edit| {
-            model.incomeTax.applyInput(.tax_payable_or_overpayment, edit);
-        },
-        .income_tax_surcharge_input => |edit| {
-            model.incomeTax.applyInput(.surcharge, edit);
-        },
-        .income_tax_interest_input => |edit| {
-            model.incomeTax.applyInput(.interest, edit);
-        },
-        .income_tax_compromise_input => |edit| {
-            model.incomeTax.applyInput(.compromise, edit);
-        },
-        .income_tax_add_payment => {
-            _ = model.incomeTax.addPaymentRow() catch {};
-        },
-        .income_tax_select_payment => |slot| {
-            model.incomeTax.selectPaymentRow(slot) catch {};
-        },
-        .income_tax_remove_selected_payment => {
-            for (model.incomeTax.paymentRows()) |*row| {
-                if (!row.selected()) continue;
-                model.incomeTax.removePaymentRow(row.id()) catch {};
-                break;
-            }
-        },
-        .income_tax_payment_method_cash => {
-            model.incomeTax.setSelectedPaymentMethod(.cash) catch {};
-        },
-        .income_tax_payment_method_check => {
-            model.incomeTax.setSelectedPaymentMethod(.check) catch {};
-        },
-        .income_tax_payment_method_tax_debit_memo => {
-            model.incomeTax.setSelectedPaymentMethod(
-                .tax_debit_memo,
-            ) catch {};
-        },
-        .income_tax_payment_method_other => {
-            model.incomeTax.setSelectedPaymentMethod(.other) catch {};
-        },
-        .income_tax_payment_bank_input => |edit| {
-            model.incomeTax.applyPaymentInput(.bank_or_agency, edit);
-        },
-        .income_tax_payment_reference_input => |edit| {
-            model.incomeTax.applyPaymentInput(.reference, edit);
-        },
-        .income_tax_payment_amount_input => |edit| {
-            model.incomeTax.applyPaymentInput(.amount, edit);
-        },
+        .income_tax_sheets_attached_input => {},
+        .income_tax_election_graduated => {},
+        .income_tax_election_eight_percent => {},
+        .income_tax_graduated_sales_input => {},
+        .income_tax_graduated_cost_input => {},
+        .income_tax_graduated_deductions_input => {},
+        .income_tax_graduated_taxable_income_input => {},
+        .income_tax_graduated_tax_due_input => {},
+        .income_tax_eight_gross_sales_input => {},
+        .income_tax_eight_non_operating_input => {},
+        .income_tax_eight_tax_due_input => {},
+        .income_tax_prior_payments_input => {},
+        .income_tax_withheld_2307_input => {},
+        .income_tax_other_credits_input => {},
+        .income_tax_payable_input => {},
+        .income_tax_surcharge_input => {},
+        .income_tax_interest_input => {},
+        .income_tax_compromise_input => {},
+        .income_tax_add_payment => {},
+        .income_tax_select_payment => {},
+        .income_tax_remove_selected_payment => {},
+        .income_tax_payment_method_cash => {},
+        .income_tax_payment_method_check => {},
+        .income_tax_payment_method_tax_debit_memo => {},
+        .income_tax_payment_method_other => {},
+        .income_tax_payment_bank_input => {},
+        .income_tax_payment_reference_input => {},
+        .income_tax_payment_amount_input => {},
         .percentage_tax_sheets_attached_input => |edit| {
             model.percentageTax.editSheetsAttached(edit);
         },
@@ -16082,7 +15991,6 @@ fn saveRecurringFormDraft(model: *Model) void {
         return;
     }
     if (std.mem.eql(u8, revision.code.asSlice(), "1701Q")) {
-        persistExact1701QCandidate(model);
         return;
     }
     _ = model.formProfiles.saveRecurringDraft() catch return;
@@ -22594,9 +22502,16 @@ test "1701Q opens exact state and coarse draft persistence stays disabled" {
 
     // No hidden coarse editor is allowed to become a parallel authority.
     try std.testing.expect(model.incomeTaxSaveDisabled());
+    update(&model, .income_tax_election_graduated);
+    try std.testing.expectEqualStrings(
+        "Select graduated or 8 percent",
+        model.incomeTaxElection(),
+    );
+    try std.testing.expect(model.incomeTax.quarter() == null);
 
     update(&model, .save_recurring_form_draft);
     try std.testing.expect(model.formProfiles.draftId() == null);
+    try std.testing.expect(!model.exact1701Q.candidateVisible());
     try std.testing.expectEqual(
         @as(usize, 0),
         std.mem.count(u8, app_markup, "on-input=\"income_tax_"),
