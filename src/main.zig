@@ -22202,6 +22202,21 @@ test "1601EQ opens from the library with Tax Profile identity and save disabled"
     ));
     try std.testing.expect(try appMarkupHasWidgetText(
         &model,
+        .text,
+        "PART II - COMPUTATION OF TAX",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        "19 Total tax withheld this quarter",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
+        .text,
+        "20 Less: tax remitted first month (0619E)",
+    ));
+    try std.testing.expect(try appMarkupHasWidgetText(
+        &model,
         .button,
         "Save Draft",
     ));

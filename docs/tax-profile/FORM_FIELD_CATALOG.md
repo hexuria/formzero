@@ -12,7 +12,7 @@ exists yet; it does not imply filing support.
 - Registry codes: 51
 - Native editor revisions: 11
 - Calendar-only codes: 40
-- Native input controls inventoried: 336
+- Native input controls inventoried: 348
 - Meaningful static-table fields inventoried: 63
 - Direct profile projection targets: 99
 - Optional profile projection targets: 35
@@ -72,7 +72,7 @@ exists yet; it does not imply filing support.
 | 2200C | Excise Tax Return for Coal and Coke | excise_tax | — | calendar_only | calendar_only | — | monthly | 1-12 | 0 | 0 | — |
 | 2200S | Excise Tax Return for Sweetened Beverages | excise_tax | — | calendar_only | calendar_only | — | monthly | 1-12 | 0 | 0 | — |
 | 0619E | Monthly Remittance Form for Creditable Income Taxes Withheld (Expanded) | withholding_tax | 2018-01-ENCS | static_layout | no_setup | — | monthly | 1-12 | 24 | 4 | src/pages/forms/0619-e.native |
-| 1601EQ | Quarterly Remittance Return of Creditable Income Taxes Withheld (Expanded) | withholding_tax | 2018-01-ENCS | static_layout | no_setup | — | quarterly | 1-4 | 10 | 0 | src/pages/forms/1601-eq.native |
+| 1601EQ | Quarterly Remittance Return of Creditable Income Taxes Withheld (Expanded) | withholding_tax | 2018-01-ENCS | static_layout | no_setup | — | quarterly | 1-4 | 22 | 0 | src/pages/forms/1601-eq.native |
 | 1701MS | Annual Income Tax Return for Micro and Small Taxpayers | income_tax | — | calendar_only | calendar_only | — | annual | — | 0 | 0 | — |
 | 1706 | Capital Gains Tax Return (Real Properties) | capital_gains_tax | — | calendar_only | calendar_only | — | on_demand | — | 0 | 0 | — |
 | 1707A | Annual Capital Gains Tax Return (Shares of Stock Not Traded) | capital_gains_tax | — | calendar_only | calendar_only | — | on_demand | — | 0 | 0 | — |
@@ -118,7 +118,7 @@ transaction defaults; this is intentional rather than an inferred omission.
 | 2550Q 2024-04-ENCS | no_setup | 1 | `49363b23a0fd60148850df5a6f3b162b907e95840efc80af3c7a60700e3ab7f6` | 0 | 0 | 0 | Ownership matrix § 2550Q finds no genuine form-specific annual setup value |
 | 2551Q 2018-01-ENCS | setup | 2 | `7f3df1b82f7d72e8e9b29ff01e10b086e0a6b1a1d4702861cd9f8d175f62cef4` | 1 | 1 | 0 | 2551Q January 2018 ENCS Item 13 is a form-specific yearly choice projected only on the initial applicable quarter |
 | 0619E 2018-01-ENCS | no_setup | 1 | `0bbca08d13a26690fb24c819c36c4c83aafe1e150ee6b4aef10fd4bce16d3579` | 0 | 0 | 0 | Line of business is inherited from the Base Tax Profile; 0619E has no form-specific yearly setup |
-| 1601EQ 2018-01-ENCS | no_setup | 1 | `00da4f31d7e8646a51315909b4eadf20feaf1bd8b7d8127158bf0475bed3be1a` | 0 | 0 | 0 | First editor slice: identity and filing period only; remittance stays disabled until an exact 1601EQ path exists |
+| 1601EQ 2018-01-ENCS | no_setup | 1 | `00da4f31d7e8646a51315909b4eadf20feaf1bd8b7d8127158bf0475bed3be1a` | 0 | 0 | 0 | Identity, filing choices, and unbound remittance totals; exact ATC schedule and save stay disabled until an exact 1601EQ path exists |
 
 | Form revision | Semantic key | Value type | Role | Presence | Validation | Ownership | Source kind | Availability | Source evidence | Blocking evidence gate |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -839,7 +839,7 @@ Tax Form Profile: `no_setup`, spec revision 1, SHA-256 `00da4f31d7e8646a51315909
 
 Consumed taxpayer-year settings: none
 
-Named roles: `filer`, `filing`
+Named roles: `filer`, `filing`, `evidence`, `system`
 
 Profile binding policy:
 
@@ -857,5 +857,17 @@ Profile binding policy:
 | `1601EQ.2018-01-ENCS.input.line_of_business` | Line of Business | profile | line_of_business | required | — | — | filer | text | unbound_input | `src/pages/forms/1601-eq.native:8` |
 | `1601EQ.2018-01-ENCS.input.contact_number` | Contact Number | profile | contact_number | required | — | — | filer | phone | unbound_input | `src/pages/forms/1601-eq.native:9` |
 | `1601EQ.2018-01-ENCS.input.email_address` | Email Address | profile | email_address | optional | — | — | filer | email | unbound_input | `src/pages/forms/1601-eq.native:10` |
-| `1601EQ.2018-01-ENCS.input.taxable_year` | Taxable Year | filing_context | — | — | — | — | filing | year | unbound_input | `src/pages/forms/1601-eq.native:16` |
-| `1601EQ.2018-01-ENCS.input.quarter` | Quarter | filing_context | — | — | — | — | filing | tax_period | unbound_input | `src/pages/forms/1601-eq.native:17` |
+| `1601EQ.2018-01-ENCS.input.taxable_year` | 1 Taxable Year | filing_context | — | — | — | — | filing | year | unbound_input | `src/pages/forms/1601-eq.native:16` |
+| `1601EQ.2018-01-ENCS.input.quarter` | 2 Quarter | filing_context | — | — | — | — | filing | tax_period | unbound_input | `src/pages/forms/1601-eq.native:17` |
+| `1601EQ.2018-01-ENCS.input.amended_return` | 3 Amended Return? | filing_context | — | — | — | — | filing | boolean | unbound_input | `src/pages/forms/1601-eq.native:18` |
+| `1601EQ.2018-01-ENCS.input.any_taxes_withheld` | 4 Any Taxes Withheld? | transaction | — | — | — | — | filing | boolean | unbound_input | `src/pages/forms/1601-eq.native:19` |
+| `1601EQ.2018-01-ENCS.input.number_of_sheets_attached` | 5 Number of Sheets Attached | filing_context | — | — | — | — | filing | integer | unbound_input | `src/pages/forms/1601-eq.native:20` |
+| `1601EQ.2018-01-ENCS.input.withholding_agent_category` | Withholding Agent Category | transaction | — | — | — | — | filing | choice | unbound_input | `src/pages/forms/1601-eq.native:21` |
+| `1601EQ.2018-01-ENCS.input.total_tax_withheld_this_quarter` | 19 Total tax withheld this quarter | transaction | — | — | — | — | filing | money | unbound_input | `src/pages/forms/1601-eq.native:27` |
+| `1601EQ.2018-01-ENCS.input.less_tax_remitted_first_month_0619e` | 20 Less: tax remitted first month (0619E) | external | — | — | — | — | evidence | money | unbound_input | `src/pages/forms/1601-eq.native:28` |
+| `1601EQ.2018-01-ENCS.input.less_tax_remitted_second_month_0619e` | 21 Less: tax remitted second month (0619E) | external | — | — | — | — | evidence | money | unbound_input | `src/pages/forms/1601-eq.native:29` |
+| `1601EQ.2018-01-ENCS.input.tax_still_due` | 25 Tax still due | derived | — | — | — | — | system | money | unbound_input | `src/pages/forms/1601-eq.native:30` |
+| `1601EQ.2018-01-ENCS.input.surcharge` | 26 Surcharge | derived | — | — | — | — | system | money | unbound_input | `src/pages/forms/1601-eq.native:31` |
+| `1601EQ.2018-01-ENCS.input.interest` | 27 Interest | derived | — | — | — | — | system | money | unbound_input | `src/pages/forms/1601-eq.native:32` |
+| `1601EQ.2018-01-ENCS.input.compromise` | 28 Compromise | derived | — | — | — | — | system | money | unbound_input | `src/pages/forms/1601-eq.native:33` |
+| `1601EQ.2018-01-ENCS.input.total_amount_payable` | 31 Total amount payable | derived | — | — | — | — | system | money | unbound_input | `src/pages/forms/1601-eq.native:34` |

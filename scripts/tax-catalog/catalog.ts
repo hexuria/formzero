@@ -472,7 +472,7 @@ function supportedSetupValue(
 }
 
 /**
- * Exhaustive ownership/type review of the 336 Native input controls.
+ * Exhaustive ownership/type review of the 348 Native input controls.
  *
  * Grouping keeps the source reviewable without weakening exact-ID coverage:
  * the generator rejects a discovered control missing from this table and an
@@ -553,6 +553,11 @@ const explicitInputFields = defineInputFields([
       "0619E.2018-01-ENCS.input.surcharge",
       "0619E.2018-01-ENCS.input.interest",
       "0619E.2018-01-ENCS.input.compromise",
+      "1601EQ.2018-01-ENCS.input.tax_still_due",
+      "1601EQ.2018-01-ENCS.input.surcharge",
+      "1601EQ.2018-01-ENCS.input.interest",
+      "1601EQ.2018-01-ENCS.input.compromise",
+      "1601EQ.2018-01-ENCS.input.total_amount_payable",
     ],
   },
   {
@@ -576,6 +581,8 @@ const explicitInputFields = defineInputFields([
     provenance: "external", role: "evidence", valueType: "money",
     ids: [
       "0619F.2018-01-ENCS.input.less_amount_remitted_from_previously_filed_form",
+      "1601EQ.2018-01-ENCS.input.less_tax_remitted_first_month_0619e",
+      "1601EQ.2018-01-ENCS.input.less_tax_remitted_second_month_0619e",
       "1701Q.2018-01-ENCS.input.prior_quarter_income_tax_payments",
       "1701Q.2018-01-ENCS.input.creditable_tax_withheld_bir_form_2307",
       "1701.2018-01-ENCS.input.tax_withheld_on_compensation",
@@ -623,6 +630,7 @@ const explicitInputFields = defineInputFields([
     provenance: "filing_context", role: "filing", valueType: "boolean",
     ids: [
       "1601C.2018-01-ENCS.input.amended_return",
+      "1601EQ.2018-01-ENCS.input.amended_return",
       "0619F.2018-01-ENCS.input.amended_form",
       "1701Q.2018-01-ENCS.input.amended_return",
       "1701.2018-01-ENCS.input.amended_return",
@@ -653,6 +661,7 @@ const explicitInputFields = defineInputFields([
     ids: [
       "0605.1999-07-ENCS.input.number_of_sheets_attached",
       "1601C.2018-01-ENCS.input.number_of_sheets_attached",
+      "1601EQ.2018-01-ENCS.input.number_of_sheets_attached",
       "1701Q.2018-01-ENCS.input.number_of_sheets_attached",
       "1701.2018-01-ENCS.input.number_of_sheets_attached",
       "1702RT.2018-01-ENCS.input.number_of_sheets_attached",
@@ -915,6 +924,7 @@ const explicitInputFields = defineInputFields([
     provenance: "transaction", role: "filing", valueType: "boolean",
     ids: [
       "1601C.2018-01-ENCS.input.any_taxes_withheld",
+      "1601EQ.2018-01-ENCS.input.any_taxes_withheld",
       "0619F.2018-01-ENCS.input.any_taxes_withheld",
       "0619F.2018-01-ENCS.input.government_withholding_agent",
       "2550Q.2024-04-ENCS.input.tax_relief",
@@ -931,6 +941,7 @@ const explicitInputFields = defineInputFields([
       "1702RT.2018-01-ENCS.input.itemized_optional_standard_deduction",
       "2551Q.2018-01-ENCS.input.return_options",
       "2551Q.2018-01-ENCS.input.overpayment_disposition",
+      "1601EQ.2018-01-ENCS.input.withholding_agent_category",
     ],
   },
   {
@@ -1000,6 +1011,7 @@ const explicitInputFields = defineInputFields([
       "2551Q.2018-01-ENCS.input.interest_manual",
       "2551Q.2018-01-ENCS.input.compromise_manual",
       "0619E.2018-01-ENCS.input.amount_of_remittance",
+      "1601EQ.2018-01-ENCS.input.total_tax_withheld_this_quarter",
     ],
   },
   {
@@ -1248,17 +1260,17 @@ export const editorForms: readonly EditorFormSpec[] = [
     revisionLabel: "January 2018 (ENCS)",
     sourcePath: "src/pages/forms/1601-eq.native",
     inputFields: inputFieldsFor("1601EQ", "2018-01-ENCS"),
-    expectedInputCount: 10,
+    expectedInputCount: 22,
     expectedTableCount: 0,
     expectedTableHeaders: [],
-    roles: ["filer", "filing"],
+    roles: ["filer", "filing", "evidence", "system"],
     profileRoles: [exactlyOneFiler()],
     consumedTaxpayerYearSettings: [],
     taxFormProfile: {
       mode: "no_setup",
       specRevision: 1,
       sourceEvidence:
-        "First editor slice: identity and filing period only; remittance stays disabled until an exact 1601EQ path exists",
+        "Identity, filing choices, and unbound remittance totals; exact ATC schedule and save stay disabled until an exact 1601EQ path exists",
       values: [],
     },
     profileTargetPresence: {
