@@ -18,13 +18,16 @@ pub const draft = @import("draft.zig");
 pub const contract = package;
 
 pub const form_1701q_2018 = @import("forms/form_1701q_2018/mod.zig");
+pub const form_1601eq_2018 = @import("forms/form_1601eq_2018/mod.zig");
 
 /// Every exact form package this build knows about.
 ///
-/// Only 1701Q January 2018 (ENCS) is registered today. The remaining catalog
-/// forms stay calendar-only until their package exists.
+/// 1701Q January 2018 (ENCS) is identity-ready. 1601EQ January 2018 (ENCS) is
+/// registered with pinned identity and incomplete script closure; that is not
+/// a runtime-parity claim.
 pub const registry = .{
     form_1701q_2018,
+    form_1601eq_2018,
 };
 
 /// Number of registered exact form packages.
@@ -44,7 +47,7 @@ test {
 }
 
 test "every registered package satisfies the structural contract" {
-    try std.testing.expect(registered_count >= 1);
+    try std.testing.expectEqual(@as(usize, 2), registered_count);
     inline for (registry) |Package| {
         // Reading identity through the contract also proves it is reachable
         // without importing the package's internals.
@@ -58,4 +61,16 @@ test "the registered 1701Q package reports its printed identity" {
     const revision = package.revisionOf(form_1701q_2018);
     try std.testing.expectEqualStrings("1701Q", revision.code.asSlice());
     try std.testing.expectEqualStrings("2018-01-ENCS", revision.revision.asSlice());
+    try std.testing.expect(form_1701q_2018.evidence.readiness.identityReady());
+}
+
+test "the registered 1601EQ package reports its printed identity and is not identity-ready" {
+    const revision = package.revisionOf(form_1601eq_2018);
+    try std.testing.expectEqualStrings("1601EQ", revision.code.asSlice());
+    try std.testing.expectEqualStrings("2018-01-ENCS", revision.revision.asSlice());
+    try std.testing.expect(!form_1601eq_2018.evidence.readiness.identityReady());
+    try std.testing.expect(!form_1601eq_2018.evidence.readiness.dependency_closure);
+    try std.testing.expect(!form_1701q_2018.package_key.eql(
+        &form_1601eq_2018.package_key,
+    ));
 }
