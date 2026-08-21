@@ -2,11 +2,11 @@
 //!
 //! Identity is pinned. The static HTA control inventory, declaration
 //! contract, event-attribute inventory, HTA-local remittance totals
-//! (Items 24, 25, 29, 30), over-remittance exclusive choice, and the
-//! amended-return gate for Item 22 are pinned. Script closure and ATC
-//! lookup are not. Remaining parts stay fail-closed until the five absent
-//! active scripts and two path-placement variants are recovered or
-//! independently reconstructed with provenance.
+//! (Items 24, 25, 29, 30), over-remittance exclusive choice, the
+//! amended-return gate for Item 22, and Item 1/2 year-quarter gates are
+//! pinned. Script closure and ATC lookup are not. Remaining parts stay
+//! fail-closed until the five absent active scripts and two path-placement
+//! variants are recovered or independently reconstructed with provenance.
 
 pub const evidence = @import("evidence.zig");
 pub const occurrences = @import("occurrences.zig");
