@@ -11,9 +11,8 @@
 //! directory, add one registry line, and let the compiler enumerate the work.
 //!
 //! This pins the *shape* of a package, not the signatures inside each part.
-//! Those are still specific to 1701Q; generalising them needs a second real
-//! form to compare against, and guessing now would encode one form's accidents
-//! as the contract.
+//! 1601EQ is registered as a second package whose parts remain fail-closed
+//! pending script recovery; do not generalise 1701Q signatures from it yet.
 
 const std = @import("std");
 const identity = @import("identity.zig");

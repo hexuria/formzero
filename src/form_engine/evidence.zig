@@ -34,6 +34,23 @@ pub const SourceEvidence = struct {
     script_tag_line: ?u32 = null,
 };
 
+/// An active `<script src>` that is not an exact recovered package path.
+/// Path-placement variants name the nearby recovered file without claiming
+/// that the HTA loads it. Absent scripts have no recovered bytes.
+pub const UnresolvedScriptKind = enum(u8) {
+    absent_from_package = 1,
+    path_placement_variant = 2,
+};
+
+pub const UnresolvedScriptEvidence = struct {
+    kind: UnresolvedScriptKind,
+    normalized_relative_path: []const u8,
+    script_load_order: u8,
+    script_tag_line: u32,
+    recovered_relative_path: ?[]const u8 = null,
+    recovered_sha256: ?identity.Sha256Digest = null,
+};
+
 pub const EvidenceReadiness = struct {
     identity_resolved: bool = false,
     dependency_closure: bool = false,
@@ -80,6 +97,8 @@ pub const ManifestError = error{
     InvalidScriptLoadOrder,
     DuplicateScriptLoadOrder,
     MissingScriptTagLine,
+    UnresolvedRecoveredPathMissing,
+    UnresolvedRecoveredPathUnexpected,
     DependencyDigestMismatch,
     IdentityReadinessMismatch,
     DependencyReadinessMismatch,
@@ -94,6 +113,10 @@ pub const EvidenceManifest = struct {
     /// Canonical path order, not execution order. `script_load_order`
     /// separately preserves the official `<script>` order.
     dependencies: []const SourceEvidence,
+    /// Active `<script src>` references that are not exact recovered paths.
+    /// Canonical path order among themselves. Load order is the HTA order
+    /// shared with `dependencies`.
+    unresolved_scripts: []const UnresolvedScriptEvidence = &.{},
     readiness: EvidenceReadiness,
 
     pub fn validate(self: *const Self) ManifestError!void {
@@ -113,6 +136,8 @@ pub const EvidenceManifest = struct {
         )) {
             return error.IdentityReadinessMismatch;
         }
+
+        const total_scripts = self.dependencies.len + self.unresolved_scripts.len;
 
         var prior_path = self.primary_source.normalized_relative_path;
         for (self.dependencies, 0..) |dependency, index| {
@@ -135,7 +160,7 @@ pub const EvidenceManifest = struct {
             }
             const load_order = dependency.script_load_order orelse
                 return error.MissingScriptLoadOrder;
-            if (load_order == 0 or load_order > self.dependencies.len) {
+            if (load_order == 0 or load_order > total_scripts) {
                 return error.InvalidScriptLoadOrder;
             }
             if (dependency.script_tag_line == null) {
@@ -143,6 +168,57 @@ pub const EvidenceManifest = struct {
             }
             for (self.dependencies[0..index]) |earlier| {
                 if (earlier.script_load_order.? == load_order) {
+                    return error.DuplicateScriptLoadOrder;
+                }
+            }
+        }
+
+        var unresolved_prior: []const u8 = "";
+        for (self.unresolved_scripts, 0..) |script, index| {
+            if (script.normalized_relative_path.len == 0) {
+                return error.EmptyRelativePath;
+            }
+            if (unresolved_prior.len != 0 and
+                std.mem.order(
+                    u8,
+                    unresolved_prior,
+                    script.normalized_relative_path,
+                ) != .lt)
+            {
+                return error.PathOrderNotCanonical;
+            }
+            unresolved_prior = script.normalized_relative_path;
+            if (script.script_load_order == 0 or
+                script.script_load_order > total_scripts)
+            {
+                return error.InvalidScriptLoadOrder;
+            }
+            if (script.script_tag_line == 0) {
+                return error.MissingScriptTagLine;
+            }
+            switch (script.kind) {
+                .absent_from_package => {
+                    if (script.recovered_relative_path != null or
+                        script.recovered_sha256 != null)
+                    {
+                        return error.UnresolvedRecoveredPathUnexpected;
+                    }
+                },
+                .path_placement_variant => {
+                    const recovered = script.recovered_relative_path orelse
+                        return error.UnresolvedRecoveredPathMissing;
+                    if (recovered.len == 0 or script.recovered_sha256 == null) {
+                        return error.UnresolvedRecoveredPathMissing;
+                    }
+                },
+            }
+            for (self.unresolved_scripts[0..index]) |earlier| {
+                if (earlier.script_load_order == script.script_load_order) {
+                    return error.DuplicateScriptLoadOrder;
+                }
+            }
+            for (self.dependencies) |dependency| {
+                if (dependency.script_load_order.? == script.script_load_order) {
                     return error.DuplicateScriptLoadOrder;
                 }
             }
@@ -159,7 +235,9 @@ pub const EvidenceManifest = struct {
         {
             return error.IdentityReadinessMismatch;
         }
-        if (self.readiness.dependency_closure and self.dependencies.len == 0) {
+        if (self.readiness.dependency_closure and
+            (self.dependencies.len == 0 or self.unresolved_scripts.len != 0))
+        {
             return error.DependencyReadinessMismatch;
         }
     }
@@ -227,4 +305,7 @@ test "source evidence has no value-bearing field" {
     try std.testing.expect(!@hasField(SourceEvidence, "payload"));
     try std.testing.expect(!@hasField(OfficialDocumentEvidence, "value"));
     try std.testing.expect(!@hasField(OfficialDocumentEvidence, "payload"));
+    try std.testing.expect(!@hasField(UnresolvedScriptEvidence, "value"));
+    try std.testing.expect(!@hasField(UnresolvedScriptEvidence, "raw_value"));
+    try std.testing.expect(!@hasField(UnresolvedScriptEvidence, "payload"));
 }
