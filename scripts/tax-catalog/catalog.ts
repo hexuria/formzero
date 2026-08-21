@@ -472,7 +472,7 @@ function supportedSetupValue(
 }
 
 /**
- * Exhaustive ownership/type review of the 372 Native input controls.
+ * Exhaustive ownership/type review of the 389 Native input controls.
  *
  * Grouping keeps the source reviewable without weakening exact-ID coverage:
  * the generator rejects a discovered control missing from this table and an
@@ -634,7 +634,36 @@ const explicitInputFields = defineInputFields([
   },
   {
     provenance: "external", role: "payment", valueType: "text",
-    ids: ["2550Q.2024-04-ENCS.input.payment_reference"],
+    ids: [
+      "2550Q.2024-04-ENCS.input.payment_reference",
+      "1601EQ.2018-01-ENCS.input.item_33_agency",
+      "1601EQ.2018-01-ENCS.input.item_33_number",
+      "1601EQ.2018-01-ENCS.input.item_34_agency",
+      "1601EQ.2018-01-ENCS.input.item_34_number",
+      "1601EQ.2018-01-ENCS.input.item_35_agency",
+      "1601EQ.2018-01-ENCS.input.item_35_number",
+      "1601EQ.2018-01-ENCS.input.item_36_agency",
+      "1601EQ.2018-01-ENCS.input.item_36_number",
+      "1601EQ.2018-01-ENCS.input.item_36_particular",
+    ],
+  },
+  {
+    provenance: "external", role: "payment", valueType: "date",
+    ids: [
+      "1601EQ.2018-01-ENCS.input.item_33_date_paid",
+      "1601EQ.2018-01-ENCS.input.item_34_date_paid",
+      "1601EQ.2018-01-ENCS.input.item_35_date_paid",
+      "1601EQ.2018-01-ENCS.input.item_36_date_paid",
+    ],
+  },
+  {
+    provenance: "external", role: "payment", valueType: "money",
+    ids: [
+      "1601EQ.2018-01-ENCS.input.item_33_amount",
+      "1601EQ.2018-01-ENCS.input.item_34_amount",
+      "1601EQ.2018-01-ENCS.input.item_35_amount",
+      "1601EQ.2018-01-ENCS.input.item_36_amount",
+    ],
   },
   {
     provenance: "external", role: "preparer", valueType: "text",
@@ -1289,17 +1318,17 @@ export const editorForms: readonly EditorFormSpec[] = [
     revisionLabel: "January 2018 (ENCS)",
     sourcePath: "src/pages/forms/1601-eq.native",
     inputFields: inputFieldsFor("1601EQ", "2018-01-ENCS"),
-    expectedInputCount: 46,
+    expectedInputCount: 63,
     expectedTableCount: 0,
     expectedTableHeaders: [],
-    roles: ["filer", "filing", "evidence", "system"],
+    roles: ["filer", "filing", "payment", "evidence", "system"],
     profileRoles: [exactlyOneFiler()],
     consumedTaxpayerYearSettings: [],
     taxFormProfile: {
       mode: "no_setup",
       specRevision: 1,
       sourceEvidence:
-        "Identity, filing choices, unbound ATC rows 13-18, and remittance totals; save stays disabled until an exact 1601EQ path exists",
+        "Identity, filing choices, unbound ATC rows 13-18, remittance totals, and payment rows 33-36; save stays disabled until an exact 1601EQ path exists",
       values: [],
     },
     profileTargetPresence: {
