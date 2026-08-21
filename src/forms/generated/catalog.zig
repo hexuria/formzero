@@ -5,7 +5,7 @@
 const std = @import("std");
 
 pub const catalog_revision = "tax-catalog-v2";
-pub const catalog_sha256 = "c6056effe4bcd4a1746051ca7995facff4c2e57ed983e8c2e009d93f65684477";
+pub const catalog_sha256 = "5f404aa6958074a2f985f7301b7ffb29a7c3a8e7b4db05ae22147e8eaee3f265";
 
 pub const Provenance = enum { profile, tax_form_profile, taxpayer_year, form_policy, transaction, derived, filing_context, external };
 pub const Role = enum { filer, spouse, filing, payment, preparer, employer, withholding_agent, attachment, evidence, system };
@@ -6993,8 +6993,8 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .control = .input,
     },
     .{
-        .id = "1601EQ.2018-01-ENCS.input.tax_still_due",
-        .label = "25 Tax still due",
+        .id = "1601EQ.2018-01-ENCS.input.tax_still_due_over_remittance",
+        .label = "25 Tax still due/(Over-remittance)",
         .provenance = .derived,
         .role = .system,
         .value_type = .money,
@@ -7053,8 +7053,8 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .control = .input,
     },
     .{
-        .id = "1601EQ.2018-01-ENCS.input.total_amount_payable",
-        .label = "31 Total amount payable",
+        .id = "1601EQ.2018-01-ENCS.input.total_penalties",
+        .label = "29 Total penalties",
         .provenance = .derived,
         .role = .system,
         .value_type = .money,
@@ -7065,6 +7065,21 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
         .source_line = 66,
+        .control = .input,
+    },
+    .{
+        .id = "1601EQ.2018-01-ENCS.input.total_amount_still_due_over_remittance",
+        .label = "30 Total amount still due/(Over-remittance)",
+        .provenance = .derived,
+        .role = .system,
+        .value_type = .money,
+        .status = .unbound_input,
+        .profile_key = null,
+        .profile_presence = null,
+        .source_key = null,
+        .fixed_value = null,
+        .source_path = "src/pages/forms/1601-eq.native",
+        .source_line = 67,
         .control = .input,
     },
     .{
@@ -7079,7 +7094,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 67,
+        .source_line = 68,
         .control = .input,
     },
     .{
@@ -7094,7 +7109,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 68,
+        .source_line = 69,
         .control = .input,
     },
     .{
@@ -7109,7 +7124,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 69,
+        .source_line = 70,
         .control = .input,
     },
     .{
@@ -7124,7 +7139,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 75,
+        .source_line = 76,
         .control = .input,
     },
     .{
@@ -7139,7 +7154,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 76,
+        .source_line = 77,
         .control = .input,
     },
     .{
@@ -7154,7 +7169,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 77,
+        .source_line = 78,
         .control = .input,
     },
     .{
@@ -7169,7 +7184,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 86,
+        .source_line = 87,
         .control = .input,
     },
     .{
@@ -7184,7 +7199,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 87,
+        .source_line = 88,
         .control = .input,
     },
     .{
@@ -7199,7 +7214,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 88,
+        .source_line = 89,
         .control = .input,
     },
     .{
@@ -7214,7 +7229,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 89,
+        .source_line = 90,
         .control = .input,
     },
     .{
@@ -7229,7 +7244,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 95,
+        .source_line = 96,
         .control = .input,
     },
     .{
@@ -7244,7 +7259,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 96,
+        .source_line = 97,
         .control = .input,
     },
     .{
@@ -7259,7 +7274,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 97,
+        .source_line = 98,
         .control = .input,
     },
     .{
@@ -7274,7 +7289,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 98,
+        .source_line = 99,
         .control = .input,
     },
     .{
@@ -7289,7 +7304,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 104,
+        .source_line = 105,
         .control = .input,
     },
     .{
@@ -7304,7 +7319,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 105,
+        .source_line = 106,
         .control = .input,
     },
     .{
@@ -7319,7 +7334,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 106,
+        .source_line = 107,
         .control = .input,
     },
     .{
@@ -7334,7 +7349,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 107,
+        .source_line = 108,
         .control = .input,
     },
     .{
@@ -7349,7 +7364,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 113,
+        .source_line = 114,
         .control = .input,
     },
     .{
@@ -7364,7 +7379,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 114,
+        .source_line = 115,
         .control = .input,
     },
     .{
@@ -7379,7 +7394,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 115,
+        .source_line = 116,
         .control = .input,
     },
     .{
@@ -7394,7 +7409,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 116,
+        .source_line = 117,
         .control = .input,
     },
     .{
@@ -7409,7 +7424,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 117,
+        .source_line = 118,
         .control = .input,
     },
 };
@@ -8476,7 +8491,7 @@ pub const forms = [_]FormDefinition{
 pub const registry_count: usize = 51;
 pub const editor_count: usize = 11;
 pub const calendar_only_count: usize = 40;
-pub const native_input_count: usize = 398;
+pub const native_input_count: usize = 399;
 pub const table_field_count: usize = 63;
 pub const profile_target_count: usize = 99;
 pub const optional_profile_target_count: usize = 35;

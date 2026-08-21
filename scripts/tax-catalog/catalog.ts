@@ -472,7 +472,7 @@ function supportedSetupValue(
 }
 
 /**
- * Exhaustive ownership/type review of the 398 Native input controls.
+ * Exhaustive ownership/type review of the 399 Native input controls.
  *
  * Grouping keeps the source reviewable without weakening exact-ID coverage:
  * the generator rejects a discovered control missing from this table and an
@@ -553,11 +553,12 @@ const explicitInputFields = defineInputFields([
       "0619E.2018-01-ENCS.input.surcharge",
       "0619E.2018-01-ENCS.input.interest",
       "0619E.2018-01-ENCS.input.compromise",
-      "1601EQ.2018-01-ENCS.input.tax_still_due",
+      "1601EQ.2018-01-ENCS.input.tax_still_due_over_remittance",
       "1601EQ.2018-01-ENCS.input.surcharge",
       "1601EQ.2018-01-ENCS.input.interest",
       "1601EQ.2018-01-ENCS.input.compromise",
-      "1601EQ.2018-01-ENCS.input.total_amount_payable",
+      "1601EQ.2018-01-ENCS.input.total_penalties",
+      "1601EQ.2018-01-ENCS.input.total_amount_still_due_over_remittance",
       "1601EQ.2018-01-ENCS.input.total_remittances_made",
       "1601EQ.2018-01-ENCS.input.item_13_tax_withheld",
       "1601EQ.2018-01-ENCS.input.item_14_tax_withheld",
@@ -1327,7 +1328,7 @@ export const editorForms: readonly EditorFormSpec[] = [
     revisionLabel: "January 2018 (ENCS)",
     sourcePath: "src/pages/forms/1601-eq.native",
     inputFields: inputFieldsFor("1601EQ", "2018-01-ENCS"),
-    expectedInputCount: 72,
+    expectedInputCount: 73,
     expectedTableCount: 0,
     expectedTableHeaders: [],
     roles: ["filer", "filing", "payment", "preparer", "evidence", "system"],
