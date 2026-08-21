@@ -472,7 +472,7 @@ function supportedSetupValue(
 }
 
 /**
- * Exhaustive ownership/type review of the 392 Native input controls.
+ * Exhaustive ownership/type review of the 398 Native input controls.
  *
  * Grouping keeps the source reviewable without weakening exact-ID coverage:
  * the generator rejects a discovered control missing from this table and an
@@ -558,6 +558,7 @@ const explicitInputFields = defineInputFields([
       "1601EQ.2018-01-ENCS.input.interest",
       "1601EQ.2018-01-ENCS.input.compromise",
       "1601EQ.2018-01-ENCS.input.total_amount_payable",
+      "1601EQ.2018-01-ENCS.input.total_remittances_made",
       "1601EQ.2018-01-ENCS.input.item_13_tax_withheld",
       "1601EQ.2018-01-ENCS.input.item_14_tax_withheld",
       "1601EQ.2018-01-ENCS.input.item_15_tax_withheld",
@@ -591,6 +592,8 @@ const explicitInputFields = defineInputFields([
       "0619F.2018-01-ENCS.input.less_amount_remitted_from_previously_filed_form",
       "1601EQ.2018-01-ENCS.input.less_tax_remitted_first_month_0619e",
       "1601EQ.2018-01-ENCS.input.less_tax_remitted_second_month_0619e",
+      "1601EQ.2018-01-ENCS.input.tax_remitted_in_return_previously_filed",
+      "1601EQ.2018-01-ENCS.input.over_remittance_from_previous_quarter",
       "1701Q.2018-01-ENCS.input.prior_quarter_income_tax_payments",
       "1701Q.2018-01-ENCS.input.creditable_tax_withheld_bir_form_2307",
       "1701.2018-01-ENCS.input.tax_withheld_on_compensation",
@@ -980,6 +983,9 @@ const explicitInputFields = defineInputFields([
     ids: [
       "1601C.2018-01-ENCS.input.any_taxes_withheld",
       "1601EQ.2018-01-ENCS.input.any_taxes_withheld",
+      "1601EQ.2018-01-ENCS.input.over_remittance_to_be_refunded",
+      "1601EQ.2018-01-ENCS.input.over_remittance_issued_tax_credit_certificate",
+      "1601EQ.2018-01-ENCS.input.over_remittance_carried_over",
       "0619F.2018-01-ENCS.input.any_taxes_withheld",
       "0619F.2018-01-ENCS.input.government_withholding_agent",
       "2550Q.2024-04-ENCS.input.tax_relief",
@@ -1321,7 +1327,7 @@ export const editorForms: readonly EditorFormSpec[] = [
     revisionLabel: "January 2018 (ENCS)",
     sourcePath: "src/pages/forms/1601-eq.native",
     inputFields: inputFieldsFor("1601EQ", "2018-01-ENCS"),
-    expectedInputCount: 66,
+    expectedInputCount: 72,
     expectedTableCount: 0,
     expectedTableHeaders: [],
     roles: ["filer", "filing", "payment", "preparer", "evidence", "system"],
@@ -1331,7 +1337,7 @@ export const editorForms: readonly EditorFormSpec[] = [
       mode: "no_setup",
       specRevision: 1,
       sourceEvidence:
-        "Identity, filing choices, unbound ATC rows, remittance totals, payment rows, and tax-agent fields; save stays disabled until an exact 1601EQ path exists",
+        "Identity, filing choices, unbound ATC rows, remittance totals including items 22-24 and over-remittance marks, payment rows, and tax-agent fields; save stays disabled until an exact 1601EQ path exists",
       values: [],
     },
     profileTargetPresence: {
