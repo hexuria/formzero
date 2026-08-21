@@ -77,5 +77,9 @@ test "the registered 1601EQ package reports its printed identity and is not iden
         @as(usize, 98),
         form_1601eq_2018.occurrences.control_seeds.len,
     );
+    try std.testing.expectEqual(
+        form_1601eq_2018.occurrences.control_seeds.len,
+        form_1601eq_2018.control_contract.contracts.len,
+    );
     try std.testing.expect(!form_1601eq_2018.occurrences.serializer_reviewed);
 }
