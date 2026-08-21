@@ -6,7 +6,7 @@
 //! amended-return gate for Item 22, the Item 1/2 year-quarter gates, and
 //! the `validateForm` identity required-field gates (Items 4, 11, 6, 7, 8,
 //! 10, 9, 9A, 12), the Part II ATC entry gate, and the Validate/Edit lock
-//! are pinned. Script closure and ATC lookup are not.
+//! and the confirm-guarded computation reset are pinned. Script closure and ATC lookup are not.
 //! Remaining parts stay fail-closed until the five absent active scripts
 //! and two path-placement variants are recovered or independently
 //! reconstructed with provenance.

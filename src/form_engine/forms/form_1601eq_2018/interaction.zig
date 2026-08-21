@@ -15,6 +15,8 @@
 //! - `cmdValidate` onclick line 1002, `cmdEdit` onclick line 1003
 //! - `disableAllControl` lines 3295-3352
 //! - `enableAllControl` lines 3353-3406
+//! - `changeCategory` lines 3411-3448, `optCategory` onclick lines 521-522
+//! - `changeTaxWithheldNO` lines 3449-3483, `optWithheld:N` onclick 337
 //!
 //! Checking one over-remittance mark unchecks the other two. Unchecking a
 //! mark does not check another. When choices are not enabled (Item 30 is
@@ -31,12 +33,20 @@
 //! disabled by Validate. Both transitions also walk a `txtTaxBase` loop
 //! whose bound is a live row count over rows added by absent scripts; that
 //! loop and the `qs('xmlFileName')` Import branch are not pinned.
+//!
+//! Switching Item 4 to No or changing Item 11 clears Items 19-30 behind a
+//! `confirm()`, but only when an ATC is already chosen. Cancelling undoes
+//! the click: Item 4 returns to Yes, and Item 11 flips to the category that
+//! was not clicked. The ATC table teardown those pipelines also perform
+//! (`populateAtcPart2`, `changedrpATCList`, the `AtcCode` checkbox sweep and
+//! `lblOtherTax`) reads the ATC catalog and is not pinned.
 
 const std = @import("std");
 const calculations = @import("calculations.zig");
 const control_contract = @import("control_contract.zig");
 const evidence = @import("evidence.zig");
 const event_contract = @import("event_contract.zig");
+const validation = @import("validation.zig");
 
 /// Full UI interaction is not ready. Exclusive choice and Item 22's
 /// amended-return gate are.
@@ -44,6 +54,7 @@ pub const ready = false;
 pub const exclusive_choice_ready = true;
 pub const amended_item22_ready = true;
 pub const validate_lock_ready = true;
+pub const computation_reset_ready = true;
 
 pub const Mark = enum {
     refund,
@@ -282,6 +293,90 @@ fn lastAssignment(table: []const ControlDisable, id: []const u8) ?bool {
     return found;
 }
 
+/// Answer to the HTA `confirm()` dialog raised by both reset pipelines.
+pub const Confirm = enum { cancelled, confirmed };
+
+/// The twelve money fields both pipelines set to `(0).toFixed(2)`, in HTA
+/// statement order. Item 19 and the four derived totals are included: the
+/// reset writes them directly rather than recomputing.
+pub const reset_money_items = [_]u8{ 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30 };
+
+/// Cleared money state. Zeroing every input leaves the derived totals at
+/// zero too, so the direct writes agree with `computeRemittanceTotals`.
+pub const cleared_inputs: calculations.Inputs = .{};
+
+pub const WithheldReset = struct {
+    /// HTA raised its confirm dialog.
+    prompted: bool,
+    /// Items 19-30 were written to zero.
+    cleared: bool,
+    /// Item 4 after the pipeline.
+    withheld: validation.Withheld,
+    /// Module-level `taxWheldFlag` after the pipeline.
+    tax_wheld_flag: bool,
+};
+
+/// `changeTaxWithheldNO`, the `optWithheld:N` onclick at line 337.
+///
+/// The whole body is guarded by `taxWheldFlag`, which only `optWithheld:Y`'s
+/// own onclick sets. Clicking No without having clicked Yes first does
+/// nothing at all. Cancelling re-checks Yes, so the click is undone.
+pub fn applyWithheldNo(
+    tax_wheld_flag: bool,
+    first_atc_code: []const u8,
+    answer: Confirm,
+) WithheldReset {
+    if (!tax_wheld_flag) {
+        return .{ .prompted = false, .cleared = false, .withheld = .no, .tax_wheld_flag = false };
+    }
+    if (first_atc_code.len == 0) {
+        return .{ .prompted = false, .cleared = false, .withheld = .no, .tax_wheld_flag = false };
+    }
+    return switch (answer) {
+        .confirmed => .{ .prompted = true, .cleared = true, .withheld = .no, .tax_wheld_flag = false },
+        .cancelled => .{ .prompted = true, .cleared = false, .withheld = .yes, .tax_wheld_flag = true },
+    };
+}
+
+pub const CategoryReset = struct {
+    prompted: bool,
+    cleared: bool,
+    /// Item 11 after the pipeline.
+    category: validation.Category,
+    /// HTA calls `changedrpATCList` for the resulting category. The reload
+    /// itself is not pinned: it reads the ATC catalog.
+    reloads_atc_list: bool,
+};
+
+/// `changeCategory`, the `optCategory:P` / `optCategory:G` onclick at lines
+/// 521-522.
+///
+/// Cancelling reverts to the other category rather than restoring a
+/// remembered one: HTA assumes exactly two, and flips to whichever was not
+/// clicked.
+pub fn applyCategoryChange(
+    clicked: validation.Category,
+    first_atc_code: []const u8,
+    answer: Confirm,
+) CategoryReset {
+    if (first_atc_code.len == 0) {
+        return .{ .prompted = false, .cleared = false, .category = clicked, .reloads_atc_list = true };
+    }
+    return switch (answer) {
+        .confirmed => .{ .prompted = true, .cleared = true, .category = clicked, .reloads_atc_list = true },
+        .cancelled => .{
+            .prompted = true,
+            .cleared = false,
+            .category = switch (clicked) {
+                .private => .government,
+                .government => .private,
+                .none => .none,
+            },
+            .reloads_atc_list = false,
+        },
+    };
+}
+
 test "1601EQ over-remittance exclusive choice stays unreconciled and unimplemented as handlers" {
     try std.testing.expect(exclusive_choice_ready);
     try std.testing.expect(amended_item22_ready);
@@ -472,4 +567,88 @@ test "1601EQ Edit restores Item 22 only for an amended return" {
 test "1601EQ btnOtherTax is enabled by Edit but never disabled by Validate" {
     try std.testing.expect(disabledAfterValidate("btnOtherTax") == null);
     try std.testing.expect(!disabledAfterEdit("btnOtherTax", .no).?);
+}
+
+test "1601EQ computation reset is pinned but the ATC teardown is not" {
+    try std.testing.expect(computation_reset_ready);
+    try std.testing.expect(!ready);
+    try std.testing.expect(!calculations.atc_lookup_ready);
+    try std.testing.expectEqual(@as(usize, 12), reset_money_items.len);
+    try std.testing.expectEqual(@as(u8, 19), reset_money_items[0]);
+    try std.testing.expectEqual(@as(u8, 30), reset_money_items[11]);
+}
+
+test "1601EQ clearing every input leaves the derived totals at zero" {
+    const derived = try calculations.computeRemittanceTotals(cleared_inputs);
+    try std.testing.expectEqual(@as(i64, 0), derived.item_24.centavos);
+    try std.testing.expectEqual(@as(i64, 0), derived.item_25.centavos);
+    try std.testing.expectEqual(@as(i64, 0), derived.item_29.centavos);
+    try std.testing.expectEqual(@as(i64, 0), derived.item_30.centavos);
+    // Item 30 is not negative, so the over-remittance marks stay unavailable.
+    try std.testing.expect(!derived.over_remittance_choices_enabled);
+}
+
+test "1601EQ Item 4 No does nothing when Yes was never clicked" {
+    const result = applyWithheldNo(false, "WC010", .confirmed);
+    try std.testing.expect(!result.prompted);
+    try std.testing.expect(!result.cleared);
+    try std.testing.expectEqual(validation.Withheld.no, result.withheld);
+    try std.testing.expect(!result.tax_wheld_flag);
+}
+
+test "1601EQ Item 4 No skips the prompt when no ATC is chosen" {
+    const result = applyWithheldNo(true, "", .confirmed);
+    try std.testing.expect(!result.prompted);
+    try std.testing.expect(!result.cleared);
+    try std.testing.expectEqual(validation.Withheld.no, result.withheld);
+    try std.testing.expect(!result.tax_wheld_flag);
+}
+
+test "1601EQ confirming Item 4 No clears the computation" {
+    const result = applyWithheldNo(true, "WC010", .confirmed);
+    try std.testing.expect(result.prompted);
+    try std.testing.expect(result.cleared);
+    try std.testing.expectEqual(validation.Withheld.no, result.withheld);
+    try std.testing.expect(!result.tax_wheld_flag);
+}
+
+test "1601EQ cancelling Item 4 No undoes the click and keeps the computation" {
+    const result = applyWithheldNo(true, "WC010", .cancelled);
+    try std.testing.expect(result.prompted);
+    try std.testing.expect(!result.cleared);
+    try std.testing.expectEqual(validation.Withheld.yes, result.withheld);
+    try std.testing.expect(result.tax_wheld_flag);
+}
+
+test "1601EQ changing category without an ATC reloads the list without prompting" {
+    const result = applyCategoryChange(.government, "", .confirmed);
+    try std.testing.expect(!result.prompted);
+    try std.testing.expect(!result.cleared);
+    try std.testing.expectEqual(validation.Category.government, result.category);
+    try std.testing.expect(result.reloads_atc_list);
+}
+
+test "1601EQ confirming a category change clears the computation and reloads" {
+    const result = applyCategoryChange(.government, "WC010", .confirmed);
+    try std.testing.expect(result.prompted);
+    try std.testing.expect(result.cleared);
+    try std.testing.expectEqual(validation.Category.government, result.category);
+    try std.testing.expect(result.reloads_atc_list);
+}
+
+test "1601EQ cancelling a category change flips to the category not clicked" {
+    const to_government = applyCategoryChange(.government, "WC010", .cancelled);
+    try std.testing.expect(to_government.prompted);
+    try std.testing.expect(!to_government.cleared);
+    try std.testing.expectEqual(validation.Category.private, to_government.category);
+    try std.testing.expect(!to_government.reloads_atc_list);
+
+    const to_private = applyCategoryChange(.private, "WC010", .cancelled);
+    try std.testing.expectEqual(validation.Category.government, to_private.category);
+    try std.testing.expect(!to_private.reloads_atc_list);
+}
+
+test "1601EQ neither reset trims, so a space counts as a chosen ATC" {
+    try std.testing.expect(applyWithheldNo(true, " ", .confirmed).prompted);
+    try std.testing.expect(applyCategoryChange(.private, " ", .confirmed).prompted);
 }
