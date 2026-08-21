@@ -81,5 +81,10 @@ test "the registered 1601EQ package reports its printed identity and is not iden
         form_1601eq_2018.occurrences.control_seeds.len,
         form_1601eq_2018.control_contract.contracts.len,
     );
+    try std.testing.expectEqual(
+        @as(usize, 67),
+        form_1601eq_2018.event_contract.observed_binding_count,
+    );
+    try std.testing.expect(!form_1601eq_2018.event_contract.handlers_implemented);
     try std.testing.expect(!form_1601eq_2018.occurrences.serializer_reviewed);
 }

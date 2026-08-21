@@ -1,9 +1,10 @@
 //! 1601EQ January 2018 (ENCS) exact form package.
 //!
-//! Identity is pinned. The static HTA control inventory and declaration
-//! contract are pinned. Script closure is not. Remaining parts stay
-//! fail-closed until the five absent active scripts and two path-placement
-//! variants are recovered or independently reconstructed with provenance.
+//! Identity is pinned. The static HTA control inventory, declaration
+//! contract, and event-attribute inventory are pinned. Script closure is
+//! not. Remaining parts stay fail-closed until the five absent active
+//! scripts and two path-placement variants are recovered or independently
+//! reconstructed with provenance.
 
 pub const evidence = @import("evidence.zig");
 pub const occurrences = @import("occurrences.zig");
