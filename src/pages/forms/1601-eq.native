@@ -64,6 +64,14 @@
   </grid>
 </template>
 
+<template name="form-1601-eq-tax-agent" args="columns">
+  <grid columns="{columns}" gap="12">
+    <!-- @include-template form-field label="Tax Agent Accreditation / Attorney Roll No." ph="Accreditation number" -->
+    <!-- @include-template form-field label="Date Issued" ph="MM / DD / YYYY" -->
+    <!-- @include-template form-field label="Date of Expiry" ph="MM / DD / YYYY" -->
+  </grid>
+</template>
+
 <template name="form-1601-eq-payment" args="columns">
   <column gap="16">
     <column gap="8">
@@ -213,6 +221,21 @@
           </if>
           <if test="{desktopLayout}">
             <use template="form-1601-eq-payment" columns="4"/>
+          </if>
+        </column>
+      </card>
+      <card>
+        <column padding="20" gap="12">
+          <text size="heading">TAX AGENT / SIGNATURE DETAILS</text>
+          <text wrap="true" foreground="text_muted">Unbound January 2018 ENCS tax-agent fields. Signature, jurat image, and save stay off this slice.</text>
+          <if test="{constrainedLayout}">
+            <use template="form-1601-eq-tax-agent" columns="1"/>
+          </if>
+          <if test="{tabletLayout}">
+            <use template="form-1601-eq-tax-agent" columns="2"/>
+          </if>
+          <if test="{desktopLayout}">
+            <use template="form-1601-eq-tax-agent" columns="3"/>
           </if>
         </column>
       </card>
