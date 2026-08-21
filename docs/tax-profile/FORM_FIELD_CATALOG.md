@@ -12,7 +12,7 @@ exists yet; it does not imply filing support.
 - Registry codes: 51
 - Native editor revisions: 11
 - Calendar-only codes: 40
-- Native input controls inventoried: 398
+- Native input controls inventoried: 399
 - Meaningful static-table fields inventoried: 63
 - Direct profile projection targets: 99
 - Optional profile projection targets: 35
@@ -72,7 +72,7 @@ exists yet; it does not imply filing support.
 | 2200C | Excise Tax Return for Coal and Coke | excise_tax | — | calendar_only | calendar_only | — | monthly | 1-12 | 0 | 0 | — |
 | 2200S | Excise Tax Return for Sweetened Beverages | excise_tax | — | calendar_only | calendar_only | — | monthly | 1-12 | 0 | 0 | — |
 | 0619E | Monthly Remittance Form for Creditable Income Taxes Withheld (Expanded) | withholding_tax | 2018-01-ENCS | static_layout | no_setup | — | monthly | 1-12 | 24 | 4 | src/pages/forms/0619-e.native |
-| 1601EQ | Quarterly Remittance Return of Creditable Income Taxes Withheld (Expanded) | withholding_tax | 2018-01-ENCS | static_layout | no_setup | — | quarterly | 1-4 | 72 | 0 | src/pages/forms/1601-eq.native |
+| 1601EQ | Quarterly Remittance Return of Creditable Income Taxes Withheld (Expanded) | withholding_tax | 2018-01-ENCS | static_layout | no_setup | — | quarterly | 1-4 | 73 | 0 | src/pages/forms/1601-eq.native |
 | 1701MS | Annual Income Tax Return for Micro and Small Taxpayers | income_tax | — | calendar_only | calendar_only | — | annual | — | 0 | 0 | — |
 | 1706 | Capital Gains Tax Return (Real Properties) | capital_gains_tax | — | calendar_only | calendar_only | — | on_demand | — | 0 | 0 | — |
 | 1707A | Annual Capital Gains Tax Return (Shares of Stock Not Traded) | capital_gains_tax | — | calendar_only | calendar_only | — | on_demand | — | 0 | 0 | — |
@@ -893,31 +893,32 @@ Profile binding policy:
 | `1601EQ.2018-01-ENCS.input.tax_remitted_in_return_previously_filed` | 22 Tax remitted in return previously filed | external | — | — | — | — | evidence | money | unbound_input | `src/pages/forms/1601-eq.native:59` |
 | `1601EQ.2018-01-ENCS.input.over_remittance_from_previous_quarter` | 23 Over-remittance from previous quarter | external | — | — | — | — | evidence | money | unbound_input | `src/pages/forms/1601-eq.native:60` |
 | `1601EQ.2018-01-ENCS.input.total_remittances_made` | 24 Total remittances made | derived | — | — | — | — | system | money | unbound_input | `src/pages/forms/1601-eq.native:61` |
-| `1601EQ.2018-01-ENCS.input.tax_still_due` | 25 Tax still due | derived | — | — | — | — | system | money | unbound_input | `src/pages/forms/1601-eq.native:62` |
+| `1601EQ.2018-01-ENCS.input.tax_still_due_over_remittance` | 25 Tax still due/(Over-remittance) | derived | — | — | — | — | system | money | unbound_input | `src/pages/forms/1601-eq.native:62` |
 | `1601EQ.2018-01-ENCS.input.surcharge` | 26 Surcharge | derived | — | — | — | — | system | money | unbound_input | `src/pages/forms/1601-eq.native:63` |
 | `1601EQ.2018-01-ENCS.input.interest` | 27 Interest | derived | — | — | — | — | system | money | unbound_input | `src/pages/forms/1601-eq.native:64` |
 | `1601EQ.2018-01-ENCS.input.compromise` | 28 Compromise | derived | — | — | — | — | system | money | unbound_input | `src/pages/forms/1601-eq.native:65` |
-| `1601EQ.2018-01-ENCS.input.total_amount_payable` | 31 Total amount payable | derived | — | — | — | — | system | money | unbound_input | `src/pages/forms/1601-eq.native:66` |
-| `1601EQ.2018-01-ENCS.input.over_remittance_to_be_refunded` | Over-remittance to be refunded | transaction | — | — | — | — | filing | boolean | unbound_input | `src/pages/forms/1601-eq.native:67` |
-| `1601EQ.2018-01-ENCS.input.over_remittance_issued_tax_credit_certificate` | Over-remittance issued tax credit certificate | transaction | — | — | — | — | filing | boolean | unbound_input | `src/pages/forms/1601-eq.native:68` |
-| `1601EQ.2018-01-ENCS.input.over_remittance_carried_over` | Over-remittance carried over | transaction | — | — | — | — | filing | boolean | unbound_input | `src/pages/forms/1601-eq.native:69` |
-| `1601EQ.2018-01-ENCS.input.tax_agent_accreditation_attorney_roll_no` | Tax Agent Accreditation / Attorney Roll No. | external | — | — | — | — | preparer | text | unbound_input | `src/pages/forms/1601-eq.native:75` |
-| `1601EQ.2018-01-ENCS.input.date_issued` | Date Issued | external | — | — | — | — | evidence | date | unbound_input | `src/pages/forms/1601-eq.native:76` |
-| `1601EQ.2018-01-ENCS.input.date_of_expiry` | Date of Expiry | external | — | — | — | — | evidence | date | unbound_input | `src/pages/forms/1601-eq.native:77` |
-| `1601EQ.2018-01-ENCS.input.item_33_agency` | Item 33 agency | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:86` |
-| `1601EQ.2018-01-ENCS.input.item_33_date_paid` | Item 33 date paid | external | — | — | — | — | payment | date | unbound_input | `src/pages/forms/1601-eq.native:87` |
-| `1601EQ.2018-01-ENCS.input.item_33_number` | Item 33 number | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:88` |
-| `1601EQ.2018-01-ENCS.input.item_33_amount` | Item 33 amount | external | — | — | — | — | payment | money | unbound_input | `src/pages/forms/1601-eq.native:89` |
-| `1601EQ.2018-01-ENCS.input.item_34_agency` | Item 34 agency | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:95` |
-| `1601EQ.2018-01-ENCS.input.item_34_date_paid` | Item 34 date paid | external | — | — | — | — | payment | date | unbound_input | `src/pages/forms/1601-eq.native:96` |
-| `1601EQ.2018-01-ENCS.input.item_34_number` | Item 34 number | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:97` |
-| `1601EQ.2018-01-ENCS.input.item_34_amount` | Item 34 amount | external | — | — | — | — | payment | money | unbound_input | `src/pages/forms/1601-eq.native:98` |
-| `1601EQ.2018-01-ENCS.input.item_35_agency` | Item 35 agency | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:104` |
-| `1601EQ.2018-01-ENCS.input.item_35_date_paid` | Item 35 date paid | external | — | — | — | — | payment | date | unbound_input | `src/pages/forms/1601-eq.native:105` |
-| `1601EQ.2018-01-ENCS.input.item_35_number` | Item 35 number | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:106` |
-| `1601EQ.2018-01-ENCS.input.item_35_amount` | Item 35 amount | external | — | — | — | — | payment | money | unbound_input | `src/pages/forms/1601-eq.native:107` |
-| `1601EQ.2018-01-ENCS.input.item_36_agency` | Item 36 agency | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:113` |
-| `1601EQ.2018-01-ENCS.input.item_36_date_paid` | Item 36 date paid | external | — | — | — | — | payment | date | unbound_input | `src/pages/forms/1601-eq.native:114` |
-| `1601EQ.2018-01-ENCS.input.item_36_number` | Item 36 number | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:115` |
-| `1601EQ.2018-01-ENCS.input.item_36_amount` | Item 36 amount | external | — | — | — | — | payment | money | unbound_input | `src/pages/forms/1601-eq.native:116` |
-| `1601EQ.2018-01-ENCS.input.item_36_particular` | Item 36 particular | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:117` |
+| `1601EQ.2018-01-ENCS.input.total_penalties` | 29 Total penalties | derived | — | — | — | — | system | money | unbound_input | `src/pages/forms/1601-eq.native:66` |
+| `1601EQ.2018-01-ENCS.input.total_amount_still_due_over_remittance` | 30 Total amount still due/(Over-remittance) | derived | — | — | — | — | system | money | unbound_input | `src/pages/forms/1601-eq.native:67` |
+| `1601EQ.2018-01-ENCS.input.over_remittance_to_be_refunded` | Over-remittance to be refunded | transaction | — | — | — | — | filing | boolean | unbound_input | `src/pages/forms/1601-eq.native:68` |
+| `1601EQ.2018-01-ENCS.input.over_remittance_issued_tax_credit_certificate` | Over-remittance issued tax credit certificate | transaction | — | — | — | — | filing | boolean | unbound_input | `src/pages/forms/1601-eq.native:69` |
+| `1601EQ.2018-01-ENCS.input.over_remittance_carried_over` | Over-remittance carried over | transaction | — | — | — | — | filing | boolean | unbound_input | `src/pages/forms/1601-eq.native:70` |
+| `1601EQ.2018-01-ENCS.input.tax_agent_accreditation_attorney_roll_no` | Tax Agent Accreditation / Attorney Roll No. | external | — | — | — | — | preparer | text | unbound_input | `src/pages/forms/1601-eq.native:76` |
+| `1601EQ.2018-01-ENCS.input.date_issued` | Date Issued | external | — | — | — | — | evidence | date | unbound_input | `src/pages/forms/1601-eq.native:77` |
+| `1601EQ.2018-01-ENCS.input.date_of_expiry` | Date of Expiry | external | — | — | — | — | evidence | date | unbound_input | `src/pages/forms/1601-eq.native:78` |
+| `1601EQ.2018-01-ENCS.input.item_33_agency` | Item 33 agency | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:87` |
+| `1601EQ.2018-01-ENCS.input.item_33_date_paid` | Item 33 date paid | external | — | — | — | — | payment | date | unbound_input | `src/pages/forms/1601-eq.native:88` |
+| `1601EQ.2018-01-ENCS.input.item_33_number` | Item 33 number | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:89` |
+| `1601EQ.2018-01-ENCS.input.item_33_amount` | Item 33 amount | external | — | — | — | — | payment | money | unbound_input | `src/pages/forms/1601-eq.native:90` |
+| `1601EQ.2018-01-ENCS.input.item_34_agency` | Item 34 agency | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:96` |
+| `1601EQ.2018-01-ENCS.input.item_34_date_paid` | Item 34 date paid | external | — | — | — | — | payment | date | unbound_input | `src/pages/forms/1601-eq.native:97` |
+| `1601EQ.2018-01-ENCS.input.item_34_number` | Item 34 number | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:98` |
+| `1601EQ.2018-01-ENCS.input.item_34_amount` | Item 34 amount | external | — | — | — | — | payment | money | unbound_input | `src/pages/forms/1601-eq.native:99` |
+| `1601EQ.2018-01-ENCS.input.item_35_agency` | Item 35 agency | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:105` |
+| `1601EQ.2018-01-ENCS.input.item_35_date_paid` | Item 35 date paid | external | — | — | — | — | payment | date | unbound_input | `src/pages/forms/1601-eq.native:106` |
+| `1601EQ.2018-01-ENCS.input.item_35_number` | Item 35 number | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:107` |
+| `1601EQ.2018-01-ENCS.input.item_35_amount` | Item 35 amount | external | — | — | — | — | payment | money | unbound_input | `src/pages/forms/1601-eq.native:108` |
+| `1601EQ.2018-01-ENCS.input.item_36_agency` | Item 36 agency | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:114` |
+| `1601EQ.2018-01-ENCS.input.item_36_date_paid` | Item 36 date paid | external | — | — | — | — | payment | date | unbound_input | `src/pages/forms/1601-eq.native:115` |
+| `1601EQ.2018-01-ENCS.input.item_36_number` | Item 36 number | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:116` |
+| `1601EQ.2018-01-ENCS.input.item_36_amount` | Item 36 amount | external | — | — | — | — | payment | money | unbound_input | `src/pages/forms/1601-eq.native:117` |
+| `1601EQ.2018-01-ENCS.input.item_36_particular` | Item 36 particular | external | — | — | — | — | payment | text | unbound_input | `src/pages/forms/1601-eq.native:118` |
