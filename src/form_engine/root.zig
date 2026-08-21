@@ -87,4 +87,8 @@ test "the registered 1601EQ package reports its printed identity and is not iden
     );
     try std.testing.expect(!form_1601eq_2018.event_contract.handlers_implemented);
     try std.testing.expect(!form_1601eq_2018.occurrences.serializer_reviewed);
+    try std.testing.expect(form_1601eq_2018.calculations.remittance_totals_ready);
+    try std.testing.expect(!form_1601eq_2018.calculations.atc_lookup_ready);
+    try std.testing.expect(!form_1601eq_2018.calculations.ready);
+    try std.testing.expect(!form_1601eq_2018.evidence.readiness.calculation_reconciled);
 }
