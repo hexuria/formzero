@@ -95,5 +95,6 @@ test "the registered 1601EQ package reports its printed identity and is not iden
     try std.testing.expect(form_1601eq_2018.interaction.amended_item22_ready);
     try std.testing.expect(!form_1601eq_2018.interaction.ready);
     try std.testing.expect(form_1601eq_2018.validation.year_quarter_ready);
+    try std.testing.expect(form_1601eq_2018.validation.identity_required_ready);
     try std.testing.expect(!form_1601eq_2018.validation.ready);
 }
