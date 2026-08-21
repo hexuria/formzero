@@ -5,7 +5,7 @@
 const std = @import("std");
 
 pub const catalog_revision = "tax-catalog-v2";
-pub const catalog_sha256 = "9bce8df03183d2d8ec0fd3ea7d29246ea27ab1646a5bd14d7a314cf7154797bb";
+pub const catalog_sha256 = "c6056effe4bcd4a1746051ca7995facff4c2e57ed983e8c2e009d93f65684477";
 
 pub const Provenance = enum { profile, tax_form_profile, taxpayer_year, form_policy, transaction, derived, filing_context, external };
 pub const Role = enum { filer, spouse, filing, payment, preparer, employer, withholding_agent, attachment, evidence, system };
@@ -6327,7 +6327,7 @@ const tax_form_profile_spec_1601eq_2018_01_encs = TaxFormProfileSpec{
     .mode = .no_setup,
     .spec_revision = 1,
     .spec_hash = "00da4f31d7e8646a51315909b4eadf20feaf1bd8b7d8127158bf0475bed3be1a",
-    .source_evidence = "Identity, filing choices, unbound ATC rows, remittance totals, payment rows, and tax-agent fields; save stays disabled until an exact 1601EQ path exists",
+    .source_evidence = "Identity, filing choices, unbound ATC rows, remittance totals including items 22-24 and over-remittance marks, payment rows, and tax-agent fields; save stays disabled until an exact 1601EQ path exists",
     .values = &tax_form_profile_values_1601eq_2018_01_encs,
 };
 
@@ -6948,6 +6948,51 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .control = .input,
     },
     .{
+        .id = "1601EQ.2018-01-ENCS.input.tax_remitted_in_return_previously_filed",
+        .label = "22 Tax remitted in return previously filed",
+        .provenance = .external,
+        .role = .evidence,
+        .value_type = .money,
+        .status = .unbound_input,
+        .profile_key = null,
+        .profile_presence = null,
+        .source_key = null,
+        .fixed_value = null,
+        .source_path = "src/pages/forms/1601-eq.native",
+        .source_line = 59,
+        .control = .input,
+    },
+    .{
+        .id = "1601EQ.2018-01-ENCS.input.over_remittance_from_previous_quarter",
+        .label = "23 Over-remittance from previous quarter",
+        .provenance = .external,
+        .role = .evidence,
+        .value_type = .money,
+        .status = .unbound_input,
+        .profile_key = null,
+        .profile_presence = null,
+        .source_key = null,
+        .fixed_value = null,
+        .source_path = "src/pages/forms/1601-eq.native",
+        .source_line = 60,
+        .control = .input,
+    },
+    .{
+        .id = "1601EQ.2018-01-ENCS.input.total_remittances_made",
+        .label = "24 Total remittances made",
+        .provenance = .derived,
+        .role = .system,
+        .value_type = .money,
+        .status = .unbound_input,
+        .profile_key = null,
+        .profile_presence = null,
+        .source_key = null,
+        .fixed_value = null,
+        .source_path = "src/pages/forms/1601-eq.native",
+        .source_line = 61,
+        .control = .input,
+    },
+    .{
         .id = "1601EQ.2018-01-ENCS.input.tax_still_due",
         .label = "25 Tax still due",
         .provenance = .derived,
@@ -6959,7 +7004,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 59,
+        .source_line = 62,
         .control = .input,
     },
     .{
@@ -6974,7 +7019,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 60,
+        .source_line = 63,
         .control = .input,
     },
     .{
@@ -6989,7 +7034,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 61,
+        .source_line = 64,
         .control = .input,
     },
     .{
@@ -7004,7 +7049,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 62,
+        .source_line = 65,
         .control = .input,
     },
     .{
@@ -7019,7 +7064,52 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 63,
+        .source_line = 66,
+        .control = .input,
+    },
+    .{
+        .id = "1601EQ.2018-01-ENCS.input.over_remittance_to_be_refunded",
+        .label = "Over-remittance to be refunded",
+        .provenance = .transaction,
+        .role = .filing,
+        .value_type = .boolean,
+        .status = .unbound_input,
+        .profile_key = null,
+        .profile_presence = null,
+        .source_key = null,
+        .fixed_value = null,
+        .source_path = "src/pages/forms/1601-eq.native",
+        .source_line = 67,
+        .control = .input,
+    },
+    .{
+        .id = "1601EQ.2018-01-ENCS.input.over_remittance_issued_tax_credit_certificate",
+        .label = "Over-remittance issued tax credit certificate",
+        .provenance = .transaction,
+        .role = .filing,
+        .value_type = .boolean,
+        .status = .unbound_input,
+        .profile_key = null,
+        .profile_presence = null,
+        .source_key = null,
+        .fixed_value = null,
+        .source_path = "src/pages/forms/1601-eq.native",
+        .source_line = 68,
+        .control = .input,
+    },
+    .{
+        .id = "1601EQ.2018-01-ENCS.input.over_remittance_carried_over",
+        .label = "Over-remittance carried over",
+        .provenance = .transaction,
+        .role = .filing,
+        .value_type = .boolean,
+        .status = .unbound_input,
+        .profile_key = null,
+        .profile_presence = null,
+        .source_key = null,
+        .fixed_value = null,
+        .source_path = "src/pages/forms/1601-eq.native",
+        .source_line = 69,
         .control = .input,
     },
     .{
@@ -7034,7 +7124,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 69,
+        .source_line = 75,
         .control = .input,
     },
     .{
@@ -7049,7 +7139,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 70,
+        .source_line = 76,
         .control = .input,
     },
     .{
@@ -7064,7 +7154,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 71,
+        .source_line = 77,
         .control = .input,
     },
     .{
@@ -7079,7 +7169,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 80,
+        .source_line = 86,
         .control = .input,
     },
     .{
@@ -7094,7 +7184,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 81,
+        .source_line = 87,
         .control = .input,
     },
     .{
@@ -7109,7 +7199,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 82,
+        .source_line = 88,
         .control = .input,
     },
     .{
@@ -7124,7 +7214,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 83,
+        .source_line = 89,
         .control = .input,
     },
     .{
@@ -7139,7 +7229,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 89,
+        .source_line = 95,
         .control = .input,
     },
     .{
@@ -7154,7 +7244,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 90,
+        .source_line = 96,
         .control = .input,
     },
     .{
@@ -7169,7 +7259,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 91,
+        .source_line = 97,
         .control = .input,
     },
     .{
@@ -7184,7 +7274,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 92,
+        .source_line = 98,
         .control = .input,
     },
     .{
@@ -7199,7 +7289,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 98,
+        .source_line = 104,
         .control = .input,
     },
     .{
@@ -7214,7 +7304,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 99,
+        .source_line = 105,
         .control = .input,
     },
     .{
@@ -7229,7 +7319,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 100,
+        .source_line = 106,
         .control = .input,
     },
     .{
@@ -7244,7 +7334,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 101,
+        .source_line = 107,
         .control = .input,
     },
     .{
@@ -7259,7 +7349,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 107,
+        .source_line = 113,
         .control = .input,
     },
     .{
@@ -7274,7 +7364,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 108,
+        .source_line = 114,
         .control = .input,
     },
     .{
@@ -7289,7 +7379,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 109,
+        .source_line = 115,
         .control = .input,
     },
     .{
@@ -7304,7 +7394,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 110,
+        .source_line = 116,
         .control = .input,
     },
     .{
@@ -7319,7 +7409,7 @@ const fields_1601eq_2018_01_encs = [_]FieldDefinition{
         .source_key = null,
         .fixed_value = null,
         .source_path = "src/pages/forms/1601-eq.native",
-        .source_line = 111,
+        .source_line = 117,
         .control = .input,
     },
 };
@@ -8386,7 +8476,7 @@ pub const forms = [_]FormDefinition{
 pub const registry_count: usize = 51;
 pub const editor_count: usize = 11;
 pub const calendar_only_count: usize = 40;
-pub const native_input_count: usize = 392;
+pub const native_input_count: usize = 398;
 pub const table_field_count: usize = 63;
 pub const profile_target_count: usize = 99;
 pub const optional_profile_target_count: usize = 35;

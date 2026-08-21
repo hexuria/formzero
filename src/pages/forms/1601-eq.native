@@ -56,11 +56,17 @@
     <!-- @include-template form-field label="19 Total tax withheld this quarter" ph="Enter amount" -->
     <!-- @include-template form-field label="20 Less: tax remitted first month (0619E)" ph="Enter amount" -->
     <!-- @include-template form-field label="21 Less: tax remitted second month (0619E)" ph="Enter amount" -->
+    <!-- @include-template form-field label="22 Tax remitted in return previously filed" ph="Enter amount" -->
+    <!-- @include-template form-field label="23 Over-remittance from previous quarter" ph="Enter amount" -->
+    <!-- @include-template form-field label="24 Total remittances made" ph="Enter amount" -->
     <!-- @include-template form-field label="25 Tax still due" ph="Enter amount" -->
     <!-- @include-template form-field label="26 Surcharge" ph="Enter amount" -->
     <!-- @include-template form-field label="27 Interest" ph="Enter amount" -->
     <!-- @include-template form-field label="28 Compromise" ph="Enter amount" -->
     <!-- @include-template form-field label="31 Total amount payable" ph="Enter amount" -->
+    <!-- @include-template form-field label="Over-remittance to be refunded" ph="Yes / No" -->
+    <!-- @include-template form-field label="Over-remittance issued tax credit certificate" ph="Yes / No" -->
+    <!-- @include-template form-field label="Over-remittance carried over" ph="Yes / No" -->
   </grid>
 </template>
 
