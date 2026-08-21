@@ -23,16 +23,22 @@
 //! Two other HTA functions carry overlapping messages and are NOT pinned
 //! here, because they are different code paths with different predicates:
 //! - `checkiftaxwheldisYes` lines 2840-2857 repeats the Item 4 and Item 11
-//!   gates, but reads `frm1601EQ:optcategory:G` with a lowercase `c` where
-//!   the control is `optCategory:G`. That id does not resolve.
+//!   gates, but its Item 11 branch reads `frm1601EQ:optcategory:G` with a
+//!   lowercase `c` where the declared control id is `optCategory:G`. That
+//!   is a static divergence. Whether the lookup still resolves depends on
+//!   the document mode: this HTA carries an XHTML 1.0 Transitional doctype
+//!   and no `X-UA-Compatible` directive, and legacy IE document modes match
+//!   `getElementById` case-insensitively. The runtime effect is therefore
+//!   unresolved and is not asserted here.
 //! - `initialValidateBeforeSave` lines 3485-3501 is a narrower save-path
 //!   gate: it tests the RDO by `value == "000"` rather than by
 //!   `selectedIndex`, and names Item 8 "Withholding Agent's Name". Save is
 //!   fail-closed, so it stays unimplemented.
 //!
-//! Gates after Item 12 — the Item-4-Yes Part II ATC branch, the Item 30
-//! over-remittance choice gate, and the success path — are not implemented.
-//! ATC lookup depends on absent scripts. `ready` stays false.
+//! The Item-4-Yes Part II ATC entry gate is pinned (lines 3251-3255). Its
+//! per-row tax-base loop, the Item 30 over-remittance choice gate, and the
+//! success path are not. ATC lookup depends on absent scripts. `ready`
+//! stays false.
 
 const std = @import("std");
 const evidence = @import("evidence.zig");
@@ -40,6 +46,7 @@ const evidence = @import("evidence.zig");
 pub const ready = false;
 pub const year_quarter_ready = true;
 pub const identity_required_ready = true;
+pub const atc_entry_gate_ready = true;
 
 pub const alert_year_required = "Please enter a valid year on Item 1.";
 pub const alert_year_future = "Invalid entry on Item 1. Entry should not be a future Date.";
@@ -336,6 +343,85 @@ pub fn validateThroughIdentity(
     };
 }
 
+pub const alert_part_ii_atc_required = "Please fill up Part II Computation of Tax if item 4 is set to Yes.";
+
+/// `validateForm` lines 3251-3269, immediately after the Item 12 gate.
+pub const AtcEntry = enum {
+    /// Item 4 is not Yes. HTA skips the whole Part II ATC branch.
+    skipped,
+    /// Item 4 is Yes and `txtAtcCd1` is empty: HTA alerts, calls
+    /// `showPartIIATC()`, and returns before the per-row loop.
+    blocked_on_empty_first_atc,
+    /// Item 4 is Yes and `txtAtcCd1` is set. HTA enters the per-row
+    /// tax-base loop, which this package does not pin: its bound is a live
+    /// row count over `tblPartIIComputeTax` and `tblPartIIOtherTax`, and the
+    /// rows it walks are added by absent scripts.
+    reached_row_loop,
+};
+
+/// Item 4 gates the branch; only the first ATC cell decides between the
+/// alert and the row loop. Item 4 = No skips it regardless of ATC content.
+pub fn atcEntryGate(withheld: Withheld, first_atc_code: []const u8) AtcEntry {
+    if (withheld != .yes) return .skipped;
+    if (blank(first_atc_code)) return .blocked_on_empty_first_atc;
+    return .reached_row_loop;
+}
+
+pub const FormProgress = struct {
+    year_quarter: Outcome,
+    /// Null when the year or quarter gate already returned.
+    identity: ?IdentityOutcome,
+    /// Null when an earlier gate already returned.
+    atc_entry: ?AtcEntry,
+    /// HTA calls `showPartIIATC()` before returning from the empty-ATC
+    /// gate. Its own effect is not pinned: it is guarded by
+    /// `btnAddATCPartII.disabled`, and `btnAddATCPartII` is an anchor, on
+    /// which `disabled` is an IE extension rather than a standard property.
+    invokes_show_part_ii_atc: bool,
+    /// Every pinned gate passed and HTA would enter the per-row tax-base
+    /// loop. This is not `validateForm` success: the loop, the Item 30
+    /// over-remittance gate, and the success path are all unpinned.
+    reached_row_loop: bool,
+    alert: ?[]const u8,
+};
+
+/// `validateForm` from Item 1 through the Part II ATC entry gate. The sole
+/// call site is `onclick="validateForm()"` on `frm1601EQ:cmdValidate`, which
+/// discards the return value, so the HTA's `return;` here and `return false`
+/// in the earlier gates are not behaviorally distinct.
+pub fn validateThroughAtcEntry(
+    year: Year,
+    quarter: Quarter,
+    clock: Clock,
+    inputs: IdentityInputs,
+    first_atc_code: []const u8,
+) FormProgress {
+    const through_identity = validateThroughIdentity(year, quarter, clock, inputs);
+    if (!through_identity.reached_part_ii_atc_gate) {
+        return .{
+            .year_quarter = through_identity.year_quarter,
+            .identity = through_identity.identity,
+            .atc_entry = null,
+            .invokes_show_part_ii_atc = false,
+            .reached_row_loop = false,
+            .alert = through_identity.alert,
+        };
+    }
+
+    const entry = atcEntryGate(inputs.withheld, first_atc_code);
+    return .{
+        .year_quarter = through_identity.year_quarter,
+        .identity = through_identity.identity,
+        .atc_entry = entry,
+        .invokes_show_part_ii_atc = entry == .blocked_on_empty_first_atc,
+        .reached_row_loop = entry == .reached_row_loop,
+        .alert = switch (entry) {
+            .blocked_on_empty_first_atc => alert_part_ii_atc_required,
+            .skipped, .reached_row_loop => null,
+        },
+    };
+}
+
 const april_2026: Clock = .{ .year = 2026, .month = .april };
 const december_2026: Clock = .{ .year = 2026, .month = .december };
 
@@ -554,4 +640,60 @@ test "1601EQ a failed year or quarter gate never reaches the identity gates" {
     const closed_quarter = validateThroughIdentity(.{ .value = 2026 }, .q4, december_2026, missing_email);
     try std.testing.expect(closed_quarter.identity == null);
     try std.testing.expectEqualStrings(alert_quarter_4, closed_quarter.alert.?);
+}
+
+test "1601EQ Part II ATC entry gate is pinned but its row loop is not" {
+    try std.testing.expect(atc_entry_gate_ready);
+    try std.testing.expect(!ready);
+}
+
+test "1601EQ Item 4 No skips the Part II ATC branch whatever the ATC cell holds" {
+    try std.testing.expectEqual(AtcEntry.skipped, atcEntryGate(.no, ""));
+    try std.testing.expectEqual(AtcEntry.skipped, atcEntryGate(.no, "WC010"));
+    try std.testing.expectEqual(AtcEntry.skipped, atcEntryGate(.none, ""));
+}
+
+test "1601EQ Item 4 Yes with an empty first ATC blocks and calls showPartIIATC" {
+    try std.testing.expectEqual(AtcEntry.blocked_on_empty_first_atc, atcEntryGate(.yes, ""));
+
+    var withheld = complete_identity;
+    withheld.withheld = .yes;
+    const result = validateThroughAtcEntry(.{ .value = 2025 }, .q4, april_2026, withheld, "");
+    try std.testing.expectEqual(AtcEntry.blocked_on_empty_first_atc, result.atc_entry.?);
+    try std.testing.expect(result.invokes_show_part_ii_atc);
+    try std.testing.expect(!result.reached_row_loop);
+    try std.testing.expectEqualStrings(alert_part_ii_atc_required, result.alert.?);
+}
+
+test "1601EQ the ATC cell is not trimmed, so a space reaches the row loop" {
+    try std.testing.expectEqual(AtcEntry.reached_row_loop, atcEntryGate(.yes, " "));
+}
+
+test "1601EQ Item 4 Yes with a first ATC reaches the row loop without claiming success" {
+    var withheld = complete_identity;
+    withheld.withheld = .yes;
+    const result = validateThroughAtcEntry(.{ .value = 2025 }, .q4, april_2026, withheld, "WC010");
+    try std.testing.expectEqual(AtcEntry.reached_row_loop, result.atc_entry.?);
+    try std.testing.expect(result.reached_row_loop);
+    try std.testing.expect(!result.invokes_show_part_ii_atc);
+    try std.testing.expect(result.alert == null);
+}
+
+test "1601EQ Item 4 No reaches the ATC branch only after every identity gate" {
+    const passing = validateThroughAtcEntry(.{ .value = 2025 }, .q4, april_2026, complete_identity, "");
+    try std.testing.expectEqual(AtcEntry.skipped, passing.atc_entry.?);
+    try std.testing.expect(!passing.reached_row_loop);
+    try std.testing.expect(passing.alert == null);
+
+    var no_email = complete_identity;
+    no_email.email = "";
+    const blocked = validateThroughAtcEntry(.{ .value = 2025 }, .q4, april_2026, no_email, "");
+    try std.testing.expect(blocked.atc_entry == null);
+    try std.testing.expect(!blocked.invokes_show_part_ii_atc);
+    try std.testing.expectEqualStrings(alert_item_12_email, blocked.alert.?);
+
+    const bad_year = validateThroughAtcEntry(.empty, .q1, april_2026, complete_identity, "WC010");
+    try std.testing.expect(bad_year.identity == null);
+    try std.testing.expect(bad_year.atc_entry == null);
+    try std.testing.expectEqualStrings(alert_year_required, bad_year.alert.?);
 }
