@@ -472,7 +472,7 @@ function supportedSetupValue(
 }
 
 /**
- * Exhaustive ownership/type review of the 389 Native input controls.
+ * Exhaustive ownership/type review of the 392 Native input controls.
  *
  * Grouping keeps the source reviewable without weakening exact-ID coverage:
  * the generator rejects a discovered control missing from this table and an
@@ -581,6 +581,8 @@ const explicitInputFields = defineInputFields([
       "0619F.2018-01-ENCS.input.date_of_expiry",
       "0619E.2018-01-ENCS.input.date_issued",
       "0619E.2018-01-ENCS.input.date_of_expiry",
+      "1601EQ.2018-01-ENCS.input.date_issued",
+      "1601EQ.2018-01-ENCS.input.date_of_expiry",
     ],
   },
   {
@@ -670,6 +672,7 @@ const explicitInputFields = defineInputFields([
     ids: [
       "0619F.2018-01-ENCS.input.tax_agent_accreditation_attorney_roll_no",
       "0619E.2018-01-ENCS.input.tax_agent_accreditation_attorney_roll_no",
+      "1601EQ.2018-01-ENCS.input.tax_agent_accreditation_attorney_roll_no",
     ],
   },
   {
@@ -1318,17 +1321,17 @@ export const editorForms: readonly EditorFormSpec[] = [
     revisionLabel: "January 2018 (ENCS)",
     sourcePath: "src/pages/forms/1601-eq.native",
     inputFields: inputFieldsFor("1601EQ", "2018-01-ENCS"),
-    expectedInputCount: 63,
+    expectedInputCount: 66,
     expectedTableCount: 0,
     expectedTableHeaders: [],
-    roles: ["filer", "filing", "payment", "evidence", "system"],
+    roles: ["filer", "filing", "payment", "preparer", "evidence", "system"],
     profileRoles: [exactlyOneFiler()],
     consumedTaxpayerYearSettings: [],
     taxFormProfile: {
       mode: "no_setup",
       specRevision: 1,
       sourceEvidence:
-        "Identity, filing choices, unbound ATC rows 13-18, remittance totals, and payment rows 33-36; save stays disabled until an exact 1601EQ path exists",
+        "Identity, filing choices, unbound ATC rows, remittance totals, payment rows, and tax-agent fields; save stays disabled until an exact 1601EQ path exists",
       values: [],
     },
     profileTargetPresence: {
