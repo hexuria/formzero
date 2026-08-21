@@ -1,16 +1,95 @@
-//! 1601EQ January 2018 (ENCS) RDO options.
+//! Exact RDO option values available to 1601EQ January 2018 (ENCS).
 //!
-//! Fail-closed until the five absent active scripts and two path-placement
-//! variants are recovered or independently reconstructed with provenance.
-//! This module must not invent an RDO option domain.
+//! Grounding:
+//! - Offline eBIRForms 7.9.6 `xml/rdo.xml`, 40,317 bytes,
+//!   SHA-256 `17c85ca0ae23dd096c28a240fcfaf047c9244b041d8bae65352a9260f6c8c925`;
+//! - `loadXMLrdo` reads that file through a FileSystemObject into the hidden
+//!   `responseRdo` div at lines 2578-2595, `loadRdo` filters it for the
+//!   `1601EQ` token at lines 2600-2635, and `getRdo` injects the survivors
+//!   into the Item 7 select at lines 3407-3419;
+//! - all 138 source records include `1601EQ`.
+//!
+//! The whole chain lives in the HTA, so this domain does not depend on the
+//! seven scripts 1601EQ fails to load.
+//!
+//! `loadRdo` reads each record's first two `~` fields as code and
+//! description. They are identical for every record in this file, so the
+//! select shows codes rather than office names and only the code is pinned.
+//!
+//! `getRdo` emits `000` as a leading blank placeholder, so it is not an
+//! accepted value; `validation.validateIdentity` rejects Item 7 by
+//! `selectedIndex == 0`, which is that placeholder's position.
+//!
+//! This list is derived independently of 1701Q's. Both filter the same file
+//! for different form tokens and currently yield the same 138 records; that
+//! is a property of this `rdo.xml`, not a guarantee, so the two are pinned
+//! separately and a test asserts they still agree.
 
 const std = @import("std");
-const evidence = @import("evidence.zig");
+const field = @import("../../../tax_profile/field.zig");
 
-pub const ready = false;
+pub const source_byte_length: usize = 40_317;
+pub const source_sha256 =
+    "17c85ca0ae23dd096c28a240fcfaf047c9244b041d8bae65352a9260f6c8c925";
 
-test "1601EQ RDO options stay fail-closed" {
-    try std.testing.expect(!ready);
-    try std.testing.expect(!evidence.readiness.dependency_closure);
-    try std.testing.expect(!evidence.readiness.identityReady());
+pub const placeholder_value = "000";
+
+pub const values = [_][]const u8{
+    "001", "002", "003", "004", "005", "006", "007", "008",
+    "009", "010", "011", "012", "013", "014", "015", "016",
+    "17A", "17B", "018", "019", "020", "21A", "21B", "21C",
+    "022", "23A", "23B", "024", "25A", "25B", "026", "027",
+    "028", "029", "030", "031", "032", "033", "034", "035",
+    "036", "037", "038", "039", "040", "041", "042", "043",
+    "43A", "43B", "044", "045", "046", "047", "048", "049",
+    "050", "051", "052", "53A", "53B", "54A", "54B", "055",
+    "056", "057", "058", "059", "060", "061", "062", "063",
+    "064", "065", "066", "067", "068", "069", "070", "071",
+    "072", "073", "074", "075", "076", "077", "078", "079",
+    "080", "081", "082", "083", "084", "085", "086", "087",
+    "088", "089", "090", "091", "092", "93A", "93B", "094",
+    "095", "096", "097", "098", "099", "100", "101", "102",
+    "103", "104", "105", "106", "107", "108", "109", "110",
+    "111", "112", "113", "114", "115", "116", "117", "118",
+    "119", "120", "121", "122", "123", "124", "125", "126",
+    "127", "132",
+};
+
+pub fn contains(value: *const field.RdoCode) bool {
+    for (values) |candidate| {
+        if (std.mem.eql(u8, candidate, value.asSlice())) return true;
+    }
+    return false;
+}
+
+test "1601EQ RDO option domain is exact, unique, and excludes placeholder" {
+    try std.testing.expectEqual(@as(usize, 138), values.len);
+    for (values, 0..) |raw, index| {
+        const parsed = try field.RdoCode.parse(raw);
+        try std.testing.expectEqualStrings(raw, parsed.asSlice());
+        for (values[0..index]) |earlier| {
+            try std.testing.expect(!std.mem.eql(u8, earlier, raw));
+        }
+    }
+
+    const numeric = try field.RdoCode.parse("019");
+    const alpha = try field.RdoCode.parse("17A");
+    const final = try field.RdoCode.parse("132");
+    const placeholder = try field.RdoCode.parse(placeholder_value);
+    const unknown = try field.RdoCode.parse("ABC");
+    try std.testing.expect(contains(&numeric));
+    try std.testing.expect(contains(&alpha));
+    try std.testing.expect(contains(&final));
+    try std.testing.expect(!contains(&placeholder));
+    try std.testing.expect(!contains(&unknown));
+}
+
+test "1601EQ and 1701Q still resolve rdo.xml to the same option domain" {
+    const q = @import("../form_1701q_2018/rdo_options.zig");
+    try std.testing.expectEqualStrings(source_sha256, q.source_sha256);
+    try std.testing.expectEqual(source_byte_length, q.source_byte_length);
+    try std.testing.expectEqual(q.values.len, values.len);
+    for (values, q.values) |mine, theirs| {
+        try std.testing.expectEqualStrings(theirs, mine);
+    }
 }

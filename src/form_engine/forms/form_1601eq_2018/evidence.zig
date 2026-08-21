@@ -319,3 +319,59 @@ test "1601EQ cannot claim dependency closure while scripts are unresolved" {
         claimed.validate(),
     );
 }
+
+/// Scripts whose `<script src>` resolves to a path this package does not
+/// contain, counting both unresolved kinds. `path_placement_variant` is not
+/// a lesser failure than `absent_from_package`: the HTA's `src` resolves to
+/// `normalized_relative_path`, and that path is absent, so the script does
+/// not load. The identical bytes recorded at `recovered_relative_path` are
+/// never fetched by this form.
+///
+/// 1701Q is the contrast: its HTA references `js/string-util2014.js`, the
+/// path that exists, so the same file is a resolved dependency there while
+/// 1601EQ's `js/formatter/string-util2014.js` reference is not.
+pub const non_loading_script_count: usize =
+    absent_active_script_count + path_placement_variant_count;
+
+test "1601EQ path placement variants are recoverable bytes, not loadable scripts" {
+    try std.testing.expectEqual(@as(usize, 7), non_loading_script_count);
+    try std.testing.expectEqual(non_loading_script_count, unresolved_scripts.len);
+
+    var absent: usize = 0;
+    var variants: usize = 0;
+    for (unresolved_scripts) |entry| {
+        // Nothing unresolved may also appear as a resolved dependency.
+        for (dependencies) |dependency| {
+            try std.testing.expect(!std.mem.eql(
+                u8,
+                dependency.normalized_relative_path,
+                entry.normalized_relative_path,
+            ));
+        }
+        switch (entry.kind) {
+            .absent_from_package => {
+                absent += 1;
+                // Nothing was recovered, so there is nothing to point at.
+                try std.testing.expect(entry.recovered_relative_path == null);
+                try std.testing.expect(entry.recovered_sha256 == null);
+            },
+            .path_placement_variant => {
+                variants += 1;
+                // Bytes were found, but under a path the HTA never requests.
+                const recovered = entry.recovered_relative_path.?;
+                try std.testing.expect(entry.recovered_sha256 != null);
+                try std.testing.expect(!std.mem.eql(
+                    u8,
+                    recovered,
+                    entry.normalized_relative_path,
+                ));
+            },
+        }
+    }
+    try std.testing.expectEqual(absent_active_script_count, absent);
+    try std.testing.expectEqual(path_placement_variant_count, variants);
+
+    // Recovered bytes do not shorten the path to closure.
+    try std.testing.expect(!readiness.dependency_closure);
+    try std.testing.expect(!readiness.identityReady());
+}
