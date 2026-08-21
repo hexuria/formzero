@@ -1,11 +1,11 @@
 //! 1601EQ January 2018 (ENCS) exact form package.
 //!
 //! Identity is pinned. The static HTA control inventory, declaration
-//! contract, event-attribute inventory, and HTA-local remittance totals
-//! (Items 24, 25, 29, 30) are pinned. Script closure and ATC lookup are
-//! not. Remaining parts stay fail-closed until the five absent active
-//! scripts and two path-placement variants are recovered or independently
-//! reconstructed with provenance.
+//! contract, event-attribute inventory, HTA-local remittance totals
+//! (Items 24, 25, 29, 30), and over-remittance exclusive choice are
+//! pinned. Script closure and ATC lookup are not. Remaining parts stay
+//! fail-closed until the five absent active scripts and two path-placement
+//! variants are recovered or independently reconstructed with provenance.
 
 pub const evidence = @import("evidence.zig");
 pub const occurrences = @import("occurrences.zig");
