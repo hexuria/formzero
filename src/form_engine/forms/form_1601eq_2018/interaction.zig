@@ -1,5 +1,5 @@
-//! HTA-local 1601EQ interaction: over-remittance exclusive choice and the
-//! amended-return gate for Item 22.
+//! HTA-local 1601EQ interaction: over-remittance exclusive choice, the
+//! amended-return gate for Item 22, and the Validate/Edit lock.
 //!
 //! Provenance (value-free):
 //! - Offline eBIRForms 7.9.6
@@ -12,6 +12,9 @@
 //! - `checkIssueCert` lines 3124-3129
 //! - `checkCarriedOver` lines 3132-3137
 //! - `computeOfTotalAmtDue` else-branch uncheck, lines 3088-3094
+//! - `cmdValidate` onclick line 1002, `cmdEdit` onclick line 1003
+//! - `disableAllControl` lines 3295-3352
+//! - `enableAllControl` lines 3353-3406
 //!
 //! Checking one over-remittance mark unchecks the other two. Unchecking a
 //! mark does not check another. When choices are not enabled (Item 30 is
@@ -19,6 +22,15 @@
 //! without recomputing. Amended No disables Item 22, zeros it, and reruns
 //! remittance totals. This is not a handler implementation:
 //! `handlers_implemented` stays false.
+//!
+//! Validate and Edit are not inverses. `enableAllControl` never re-enables
+//! the Background Information section: it re-disables `txtTIN1`, `txtTIN2`,
+//! `txtTIN3` and `txtBranchCode` on its last statement and omits the other
+//! seven controls entirely. `txtTax19` is touched by neither transition, so
+//! Item 19 is never locked. `btnOtherTax` is enabled by Edit but never
+//! disabled by Validate. Both transitions also walk a `txtTaxBase` loop
+//! whose bound is a live row count over rows added by absent scripts; that
+//! loop and the `qs('xmlFileName')` Import branch are not pinned.
 
 const std = @import("std");
 const calculations = @import("calculations.zig");
@@ -31,6 +43,7 @@ const event_contract = @import("event_contract.zig");
 pub const ready = false;
 pub const exclusive_choice_ready = true;
 pub const amended_item22_ready = true;
+pub const validate_lock_ready = true;
 
 pub const Mark = enum {
     refund,
@@ -130,6 +143,143 @@ pub fn applyAmendNo(
         else
             OverRemittanceMarks.none,
     };
+}
+
+/// One `element.disabled = <bool>` statement, in HTA source order.
+pub const ControlDisable = struct {
+    id: []const u8,
+    source_line: u32,
+    disabled: bool,
+};
+
+/// `disableAllControl` lines 3295-3352, static statements in source order.
+/// Its `txtTaxBase` loop is excluded: the bound is a live row count and the
+/// rows it walks are added by absent scripts.
+pub const validate_lock = [_]ControlDisable{
+    .{ .id = "frm1601EQ:btnFinalCopy", .source_line = 3298, .disabled = false },
+    .{ .id = "frm1601EQ:txtYear", .source_line = 3301, .disabled = true },
+    .{ .id = "frm1601EQ:optQuarter:1", .source_line = 3302, .disabled = true },
+    .{ .id = "frm1601EQ:optQuarter:2", .source_line = 3303, .disabled = true },
+    .{ .id = "frm1601EQ:optQuarter:3", .source_line = 3304, .disabled = true },
+    .{ .id = "frm1601EQ:optQuarter:4", .source_line = 3305, .disabled = true },
+    .{ .id = "frm1601EQ:optAmend:Y", .source_line = 3306, .disabled = true },
+    .{ .id = "frm1601EQ:optAmend:N", .source_line = 3307, .disabled = true },
+    .{ .id = "frm1601EQ:optWithheld:Y", .source_line = 3308, .disabled = true },
+    .{ .id = "frm1601EQ:optWithheld:N", .source_line = 3309, .disabled = true },
+    .{ .id = "frm1601EQ:txtNoSheets", .source_line = 3310, .disabled = true },
+    .{ .id = "frm1601EQ:txtTIN1", .source_line = 3313, .disabled = true },
+    .{ .id = "frm1601EQ:txtTIN2", .source_line = 3314, .disabled = true },
+    .{ .id = "frm1601EQ:txtTIN3", .source_line = 3315, .disabled = true },
+    .{ .id = "frm1601EQ:txtBranchCode", .source_line = 3316, .disabled = true },
+    .{ .id = "frm1601EQ:txtRDOCode", .source_line = 3317, .disabled = true },
+    .{ .id = "frm1601EQ:txtTaxpayerName", .source_line = 3318, .disabled = true },
+    .{ .id = "frm1601EQ:txtAddress", .source_line = 3319, .disabled = true },
+    .{ .id = "frm1601EQ:txtAddress2", .source_line = 3320, .disabled = true },
+    .{ .id = "frm1601EQ:txtZipCode", .source_line = 3321, .disabled = true },
+    .{ .id = "frm1601EQ:txtTelNum", .source_line = 3322, .disabled = true },
+    .{ .id = "txtEmail", .source_line = 3323, .disabled = true },
+    .{ .id = "frm1601EQ:optCategory:P", .source_line = 3324, .disabled = true },
+    .{ .id = "frm1601EQ:optCategory:G", .source_line = 3325, .disabled = true },
+    .{ .id = "frm1601EQ:txtTax20", .source_line = 3328, .disabled = true },
+    .{ .id = "frm1601EQ:txtTax21", .source_line = 3329, .disabled = true },
+    .{ .id = "frm1601EQ:txtTax22", .source_line = 3330, .disabled = true },
+    .{ .id = "frm1601EQ:txtTax23", .source_line = 3331, .disabled = true },
+    .{ .id = "frm1601EQ:txtTax26", .source_line = 3332, .disabled = true },
+    .{ .id = "frm1601EQ:txtTax27", .source_line = 3333, .disabled = true },
+    .{ .id = "frm1601EQ:txtTax28", .source_line = 3334, .disabled = true },
+    .{ .id = "btnClearOtherAtc", .source_line = 3343, .disabled = true },
+    .{ .id = "btnAddATCPartII", .source_line = 3344, .disabled = true },
+    .{ .id = "btnPrintOtherAtc", .source_line = 3345, .disabled = false },
+    .{ .id = "menuPrintPreview", .source_line = 3346, .disabled = false },
+    .{ .id = "btnPrint", .source_line = 3347, .disabled = false },
+};
+
+/// `enableAllControl` lines 3353-3406, unconditional static statements in
+/// source order. Excluded: the Item 22 if/else at 3383/3385, which
+/// `editUnlockItem22` models; the `qs('xmlFileName')` year re-disable at
+/// 3398, which is the Import path and out of scope; and the guarded
+/// `txtTaxBase` loop. The four TIN re-disables at 3403 are unconditional
+/// and are kept.
+pub const edit_unlock = [_]ControlDisable{
+    .{ .id = "frm1601EQ:txtYear", .source_line = 3354, .disabled = false },
+    .{ .id = "frm1601EQ:optQuarter:1", .source_line = 3355, .disabled = false },
+    .{ .id = "frm1601EQ:optQuarter:2", .source_line = 3356, .disabled = false },
+    .{ .id = "frm1601EQ:optQuarter:3", .source_line = 3357, .disabled = false },
+    .{ .id = "frm1601EQ:optQuarter:4", .source_line = 3358, .disabled = false },
+    .{ .id = "frm1601EQ:optAmend:Y", .source_line = 3359, .disabled = false },
+    .{ .id = "frm1601EQ:optAmend:N", .source_line = 3360, .disabled = false },
+    .{ .id = "frm1601EQ:optWithheld:Y", .source_line = 3361, .disabled = false },
+    .{ .id = "frm1601EQ:optWithheld:N", .source_line = 3362, .disabled = false },
+    .{ .id = "frm1601EQ:txtNoSheets", .source_line = 3363, .disabled = false },
+    .{ .id = "frm1601EQ:optCategory:P", .source_line = 3365, .disabled = false },
+    .{ .id = "frm1601EQ:optCategory:G", .source_line = 3366, .disabled = false },
+    .{ .id = "frm1601EQ:txtTax20", .source_line = 3368, .disabled = false },
+    .{ .id = "frm1601EQ:txtTax21", .source_line = 3369, .disabled = false },
+    .{ .id = "frm1601EQ:txtTax23", .source_line = 3370, .disabled = false },
+    .{ .id = "frm1601EQ:txtTax26", .source_line = 3371, .disabled = false },
+    .{ .id = "frm1601EQ:txtTax27", .source_line = 3372, .disabled = false },
+    .{ .id = "frm1601EQ:txtTax28", .source_line = 3373, .disabled = false },
+    .{ .id = "btnPrintOtherAtc", .source_line = 3387, .disabled = true },
+    .{ .id = "btnClearOtherAtc", .source_line = 3388, .disabled = false },
+    .{ .id = "btnOtherTax", .source_line = 3389, .disabled = false },
+    .{ .id = "btnAddATCPartII", .source_line = 3390, .disabled = false },
+    .{ .id = "frm1601EQ:cmdValidate", .source_line = 3391, .disabled = false },
+    .{ .id = "menuPrintPreview", .source_line = 3392, .disabled = true },
+    .{ .id = "frm1601EQ:cmdEdit", .source_line = 3393, .disabled = true },
+    .{ .id = "frm1601EQ:btnFinalCopy", .source_line = 3394, .disabled = true },
+    .{ .id = "btnPrint", .source_line = 3395, .disabled = true },
+    .{ .id = "frm1601EQ:txtTIN1", .source_line = 3403, .disabled = true },
+    .{ .id = "frm1601EQ:txtTIN2", .source_line = 3403, .disabled = true },
+    .{ .id = "frm1601EQ:txtTIN3", .source_line = 3403, .disabled = true },
+    .{ .id = "frm1601EQ:txtBranchCode", .source_line = 3403, .disabled = true },
+};
+
+/// Controls that Validate disables and Edit never re-enables: the entire
+/// Background Information section. `txtTIN1`, `txtTIN2`, `txtTIN3` and
+/// `txtBranchCode` are explicitly re-disabled on the last statement of
+/// `enableAllControl`; the other seven are simply omitted from it. Item 22
+/// is not here because Edit restores it conditionally.
+pub const never_reenabled_by_edit = [_][]const u8{
+    "frm1601EQ:txtAddress",
+    "frm1601EQ:txtAddress2",
+    "frm1601EQ:txtBranchCode",
+    "frm1601EQ:txtRDOCode",
+    "frm1601EQ:txtTIN1",
+    "frm1601EQ:txtTIN2",
+    "frm1601EQ:txtTIN3",
+    "frm1601EQ:txtTaxpayerName",
+    "frm1601EQ:txtTelNum",
+    "frm1601EQ:txtZipCode",
+    "txtEmail",
+};
+
+/// Item 22, HTA lines 3382-3386: Edit reopens it only for an amended
+/// return, and otherwise re-disables it. This mirrors the amend gate.
+pub fn editUnlockItem22(amend: AmendReturn) bool {
+    return amend != .yes;
+}
+
+/// Disabled state after `disableAllControl`, or null when the transition
+/// does not touch the control. Item 19 and Part III are untouched.
+pub fn disabledAfterValidate(id: []const u8) ?bool {
+    return lastAssignment(&validate_lock, id);
+}
+
+/// Disabled state after `enableAllControl`, or null when the transition
+/// does not touch the control. Item 22 is conditional, so it is answered
+/// from `editUnlockItem22` rather than from the table.
+pub fn disabledAfterEdit(id: []const u8, amend: AmendReturn) ?bool {
+    if (std.mem.eql(u8, id, "frm1601EQ:txtTax22")) return editUnlockItem22(amend);
+    return lastAssignment(&edit_unlock, id);
+}
+
+/// HTA statements run in order, so a repeated id settles on its last write.
+fn lastAssignment(table: []const ControlDisable, id: []const u8) ?bool {
+    var found: ?bool = null;
+    for (table) |entry| {
+        if (std.mem.eql(u8, entry.id, id)) found = entry.disabled;
+    }
+    return found;
 }
 
 test "1601EQ over-remittance exclusive choice stays unreconciled and unimplemented as handlers" {
@@ -238,4 +388,88 @@ test "1601EQ amended No keeps over-remittance marks when Item 30 stays negative"
     try std.testing.expect(derived.over_remittance_choices_enabled);
     try std.testing.expect(result.over_remittance_marks.carried_over);
     try std.testing.expect(!result.over_remittance_marks.refund);
+}
+
+test "1601EQ Validate lock and Edit unlock are pinned but handlers are not" {
+    try std.testing.expect(validate_lock_ready);
+    try std.testing.expect(!ready);
+    try std.testing.expect(!event_contract.handlers_implemented);
+    try std.testing.expectEqual(@as(usize, 36), validate_lock.len);
+}
+
+test "1601EQ Validate locks Part I, background info and the Part II amount inputs" {
+    try std.testing.expect(disabledAfterValidate("frm1601EQ:txtYear").?);
+    try std.testing.expect(disabledAfterValidate("frm1601EQ:optWithheld:Y").?);
+    try std.testing.expect(disabledAfterValidate("frm1601EQ:txtTIN1").?);
+    try std.testing.expect(disabledAfterValidate("txtEmail").?);
+    try std.testing.expect(disabledAfterValidate("frm1601EQ:txtTax20").?);
+    try std.testing.expect(disabledAfterValidate("frm1601EQ:txtTax28").?);
+
+    // Validate enables the outputs it gates.
+    try std.testing.expect(!disabledAfterValidate("frm1601EQ:btnFinalCopy").?);
+    try std.testing.expect(!disabledAfterValidate("btnPrint").?);
+    try std.testing.expect(!disabledAfterValidate("menuPrintPreview").?);
+    try std.testing.expect(disabledAfterValidate("btnAddATCPartII").?);
+}
+
+test "1601EQ Item 19 and Part III are untouched by both transitions" {
+    try std.testing.expect(disabledAfterValidate("frm1601EQ:txtTax19") == null);
+    try std.testing.expect(disabledAfterEdit("frm1601EQ:txtTax19", .no) == null);
+    try std.testing.expect(disabledAfterValidate("frm1601EQ:txtTax33") == null);
+}
+
+test "1601EQ Edit never reopens the background information section" {
+    try std.testing.expectEqual(@as(usize, 11), never_reenabled_by_edit.len);
+    for (never_reenabled_by_edit) |id| {
+        try std.testing.expect(disabledAfterValidate(id).?);
+        // Either explicitly re-disabled or never mentioned by Edit.
+        const after_edit = disabledAfterEdit(id, .yes);
+        if (after_edit) |state| try std.testing.expect(state);
+    }
+
+    // The four TIN controls are the explicit re-disables, not omissions.
+    try std.testing.expect(disabledAfterEdit("frm1601EQ:txtTIN1", .yes).?);
+    try std.testing.expect(disabledAfterEdit("frm1601EQ:txtBranchCode", .yes).?);
+    // The rest are simply absent from enableAllControl.
+    try std.testing.expect(disabledAfterEdit("frm1601EQ:txtRDOCode", .yes) == null);
+    try std.testing.expect(disabledAfterEdit("txtEmail", .yes) == null);
+}
+
+test "1601EQ never_reenabled_by_edit matches the two pinned tables" {
+    for (validate_lock) |locked| {
+        if (!locked.disabled) continue;
+        if (std.mem.eql(u8, locked.id, "frm1601EQ:txtTax22")) continue;
+        var reopened = false;
+        for (edit_unlock) |unlocked| {
+            if (std.mem.eql(u8, unlocked.id, locked.id) and !unlocked.disabled) reopened = true;
+        }
+        var listed = false;
+        for (never_reenabled_by_edit) |id| {
+            if (std.mem.eql(u8, id, locked.id)) listed = true;
+        }
+        try std.testing.expectEqual(!reopened, listed);
+    }
+}
+
+test "1601EQ Edit restores Part I and returns the buttons to the editing state" {
+    try std.testing.expect(!disabledAfterEdit("frm1601EQ:txtYear", .no).?);
+    try std.testing.expect(!disabledAfterEdit("frm1601EQ:optQuarter:1", .no).?);
+    try std.testing.expect(!disabledAfterEdit("frm1601EQ:optCategory:G", .no).?);
+    try std.testing.expect(!disabledAfterEdit("frm1601EQ:cmdValidate", .no).?);
+    try std.testing.expect(disabledAfterEdit("frm1601EQ:cmdEdit", .no).?);
+    try std.testing.expect(disabledAfterEdit("frm1601EQ:btnFinalCopy", .no).?);
+    try std.testing.expect(disabledAfterEdit("btnPrint", .no).?);
+    try std.testing.expect(disabledAfterEdit("menuPrintPreview", .no).?);
+}
+
+test "1601EQ Edit restores Item 22 only for an amended return" {
+    try std.testing.expect(!editUnlockItem22(.yes));
+    try std.testing.expect(editUnlockItem22(.no));
+    try std.testing.expect(!disabledAfterEdit("frm1601EQ:txtTax22", .yes).?);
+    try std.testing.expect(disabledAfterEdit("frm1601EQ:txtTax22", .no).?);
+}
+
+test "1601EQ btnOtherTax is enabled by Edit but never disabled by Validate" {
+    try std.testing.expect(disabledAfterValidate("btnOtherTax") == null);
+    try std.testing.expect(!disabledAfterEdit("btnOtherTax", .no).?);
 }
