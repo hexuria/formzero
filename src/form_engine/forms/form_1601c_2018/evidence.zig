@@ -180,7 +180,10 @@ pub const readiness: engine_evidence.EvidenceReadiness = .{
     // fraction of a centavo to resolve. Verified to operand magnitudes an
     // order of magnitude above anything round's twelve-digit gate admits.
     .calculation_reconciled = true,
-    .validation_reconciled = false,
+    // Reconciled by validation.zig: the ordered gates, the Item 3 amount
+    // conditions, both Schedule 1 date columns and the success path cover
+    // validate in full.
+    .validation_reconciled = true,
     .editable_serializer_exact = false,
     .final_plaintext_serializer_exact = false,
     .decrypt_codec_qualified = false,
