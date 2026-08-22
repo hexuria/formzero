@@ -391,3 +391,130 @@ test "1601EQ Final Copy detection is a substring sniff, not a parse" {
     try std.testing.expect(!readiness.final_plaintext_serializer_exact);
     try std.testing.expect(!readiness.editable_serializer_exact);
 }
+
+/// What a non-loading script's absence actually costs this form.
+///
+/// `unresolved_scripts` records that seven scripts never load. It does not
+/// say whether that matters, and the seven are not equivalent: a swept
+/// comparison of every live call site in the HTA against everything defined
+/// by the HTA and by the scripts that do load leaves only two open.
+pub const ScriptImpact = enum {
+    /// Every call site is commented out, so the script is never invoked.
+    no_live_call_site,
+    /// Reached only from save, submit, upload or email, which stay closed.
+    out_of_scope_path_only,
+    /// A polyfill for something the host engine supplies natively.
+    superseded_by_host,
+    /// The same file is present at another path and loads from there.
+    recovered_at_other_path,
+    /// Loads after `js/string-util.js` and may redefine the money
+    /// primitives it provides. Unresolvable from this package.
+    may_override_money_primitives,
+};
+
+pub const ScriptImpactEntry = struct {
+    normalized_relative_path: []const u8,
+    impact: ScriptImpact,
+};
+
+/// One entry per `unresolved_scripts` path.
+pub const script_impacts = [_]ScriptImpactEntry{
+    .{
+        // `getFtpFolder`, `importFiles`, `buildSuccessMessage`, `emailResend`.
+        .normalized_relative_path = "js/api-environment.js",
+        .impact = .out_of_scope_path_only,
+    },
+    .{
+        .normalized_relative_path = "js/bir-formatter.js",
+        .impact = .may_override_money_primitives,
+    },
+    .{
+        .normalized_relative_path = "js/formatter/SoapFormat/1601EQ-SoapFormat.js",
+        .impact = .out_of_scope_path_only,
+    },
+    .{
+        .normalized_relative_path = "js/formatter/forms/1601EQ.js",
+        .impact = .may_override_money_primitives,
+    },
+    .{
+        // `LZString.compress` at HTA lines 1966 and 2148 and
+        // `LZString134.compressToBase64` at line 4304 are all commented out.
+        .normalized_relative_path = "js/lz-string-1.3.4.js",
+        .impact = .no_live_call_site,
+    },
+    .{
+        .normalized_relative_path = "js/formatter/string-util2014.js",
+        .impact = .recovered_at_other_path,
+    },
+    .{
+        .normalized_relative_path = "js/json3.min.js",
+        .impact = .superseded_by_host,
+    },
+};
+
+/// Scripts whose absence can still change a pinned in-scope behaviour.
+pub const open_question_script_count: usize = 2;
+
+pub fn impactOf(path: []const u8) ?ScriptImpact {
+    for (script_impacts) |entry| {
+        if (std.mem.eql(u8, entry.normalized_relative_path, path)) return entry.impact;
+    }
+    return null;
+}
+
+test "1601EQ every non-loading script is classified exactly once" {
+    try std.testing.expectEqual(unresolved_scripts.len, script_impacts.len);
+    for (unresolved_scripts) |script| {
+        try std.testing.expect(impactOf(script.normalized_relative_path) != null);
+    }
+    for (script_impacts, 0..) |entry, index| {
+        for (script_impacts[index + 1 ..]) |other| {
+            try std.testing.expect(!std.mem.eql(
+                u8,
+                entry.normalized_relative_path,
+                other.normalized_relative_path,
+            ));
+        }
+    }
+}
+
+test "1601EQ only two absences can still change pinned behaviour" {
+    var open: usize = 0;
+    for (script_impacts) |entry| {
+        if (entry.impact == .may_override_money_primitives) open += 1;
+    }
+    try std.testing.expectEqual(open_question_script_count, open);
+    try std.testing.expectEqual(@as(usize, 2), open);
+
+    try std.testing.expectEqual(
+        ScriptImpact.may_override_money_primitives,
+        impactOf("js/bir-formatter.js").?,
+    );
+    try std.testing.expectEqual(
+        ScriptImpact.may_override_money_primitives,
+        impactOf("js/formatter/forms/1601EQ.js").?,
+    );
+}
+
+test "1601EQ the compression dependency has no live call site" {
+    try std.testing.expectEqual(
+        ScriptImpact.no_live_call_site,
+        impactOf("js/lz-string-1.3.4.js").?,
+    );
+    // The version that does load is a resolved dependency.
+    var present = false;
+    for (dependencies) |dependency| {
+        if (std.mem.eql(u8, dependency.normalized_relative_path, "js/lz-string-1.0.2.js")) {
+            present = true;
+        }
+    }
+    try std.testing.expect(present);
+}
+
+test "1601EQ classification does not soften closure or reconciliation" {
+    // Knowing an absence is harmless does not make the script load.
+    try std.testing.expectEqual(@as(usize, 7), non_loading_script_count);
+    try std.testing.expect(!readiness.dependency_closure);
+    // The two open questions are exactly why this stays false.
+    try std.testing.expect(!readiness.calculation_reconciled);
+}
