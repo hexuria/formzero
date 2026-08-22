@@ -10,6 +10,9 @@
 //! Native page leaves both controls unbound. Declaring them here would claim
 //! a projection the page does not perform.
 //!
+//! ZIP code and email address are optional; catalog policy marks them so,
+//! and the drift test holds this list to it.
+//!
 //! Filing period, the ATC schedule, remittances, penalties and payment
 //! details all remain transaction data.
 
@@ -52,6 +55,7 @@ pub const filer_requirements = [_]spec.Requirement{
         .target = ids.FieldId.initComptime(
             "1601EQ.2018-01-ENCS.input.zip_code",
         ),
+        .presence = .optional,
     },
     .{
         .source = .line_of_business,
@@ -70,6 +74,7 @@ pub const filer_requirements = [_]spec.Requirement{
         .target = ids.FieldId.initComptime(
             "1601EQ.2018-01-ENCS.input.email_address",
         ),
+        .presence = .optional,
     },
 };
 
@@ -106,6 +111,19 @@ test "1601EQ projects no field the Native page leaves unbound" {
         try std.testing.expect(!std.mem.endsWith(u8, target, ".any_taxes_withheld"));
         try std.testing.expect(!std.mem.endsWith(u8, target, ".withholding_agent_category"));
     }
+}
+
+test "1601EQ marks exactly the two fields catalog policy calls optional" {
+    var optional_count: usize = 0;
+    for (filer_requirements) |requirement| {
+        if (requirement.presence != .optional) continue;
+        optional_count += 1;
+        const target = requirement.target.asSlice();
+        const is_zip = std.mem.endsWith(u8, target, ".zip_code");
+        const is_email = std.mem.endsWith(u8, target, ".email_address");
+        try std.testing.expect(is_zip or is_email);
+    }
+    try std.testing.expectEqual(@as(usize, 2), optional_count);
 }
 
 test "1601EQ requirement targets are unique and carry the form revision" {
