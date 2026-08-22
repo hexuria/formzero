@@ -174,7 +174,10 @@ pub const readiness: engine_evidence.EvidenceReadiness = .{
     .identity_resolved = true,
     // Eight declared scripts, eight resolved, none unresolved.
     .dependency_closure = true,
-    .profile_mapping_reviewed = false,
+    // Reconciled by profile_mapping.zig against the 136-control static
+    // occurrence inventory in live document order, the Item 7 injection
+    // point, the 138-value RDO domain, and the typed form contract.
+    .profile_mapping_reviewed = true,
     // Reconciled by calculations.zig: the chain only adds and subtracts
     // two-decimal values, so neither toFixed nor formatCurrency has a
     // fraction of a centavo to resolve. Verified to operand magnitudes an
