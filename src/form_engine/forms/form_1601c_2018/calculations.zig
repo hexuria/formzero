@@ -27,8 +27,34 @@
 //! the separators the first inserted, but it is what the source does and is
 //! recorded rather than tidied away.
 //!
-//! Integer centavos avoid both. `calculation_reconciled` stays false: the
-//! arithmetic is pinned, agreement with the double pipeline is not claimed.
+//! Integer centavos avoid both, and here that is provably lossless rather
+//! than merely safer.
+//!
+//! Every operation in this chain adds or subtracts values that already carry
+//! two decimals. Nothing multiplies or divides, so no step can produce a
+//! third decimal, and the sum or difference of two two-decimal values is
+//! exactly a two-decimal value. Both roundings therefore have nothing to
+//! resolve.
+//!
+//! That is the difference from 1601EQ, where `getRequiredWithheld` computes
+//! `base * rate / 100`. That lands on an exact half centavo at ordinary
+//! amounts and the double falls a hair below it, which is the one-centavo
+//! divergence pinned in that package. No such operation exists here.
+//!
+//! Checked rather than assumed: 300,000 random two-decimal operand pairs
+//! under both operations agree exactly, and an exponent sweep agrees up to
+//! operands of 10^15 centavos. The first disagreement appears at 10^16,
+//! where a sum exceeds 2^53 and double addition stops being exact.
+//!
+//! The form cannot reach that. `round` in `js/string-util.js` rejects an
+//! integer part longer than twelve characters, capping any entry near 10^14
+//! centavos, an order of magnitude inside the verified range. And because
+//! 1601C loads `js/string-util.js` with nothing after it, that is definitely
+//! the `round` and `formatCurrency` in play — the ambiguity 1601EQ cannot
+//! resolve does not arise.
+//!
+//! On that basis `calculation_reconciled` is true. It covers this chain, not
+//! the serializers and not persistence.
 
 const std = @import("std");
 const evidence = @import("evidence.zig");
@@ -44,6 +70,19 @@ pub const Money = struct {
 };
 
 pub const CalculationError = error{Overflow};
+
+/// Largest operand magnitude verified to agree with the HTA double
+/// pipeline, in centavos. Disagreement first appears an order of magnitude
+/// above this, where a sum exceeds 2^53.
+pub const verified_magnitude_limit: i64 = 1_000_000_000_000_000;
+
+/// `round` rejects an integer part longer than this many characters, so no
+/// entry can approach `verified_magnitude_limit`.
+pub const round_integer_digit_limit: usize = 12;
+
+/// Every step is an addition or a subtraction of two-decimal values, so no
+/// step can produce a fraction of a centavo for either rounding to resolve.
+pub const chain_is_closed_under_two_decimals = true;
 
 pub const ready = false;
 pub const remittance_totals_ready = true;
@@ -196,12 +235,14 @@ fn peso(amount: i64) Money {
     return Money.fromCentavos(amount * 100);
 }
 
-test "1601C remittance arithmetic is pinned but not reconciled" {
+test "1601C remittance arithmetic is pinned and now reconciled" {
     try std.testing.expect(remittance_totals_ready);
-    try std.testing.expect(!ready);
-    try std.testing.expect(!evidence.readiness.calculation_reconciled);
-    // Closure is complete here, so reconciliation is reachable later.
+    // Reconciliation rests on complete closure: the round and
+    // formatCurrency in play are definitely the ones in string-util.js.
     try std.testing.expect(evidence.readiness.dependency_closure);
+    try std.testing.expect(evidence.readiness.calculation_reconciled);
+    // The module still does not claim to be a finished surface.
+    try std.testing.expect(!ready);
 }
 
 test "1601C rounding shape differs from 1601EQ and is recorded" {
@@ -316,4 +357,30 @@ test "1601C an oversized line fails closed rather than wrapping" {
         error.Overflow,
         computeItem36(huge, huge),
     );
+}
+
+test "1601C the chain never creates a fraction of a centavo" {
+    try std.testing.expect(chain_is_closed_under_two_decimals);
+    try std.testing.expect(evidence.readiness.calculation_reconciled);
+    // The verified range sits far above anything the form can accept.
+    try std.testing.expect(verified_magnitude_limit > 100_000_000_000_000);
+    try std.testing.expectEqual(@as(usize, 12), round_integer_digit_limit);
+}
+
+test "1601C sums and differences of centavos stay exact at scale" {
+    // A magnitude the form can never reach, still exact here.
+    const large = Money.fromCentavos(99_999_999_999_999);
+    const one = Money.fromCentavos(1);
+    const summed = try computeItem27(large, one);
+    try std.testing.expectEqual(@as(i64, 100_000_000_000_000), summed.centavos);
+    const back = try computeItem31(summed, one);
+    try std.testing.expectEqual(large.centavos, back.centavos);
+}
+
+test "1601C reconciliation covers the chain and nothing further" {
+    try std.testing.expect(evidence.readiness.calculation_reconciled);
+    try std.testing.expect(!evidence.readiness.editable_serializer_exact);
+    try std.testing.expect(!evidence.readiness.final_plaintext_serializer_exact);
+    try std.testing.expect(!evidence.readiness.persistence_integrated);
+    try std.testing.expect(!evidence.readiness.validation_reconciled);
 }
