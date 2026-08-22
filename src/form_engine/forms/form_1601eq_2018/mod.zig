@@ -8,7 +8,7 @@
 //! 10, 9, 9A, 12), the Part II ATC entry gate, and the Validate/Edit lock
 //! the confirm-guarded computation reset, and the Item 7 RDO option domain
 //! are pinned, as are the ATC lookup domain, the Part II row model and its
-//! per-row withholding. Script closure and ATC lookup are not.
+//! per-row withholding, and the HTA money text rules behind both. Script closure and ATC lookup are not.
 //! Remaining parts stay fail-closed until the five absent active scripts
 //! and two path-placement variants are recovered or independently
 //! reconstructed with provenance.
@@ -25,6 +25,7 @@ pub const final_copy_codec = @import("final_copy_codec.zig");
 pub const rdo_options = @import("rdo_options.zig");
 pub const atc_catalog = @import("atc_catalog.zig");
 pub const atc_rows = @import("atc_rows.zig");
+pub const money_text = @import("money_text.zig");
 pub const profile_mapping = @import("profile_mapping.zig");
 pub const transaction = @import("transaction.zig");
 pub const workflow = @import("workflow.zig");
@@ -48,6 +49,7 @@ test {
     _ = rdo_options;
     _ = atc_catalog;
     _ = atc_rows;
+    _ = money_text;
     _ = profile_mapping;
     _ = transaction;
     _ = workflow;
