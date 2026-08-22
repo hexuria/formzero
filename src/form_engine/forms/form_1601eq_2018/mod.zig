@@ -9,7 +9,7 @@
 //! the confirm-guarded computation reset, and the Item 7 RDO option domain
 //! are pinned, as are the ATC lookup domain, the Part II row model and its
 //! per-row withholding, the ATC selection placement, and the HTA money text
-//! rules behind them. Script closure and ATC lookup are not.
+//! rules and keypress filter behind them. Script closure and ATC lookup are not.
 //! Remaining parts stay fail-closed until the five absent active scripts
 //! and two path-placement variants are recovered or independently
 //! reconstructed with provenance.
