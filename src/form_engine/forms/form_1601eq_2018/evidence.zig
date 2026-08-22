@@ -221,7 +221,11 @@ pub const unresolved_scripts = [_]engine_evidence.UnresolvedScriptEvidence{
 pub const readiness: engine_evidence.EvidenceReadiness = .{
     .identity_resolved = true,
     .dependency_closure = false,
-    .profile_mapping_reviewed = false,
+    // Reconciled by profile_mapping.zig against the 98-control static
+    // occurrence inventory in live document order, the Item 7 injection
+    // point, the 138-value RDO domain, and the typed form contract. The
+    // runtime-injected ATC rows carry transaction data and are excluded.
+    .profile_mapping_reviewed = true,
     .calculation_reconciled = false,
     .validation_reconciled = false,
     .editable_serializer_exact = false,
