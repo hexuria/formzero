@@ -19,15 +19,18 @@ pub const contract = package;
 
 pub const form_1701q_2018 = @import("forms/form_1701q_2018/mod.zig");
 pub const form_1601eq_2018 = @import("forms/form_1601eq_2018/mod.zig");
+pub const form_1601c_2018 = @import("forms/form_1601c_2018/mod.zig");
 
 /// Every exact form package this build knows about.
 ///
 /// 1701Q January 2018 (ENCS) is identity-ready. 1601EQ January 2018 (ENCS) is
 /// registered with pinned identity and incomplete script closure; that is not
-/// a runtime-parity claim.
+/// a runtime-parity claim. 1601C January 2018 (ENCS) is identity-ready with
+/// complete script closure and every other part fail-closed.
 pub const registry = .{
     form_1701q_2018,
     form_1601eq_2018,
+    form_1601c_2018,
 };
 
 /// Number of registered exact form packages.
@@ -47,7 +50,7 @@ test {
 }
 
 test "every registered package satisfies the structural contract" {
-    try std.testing.expectEqual(@as(usize, 2), registered_count);
+    try std.testing.expectEqual(@as(usize, 3), registered_count);
     inline for (registry) |Package| {
         // Reading identity through the contract also proves it is reachable
         // without importing the package's internals.

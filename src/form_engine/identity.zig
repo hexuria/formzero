@@ -71,6 +71,7 @@ pub const OfflinePackageVersion = enum(u8) {
 pub const PayloadSchemaToken = enum(u8) {
     form_1701q_v2018 = 1,
     form_1601eq_v2018 = 2,
+    form_1601c_v2018 = 3,
 };
 
 /// A codec version is absent until exact editable and Final Copy codecs have
