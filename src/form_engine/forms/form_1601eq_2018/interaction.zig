@@ -15,6 +15,7 @@
 //! - `cmdValidate` onclick line 1002, `cmdEdit` onclick line 1003
 //! - `disableAllControl` lines 3295-3352
 //! - `enableAllControl` lines 3353-3406
+//! - `isItAnAmendedReturn` lines 2034-2040
 //! - `changeCategory` lines 3411-3448, `optCategory` onclick lines 521-522
 //! - `changeTaxWithheldNO` lines 3449-3483, `optWithheld:N` onclick 337
 //!
@@ -377,6 +378,15 @@ pub fn applyCategoryChange(
     };
 }
 
+/// `isItAnAmendedReturn(xmlFile)` declares a parameter it never reads. It
+/// answers from the live `optAmend:Y` radio, so it reports the form's
+/// current state rather than anything about the file it is handed.
+pub const amended_return_predicate_reads_its_argument = false;
+
+pub fn isAmendedReturn(amend: AmendReturn) bool {
+    return amend == .yes;
+}
+
 test "1601EQ over-remittance exclusive choice stays unreconciled and unimplemented as handlers" {
     try std.testing.expect(exclusive_choice_ready);
     try std.testing.expect(amended_item22_ready);
@@ -651,4 +661,13 @@ test "1601EQ cancelling a category change flips to the category not clicked" {
 test "1601EQ neither reset trims, so a space counts as a chosen ATC" {
     try std.testing.expect(applyWithheldNo(true, " ", .confirmed).prompted);
     try std.testing.expect(applyCategoryChange(.private, " ", .confirmed).prompted);
+}
+
+test "1601EQ the amended-return predicate ignores the file it is given" {
+    try std.testing.expect(!amended_return_predicate_reads_its_argument);
+    try std.testing.expect(isAmendedReturn(.yes));
+    try std.testing.expect(!isAmendedReturn(.no));
+    // It agrees with the gate that drives Item 22.
+    try std.testing.expect(!editUnlockItem22(.yes));
+    try std.testing.expect(editUnlockItem22(.no));
 }

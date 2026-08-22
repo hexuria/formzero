@@ -11,6 +11,7 @@
 //! - `enabletaxrate` lines 3422-3428, `disabletaxrate` lines 3430-3436
 //! - `clearpart2` lines 3438-3447
 //! - `changedrpATCList` lines 2759-2781
+//! - `cancelPartIIATC` lines 2784-2796
 //!
 //! Checked codes fill the main grid as Items 13-18 and, from the seventh
 //! onward, the separate Other Tax table under its own counter starting at
@@ -47,6 +48,12 @@
 //!
 //! `clearpart2` is likewise one-sided: it empties the Other Tax rows and
 //! their total and then reruns Item 19, leaving the main grid untouched.
+//!
+//! Cancelling the picker restores the checkbox states from `ATCCodeList`,
+//! the snapshot `getATCCode` wrote on its last confirm. So cancel reverts to
+//! the last confirmed selection rather than to whatever was on screen when
+//! the picker opened, and a selection never confirmed leaves the array
+//! holding whatever the previous confirm left there.
 //!
 //! `changedrpATCList` rebuilds the picker from the catalog for one category,
 //! one row per record, striping odd rows. It writes each description into a
@@ -191,6 +198,26 @@ pub const escaped_replacement = "&lt;=";
 /// Whether a description is altered on its way into the picker.
 pub fn descriptionIsRewritten(description: []const u8) bool {
     return std.mem.indexOf(u8, description, escaped_sequence) != null;
+}
+
+/// `cancelPartIIATC` restores each checkbox from `ATCCodeList`, which
+/// `getATCCode` writes as it builds rows. The restore point is therefore
+/// the last confirmed selection, not the picker's state on open.
+pub const CancelRestore = struct {
+    restores_from_last_confirm: bool = true,
+    restores_from_picker_open_state: bool = false,
+    /// Hidden only when it is currently shown.
+    hides_modal_when_visible: bool = true,
+};
+
+pub const cancel_restore: CancelRestore = .{};
+
+/// Checkbox state after cancelling, given the last confirmed selection.
+pub fn checkedAfterCancel(last_confirmed: []const []const u8, code: []const u8) bool {
+    for (last_confirmed) |confirmed| {
+        if (std.mem.eql(u8, confirmed, code)) return true;
+    }
+    return false;
 }
 
 test "1601EQ selection placement fills the main grid before spilling" {
@@ -373,4 +400,18 @@ test "1601EQ descriptions carrying an ampersand are written through unescaped" {
         }
     }
     try std.testing.expect(with_ampersand > 0);
+}
+
+test "1601EQ cancelling the picker reverts to the last confirmed selection" {
+    try std.testing.expect(cancel_restore.restores_from_last_confirm);
+    try std.testing.expect(!cancel_restore.restores_from_picker_open_state);
+    try std.testing.expect(cancel_restore.hides_modal_when_visible);
+
+    const confirmed = [_][]const u8{ "WI010", "WC030" };
+    try std.testing.expect(checkedAfterCancel(&confirmed, "WI010"));
+    try std.testing.expect(checkedAfterCancel(&confirmed, "WC030"));
+    // Anything ticked since the last confirm is discarded.
+    try std.testing.expect(!checkedAfterCancel(&confirmed, "WI020"));
+    // With nothing ever confirmed, cancel clears everything.
+    try std.testing.expect(!checkedAfterCancel(&.{}, "WI010"));
 }

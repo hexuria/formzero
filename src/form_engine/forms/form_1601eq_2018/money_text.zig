@@ -8,6 +8,8 @@
 //!   `formatCurrency` line 321, `NumWithComma` line 358
 //! - `numbersonly` lines 120 and 148, called as `numbersonly(this, event)`
 //!   at ten 1601EQ keypress bindings
+//! - `setInputTextControl_NumberFormatter` HTA lines 2883-2886, called six
+//!   times as `(id, 15, 2)`
 //!
 //! Both functions strip `$` and `,` before doing anything else, then round
 //! the magnitude half away from zero at the centavo and regroup the integer
@@ -45,6 +47,16 @@
 //! looking at either argument, so under an IE engine the arguments are never
 //! consulted. That also means the filter is keyed to the host, not to what
 //! the call site passes.
+//!
+//! A third formatter reaches the same fields.
+//! `setInputTextControl_NumberFormatter(id, limit, deci)` sets the control's
+//! `size` and rewrites its value as `parseFloat(value).toFixed(deci)`. Every
+//! 1601EQ call passes `(id, 15, 2)`, so it fixes two decimals like the other
+//! two — but `toFixed` inserts no group separators, where `round` and
+//! `formatCurrency` both do. A tax base written by the row renderer is
+//! therefore ungrouped, and the same field becomes grouped the moment it is
+//! blurred. Its `limit` of 15 sets a display width and is unrelated to the
+//! twelve-character precision gate.
 //!
 //! The surviving filter admits digits, `.`, and the control keys the HTA
 //! lists by code. It admits no sign character, so a negative amount cannot
@@ -237,6 +249,25 @@ pub fn keypressAccepted(key_code: ?u16) bool {
     return std.mem.indexOfScalar(u8, accepted_characters, character) != null;
 }
 
+/// `setInputTextControl_NumberFormatter` decimal count, from every call.
+pub const number_formatter_decimals: usize = 2;
+/// Its `limit`, which sets the control's display width only.
+pub const number_formatter_size: usize = 15;
+/// `toFixed` emits no group separators, unlike `round` and `formatCurrency`.
+pub const number_formatter_groups_digits = false;
+
+/// Value the row renderer writes: two decimals, no separators, sign kept.
+pub fn numberFormatterInto(buffer: []u8, value: Money) []const u8 {
+    const grouped = formatInto(buffer, value);
+    var length: usize = 0;
+    for (grouped) |character| {
+        if (character == ',') continue;
+        buffer[length] = character;
+        length += 1;
+    }
+    return buffer[0..length];
+}
+
 test "1601EQ round and formatCurrency carry different limits" {
     try std.testing.expectEqual(@as(usize, 12), round_max_integer_digits);
     try std.testing.expectEqual(@as(usize, 15), format_currency_max_integer_digits);
@@ -355,4 +386,42 @@ test "1601EQ a second point is typeable and round then zeroes the field" {
     // It clears the precision gate, then fails to parse and becomes zero.
     try std.testing.expect(outcome.accepted);
     try std.testing.expectEqual(@as(i64, 0), outcome.value.centavos);
+}
+
+test "1601EQ the row renderer writes two decimals without separators" {
+    try std.testing.expectEqual(@as(usize, 2), number_formatter_decimals);
+    try std.testing.expectEqual(@as(usize, 15), number_formatter_size);
+    try std.testing.expect(!number_formatter_groups_digits);
+
+    const Static = struct {
+        var buffer: [max_formatted_length]u8 = undefined;
+    };
+    try std.testing.expectEqualStrings(
+        "1234567.89",
+        numberFormatterInto(&Static.buffer, Money.fromCentavos(123_456_789)),
+    );
+    try std.testing.expectEqualStrings(
+        "0.00",
+        numberFormatterInto(&Static.buffer, Money.zero),
+    );
+    try std.testing.expectEqualStrings(
+        "-1000.00",
+        numberFormatterInto(&Static.buffer, Money.fromCentavos(-100_000)),
+    );
+}
+
+test "1601EQ the same amount is grouped by blur and ungrouped by render" {
+    const Static = struct {
+        var rendered: [max_formatted_length]u8 = undefined;
+        var blurred: [max_formatted_length]u8 = undefined;
+    };
+    const amount = Money.fromCentavos(123_456_789);
+    const on_render = numberFormatterInto(&Static.rendered, amount);
+    const on_blur = formatInto(&Static.blurred, amount);
+    try std.testing.expect(!std.mem.eql(u8, on_render, on_blur));
+    try std.testing.expect(std.mem.indexOfScalar(u8, on_render, ',') == null);
+    try std.testing.expect(std.mem.indexOfScalar(u8, on_blur, ',') != null);
+    // Both still parse back to the same value.
+    try std.testing.expectEqual(amount.centavos, roundField(on_render).value.centavos);
+    try std.testing.expectEqual(amount.centavos, roundField(on_blur).value.centavos);
 }
