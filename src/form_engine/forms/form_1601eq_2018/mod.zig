@@ -10,7 +10,7 @@
 //! are pinned, as are the ATC lookup domain, the Part II row model and its
 //! per-row withholding, the ATC selection placement, and the HTA money text
 //! rules and keypress filter behind them, and the year-driven ATC rate
-//! refresh, and the startup control state. Script closure and ATC lookup are not.
+//! refresh, the startup control state, and the profile-to-control mapping. Script closure and ATC lookup are not.
 //! Remaining parts stay fail-closed until the five absent active scripts
 //! and two path-placement variants are recovered or independently
 //! reconstructed with provenance.
