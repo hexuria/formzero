@@ -25,6 +25,7 @@ test "core logic modules remain in the headless test root" {
     _ = @import("forms/compose.zig");
     _ = @import("forms/lifecycle.zig");
     _ = @import("forms/form_1701q.zig");
+    _ = @import("forms/form_1601eq.zig");
     _ = @import("forms/form_1701q_exact_ui_state.zig");
     _ = @import("filing/policy.zig");
     _ = @import("filing/planner.zig");
