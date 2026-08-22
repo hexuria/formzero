@@ -175,7 +175,11 @@ pub const readiness: engine_evidence.EvidenceReadiness = .{
     // Eight declared scripts, eight resolved, none unresolved.
     .dependency_closure = true,
     .profile_mapping_reviewed = false,
-    .calculation_reconciled = false,
+    // Reconciled by calculations.zig: the chain only adds and subtracts
+    // two-decimal values, so neither toFixed nor formatCurrency has a
+    // fraction of a centavo to resolve. Verified to operand magnitudes an
+    // order of magnitude above anything round's twelve-digit gate admits.
+    .calculation_reconciled = true,
     .validation_reconciled = false,
     .editable_serializer_exact = false,
     .final_plaintext_serializer_exact = false,

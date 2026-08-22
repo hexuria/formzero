@@ -11,5 +11,5 @@ pub const ready = false;
 
 test "1601C document stay fail-closed" {
     try std.testing.expect(!ready);
-    try std.testing.expect(!evidence.readiness.calculation_reconciled);
+    try std.testing.expect(!evidence.readiness.persistence_integrated);
 }
