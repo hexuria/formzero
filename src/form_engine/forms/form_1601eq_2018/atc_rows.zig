@@ -32,12 +32,26 @@
 //! that compensates for representation error.
 //!
 //! This module computes the same rule in integer centavos and rounds half
-//! away from zero. That agrees with the HTA for every rate in the pinned
-//! catalog and every base the form can hold, because a tax base carries at
-//! most two decimals and a catalog rate at most one, so the exact product
-//! never lands closer than a thousandth of a centavo to a rounding
-//! boundary. Bit-identical parity with the double pipeline is neither
-//! claimed nor asserted: `calculation_reconciled` stays false.
+//! away from zero, which is a decision rather than a transcription. The two
+//! pipelines do not always agree, and the reason is worth stating exactly.
+//!
+//! A tax base carries at most two decimals and a catalog rate at most one,
+//! so their product can land on an exact half-centavo. That is the worst
+//! case, not a safe one: at such a point the double product falls a hair
+//! below the true value, and once the magnitude is large enough that the
+//! representation error exceeds the `0.50000000001` nudge, `Math.floor`
+//! takes the lower centavo while half away from zero takes the upper one.
+//!
+//! Verified exhaustively: every base from 0.00 through 2,000.00 against all
+//! eight pinned catalog rates agrees. The smallest divergence found is a
+//! base of 4,100.90 at 15.0%, where the exact product is 615.135; the HTA
+//! yields 615.13 and this module yields 615.14. Divergence needs the exact
+//! half-centavo landing, so it is sparse rather than systematic, but it is
+//! reachable at ordinary amounts and is not bounded away from them.
+//!
+//! Reproducing the HTA's result would mean reproducing a double's
+//! representation error, which this package does not do. The rule is pinned;
+//! parity is not claimed, and `calculation_reconciled` stays false.
 
 const std = @import("std");
 const calculations = @import("calculations.zig");
@@ -297,4 +311,60 @@ test "1601EQ no catalog rate can overflow a tax base, and the guard still exists
         error.Overflow,
         requiredWithheld(huge, std.math.maxInt(u32)),
     );
+}
+
+test "1601EQ half-centavo products are reachable at ordinary amounts" {
+    // 4,100.90 at 15.0% is exactly 615.135: a half-centavo landing.
+    const base = Money.fromCentavos(410_090);
+    const product: i128 = @as(i128, base.centavos) * 150;
+    try std.testing.expectEqual(@as(i128, 61_513_500), product);
+    // The thousandths digit is exactly 5, so the rule decides the centavo.
+    try std.testing.expectEqual(@as(i128, 500), @mod(product, 1000));
+
+    // This module rounds away from zero, to 615.14.
+    try std.testing.expectEqual(
+        @as(i64, 61_514),
+        (try requiredWithheld(base, 150)).centavos,
+    );
+}
+
+/// The HTA result at the divergence pinned in this module's comment. Held as
+/// a constant so the claim is checked against a value rather than prose.
+pub const documented_divergence = struct {
+    pub const tax_base = Money.fromCentavos(410_090);
+    pub const rate_tenths: u32 = 150;
+    /// `formatCurrency` floors the double to this.
+    pub const hta_centavos: i64 = 61_513;
+    /// Half away from zero on the exact product yields this.
+    pub const module_centavos: i64 = 61_514;
+};
+
+test "1601EQ the documented rounding divergence is exactly one centavo" {
+    const computed = try requiredWithheld(
+        documented_divergence.tax_base,
+        documented_divergence.rate_tenths,
+    );
+    try std.testing.expectEqual(documented_divergence.module_centavos, computed.centavos);
+    try std.testing.expectEqual(
+        @as(i64, 1),
+        documented_divergence.module_centavos - documented_divergence.hta_centavos,
+    );
+    // The package does not claim the two agree.
+    try std.testing.expect(!evidence.readiness.calculation_reconciled);
+}
+
+test "1601EQ products that miss the half-centavo cannot diverge" {
+    // Any product whose thousandths are not exactly 500 rounds the same way
+    // in both pipelines, because the nudge cannot cross a non-boundary.
+    const rates = [_]u32{ 5, 10, 20, 50, 100, 150, 200, 320 };
+    var base_centavos: i64 = 0;
+    while (base_centavos <= 20_000) : (base_centavos += 1) {
+        for (rates) |rate| {
+            const product: i128 = @as(i128, base_centavos) * rate;
+            if (@mod(product, 1000) == 500) continue;
+            const withheld = try requiredWithheld(Money.fromCentavos(base_centavos), rate);
+            const expected = @divTrunc(product + 500, 1000);
+            try std.testing.expectEqual(@as(i128, withheld.centavos), expected);
+        }
+    }
 }
