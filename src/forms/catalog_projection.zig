@@ -882,9 +882,10 @@ test "corrected ownership source contracts stay outside direct profile projectio
     try std.testing.expectEqual(@as(usize, 4), catalog.form_policy_target_count);
 }
 
-test "exact 2551Q and 1701Q typed specs cannot drift from catalog policy" {
+test "exact 2551Q, 1701Q and 1601EQ typed specs cannot drift from catalog policy" {
     const form_2551q = @import("form_2551q.zig");
     const form_1701q = @import("form_1701q.zig");
+    const form_1601eq = @import("form_1601eq.zig");
     try expectTypedSpecMatchesCatalog(
         catalog.findForm("2551Q").?,
         form_2551q.profile_spec,
@@ -892,6 +893,10 @@ test "exact 2551Q and 1701Q typed specs cannot drift from catalog policy" {
     try expectTypedSpecMatchesCatalog(
         catalog.findForm("1701Q").?,
         form_1701q.profile_spec,
+    );
+    try expectTypedSpecMatchesCatalog(
+        catalog.findForm("1601EQ").?,
+        form_1601eq.profile_spec,
     );
 }
 
