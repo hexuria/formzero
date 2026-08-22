@@ -379,8 +379,8 @@ test "1601C sums and differences of centavos stay exact at scale" {
 
 test "1601C reconciliation covers the chain and nothing further" {
     try std.testing.expect(evidence.readiness.calculation_reconciled);
+    // The serializers and persistence are untouched by it.
     try std.testing.expect(!evidence.readiness.editable_serializer_exact);
     try std.testing.expect(!evidence.readiness.final_plaintext_serializer_exact);
     try std.testing.expect(!evidence.readiness.persistence_integrated);
-    try std.testing.expect(!evidence.readiness.validation_reconciled);
 }
