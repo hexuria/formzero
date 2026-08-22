@@ -20371,6 +20371,7 @@ test "tax-profile domain modules remain in the repository test root" {
     _ = @import("forms/form_2551q.zig");
     _ = @import("forms/form_1701q.zig");
     _ = @import("forms/form_1601eq.zig");
+    _ = @import("forms/form_1601c.zig");
     _ = @import("forms/runtime.zig");
     _ = @import("forms/catalog_projection.zig");
     _ = @import("forms/persistence_adapter.zig");

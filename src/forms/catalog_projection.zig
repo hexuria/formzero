@@ -886,6 +886,7 @@ test "exact 2551Q, 1701Q and 1601EQ typed specs cannot drift from catalog policy
     const form_2551q = @import("form_2551q.zig");
     const form_1701q = @import("form_1701q.zig");
     const form_1601eq = @import("form_1601eq.zig");
+    const form_1601c = @import("form_1601c.zig");
     try expectTypedSpecMatchesCatalog(
         catalog.findForm("2551Q").?,
         form_2551q.profile_spec,
@@ -897,6 +898,10 @@ test "exact 2551Q, 1701Q and 1601EQ typed specs cannot drift from catalog policy
     try expectTypedSpecMatchesCatalog(
         catalog.findForm("1601EQ").?,
         form_1601eq.profile_spec,
+    );
+    try expectTypedSpecMatchesCatalog(
+        catalog.findForm("1601C").?,
+        form_1601c.profile_spec,
     );
 }
 
