@@ -375,3 +375,19 @@ test "1601EQ path placement variants are recoverable bytes, not loadable scripts
     try std.testing.expect(!readiness.dependency_closure);
     try std.testing.expect(!readiness.identityReady());
 }
+
+/// `isItAFinalCopy` decides whether a saved XML is a Final Copy by looking
+/// for this literal anywhere in the file, rather than by parsing it. The
+/// stamp reads 2012.0 inside a 7.9.6 package, so it tracks the document
+/// format rather than the application version.
+///
+/// Recorded as format evidence only. No codec is enabled by it and
+/// `final_plaintext_serializer_exact` stays false.
+pub const final_copy_marker = "All Rights Reserved BIR 2012.0";
+
+test "1601EQ Final Copy detection is a substring sniff, not a parse" {
+    try std.testing.expect(final_copy_marker.len > 0);
+    try std.testing.expect(std.mem.indexOf(u8, final_copy_marker, "2012.0") != null);
+    try std.testing.expect(!readiness.final_plaintext_serializer_exact);
+    try std.testing.expect(!readiness.editable_serializer_exact);
+}
