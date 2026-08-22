@@ -10,7 +10,7 @@
 //! are pinned, as are the ATC lookup domain, the Part II row model and its
 //! per-row withholding, the ATC selection placement, and the HTA money text
 //! rules and keypress filter behind them, and the year-driven ATC rate
-//! refresh. Script closure and ATC lookup are not.
+//! refresh, and the startup control state. Script closure and ATC lookup are not.
 //! Remaining parts stay fail-closed until the five absent active scripts
 //! and two path-placement variants are recovered or independently
 //! reconstructed with provenance.
@@ -30,6 +30,7 @@ pub const atc_rows = @import("atc_rows.zig");
 pub const money_text = @import("money_text.zig");
 pub const atc_selection = @import("atc_selection.zig");
 pub const year_rate_refresh = @import("year_rate_refresh.zig");
+pub const startup = @import("startup.zig");
 pub const profile_mapping = @import("profile_mapping.zig");
 pub const transaction = @import("transaction.zig");
 pub const workflow = @import("workflow.zig");
@@ -56,6 +57,7 @@ test {
     _ = money_text;
     _ = atc_selection;
     _ = year_rate_refresh;
+    _ = startup;
     _ = profile_mapping;
     _ = transaction;
     _ = workflow;

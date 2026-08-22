@@ -10,6 +10,7 @@
 //! - `setInputTextControl_NumberFormatter` lines 2883-2886
 //! - `enabletaxrate` lines 3422-3428, `disabletaxrate` lines 3430-3436
 //! - `clearpart2` lines 3438-3447
+//! - `changedrpATCList` lines 2759-2781
 //!
 //! Checked codes fill the main grid as Items 13-18 and, from the seventh
 //! onward, the separate Other Tax table under its own counter starting at
@@ -46,8 +47,17 @@
 //!
 //! `clearpart2` is likewise one-sided: it empties the Other Tax rows and
 //! their total and then reruns Item 19, leaving the main grid untouched.
+//!
+//! `changedrpATCList` rebuilds the picker from the catalog for one category,
+//! one row per record, striping odd rows. It writes each description into a
+//! cell after replacing `<=` with its entity and nothing else. No 1601EQ
+//! description contains `<=`, so that substitution never fires for this
+//! form, while the eight descriptions that do carry `&` are written through
+//! unescaped. The characters present and the character guarded against are
+//! disjoint.
 
 const std = @import("std");
+const atc_catalog = @import("atc_catalog.zig");
 const atc_rows = @import("atc_rows.zig");
 const calculations = @import("calculations.zig");
 const evidence = @import("evidence.zig");
@@ -161,6 +171,26 @@ pub fn clearedRowRange(selected_count: usize) struct { first: usize, count: usiz
         .first = atc_rows.first_other_row,
         .count = otherTaxRowCount(selected_count),
     };
+}
+
+/// `changedrpATCList` emits one picker row per catalog record for the
+/// chosen category, indexed from one.
+pub fn pickerRowCount(category: atc_catalog.Category) usize {
+    return atc_catalog.countFor(category);
+}
+
+/// Odd rows are shaded; even rows are left plain.
+pub fn pickerRowShaded(row_index: usize) bool {
+    return row_index % 2 != 0;
+}
+
+/// The only substitution `changedrpATCList` performs on a description.
+pub const escaped_sequence = "<=";
+pub const escaped_replacement = "&lt;=";
+
+/// Whether a description is altered on its way into the picker.
+pub fn descriptionIsRewritten(description: []const u8) bool {
+    return std.mem.indexOf(u8, description, escaped_sequence) != null;
 }
 
 test "1601EQ selection placement fills the main grid before spilling" {
@@ -294,4 +324,53 @@ test "1601EQ clearpart2 empties only the Other Tax side" {
     try std.testing.expectEqual(@as(usize, 4), spilled.count);
     // It starts exactly where the Other Tax numbering starts.
     try std.testing.expectEqual(atc_rows.first_other_row, spilled.first);
+}
+
+test "1601EQ the picker lists every catalog record for one category" {
+    try std.testing.expectEqual(
+        atc_catalog.private_record_count,
+        pickerRowCount(.private),
+    );
+    try std.testing.expectEqual(
+        atc_catalog.government_record_count,
+        pickerRowCount(.government),
+    );
+    // The four malformed records reach neither picker.
+    try std.testing.expectEqual(
+        atc_catalog.records.len,
+        pickerRowCount(.private) + pickerRowCount(.government),
+    );
+}
+
+test "1601EQ the picker shades odd rows only" {
+    try std.testing.expect(pickerRowShaded(1));
+    try std.testing.expect(!pickerRowShaded(2));
+    try std.testing.expect(pickerRowShaded(3));
+    try std.testing.expect(!pickerRowShaded(4));
+}
+
+test "1601EQ the picker guards a sequence no 1601EQ description contains" {
+    for (atc_catalog.records) |record| {
+        // Nothing in this form's catalog triggers the substitution.
+        try std.testing.expect(!descriptionIsRewritten(record.description));
+        try std.testing.expect(
+            std.mem.indexOfScalar(u8, record.description, '<') == null,
+        );
+    }
+    // The substitution itself is still what the HTA performs.
+    try std.testing.expect(descriptionIsRewritten("PAYMENTS <= 10,000"));
+    try std.testing.expectEqualStrings("<=", escaped_sequence);
+    try std.testing.expectEqualStrings("&lt;=", escaped_replacement);
+}
+
+test "1601EQ descriptions carrying an ampersand are written through unescaped" {
+    var with_ampersand: usize = 0;
+    for (atc_catalog.records) |record| {
+        if (std.mem.indexOfScalar(u8, record.description, '&') != null) {
+            with_ampersand += 1;
+            // Present in the data, absent from the guard.
+            try std.testing.expect(!descriptionIsRewritten(record.description));
+        }
+    }
+    try std.testing.expect(with_ampersand > 0);
 }
