@@ -8,6 +8,8 @@
 //!   `cd56bf18d1da2127d578af611fe8005fe49913a65781bb603b22b31bbe548b96`
 //! - `getATCCode` lines 2890-3034, `showPartIIATC` lines 2801-2824
 //! - `setInputTextControl_NumberFormatter` lines 2883-2886
+//! - `enabletaxrate` lines 3422-3428, `disabletaxrate` lines 3430-3436
+//! - `clearpart2` lines 3438-3447
 //!
 //! Checked codes fill the main grid as Items 13-18 and, from the seventh
 //! onward, the separate Other Tax table under its own counter starting at
@@ -35,6 +37,15 @@
 //! 2)`, which is `parseFloat(value).toFixed(2)` — a third rounding path,
 //! distinct from `round` and from `formatCurrency`. Only its two-decimal
 //! shape is pinned here; `calculation_reconciled` stays false.
+//!
+//! The bulk rate helpers are asymmetric in the same way the render path is.
+//! `enabletaxrate` reopens a rate only where the row's ATC is `N/A`, while
+//! `disabletaxrate` closes every rate unconditionally. Both walk
+//! `tblPartIIComputeTax` alone, so a rate in the Other Tax table is beyond
+//! either of them.
+//!
+//! `clearpart2` is likewise one-sided: it empties the Other Tax rows and
+//! their total and then reruns Item 19, leaving the main grid untouched.
 
 const std = @import("std");
 const atc_rows = @import("atc_rows.zig");
@@ -118,6 +129,38 @@ pub fn otherTaxRowCount(selected_count: usize) usize {
 /// `lblOtherTax` is revealed only when the selection spills.
 pub fn showsOtherTaxLabel(selected_count: usize) bool {
     return atc_rows.usesOverflow(selected_count);
+}
+
+/// `enabletaxrate` reopens a rate only for an `N/A` row; `disabletaxrate`
+/// closes every rate. Neither reaches past the main grid.
+pub const RateSweep = enum { enable, disable };
+
+pub fn rateDisabledAfterSweep(sweep: RateSweep, code: []const u8, placement: Placement) ?bool {
+    // Both loops are bounded by the main grid's own table.
+    if (placement != .main_grid) return null;
+    return switch (sweep) {
+        .disable => true,
+        .enable => !std.mem.eql(u8, code, not_applicable_code),
+    };
+}
+
+/// `clearpart2` empties the Other Tax rows and their total, then reruns
+/// Item 19. Main-grid rows keep their values.
+pub const ClearPart2 = struct {
+    clears_other_tax_rows: bool = true,
+    clears_other_tax_total: bool = true,
+    clears_main_grid: bool = false,
+    recomputes_item_19: bool = true,
+};
+
+pub const clear_part_2: ClearPart2 = .{};
+
+/// The one-based row indices `clearpart2` walks for a given selection.
+pub fn clearedRowRange(selected_count: usize) struct { first: usize, count: usize } {
+    return .{
+        .first = atc_rows.first_other_row,
+        .count = otherTaxRowCount(selected_count),
+    };
 }
 
 test "1601EQ selection placement fills the main grid before spilling" {
@@ -215,4 +258,40 @@ test "1601EQ the Other Tax table and its label appear together" {
         const in_main = @min(selected, atc_rows.main_grid_row_count);
         try std.testing.expectEqual(selected, in_main + otherTaxRowCount(selected));
     }
+}
+
+test "1601EQ the bulk rate sweeps are asymmetric" {
+    // Disabling is unconditional.
+    try std.testing.expect(rateDisabledAfterSweep(.disable, "WI010", .main_grid).?);
+    try std.testing.expect(rateDisabledAfterSweep(.disable, not_applicable_code, .main_grid).?);
+
+    // Enabling reopens only the N/A rows.
+    try std.testing.expect(!rateDisabledAfterSweep(.enable, not_applicable_code, .main_grid).?);
+    try std.testing.expect(rateDisabledAfterSweep(.enable, "WI010", .main_grid).?);
+}
+
+test "1601EQ neither rate sweep reaches the Other Tax table" {
+    try std.testing.expect(rateDisabledAfterSweep(.enable, not_applicable_code, .other_tax) == null);
+    try std.testing.expect(rateDisabledAfterSweep(.disable, "WI010", .other_tax) == null);
+
+    // An N/A row past the sixth is unreachable by the render path too.
+    try std.testing.expect(!rateEditable(not_applicable_code, .other_tax));
+}
+
+test "1601EQ clearpart2 empties only the Other Tax side" {
+    try std.testing.expect(clear_part_2.clears_other_tax_rows);
+    try std.testing.expect(clear_part_2.clears_other_tax_total);
+    try std.testing.expect(!clear_part_2.clears_main_grid);
+    try std.testing.expect(clear_part_2.recomputes_item_19);
+
+    // With no spill there is nothing for it to clear.
+    const none = clearedRowRange(6);
+    try std.testing.expectEqual(@as(usize, 7), none.first);
+    try std.testing.expectEqual(@as(usize, 0), none.count);
+
+    const spilled = clearedRowRange(10);
+    try std.testing.expectEqual(@as(usize, 7), spilled.first);
+    try std.testing.expectEqual(@as(usize, 4), spilled.count);
+    // It starts exactly where the Other Tax numbering starts.
+    try std.testing.expectEqual(atc_rows.first_other_row, spilled.first);
 }

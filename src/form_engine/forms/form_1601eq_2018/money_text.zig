@@ -6,6 +6,8 @@
 //! - `js/string-util.js`, a resolved dependency loading at script position 5
 //! - `isAmountWithinAllowedPrecision` line 268, `round` line 286,
 //!   `formatCurrency` line 321, `NumWithComma` line 358
+//! - `numbersonly` lines 120 and 148, called as `numbersonly(this, event)`
+//!   at ten 1601EQ keypress bindings
 //!
 //! Both functions strip `$` and `,` before doing anything else, then round
 //! the magnitude half away from zero at the centavo and regroup the integer
@@ -34,6 +36,21 @@
 //! which diverges by one centavo when the exact value lands on a half
 //! centavo at a large enough magnitude. That divergence is characterised in
 //! `atc_rows`; `calculation_reconciled` stays false.
+//! `numbersonly` is declared twice in the same file. The later declaration
+//! wins, and the two differ: the earlier one rejects `.` outright and moves
+//! focus to another field, while the later one accepts it. Every 1601EQ
+//! binding passes `(this, event)`, which matches the earlier signature
+//! `(myfield, e, dec)` rather than the surviving `(e, decimal)`. The
+//! mismatch is harmless only because the body reads `window.event` before
+//! looking at either argument, so under an IE engine the arguments are never
+//! consulted. That also means the filter is keyed to the host, not to what
+//! the call site passes.
+//!
+//! The surviving filter admits digits, `.`, and the control keys the HTA
+//! lists by code. It admits no sign character, so a negative amount cannot
+//! be typed into a Part II field at all. It also has no guard against a
+//! second `.`, so `1.2.3` is typeable; `round` then finds it unparseable and
+//! writes `0.00`.
 
 const std = @import("std");
 const calculations = @import("calculations.zig");
@@ -198,6 +215,28 @@ fn formatted(value: Money) []const u8 {
     return formatInto(&Static.buffer, value);
 }
 
+/// Key codes `numbersonly` admits before it inspects the character, in the
+/// order the HTA lists them: unset, null, backspace, tab, enter, escape.
+pub const accepted_control_key_codes = [_]u16{ 0, 8, 9, 13, 27 };
+
+/// Characters the surviving `numbersonly` admits.
+pub const accepted_characters = "0123456789.";
+
+/// The earlier declaration rejects `.`; the later one accepts it and wins.
+pub const numbersonly_declaration_count: usize = 2;
+
+/// True when a keypress survives the filter. `key_code` null models the
+/// HTA's `key == null` branch, which passes.
+pub fn keypressAccepted(key_code: ?u16) bool {
+    const code = key_code orelse return true;
+    for (accepted_control_key_codes) |accepted| {
+        if (code == accepted) return true;
+    }
+    if (code > 0x7F) return false;
+    const character: u8 = @intCast(code);
+    return std.mem.indexOfScalar(u8, accepted_characters, character) != null;
+}
+
 test "1601EQ round and formatCurrency carry different limits" {
     try std.testing.expectEqual(@as(usize, 12), round_max_integer_digits);
     try std.testing.expectEqual(@as(usize, 15), format_currency_max_integer_digits);
@@ -282,4 +321,38 @@ test "1601EQ a rounded field survives a round trip through the formatter" {
         // Reparsing the formatted text yields the same centavos.
         try std.testing.expectEqual(outcome.value.centavos, roundField(text).value.centavos);
     }
+}
+
+test "1601EQ the surviving numbersonly filter admits digits and the point" {
+    try std.testing.expectEqual(@as(usize, 2), numbersonly_declaration_count);
+    for ("0123456789.") |character| {
+        try std.testing.expect(keypressAccepted(character));
+    }
+}
+
+test "1601EQ no sign character can be typed into a Part II field" {
+    try std.testing.expect(!keypressAccepted('-'));
+    try std.testing.expect(!keypressAccepted('+'));
+    // So a negative tax base is unreachable by typing, whatever round accepts.
+    try std.testing.expectEqual(@as(i64, -50), roundField("-.50").value.centavos);
+}
+
+test "1601EQ the listed control keys pass and other characters do not" {
+    try std.testing.expect(keypressAccepted(null));
+    for (accepted_control_key_codes) |code| {
+        try std.testing.expect(keypressAccepted(code));
+    }
+    try std.testing.expect(!keypressAccepted('a'));
+    try std.testing.expect(!keypressAccepted('$'));
+    try std.testing.expect(!keypressAccepted(','));
+    try std.testing.expect(!keypressAccepted(' '));
+}
+
+test "1601EQ a second point is typeable and round then zeroes the field" {
+    // The filter has no guard against repeating the separator.
+    try std.testing.expect(keypressAccepted('.'));
+    const outcome = roundField("1.2.3");
+    // It clears the precision gate, then fails to parse and becomes zero.
+    try std.testing.expect(outcome.accepted);
+    try std.testing.expectEqual(@as(i64, 0), outcome.value.centavos);
 }
