@@ -18,6 +18,7 @@ pub const final_copy_codec_crypto = @import("final_copy_codec_crypto.zig");
 pub const rdo_options = @import("rdo_options.zig");
 pub const profile_mapping = @import("profile_mapping.zig");
 pub const transaction = @import("transaction.zig");
+pub const transaction_submit = @import("transaction_submit.zig");
 pub const workflow = @import("workflow.zig");
 pub const interaction = @import("interaction.zig");
 
@@ -38,6 +39,7 @@ test {
     _ = rdo_options;
     _ = profile_mapping;
     _ = transaction;
+    _ = transaction_submit;
     _ = workflow;
     _ = interaction;
 }
