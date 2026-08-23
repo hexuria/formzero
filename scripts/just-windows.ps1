@@ -12,9 +12,13 @@ param(
         "doctor",
         "package",
         "app",
-        "install"
+        "install",
+        "maintenance"
     )]
-    [string]$Command
+    [string]$Command,
+
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$RemainingArguments = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,18 +28,6 @@ $repositoryRoot = [IO.Path]::GetFullPath(
     (Join-Path $PSScriptRoot "..")
 )
 Set-Location -LiteralPath $repositoryRoot
-
-$identityJson = & node scripts/app-identity.mjs prepare --format json
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to resolve Buwiz app identity."
-}
-$appIdentity = $identityJson | ConvertFrom-Json
-$appName = [string]$appIdentity.appName
-$displayName = [string]$appIdentity.displayName
-$bundleId = [string]$appIdentity.bundleId
-$manifestPath = [string]$appIdentity.manifestPath
-$packageRelativePath = "zig-out\package\$appName-windows"
-$resolvedPackageRoot = Join-Path $repositoryRoot $packageRelativePath
 
 function Invoke-Checked {
     param(
@@ -50,6 +42,73 @@ function Invoke-Checked {
         throw "Command failed with exit code ${LASTEXITCODE}: $Executable"
     }
 }
+
+function Repair-MaintenanceArguments {
+    param([string[]]$Values)
+    if (-not $Values -or $Values.Count -eq 0) {
+        return @()
+    }
+    $head = $Values[0]
+    if ($head -ne "clean" -and $head -ne "worktree-remove") {
+        return $Values
+    }
+    if ($Values.Count -ge 2 -and $Values[1] -eq $head) {
+        $Values = @($Values[0]) + @($Values[2..($Values.Count - 1)])
+    }
+    $repeatAt = [Array]::IndexOf($Values, $head, 1)
+    if ($repeatAt -gt 0 -and ($Values.Count - $repeatAt) -eq $repeatAt) {
+        $same = $true
+        for ($i = 0; $i -lt $repeatAt; $i++) {
+            if ($Values[$i] -ne $Values[$repeatAt + $i]) {
+                $same = $false
+                break
+            }
+        }
+        if ($same) {
+            return $Values[0..($repeatAt - 1)]
+        }
+    }
+    return $Values
+}
+
+if ($Command -eq "maintenance") {
+    $RemainingArguments = @(Repair-MaintenanceArguments $RemainingArguments)
+    if ($RemainingArguments.Count -lt 1) {
+        throw "maintenance requires a subcommand"
+    }
+    $isCleanInventory = (
+        $RemainingArguments[0] -eq "clean" -and
+        (($RemainingArguments.Count -eq 1) -or
+         ($RemainingArguments[1] -eq "list"))
+    )
+    $isWorktreeInventory = (
+        $RemainingArguments[0] -eq "worktree-remove" -and
+        $RemainingArguments.Count -eq 1
+    )
+    if (($RemainingArguments -notcontains "--dry-run") -and
+        -not ($isCleanInventory -or $isWorktreeInventory)) {
+        throw (
+            "Destructive workspace maintenance is unavailable on Windows. " +
+            "Use inventory or --dry-run."
+        )
+    }
+    Invoke-Checked "node" (
+        @("scripts/workspace-maintenance.mjs") + $RemainingArguments
+    )
+    return
+}
+
+$identityJson = & node scripts/app-identity.mjs prepare --format json
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to resolve Buwiz app identity."
+}
+$appIdentity = $identityJson | ConvertFrom-Json
+$appName = [string]$appIdentity.appName
+$displayName = [string]$appIdentity.displayName
+$bundleId = [string]$appIdentity.bundleId
+$manifestPath = [string]$appIdentity.manifestPath
+$packageRelativePath = "zig-out\package\$appName-windows"
+$resolvedPackageRoot = Join-Path $repositoryRoot $packageRelativePath
 
 function Invoke-NativeCli {
     param(
@@ -102,6 +161,8 @@ switch ($Command) {
 
     "check" {
         Invoke-Checked "npm.cmd" @("run", "test:app-identity")
+        Invoke-Checked "npm.cmd" @("run", "test:windows-maintenance")
+        Invoke-Checked "npm.cmd" @("run", "test:workspace-maintenance")
         Invoke-Checked "npm.cmd" @("run", "check:tax-catalog")
         Invoke-Checked "npm.cmd" @("run", "check:postal-reference")
         Invoke-Checked "npm.cmd" @("run", "typecheck:news-sync")

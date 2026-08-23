@@ -1,11 +1,30 @@
 # Use PowerShell for recipes on Windows; Unix hosts keep just's sh default.
 
 set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
+set positional-arguments
 
 npm_command := if os() == "windows" { "npm.cmd" } else { "npm" }
 
 default:
     @just --list
+
+# Reclaim only declared build artifacts; no target lists choices and changes nothing.
+[unix]
+clean *args:
+    @WORKSPACE_MAINTENANCE_CWD="$(git rev-parse --show-toplevel)" WORKSPACE_MAINTENANCE_JUST_PID="$PPID" WORKSPACE_MAINTENANCE_JUST_EXE="$(command -v just)" node "{{justfile_directory()}}/scripts/workspace-maintenance.mjs" clean "$@"
+
+[windows]
+clean *args:
+    & scripts/just-windows.ps1 maintenance clean {{args}}
+
+# Remove one exact registered worktree after fail-closed safety checks.
+[unix]
+worktree-remove *args:
+    @WORKSPACE_MAINTENANCE_CWD="$(git rev-parse --show-toplevel)" WORKSPACE_MAINTENANCE_JUST_PID="$PPID" WORKSPACE_MAINTENANCE_JUST_EXE="$(command -v just)" node "{{justfile_directory()}}/scripts/workspace-maintenance.mjs" worktree-remove "$@"
+
+[windows]
+worktree-remove *args:
+    & scripts/just-windows.ps1 maintenance worktree-remove {{args}}
 
 # Prepare the branch-qualified manifest and print its resolved identity.
 identity:
@@ -44,6 +63,7 @@ check: generate
     #!/usr/bin/env bash
     set -euo pipefail
     {{ npm_command }} run test:app-identity
+    {{ npm_command }} run test:workspace-maintenance
     {{ npm_command }} run check:tax-catalog
 
     {{ npm_command }} run check:postal-reference
@@ -58,6 +78,7 @@ check: generate
     #!/usr/bin/env bash
     set -euo pipefail
     {{ npm_command }} run test:app-identity
+    {{ npm_command }} run test:workspace-maintenance
     {{ npm_command }} run check:tax-catalog
 
     {{ npm_command }} run check:postal-reference

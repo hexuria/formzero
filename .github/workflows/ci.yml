@@ -42,6 +42,23 @@ jobs:
           node-version: '22.15'
           cache: npm
 
+      # The Just-launcher ancestry tests invoke just on PATH. Linux installs
+      # the same pinned 1.43.1 via cargo; macOS hosted images do not ship it.
+      - name: Install Just
+        run: |
+          case "$(uname -m)" in
+            arm64|aarch64) target="aarch64-apple-darwin" ;;
+            x86_64) target="x86_64-apple-darwin" ;;
+            *) echo "::error::unsupported macOS architecture $(uname -m)"; exit 1 ;;
+          esac
+          curl --fail --location --silent --show-error \
+            "https://github.com/casey/just/releases/download/1.43.1/just-1.43.1-${target}.tar.gz" \
+            --output "${RUNNER_TEMP}/just.tar.gz"
+          mkdir -p "${HOME}/.local/bin"
+          tar -xzf "${RUNNER_TEMP}/just.tar.gz" -C "${HOME}/.local/bin" just
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+          "${HOME}/.local/bin/just" --version
+
       - name: Restore pinned Zig toolchain
         uses: actions/cache@v4
         with:
@@ -70,6 +87,7 @@ jobs:
 
       - name: Report toolchain
         run: |
+          just --version
           zig version
           node --version
           npx native --version || true
@@ -94,6 +112,7 @@ jobs:
       - name: Check tax catalog
         run: |
           npm run test:app-identity
+          npm run test:workspace-maintenance
           npm run check:tax-catalog
           npm run check:postal-reference
 
@@ -239,3 +258,37 @@ jobs:
             echo '::error::Re-running the setup script downloaded Zig again.'
             exit 1
           fi
+
+  windows-maintenance:
+    name: Workspace maintenance forwarding (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22.15'
+
+      - name: Install Just
+        shell: powershell
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "just.zip"
+          $download = @{
+            Uri = "https://github.com/casey/just/releases/download/1.43.1/just-1.43.1-x86_64-pc-windows-msvc.zip"
+            OutFile = $archive
+          }
+          Invoke-WebRequest @download
+          Expand-Archive -LiteralPath $archive -DestinationPath $env:RUNNER_TEMP
+          Add-Content -Path $env:GITHUB_PATH -Value $env:RUNNER_TEMP
+
+      - name: Verify inventory and argument forwarding
+        shell: powershell
+        run: |
+          just clean list --json
+          just clean build --dry-run
+          npm run test:windows-maintenance
+          npm run test:workspace-maintenance
