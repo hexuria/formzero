@@ -1,4 +1,4 @@
-//! Exact proven-ASCII Final Copy plaintext codec for 1701Q January 2018.
+//! Exact Windows-1252 Final Copy plaintext codec for 1701Q January 2018.
 //!
 //! Evidence anchors in the verified 7.9.6 HTA:
 //! - Final Copy plaintext writer loop: lines 2463-2487;
@@ -13,13 +13,14 @@ const std = @import("std");
 const occurrence = @import("../../occurrence.zig");
 const occurrences = @import("occurrences.zig");
 const document = @import("document.zig");
+const sensitive_memory = @import("../../../security/sensitive_memory.zig");
 
 pub const ControlInput = document.ControlInput;
 pub const ControlValue = document.ControlValue;
 pub const ParsedDocument = document.ParsedDocument;
 
-/// Delimiters and ASCII bytes are exact. Full machine-ANSI output remains
-/// fail-closed pending the paired official Windows capture gate.
+/// Delimiters, ASCII, and Windows-1252 raw values are exact. Characters
+/// outside ACP 1252 stay fail-closed; Windows best-fit is not reproduced.
 pub const exact_complete_byte_encoding_ready =
     document.exact_complete_byte_encoding_ready;
 pub const ascii_byte_layer_exact = document.ascii_byte_layer_exact;
@@ -45,6 +46,22 @@ pub fn serializeAsciiExactAlloc(
     try validateControls(controls);
     const manifest = try occurrences.finalCopyManifest();
 
+    var temporary_buffers: [occurrences.final_copy_occurrence_items.len][]u8 = undefined;
+    var temporary_count: usize = 0;
+    defer {
+        for (temporary_buffers[0..temporary_count]) |buffer| {
+            sensitive_memory.wipeAndFreeDefaultAligned(
+                u8,
+                allocator,
+                buffer,
+            );
+        }
+        sensitive_memory.wipeValue(
+            [occurrences.final_copy_occurrence_items.len][]u8,
+            &temporary_buffers,
+        );
+    }
+
     var emitted: [occurrences.final_copy_occurrence_items.len]document.Occurrence =
         undefined;
     for (manifest.items, controls, 0..) |metadata, input, index| {
@@ -61,7 +78,15 @@ pub fn serializeAsciiExactAlloc(
             .key = metadata.serialized_key,
             .encoded_value = switch (metadata.emission) {
                 .raw => switch (input.value) {
-                    .text => |value| value,
+                    .text => |value| blk: {
+                        const encoded = try document.encodeRawUtf8Alloc(
+                            allocator,
+                            value,
+                        );
+                        temporary_buffers[temporary_count] = encoded;
+                        temporary_count += 1;
+                        break :blk encoded;
+                    },
                     .checked => return error.InputKindMismatch,
                 },
                 .checked_boolean => switch (input.value) {
@@ -339,6 +364,20 @@ test "Final Copy byte output is fail-closed beyond proven ASCII" {
     try std.testing.expectError(
         error.UnqualifiedByteEncoding,
         serializeAsciiExactAlloc(std.testing.allocator, &controls),
+    );
+
+    controls = blankControls();
+    setText(&controls, "frm1701q:txtTaxpayerName", "\xC3\xA9");
+    const encoded = try serializeAsciiExactAlloc(
+        std.testing.allocator,
+        &controls,
+    );
+    defer std.testing.allocator.free(encoded);
+    var parsed = try parseAsciiExact(std.testing.allocator, encoded);
+    defer parsed.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings(
+        "\xE9",
+        parsed.occurrence("frm1701q:txtTaxpayerName", 1).?.encoded_value,
     );
 
     controls = blankControls();
