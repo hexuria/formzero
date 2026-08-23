@@ -12,6 +12,7 @@ pub const calculations = @import("calculations.zig");
 pub const validation = @import("validation.zig");
 pub const document = @import("document.zig");
 pub const editable_codec = @import("editable_codec.zig");
+pub const editable_codec_import = @import("editable_codec_import.zig");
 pub const final_copy_codec = @import("final_copy_codec.zig");
 pub const rdo_options = @import("rdo_options.zig");
 pub const profile_mapping = @import("profile_mapping.zig");
@@ -30,6 +31,7 @@ test {
     _ = validation;
     _ = document;
     _ = editable_codec;
+    _ = editable_codec_import;
     _ = final_copy_codec;
     _ = rdo_options;
     _ = profile_mapping;
