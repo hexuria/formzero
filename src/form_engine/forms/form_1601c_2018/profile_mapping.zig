@@ -30,8 +30,21 @@
 //! 100 against 150, and line of business is 60 against 150. Each is read
 //! from this form's own contract.
 //!
-//! This module maps values onto controls. `profile_mapping_reviewed` stays
-//! false until the mapping is reconciled against the occurrence inventory.
+//! `validateEvidence` reconciles the mapping against the static occurrence
+//! inventory: every rule resolves to a seed on its recorded line and kind,
+//! live document order is strictly increasing, no control is mapped twice,
+//! and nothing overlaps the controls Part I owns as transaction data. That,
+//! with the 138-value RDO domain and the typed form contract, is what
+//! `profile_mapping_reviewed` rests on.
+//!
+//! Twelve Part I controls are recorded as transaction owned. `txtATC` is
+//! among them: the Native page binds it, but the catalog records it as
+//! `form_policy` and `system` rather than profile, which is why the spec
+//! excludes it. Recording it here enforces that exclusion from the other
+//! side as well.
+//!
+//! Reconciliation covers the mapping. Persistence and the codecs stay
+//! closed.
 
 const std = @import("std");
 const ids = @import("../../../forms/id.zig");
@@ -142,6 +155,97 @@ pub fn rulesForField(source: field.ReusableField) usize {
     return total;
 }
 
+/// Why a Part I control carries transaction data rather than a profile
+/// value.
+pub const NonProfileReason = enum {
+    filing_period,
+    amended_return,
+    taxes_withheld_election,
+    attachment_count,
+    policy_supplied_atc,
+    withholding_agent_category,
+    special_tax_election,
+};
+
+pub const NonProfileControl = struct {
+    control_id: []const u8,
+    source_line: u32,
+    reason: NonProfileReason,
+};
+
+/// Part I controls the form owns as transaction data, in source order.
+pub const transaction_owned_controls = [_]NonProfileControl{
+    .{ .control_id = "frm1601c:txtMonth", .source_line = 293, .reason = .filing_period },
+    .{ .control_id = "frm1601c:txtYear", .source_line = 308, .reason = .filing_period },
+    .{ .control_id = "frm1601c:AmendedRtn_1", .source_line = 327, .reason = .amended_return },
+    .{ .control_id = "frm1601c:AmendedRtn_2", .source_line = 328, .reason = .amended_return },
+    .{ .control_id = "frm1601c:TaxWithheld_1", .source_line = 351, .reason = .taxes_withheld_election },
+    .{ .control_id = "frm1601c:TaxWithheld_2", .source_line = 352, .reason = .taxes_withheld_election },
+    .{ .control_id = "frm1601c:txtSheets", .source_line = 369, .reason = .attachment_count },
+    .{ .control_id = "frm1601c:txtATC", .source_line = 381, .reason = .policy_supplied_atc },
+    .{ .control_id = "frm1601c:CatAgent_P", .source_line = 561, .reason = .withholding_agent_category },
+    .{ .control_id = "frm1601c:CatAgent_G", .source_line = 562, .reason = .withholding_agent_category },
+    .{ .control_id = "frm1601c:SpecialTax_1", .source_line = 608, .reason = .special_tax_election },
+    .{ .control_id = "frm1601c:SpecialTax_2", .source_line = 609, .reason = .special_tax_election },
+};
+
+fn findControlSeed(control_id: []const u8) ?*const occurrences.ControlSeed {
+    for (&occurrences.control_seeds) |*seed| {
+        const id = seed.id orelse continue;
+        if (std.mem.eql(u8, id, control_id)) return seed;
+    }
+    return null;
+}
+
+pub const EvidenceError = error{
+    MissingOccurrenceControl,
+    OccurrenceSourceLineMismatch,
+    OccurrenceKindMismatch,
+    DuplicateProfileControl,
+    ProfileControlOrderMismatch,
+    NonProfileControlOverlap,
+};
+
+/// Reconciles the mapping against the static occurrence inventory in live
+/// document order. The runtime-injected Item 7 select is ordered by the
+/// container it is written into rather than by the code that writes it.
+pub fn validateEvidence() EvidenceError!void {
+    var previous_line: u32 = 0;
+    for (profile_control_rules, 0..) |mapping, index| {
+        if (mapping.live_order_line <= previous_line) {
+            return error.ProfileControlOrderMismatch;
+        }
+        previous_line = mapping.live_order_line;
+
+        for (profile_control_rules[0..index]) |earlier| {
+            if (std.mem.eql(u8, earlier.control_id, mapping.control_id)) {
+                return error.DuplicateProfileControl;
+            }
+        }
+
+        if (mapping.generated_at_runtime) continue;
+        const seed = findControlSeed(mapping.control_id) orelse
+            return error.MissingOccurrenceControl;
+        if (seed.source_line != mapping.control_source_line) {
+            return error.OccurrenceSourceLineMismatch;
+        }
+        if (seed.kind != mapping.expected_kind) return error.OccurrenceKindMismatch;
+    }
+
+    for (transaction_owned_controls) |excluded| {
+        const seed = findControlSeed(excluded.control_id) orelse
+            return error.MissingOccurrenceControl;
+        if (seed.source_line != excluded.source_line) {
+            return error.OccurrenceSourceLineMismatch;
+        }
+        for (profile_control_rules) |mapping| {
+            if (std.mem.eql(u8, excluded.control_id, mapping.control_id)) {
+                return error.NonProfileControlOverlap;
+            }
+        }
+    }
+}
+
 pub const MappingError = error{
     ControlMissingFromContract,
     ControlSourceLineMismatch,
@@ -176,8 +280,9 @@ pub fn validateRequirementCoverage() MappingError!void {
 test "1601C every static rule resolves against the pinned contract" {
     try validateAgainstContract();
     try validateRequirementCoverage();
+    try validateEvidence();
     try std.testing.expectEqual(@as(usize, 12), profile_control_rules.len);
-    try std.testing.expect(!evidence.readiness.profile_mapping_reviewed);
+    try std.testing.expect(evidence.readiness.profile_mapping_reviewed);
 }
 
 test "1601C the eight declared requirements are all reached" {
@@ -240,4 +345,45 @@ test "1601C the email control keeps its unprefixed id" {
         if (std.mem.eql(u8, entry.control_id, "txtEmail")) continue;
         try std.testing.expect(std.mem.startsWith(u8, entry.control_id, "frm1601c:"));
     }
+}
+
+test "1601C Part I controls are transaction data and never profile targets" {
+    try std.testing.expectEqual(@as(usize, 12), transaction_owned_controls.len);
+    for (transaction_owned_controls) |excluded| {
+        try std.testing.expect(ruleFor(excluded.control_id) == null);
+        try std.testing.expect(findControlSeed(excluded.control_id) != null);
+    }
+}
+
+test "1601C the policy-supplied ATC is excluded from both sides" {
+    // #78 excluded it from the spec because the catalog calls it
+    // form_policy; here it is named as transaction owned so the exclusion
+    // is enforced from the mapping side too.
+    const atc = for (transaction_owned_controls) |entry| {
+        if (std.mem.eql(u8, entry.control_id, "frm1601c:txtATC")) break entry;
+    } else return error.TestUnexpectedResult;
+    try std.testing.expectEqual(NonProfileReason.policy_supplied_atc, atc.reason);
+    try std.testing.expect(ruleFor("frm1601c:txtATC") == null);
+}
+
+test "1601C reconciliation rejects a mapping that leaves document order" {
+    // Guard the guard: the order invariant is real, not incidental.
+    var previous: u32 = 0;
+    for (profile_control_rules) |mapping| {
+        try std.testing.expect(mapping.live_order_line > previous);
+        previous = mapping.live_order_line;
+    }
+    // Line of business is last, so the order is not simply the item order.
+    try std.testing.expectEqual(@as(u32, 1567), previous);
+}
+
+test "1601C review covers the mapping and nothing further" {
+    try std.testing.expect(evidence.readiness.profile_mapping_reviewed);
+    try std.testing.expect(!evidence.readiness.persistence_integrated);
+    try std.testing.expect(!evidence.readiness.editable_serializer_exact);
+    try std.testing.expect(!evidence.readiness.ui_integrated);
+    // Closure, calculations and validation were earned separately.
+    try std.testing.expect(evidence.readiness.dependency_closure);
+    try std.testing.expect(evidence.readiness.calculation_reconciled);
+    try std.testing.expect(evidence.readiness.validation_reconciled);
 }
