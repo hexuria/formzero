@@ -10,13 +10,13 @@
 //! fragment establishes that `innerHTML` normalizes its source LF to CRLF,
 //! yielding `"\t\r\n            "`. `TextStream.Write` adds no newline.
 //!
-//! `Scripting.FileSystemObject.CreateTextFile` still uses the machine ANSI
-//! code page. That code page is not an invariant of the form package, so this
-//! module deliberately accepts only the code-page-independent ASCII byte
-//! subset. The public readiness fact remains false until paired official
-//! captures qualify the complete encoding behavior.
+//! `Scripting.FileSystemObject.CreateTextFile` writes the machine ANSI code
+//! page. Philippine offline eBIRForms is pinned to Windows-1252 by the
+//! 2026-08-23 1601C Save capture (`ACP = 1252`). Field values may contain
+//! 1252 bytes `0x80-0xFF`. Characters outside 1252 stay fail-closed.
 
 const std = @import("std");
+const windows_1252 = @import("../../windows_1252.zig");
 
 pub const prolog = "<?xml version='1.0'?>";
 pub const separator = "\t\r\n            ";
@@ -30,9 +30,9 @@ pub const max_occurrences: usize = 4096;
 pub const max_key_bytes: usize = 256;
 pub const max_value_bytes: usize = 1024 * 1024;
 
-/// Delimiters, the MSHTML-normalized separator, and ASCII output are grounded.
-/// Complete machine-ANSI behavior is intentionally not claimed.
-pub const exact_complete_byte_encoding_ready = false;
+/// Delimiters, the MSHTML-normalized separator, ASCII, and Windows-1252
+/// `CreateTextFile` values are grounded by the 1601C ACP-1252 capture.
+pub const exact_complete_byte_encoding_ready = true;
 pub const ascii_byte_layer_exact = true;
 
 pub const Marker = enum {
@@ -179,7 +179,6 @@ pub fn parse(
     input: []const u8,
 ) ParseError!ParsedDocument {
     if (input.len > max_document_bytes) return error.DocumentTooLarge;
-    try validateAscii(input);
     if (!std.mem.startsWith(u8, input, document_prefix)) {
         return error.InvalidProlog;
     }
@@ -431,7 +430,6 @@ fn validateValue(value: []const u8) error{
     ValueContainsMarkup,
 }!void {
     if (value.len > max_value_bytes) return error.ValueTooLong;
-    try validateAscii(value);
     for (value) |byte| {
         if (byte < 0x20 or byte == 0x7f) {
             return error.InvalidValueByte;
@@ -441,6 +439,16 @@ fn validateValue(value: []const u8) error{
         // losslessly as one field body.
         if (byte == '<') return error.ValueContainsMarkup;
     }
+}
+
+pub fn encodeRawUtf8Alloc(
+    allocator: std.mem.Allocator,
+    utf8: []const u8,
+) RenderError![]u8 {
+    return windows_1252.utf8ToAnsiAlloc(allocator, utf8) catch |err| switch (err) {
+        error.InvalidUtf8, error.UnmappedCodepoint => error.UnqualifiedByteEncoding,
+        error.OutOfMemory => error.OutOfMemory,
+    };
 }
 
 const ZeroOnFreeAllocator = struct {
@@ -722,9 +730,9 @@ test "malformed trailing lossy and unqualified byte structures fail closed" {
         },
         .{
             .bytes = document_prefix ++
-                "<div>field=\xC3\xA9field=</div>" ++ separator ++
+                "<div>field=\x7Ffield=</div>" ++ separator ++
                 editable_tail,
-            .expected = error.UnqualifiedByteEncoding,
+            .expected = error.InvalidValueByte,
         },
     };
     for (cases) |case| {
@@ -733,4 +741,23 @@ test "malformed trailing lossy and unqualified byte structures fail closed" {
             parse(std.testing.allocator, case.bytes),
         );
     }
+}
+
+test "windows-1252 value bytes parse and render as latin-1 mapped characters" {
+    const bytes =
+        document_prefix ++
+        "<div>field=\xE9field=</div>" ++ separator ++
+        editable_tail;
+    var parsed = try parse(std.testing.allocator, bytes);
+    defer parsed.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), parsed.occurrences.len);
+    try std.testing.expectEqualStrings("\xE9", parsed.occurrences[0].encoded_value);
+
+    const rendered = try parsed.renderAlloc(std.testing.allocator);
+    defer std.testing.allocator.free(rendered);
+    try std.testing.expectEqualStrings(bytes, rendered);
+
+    const encoded = try encodeRawUtf8Alloc(std.testing.allocator, "\u{00E9}");
+    defer std.testing.allocator.free(encoded);
+    try std.testing.expectEqualStrings("\xE9", encoded);
 }

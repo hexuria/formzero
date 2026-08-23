@@ -188,8 +188,10 @@ pub const readiness: engine_evidence.EvidenceReadiness = .{
     .profile_mapping_reviewed = true,
     .calculation_reconciled = false,
     .validation_reconciled = false,
-    .editable_serializer_exact = false,
-    .final_plaintext_serializer_exact = false,
+    // Grounded by the 2026-08-23 1601C ACP-1252 Save capture. Artifacts stay
+    // candidate until calculation and validation are also reconciled.
+    .editable_serializer_exact = true,
+    .final_plaintext_serializer_exact = true,
     .decrypt_codec_qualified = false,
     .encrypt_codec_qualified = false,
     .persistence_integrated = false,

@@ -16095,7 +16095,7 @@ fn validateExactEmittedValue(value: []const u8) Error!void {
         return Error.InvalidValue;
     }
     for (value) |byte| {
-        if (byte > 0x7f or byte < 0x20 or byte == 0x7f or byte == '<') {
+        if (byte < 0x20 or byte == 0x7f or byte == '<') {
             return Error.InvalidValue;
         }
     }
