@@ -1,8 +1,17 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1786941086,
+  "generated_at_unix": 1787567278,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmo:2026:022",
+      "kind": "RMO",
+      "title": "RMO No. 22-2026",
+      "summary": "Prescribing the Consolidated and Revised Policies, Guidelines and Procedures for the Bureau of Internal Revenue Audit Program",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2022-2026_redacted.pdf",
+      "published_at_unix": 1787500800,
+      "month_bucket": "2026-08"
+    },
     {
       "external_id": "bir:rmc:2026:095",
       "kind": "RMC",
