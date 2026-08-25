@@ -1,8 +1,17 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1787567278,
+  "generated_at_unix": 1787632169,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmo:2026:023",
+      "kind": "RMO",
+      "title": "RMO No. 23-2026",
+      "summary": "Strict Observance of the Government Energy Management Program (GEMP) Guidelines and Implementation of Inter-Agency Energy Efficiency and Conservation Committee (IAEECC) Resolution",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2023-2026_redacted%201.pdf",
+      "published_at_unix": 1787500800,
+      "month_bucket": "2026-08"
+    },
     {
       "external_id": "bir:rmo:2026:022",
       "kind": "RMO",
