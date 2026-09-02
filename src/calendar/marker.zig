@@ -3,6 +3,7 @@
 //! The global dashboard and the taxpayer dashboard must agree on what a day
 //! looks like, so both read these rather than deriving their own thresholds.
 
+const std = @import("std");
 const domain = @import("domain.zig");
 
 pub fn deadlineMarker(count: usize) []const u8 {
@@ -43,4 +44,40 @@ pub fn calendarMarkerTone(
         return .approaching;
     }
     return .normal;
+}
+
+test "deadline marker glyphs saturate after four deadlines" {
+    try std.testing.expectEqualStrings("", deadlineMarker(0));
+    try std.testing.expectEqualStrings("•", deadlineMarker(1));
+    try std.testing.expectEqualStrings("••", deadlineMarker(2));
+    try std.testing.expectEqualStrings("•••", deadlineMarker(3));
+    try std.testing.expectEqualStrings("••••", deadlineMarker(4));
+    try std.testing.expectEqualStrings("•••• +", deadlineMarker(5));
+    try std.testing.expectEqualStrings("•••• +", deadlineMarker(100));
+}
+
+test "marker tone crosses month and leap-year boundaries at civil-day distance" {
+    // Jan 31 -> Feb 1 is tomorrow, so the deadline is due soon despite the
+    // month change; Feb 7 is the inclusive seventh day and still approaching.
+    const jan_end = try domain.Date.init(2026, 1, 31);
+    try std.testing.expectEqual(
+        CalendarMarkerTone.due_soon,
+        calendarMarkerTone(try domain.Date.init(2026, 2, 1), jan_end),
+    );
+    try std.testing.expectEqual(
+        CalendarMarkerTone.approaching,
+        calendarMarkerTone(try domain.Date.init(2026, 2, 7), jan_end),
+    );
+
+    // A leap-day deadline keeps the inclusive +1 day window: the day after
+    // is still due soon, and the day after that is approaching.
+    const leap_day = try domain.Date.init(2024, 2, 29);
+    try std.testing.expectEqual(
+        CalendarMarkerTone.due_soon,
+        calendarMarkerTone(try domain.Date.init(2024, 3, 1), leap_day),
+    );
+    try std.testing.expectEqual(
+        CalendarMarkerTone.approaching,
+        calendarMarkerTone(try domain.Date.init(2024, 3, 2), leap_day),
+    );
 }
