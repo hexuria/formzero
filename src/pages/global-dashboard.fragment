@@ -41,7 +41,7 @@
     <icon name="clock" foreground="text_muted" width="24" height="24"/>
     <text><span weight="bold">No deadlines to show</span></text>
     <text wrap="true" text-alignment="center" foreground="text_muted">
-      No selected forms have a resolved deadline for this view.
+      No forms have a resolved deadline for this period.
     </text>
   </column>
 </template>
@@ -135,6 +135,13 @@
         <row padding="12" cross="center" gap="8">
           <text grow="1"><span weight="bold">{globalCalendarMonth} {globalCalendarYear}</span></text>
           <row cross="center" gap="2">
+            <if test="{globalCalendarJumpToTodayVisible}">
+              <button
+                size="sm"
+                variant="outline"
+                label="Jump back to today's month"
+                on-press="global_calendar_jump_to_today">Today</button>
+            </if>
             <button
               width="44"
               height="44"
@@ -185,7 +192,12 @@
                     </row>
                   </if>
                   <else>
-                    <text text-alignment="center">{cell.dayLabel}</text>
+                    <if test="{cell.today}">
+                      <text text-alignment="center" foreground="accent"><span weight="bold">{cell.dayLabel}</span></text>
+                    </if>
+                    <else>
+                      <text text-alignment="center">{cell.dayLabel}</text>
+                    </else>
                   </else>
                 <if test="{cell.hasDeadlines}">
                     <row grow="1" main="center" cross="center">

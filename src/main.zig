@@ -379,6 +379,7 @@ pub const ProfileCalendarDayCell = struct {
     due_soon_flag: bool = false,
     approaching_flag: bool = false,
     selected_flag: bool = false,
+    today_flag: bool = false,
 
     pub fn blank(self: *const ProfileCalendarDayCell) bool {
         return self.day == 0;
@@ -398,13 +399,14 @@ pub const ProfileCalendarDayCell = struct {
     ) []const u8 {
         if (self.day == 0) return "Calendar padding day";
         if (self.deadline_count == 0) {
+            if (self.today_flag) return "Today, no deadlines";
             return std.fmt.allocPrint(
                 arena,
                 "Day {d}, no deadlines",
                 .{self.day},
             ) catch "Calendar day";
         }
-        return std.fmt.allocPrint(
+        const base = std.fmt.allocPrint(
             arena,
             "Show {d} {s} for day {d}: {s}",
             .{
@@ -413,7 +415,13 @@ pub const ProfileCalendarDayCell = struct {
                 self.day,
                 self.markerStatusLabel(),
             },
-        ) catch "Show deadlines";
+        ) catch return "Show deadlines";
+        if (!self.today_flag) return base;
+        return std.fmt.allocPrint(
+            arena,
+            "Today, {s}",
+            .{base},
+        ) catch base;
     }
 
     fn markerStatusLabel(self: *const ProfileCalendarDayCell) []const u8 {
@@ -450,6 +458,10 @@ pub const ProfileCalendarDayCell = struct {
 
     pub fn selected(self: *const ProfileCalendarDayCell) bool {
         return self.selected_flag;
+    }
+
+    pub fn today(self: *const ProfileCalendarDayCell) bool {
+        return self.today_flag;
     }
 };
 
@@ -9132,6 +9144,13 @@ pub const Model = struct {
         ) catch "";
     }
 
+    pub fn globalCalendarJumpToTodayVisible(self: *const Model) bool {
+        return self.globalDashboard.calendar.selected_year !=
+            self.calendarToday.year or
+            self.globalDashboard.calendar.selected_month !=
+            self.calendarToday.month;
+    }
+
     pub fn globalCalendarDeadlineHeading(
         self: *const Model,
         arena: std.mem.Allocator,
@@ -9459,6 +9478,12 @@ pub const Model = struct {
                 .approaching_flag = marker_tone == .approaching,
                 .selected_flag = day != 0 and
                     self.globalDashboard.isDaySelected(day),
+                .today_flag = day != 0 and
+                    self.globalDashboard.calendar.selected_year ==
+                        self.calendarToday.year and
+                    self.globalDashboard.calendar.selected_month ==
+                        self.calendarToday.month and
+                    day == self.calendarToday.day,
             };
         }
         return cells;
@@ -10010,6 +10035,12 @@ pub const Model = struct {
                 .approaching_flag = marker_tone == .approaching,
                 .selected_flag = day != 0 and
                     self.profileCalendarSelectedDay() == @as(?u8, day),
+                .today_flag = day != 0 and
+                    self.profileCalendar.selected_year ==
+                        self.calendarToday.year and
+                    self.profileCalendar.selected_month ==
+                        self.calendarToday.month and
+                    day == self.calendarToday.day,
             };
         }
         return cells;
@@ -12124,6 +12155,7 @@ pub const Msg = union(enum) {
     profile_calendar_select_year: i32,
     global_calendar_previous_month,
     global_calendar_next_month,
+    global_calendar_jump_to_today,
     global_calendar_select_day: u8,
     global_rdo_context_open,
     global_rdo_context_close,
@@ -14281,6 +14313,13 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         },
         .global_calendar_next_month => {
             model.globalDashboard.nextMonth();
+            applyGlobalRdoContext(model);
+        },
+        .global_calendar_jump_to_today => {
+            model.globalDashboard.jumpToMonth(
+                model.calendarToday.year,
+                model.calendarToday.month,
+            );
             applyGlobalRdoContext(model);
         },
         .global_calendar_select_day => |day| {
@@ -28880,6 +28919,107 @@ test "global calendar day widget toggles exact-date rows and heading" {
     try std.testing.expect(selected_widget.state.selected);
     update(&model, selected_tree.msgForPointer(selected_widget.id, .up).?);
     try std.testing.expect(model.globalDashboard.selectedDay() == null);
+}
+
+test "calendar day cells flag only the live date as today" {
+    const allocator = std.testing.allocator;
+    var store = try calendar_ui.persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var model = Model{ .page = .global_dashboard };
+    try model.globalDashboard.calendar.attach(
+        allocator,
+        &store,
+        "/tmp/ebirforms-global-today-test.ics",
+        "20260729T010203Z",
+        2026,
+        7,
+    );
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const month_rows = model.globalDeadlines(arena);
+    try std.testing.expect(month_rows.len > 0);
+    const today = month_rows[0].final_deadline;
+    model.calendarToday = today;
+    model.profileCalendar.selected_year = today.year;
+    model.profileCalendar.selected_month = today.month;
+
+    for (model.globalCalendarDays(arena)) |cell| {
+        if (cell.day == 0) continue;
+        const expected = cell.day == today.day;
+        try std.testing.expectEqual(expected, cell.today());
+        if (expected) {
+            const label = cell.actionLabel(arena);
+            if (cell.hasDeadlines()) {
+                try std.testing.expect(std.mem.startsWith(
+                    u8,
+                    label,
+                    "Today, ",
+                ));
+            } else {
+                try std.testing.expectEqualStrings("Today, no deadlines", label);
+            }
+        }
+    }
+    for (model.profileCalendarDays(arena)) |cell| {
+        if (cell.day == 0) continue;
+        try std.testing.expectEqual(cell.day == today.day, cell.today());
+    }
+
+    // Paging to another month clears the flag without touching the date.
+    model.globalDashboard.calendar.selected_month = 12;
+    model.globalDashboard.calendar.selected_year = 2027;
+    var any_today = false;
+    for (model.globalCalendarDays(arena)) |cell| {
+        any_today = any_today or cell.today();
+    }
+    try std.testing.expect(!any_today);
+}
+
+test "global calendar jumps back to the live month" {
+    const allocator = std.testing.allocator;
+    var store = try calendar_ui.persistence.Store.openMemory(allocator);
+    defer store.close();
+
+    var model = Model{ .page = .global_dashboard };
+    try model.globalDashboard.calendar.attach(
+        allocator,
+        &store,
+        "/tmp/ebirforms-global-jump-test.ics",
+        "20260729T010203Z",
+        2026,
+        7,
+    );
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const month_rows = model.globalDeadlines(arena);
+    try std.testing.expect(month_rows.len > 0);
+    model.calendarToday = month_rows[0].final_deadline;
+
+    update(&model, .global_calendar_previous_month);
+    update(&model, .global_calendar_previous_month);
+    try std.testing.expect(
+        model.globalDashboard.calendar.selected_month !=
+            model.calendarToday.month,
+    );
+    try std.testing.expect(model.globalCalendarJumpToTodayVisible());
+
+    update(&model, .global_calendar_jump_to_today);
+    try std.testing.expectEqual(
+        model.calendarToday.year,
+        model.globalDashboard.calendar.selected_year,
+    );
+    try std.testing.expectEqual(
+        model.calendarToday.month,
+        model.globalDashboard.calendar.selected_month,
+    );
+    try std.testing.expect(!model.globalCalendarJumpToTodayVisible());
 }
 
 test "the sidebar keeps a taxpayer's registrations together, head office first" {

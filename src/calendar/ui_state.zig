@@ -760,6 +760,26 @@ pub const State = struct {
         self.setReloadNotice("Calendar month updated.");
     }
 
+    /// Jumps directly to an absolute month instead of paging through the
+    /// months between. Crosses years exactly like `previousMonth`/`nextMonth`.
+    pub fn jumpToMonth(self: *State, year: i32, month: u8) void {
+        if (self.selected_year == year and self.selected_month == month) return;
+        if (year < 1 or year > 9997 or month < 1 or month > 12) return;
+
+        const previous_year = self.selected_year;
+        const previous_month = self.selected_month;
+        self.selected_year = year;
+        self.selected_month = month;
+        if (year != previous_year) {
+            self.recompute() catch |err| {
+                self.selected_year = previous_year;
+                self.selected_month = previous_month;
+                return self.setError(err);
+            };
+        }
+        self.setReloadNotice("Calendar month updated.");
+    }
+
     pub fn nextMonth(self: *State) void {
         if (self.selected_month < 12) {
             self.selected_month += 1;
@@ -2374,6 +2394,26 @@ test "month navigation recomputes only when crossing a year boundary" {
     try std.testing.expectEqual(@as(i32, 2026), state.selected_year);
     try std.testing.expectEqual(@as(u8, 12), state.selected_month);
     try std.testing.expect(state.deadline_count > 100);
+
+    // A direct jump crosses the year like paging does and recomputes once.
+    state.deadline_count = 0;
+    state.jumpToMonth(2028, 3);
+    try std.testing.expectEqual(@as(i32, 2028), state.selected_year);
+    try std.testing.expectEqual(@as(u8, 3), state.selected_month);
+    try std.testing.expect(state.deadline_count > 100);
+    state.deadline_count = 0;
+    state.jumpToMonth(2028, 10);
+    try std.testing.expectEqual(@as(u8, 10), state.selected_month);
+    try std.testing.expectEqual(@as(usize, 0), state.deadline_count);
+    // Jumping to the already-viewed month is a no-op.
+    state.deadline_count = 0;
+    state.jumpToMonth(2028, 10);
+    try std.testing.expectEqual(@as(usize, 0), state.deadline_count);
+    // Out-of-range years and months are rejected without movement.
+    state.jumpToMonth(0, 6);
+    try std.testing.expectEqual(@as(i32, 2028), state.selected_year);
+    state.jumpToMonth(2028, 13);
+    try std.testing.expectEqual(@as(u8, 10), state.selected_month);
 }
 
 test "SQLite insertion order preserves later override precedence" {
