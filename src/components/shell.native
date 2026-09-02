@@ -53,12 +53,7 @@
     <column grow="1" gap="2">
       <text><span weight="bold">{name}</span></text>
       <text foreground="text_muted">{tin}</text>
-      <if test="{active}">
-        <text foreground="text_muted">{branch}</text>
-      </if>
-      <else>
-        <text foreground="text_muted">{branch}</text>
-      </else>
+      <text foreground="text_muted">{branch}</text>
     </column>
   </list-item>
 </template>
