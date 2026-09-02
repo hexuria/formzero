@@ -434,3 +434,108 @@ test "folding keeps content lines within 75 bytes" {
         try std.testing.expect(std.unicode.utf8ValidateSlice(line));
     }
 }
+
+test "empty calendar exports a valid shell without events" {
+    const allocator = std.testing.allocator;
+    const bytes = try generate(
+        allocator,
+        &.{},
+        .{ .dtstamp_utc = "20260729T010203Z" },
+    );
+    defer allocator.free(bytes);
+
+    try std.testing.expect(std.mem.startsWith(
+        u8,
+        bytes,
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n",
+    ));
+    try std.testing.expect(std.mem.endsWith(u8, bytes, "END:VCALENDAR\r\n"));
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "BEGIN:VEVENT") == null);
+    try std.testing.expect(
+        std.mem.indexOf(u8, bytes, "X-WR-CALNAME:Buwiz Tax Deadlines") != null,
+    );
+}
+
+test "reminders can be opted out per event" {
+    const allocator = std.testing.allocator;
+    const bytes = try generate(allocator, &.{
+        .{
+            .obligation_key = "2026:1701:annual",
+            .date = .{ .year = 2026, .month = 4, .day = 15 },
+            .summary = "Annual",
+            .description = "Annual",
+            .reminders = false,
+        },
+    }, .{ .dtstamp_utc = "20260729T010203Z" });
+    defer allocator.free(bytes);
+
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "BEGIN:VALARM") == null);
+}
+
+test "invalid event dates and empty identity fail closed" {
+    const allocator = std.testing.allocator;
+
+    // 2026 is not a leap year, so February 30 types as a date but never
+    // exists; the exporter must reject it before emitting an event.
+    try std.testing.expectError(
+        error.InvalidDate,
+        generate(allocator, &.{
+            .{
+                .obligation_key = "2026:1701Q:q2",
+                .date = .{ .year = 2026, .month = 2, .day = 29 },
+                .summary = "Impossible date",
+                .description = "Impossible date",
+            },
+        }, .{ .dtstamp_utc = "20260729T010203Z" }),
+    );
+
+    try std.testing.expectError(
+        error.InvalidEvent,
+        generate(allocator, &.{
+            .{
+                .obligation_key = "",
+                .date = .{ .year = 2026, .month = 4, .day = 15 },
+                .summary = "No key",
+                .description = "No key",
+            },
+        }, .{ .dtstamp_utc = "20260729T010203Z" }),
+    );
+
+    try std.testing.expectError(
+        error.InvalidEvent,
+        generate(allocator, &.{
+            .{
+                .obligation_key = "2026:1701:annual",
+                .date = .{ .year = 2026, .month = 4, .day = 15 },
+                .summary = "Empty namespace",
+                .description = "Empty namespace",
+            },
+        }, .{ .uid_namespace = "", .dtstamp_utc = "20260729T010203Z" }),
+    );
+}
+
+test "text escaping covers backslashes and CRLF injection" {
+    const allocator = std.testing.allocator;
+    const bytes = try generate(allocator, &.{
+        .{
+            .obligation_key = "2026:2551Q:q1",
+            .date = .{ .year = 2026, .month = 4, .day = 27 },
+            .summary = "Back\\slash and\r\nline break",
+            .description = "Description",
+        },
+    }, .{ .dtstamp_utc = "20260729T010203Z" });
+    defer allocator.free(bytes);
+
+    // One backslash becomes the RFC 5545 pair, and the embedded CRLF becomes
+    // the escaped newline sequence, so no raw control byte reaches the feed.
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        bytes,
+        "SUMMARY:Back\\\\slash and\\nline break\r\n",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        bytes,
+        "DESCRIPTION:Description\r\n",
+    ) != null);
+}

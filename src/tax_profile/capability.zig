@@ -206,3 +206,85 @@ test "Line of Business comes only from the Base Tax Profile" {
     );
     try std.testing.expect((try valueFor(&revision, .atc, on, .{})) == null);
 }
+
+test "individual details add capabilities and resolve without leaking legal-entity fields" {
+    const revision: model.ProfileRevision = .{
+        .profile_id = try model.ProfileId.parse("profile-joaquin"),
+        .id = try model.RevisionId.parse("revision-1"),
+        .sequence = 1,
+        .effective = try model.EffectivePeriod.init(
+            try model.Date.parseIso("2026-01-01"),
+            null,
+        ),
+        .source = .manual_entry,
+        .identity = .{
+            .tin = try field.Tin.parse("123456789000"),
+            .rdo_code = try field.RdoCode.parse("019"),
+        },
+        .contact = .{
+            .address = try field.RegisteredAddress.parse("1 Taxpayer Street"),
+        },
+        .subject = .{ .individual = .{
+            .name = try field.TaxpayerName.parse("JOAQUIN REYES"),
+            .date_of_birth = try model.Date.parseIso("1990-03-14"),
+            .citizenship = try field.Citizenship.parse("Filipino"),
+            .foreign_tax_number = try field.ForeignTaxNumber.parse("US-123"),
+        } },
+    };
+    const on = try model.Date.parseIso("2026-02-01");
+
+    const set = provided(&revision);
+    try std.testing.expect(set.contains(.date_of_birth));
+    try std.testing.expect(set.contains(.citizenship));
+    try std.testing.expect(set.contains(.foreign_tax_number));
+    try std.testing.expect(!set.contains(.registered_name));
+
+    const birth = (try valueFor(&revision, .date_of_birth, on, .{})).?;
+    try std.testing.expect(birth.date_of_birth.eql(try model.Date.parseIso("1990-03-14")));
+    const citizenship = (try valueFor(&revision, .citizenship, on, .{})).?;
+    try std.testing.expectEqualStrings(
+        "Filipino",
+        citizenship.citizenship.asSlice(),
+    );
+    const foreign = (try valueFor(&revision, .foreign_tax_number, on, .{})).?;
+    try std.testing.expectEqualStrings(
+        "US-123",
+        foreign.foreign_tax_number.asSlice(),
+    );
+    try std.testing.expect((try valueFor(&revision, .registered_name, on, .{})) == null);
+}
+
+test "individual-optional capabilities stay absent when the facts are missing" {
+    const revision: model.ProfileRevision = .{
+        .profile_id = try model.ProfileId.parse("profile-aisha"),
+        .id = try model.RevisionId.parse("revision-1"),
+        .sequence = 1,
+        .effective = try model.EffectivePeriod.init(
+            try model.Date.parseIso("2026-01-01"),
+            null,
+        ),
+        .source = .manual_entry,
+        .identity = .{
+            .tin = try field.Tin.parse("123456789000"),
+            .rdo_code = try field.RdoCode.parse("019"),
+        },
+        .contact = .{
+            .address = try field.RegisteredAddress.parse("1 Taxpayer Street"),
+        },
+        .subject = .{ .individual = .{
+            .name = try field.TaxpayerName.parse("AISHA BINTI"),
+        } },
+    };
+    const on = try model.Date.parseIso("2026-02-01");
+
+    const set = provided(&revision);
+    try std.testing.expect(!set.contains(.date_of_birth));
+    try std.testing.expect(!set.contains(.citizenship));
+    try std.testing.expect(!set.contains(.foreign_tax_number));
+    try std.testing.expect(!set.contains(.zip_code));
+    try std.testing.expect(!set.contains(.contact_number));
+    try std.testing.expect(!set.contains(.email_address));
+    try std.testing.expect((try valueFor(&revision, .date_of_birth, on, .{})) == null);
+    try std.testing.expect((try valueFor(&revision, .citizenship, on, .{})) == null);
+    try std.testing.expect((try valueFor(&revision, .foreign_tax_number, on, .{})) == null);
+}
