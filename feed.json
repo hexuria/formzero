@@ -1,8 +1,17 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1787632169,
+  "generated_at_unix": 1788423765,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmo:2026:024",
+      "kind": "RMO",
+      "title": "RMO No. 24-2026",
+      "summary": "Further Amendment to RMO No. 4-2023, as Amended, Redefining the Functions and Duties of the Committee to Supervise the Printing of Specialized Accountable Forms",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2024-2026.pdf",
+      "published_at_unix": 1788364800,
+      "month_bucket": "2026-09"
+    },
     {
       "external_id": "bir:rmo:2026:023",
       "kind": "RMO",
