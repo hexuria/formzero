@@ -1,8 +1,17 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1788423765,
+  "generated_at_unix": 1788794582,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmc:2026:096",
+      "kind": "RMC",
+      "title": "RMC No. 96-2026",
+      "summary": "Clarification on the qualification of Export-Oriented Enterprises to VAT Refund during the transitory period for securing a VAT Zero-Rating Certificate from the Export Marketing Bureau of the Department of Trade and Industry",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2096-2026_redacted.pdf",
+      "published_at_unix": 1788710400,
+      "month_bucket": "2026-09"
+    },
     {
       "external_id": "bir:rmo:2026:024",
       "kind": "RMO",
