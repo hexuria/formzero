@@ -1,8 +1,17 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1788794582,
+  "generated_at_unix": 1789377723,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmc:2026:097",
+      "kind": "RMC",
+      "title": "RMC No. 97-2026",
+      "summary": "Circularizing Energy Regulatory Commission Resolution No. 26, Series of 2026, Declaring the System Loss Charge as a Government-Mandated Pass-Through Cost Not Forming Part of the Gross Sales of Generation Companies, National Grid Corporation of the Philippines, and Distribution Utilities for Value-Added Tax Purposes, and Further Amending Revenue Memorandum Circular No. 116-2024",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2097-2026_redacted.pdf",
+      "published_at_unix": 1789315200,
+      "month_bucket": "2026-09"
+    },
     {
       "external_id": "bir:rmc:2026:096",
       "kind": "RMC",
