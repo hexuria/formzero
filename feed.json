@@ -1,8 +1,17 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1789377723,
+  "generated_at_unix": 1790086509,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmc:2026:098",
+      "kind": "RMC",
+      "title": "RMC No. 98-2026",
+      "summary": "Prescribing Policies and Guidelines on the Issuance of Electronic Invoice under Revenue Regulations (RR) No. 8-2022 and RR No. 11-2025, as Amended by RR No. 26-2025",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2098-2026%20redacted.pdf",
+      "published_at_unix": 1790006400,
+      "month_bucket": "2026-09"
+    },
     {
       "external_id": "bir:rmc:2026:097",
       "kind": "RMC",
