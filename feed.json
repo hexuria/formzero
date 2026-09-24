@@ -1,8 +1,17 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1790086509,
+  "generated_at_unix": 1790239855,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmc:2026:099",
+      "kind": "RMC",
+      "title": "RMC No. 99-2026",
+      "summary": "Reiteration of the Requirement to Post Proof of BIR Registration Under Revenue Regulations Nos. 7-2024 and 15-2024 and Extension of the Period for Compliance with the Display of the BIR Registration Seal Badge",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%2099-2026.pdf",
+      "published_at_unix": 1790179200,
+      "month_bucket": "2026-09"
+    },
     {
       "external_id": "bir:rmc:2026:098",
       "kind": "RMC",
