@@ -82,6 +82,85 @@
   </column>
 </template>
 
+<template name="archived-profile-row" args="name tin initials profile">
+  <column gap="10">
+    <separator/>
+    <if test="{constrainedLayout}">
+      <column gap="10">
+        <row gap="12" cross="center">
+          <avatar label="{name}">{initials}</avatar>
+          <column grow="1" gap="2">
+            <text><span weight="bold">{name}</span></text>
+            <text wrap="true" foreground="text_muted">{tin}</text>
+          </column>
+        </row>
+        <button
+          variant="outline"
+          icon="settings"
+          on-press="manage_profile:{profile}">Manage Profile</button>
+      </column>
+    </if>
+    <else>
+      <row gap="12" cross="center">
+        <avatar label="{name}">{initials}</avatar>
+        <column grow="1" gap="2">
+          <text><span weight="bold">{name}</span></text>
+          <text wrap="true" foreground="text_muted">{tin}</text>
+        </column>
+        <button
+          variant="outline"
+          icon="settings"
+          on-press="manage_profile:{profile}">Manage Profile</button>
+      </row>
+    </else>
+  </column>
+</template>
+
+<!--
+  Archived profiles leave the sidebar entirely, so this card is their only
+  route back. It appears only when something is archived, and only an
+  administrator can act once the profile page opens.
+-->
+<template name="archived-profiles-card">
+  <card>
+    <column padding="20" gap="14">
+      <row gap="10" cross="center">
+        <icon name="archive" foreground="text_muted" width="22" height="22"/>
+        <column grow="1" gap="4">
+          <text><span weight="bold">Archived Profiles</span></text>
+          <text wrap="true" foreground="text_muted">
+            Hidden from the sidebar. Open one to restore or delete it.
+          </text>
+        </column>
+      </row>
+      <if test="{juanProfileArchived}">
+        <use
+          template="archived-profile-row"
+          name="Juan Dela Cruz"
+          tin="TIN: 000-000-000-00000"
+          initials="JD"
+          profile="juan_dela_cruz"/>
+      </if>
+      <if test="{demoProfileArchived}">
+        <use
+          template="archived-profile-row"
+          name="Demo Corporation"
+          tin="TIN: 111-111-111-00000"
+          initials="DC"
+          profile="demo_corporation"/>
+      </if>
+      <if test="{partnershipProfileArchived}">
+        <use
+          template="archived-profile-row"
+          name="Sample Partnership"
+          tin="TIN: 222-222-222-00000"
+          initials="SP"
+          profile="sample_partnership"/>
+      </if>
+    </column>
+  </card>
+</template>
+
 <template name="global-dashboard-content" args="padding">
   <column padding="{padding}" gap="24">
     <if test="{constrainedLayout}">
@@ -102,6 +181,10 @@
         <button variant="outline" icon="refresh-cw" disabled="true">Refresh</button>
       </row>
     </else>
+
+    <if test="{archivedProfilesPresent}">
+      <use template="archived-profiles-card"/>
+    </if>
 
     <if test="{constrainedLayout}">
       <column gap="24">

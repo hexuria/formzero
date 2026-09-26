@@ -100,6 +100,31 @@ pub const TaxpayerProfile = enum {
     sample_partnership,
 };
 
+const profile_count = @typeInfo(TaxpayerProfile).@"enum".fields.len;
+
+/// Lifecycle of one taxpayer profile. Archiving is reversible and removes
+/// the profile from the sidebar; deletion is the terminal state. The three
+/// profiles are a fixed reconstruction set rather than rows in a store, so
+/// `.deleted` is a tombstone: nothing renders it anywhere.
+pub const ProfileStatus = enum {
+    active,
+    archived,
+    deleted,
+};
+
+/// What the administrator overlay was opened for. Only the copy differs;
+/// the unlock itself grants one session-wide admin flag.
+pub const AdminAuthReason = enum {
+    background_tasks,
+    profile_admin,
+};
+
+/// Settings -> Master PIN is still a static row, so the admin gate checks
+/// this placeholder until a real credential store exists. The Native SDK
+/// has no secure text entry, so the overlay also renders what is typed.
+const admin_master_pin = "1234";
+const admin_pin_capacity = 12;
+
 pub const DashboardSection = enum {
     calendar,
     forms,
@@ -151,6 +176,18 @@ pub const Model = struct {
     highContrast: bool = false,
     calendar: calendar_ui.State = .{},
 
+    // Profile lifecycle, indexed by `@intFromEnum(TaxpayerProfile)`.
+    profileStatuses: [profile_count]ProfileStatus = .{ .active, .active, .active },
+    // Administrator session. Archiving, restoring, and deleting a profile
+    // are all gated on this flag in `update`, not only in the markup.
+    adminUnlocked: bool = false,
+    adminAuthReason: AdminAuthReason = .background_tasks,
+    adminAuthFailed: bool = false,
+    adminPin: canvas.TextBuffer(admin_pin_capacity) = .{},
+    // Deletion is irreversible, so the danger zone arms it with a second
+    // press instead of a dialog the SDK does not have.
+    profileDeletePending: bool = false,
+
     // These values drive Zig-owned tokens rather than markup bindings.
     pub const view_unbound = .{
         "sidebarPreference",
@@ -166,6 +203,12 @@ pub const Model = struct {
         "reduceMotion",
         "highContrast",
         "calendar",
+        "profileStatuses",
+        "adminUnlocked",
+        "adminAuthReason",
+        "adminAuthFailed",
+        "adminPin",
+        "profileDeletePending",
     };
 
     pub fn brandLogo(_: *const Model) u64 {
@@ -335,6 +378,77 @@ pub const Model = struct {
 
     pub fn partnershipProfileActive(self: *const Model) bool {
         return self.selectedTaxpayer == .sample_partnership;
+    }
+
+    pub fn profileStatus(
+        self: *const Model,
+        profile: TaxpayerProfile,
+    ) ProfileStatus {
+        return self.profileStatuses[@intFromEnum(profile)];
+    }
+
+    // Only active profiles occupy a sidebar slot. Archived profiles are
+    // reachable from the Global Dashboard; deleted ones are gone.
+    pub fn juanProfileVisible(self: *const Model) bool {
+        return self.profileStatus(.juan_dela_cruz) == .active;
+    }
+
+    pub fn demoProfileVisible(self: *const Model) bool {
+        return self.profileStatus(.demo_corporation) == .active;
+    }
+
+    pub fn partnershipProfileVisible(self: *const Model) bool {
+        return self.profileStatus(.sample_partnership) == .active;
+    }
+
+    pub fn juanProfileArchived(self: *const Model) bool {
+        return self.profileStatus(.juan_dela_cruz) == .archived;
+    }
+
+    pub fn demoProfileArchived(self: *const Model) bool {
+        return self.profileStatus(.demo_corporation) == .archived;
+    }
+
+    pub fn partnershipProfileArchived(self: *const Model) bool {
+        return self.profileStatus(.sample_partnership) == .archived;
+    }
+
+    pub fn archivedProfilesPresent(self: *const Model) bool {
+        for (self.profileStatuses) |status| {
+            if (status == .archived) return true;
+        }
+        return false;
+    }
+
+    pub fn selectedProfileActive(self: *const Model) bool {
+        return self.profileStatus(self.selectedTaxpayer) == .active;
+    }
+
+    pub fn selectedProfileArchived(self: *const Model) bool {
+        return self.profileStatus(self.selectedTaxpayer) == .archived;
+    }
+
+    pub fn adminSessionLocked(self: *const Model) bool {
+        return !self.adminUnlocked;
+    }
+
+    pub fn adminAuthMessage(self: *const Model) []const u8 {
+        return switch (self.adminAuthReason) {
+            .background_tasks => "Enter the master PIN to open Background Tasks",
+            .profile_admin => "Enter the master PIN to archive, restore, or delete taxpayer profiles",
+        };
+    }
+
+    pub fn adminAuthFailedVisible(self: *const Model) bool {
+        return self.adminAuthFailed;
+    }
+
+    pub fn adminPinValue(self: *const Model) []const u8 {
+        return self.adminPin.text();
+    }
+
+    pub fn profileDeleteIdle(self: *const Model) bool {
+        return !self.profileDeletePending;
     }
 
     pub fn dashboardCalendarActive(self: *const Model) bool {
@@ -598,6 +712,16 @@ pub const Msg = union(enum) {
     show_aux_email_confirmation,
     show_aux_background_task_debug_log,
     select_taxpayer: TaxpayerProfile,
+    manage_profile: TaxpayerProfile,
+    request_admin_access,
+    admin_pin_input: canvas.TextInputEvent,
+    admin_unlock,
+    admin_lock,
+    archive_selected_profile,
+    restore_selected_profile,
+    request_delete_selected_profile,
+    cancel_delete_selected_profile,
+    confirm_delete_selected_profile,
     show_dashboard_calendar,
     show_dashboard_forms,
     show_profile_tax,
@@ -676,7 +800,10 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
     switch (msg) {
         .show_global_dashboard => navigate(model, .global_dashboard),
         .show_taxpayer_dashboard => navigate(model, .taxpayer_dashboard),
-        .show_profile_setup => openReturnablePage(model, .profile_setup),
+        .show_profile_setup => {
+            model.profileDeletePending = false;
+            openReturnablePage(model, .profile_setup);
+        },
         .show_import_data => {
             bumpSidebarActionEpoch(model);
             navigate(model, .import_data);
@@ -715,9 +842,60 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
         .show_aux_email_confirmation => openTransient(model, .aux_email_confirmation),
         .show_aux_background_task_debug_log => openTransient(model, .aux_debug_log),
         .select_taxpayer => |profile| {
+            // Sidebar rows for hidden profiles are not rendered, but the
+            // command palette and gallery can still address one by name.
+            if (model.profileStatus(profile) != .active) return;
             model.selectedTaxpayer = profile;
             model.dashboardSection = .calendar;
             navigate(model, .taxpayer_dashboard);
+        },
+        .manage_profile => |profile| {
+            if (model.profileStatus(profile) == .deleted) return;
+            model.selectedTaxpayer = profile;
+            model.profileSetupSection = .tax_profile;
+            model.profileDeletePending = false;
+            openReturnablePage(model, .profile_setup);
+        },
+        .request_admin_access => {
+            model.adminAuthReason = .profile_admin;
+            model.adminAuthFailed = false;
+            model.adminPin.clear();
+            openTransient(model, .aux_admin_auth);
+        },
+        .admin_pin_input => |edit| {
+            model.adminPin.apply(edit);
+            model.adminAuthFailed = false;
+        },
+        .admin_unlock => {
+            if (std.mem.eql(u8, model.adminPin.text(), admin_master_pin)) {
+                model.adminUnlocked = true;
+                model.adminAuthFailed = false;
+                model.adminPin.clear();
+                const destination = model.returnPage;
+                model.returnPage = .global_dashboard;
+                navigate(model, destination);
+            } else {
+                model.adminAuthFailed = true;
+                model.adminPin.clear();
+            }
+        },
+        .admin_lock => {
+            model.adminUnlocked = false;
+            model.adminAuthFailed = false;
+            model.adminPin.clear();
+            model.profileDeletePending = false;
+        },
+        .archive_selected_profile => setSelectedProfileStatus(model, .active, .archived),
+        .restore_selected_profile => setSelectedProfileStatus(model, .archived, .active),
+        .request_delete_selected_profile => {
+            if (!model.adminUnlocked) return;
+            if (model.profileStatus(model.selectedTaxpayer) != .archived) return;
+            model.profileDeletePending = true;
+        },
+        .cancel_delete_selected_profile => model.profileDeletePending = false,
+        .confirm_delete_selected_profile => {
+            if (!model.profileDeletePending) return;
+            setSelectedProfileStatus(model, .archived, .deleted);
         },
         .show_dashboard_calendar => model.dashboardSection = .calendar,
         .show_dashboard_forms => model.dashboardSection = .forms,
@@ -817,8 +995,42 @@ fn updateCore(model: *Model, msg: Msg, fx: ?*Effects) void {
 }
 
 fn navigate(model: *Model, page: Page) void {
+    // Arming deletion is scoped to one visit to the profile page.
+    if (page != .profile_setup) model.profileDeletePending = false;
     model.page = page;
     model.sidebarOverlayOpen = false;
+}
+
+/// Move the selected profile from `expected` to `next`, refusing the change
+/// unless an administrator is unlocked and the profile is in the state the
+/// caller assumed. Deletion therefore always passes through archiving.
+fn setSelectedProfileStatus(
+    model: *Model,
+    expected: ProfileStatus,
+    next: ProfileStatus,
+) void {
+    if (!model.adminUnlocked) return;
+    const profile = model.selectedTaxpayer;
+    if (model.profileStatus(profile) != expected) return;
+
+    model.profileStatuses[@intFromEnum(profile)] = next;
+    model.profileDeletePending = false;
+    if (next == .active) return;
+
+    // The profile just left the sidebar, so its dashboard and setup page no
+    // longer apply. Fall back to a profile that is still listed.
+    if (firstActiveProfile(model)) |replacement| {
+        model.selectedTaxpayer = replacement;
+    }
+    model.returnPage = .global_dashboard;
+    navigate(model, .global_dashboard);
+}
+
+fn firstActiveProfile(model: *const Model) ?TaxpayerProfile {
+    for (model.profileStatuses, 0..) |status, index| {
+        if (status == .active) return @enumFromInt(index);
+    }
+    return null;
 }
 
 fn bumpSidebarActionEpoch(model: *Model) void {
@@ -1221,6 +1433,144 @@ test "profile setup cancel returns to its opening page" {
 
     update(&model, .go_back);
     try std.testing.expectEqual(Page.taxpayer_dashboard, model.page);
+}
+
+/// Types a PIN one character at a time, the way the overlay's input does.
+fn typeAdminPin(model: *Model, pin: []const u8) void {
+    for (pin) |character| {
+        update(&model.*, .{ .admin_pin_input = .{ .insert_text = &.{character} } });
+    }
+}
+
+test "profile lifecycle actions are refused while the admin session is locked" {
+    var model = Model{ .page = .profile_setup, .selectedTaxpayer = .demo_corporation };
+
+    update(&model, .archive_selected_profile);
+    try std.testing.expectEqual(ProfileStatus.active, model.profileStatus(.demo_corporation));
+    try std.testing.expect(model.demoProfileVisible());
+
+    // Arming deletion is gated too, so no later confirm can succeed.
+    update(&model, .request_delete_selected_profile);
+    try std.testing.expect(model.profileDeleteIdle());
+    update(&model, .confirm_delete_selected_profile);
+    try std.testing.expectEqual(ProfileStatus.active, model.profileStatus(.demo_corporation));
+}
+
+test "admin unlock rejects a wrong pin and returns to the requesting page" {
+    var model = Model{ .page = .profile_setup };
+
+    update(&model, .request_admin_access);
+    try std.testing.expectEqual(Page.aux_admin_auth, model.page);
+    try std.testing.expectEqual(Page.profile_setup, model.returnPage);
+    try std.testing.expectEqual(Page.profile_setup, model.contentPage());
+    try std.testing.expectEqualStrings(
+        "Enter the master PIN to archive, restore, or delete taxpayer profiles",
+        model.adminAuthMessage(),
+    );
+
+    typeAdminPin(&model, "9999");
+    update(&model, .admin_unlock);
+    try std.testing.expect(!model.adminUnlocked);
+    try std.testing.expect(model.adminAuthFailedVisible());
+    try std.testing.expectEqualStrings("", model.adminPinValue());
+    try std.testing.expectEqual(Page.aux_admin_auth, model.page);
+
+    typeAdminPin(&model, admin_master_pin);
+    try std.testing.expect(!model.adminAuthFailedVisible());
+    update(&model, .admin_unlock);
+    try std.testing.expect(model.adminUnlocked);
+    try std.testing.expectEqualStrings("", model.adminPinValue());
+    try std.testing.expectEqual(Page.profile_setup, model.page);
+}
+
+test "archiving hides a profile from the sidebar and reselects an active one" {
+    var model = Model{ .page = .profile_setup, .adminUnlocked = true };
+    model.selectedTaxpayer = .juan_dela_cruz;
+
+    update(&model, .archive_selected_profile);
+    try std.testing.expectEqual(ProfileStatus.archived, model.profileStatus(.juan_dela_cruz));
+    try std.testing.expect(!model.juanProfileVisible());
+    try std.testing.expect(model.juanProfileArchived());
+    try std.testing.expect(model.archivedProfilesPresent());
+
+    // The archived profile's own pages no longer apply.
+    try std.testing.expectEqual(Page.global_dashboard, model.page);
+    try std.testing.expectEqual(TaxpayerProfile.demo_corporation, model.selectedTaxpayer);
+
+    // The sidebar row is gone, so selecting it again must not resurrect it.
+    update(&model, .{ .select_taxpayer = .juan_dela_cruz });
+    try std.testing.expectEqual(TaxpayerProfile.demo_corporation, model.selectedTaxpayer);
+    try std.testing.expectEqual(Page.global_dashboard, model.page);
+}
+
+test "an archived profile is managed and restored from the global dashboard" {
+    var model = Model{ .page = .profile_setup, .adminUnlocked = true };
+    update(&model, .archive_selected_profile);
+
+    update(&model, .{ .manage_profile = .juan_dela_cruz });
+    try std.testing.expectEqual(Page.profile_setup, model.page);
+    try std.testing.expectEqual(TaxpayerProfile.juan_dela_cruz, model.selectedTaxpayer);
+    try std.testing.expect(model.selectedProfileArchived());
+    try std.testing.expect(!model.selectedProfileActive());
+
+    update(&model, .restore_selected_profile);
+    try std.testing.expect(model.selectedProfileActive());
+    try std.testing.expect(model.juanProfileVisible());
+    try std.testing.expect(!model.archivedProfilesPresent());
+    // Restoring keeps the admin on the page, which now offers Archive again.
+    try std.testing.expectEqual(Page.profile_setup, model.page);
+}
+
+test "deletion requires an archived profile and a second confirming press" {
+    var model = Model{ .page = .profile_setup, .adminUnlocked = true };
+    model.selectedTaxpayer = .sample_partnership;
+
+    // An active profile cannot be armed for deletion at all.
+    update(&model, .request_delete_selected_profile);
+    try std.testing.expect(model.profileDeleteIdle());
+
+    update(&model, .archive_selected_profile);
+    update(&model, .{ .manage_profile = .sample_partnership });
+
+    // A lone confirm without arming is inert.
+    update(&model, .confirm_delete_selected_profile);
+    try std.testing.expectEqual(ProfileStatus.archived, model.profileStatus(.sample_partnership));
+
+    update(&model, .request_delete_selected_profile);
+    try std.testing.expect(!model.profileDeleteIdle());
+    update(&model, .cancel_delete_selected_profile);
+    try std.testing.expect(model.profileDeleteIdle());
+
+    update(&model, .request_delete_selected_profile);
+    update(&model, .confirm_delete_selected_profile);
+    try std.testing.expectEqual(ProfileStatus.deleted, model.profileStatus(.sample_partnership));
+    try std.testing.expect(!model.partnershipProfileVisible());
+    try std.testing.expect(!model.partnershipProfileArchived());
+    try std.testing.expect(!model.archivedProfilesPresent());
+
+    // A deleted profile is unreachable from every surface.
+    update(&model, .{ .manage_profile = .sample_partnership });
+    try std.testing.expect(model.selectedTaxpayer != .sample_partnership);
+}
+
+test "leaving the profile page disarms a pending deletion" {
+    var model = Model{ .page = .profile_setup, .adminUnlocked = true };
+    update(&model, .archive_selected_profile);
+    update(&model, .{ .manage_profile = .juan_dela_cruz });
+    update(&model, .request_delete_selected_profile);
+    try std.testing.expect(!model.profileDeleteIdle());
+
+    update(&model, .go_back);
+    try std.testing.expect(model.profileDeleteIdle());
+}
+
+test "ending the admin session relocks every lifecycle action" {
+    var model = Model{ .page = .profile_setup, .adminUnlocked = true };
+    update(&model, .admin_lock);
+    try std.testing.expect(model.adminSessionLocked());
+
+    update(&model, .archive_selected_profile);
+    try std.testing.expectEqual(ProfileStatus.active, model.profileStatus(.juan_dela_cruz));
 }
 
 test "viewport classes cover phone compact tablet and desktop breakpoints" {

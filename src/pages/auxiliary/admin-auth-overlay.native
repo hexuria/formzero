@@ -7,17 +7,31 @@
 
     <column gap="6" cross="center">
       <text wrap="true" text-alignment="center" size="heading">Admin Access Required</text>
-      <text wrap="true" text-alignment="center" foreground="text_muted">Enter App Lock PIN to access Background Tasks</text>
+      <text wrap="true" text-alignment="center" foreground="text_muted">{adminAuthMessage}</text>
     </column>
 
+    <!--
+      Native 0.6.1 has no secure text entry, so the PIN renders as typed.
+      The buffer is cleared when the overlay opens and after every attempt,
+      so it never outlives the screen.
+    -->
     <input
       width="300"
       size="lg"
+      text="{adminPinValue}"
       placeholder="Enter 4-digit PIN"
       label="Administrator PIN"
+      on-input="admin_pin_input"
     />
 
+    <if test="{adminAuthFailedVisible}">
+      <text wrap="true" text-alignment="center" foreground="destructive_text">
+        That PIN did not match. Try again.
+      </text>
+    </if>
+
     <column width="300" gap="8">
+      <button width="300" variant="primary" on-press="admin_unlock">Unlock</button>
       <button width="300" variant="outline" disabled="true">OS Auth Override</button>
       <button width="300" variant="ghost" on-press="go_back">Cancel</button>
     </column>

@@ -266,26 +266,36 @@
 
       <scroll grow="1" width="255" overscroll="none" label="Sidebar navigation">
         <column width="255" cross="center" gap="8">
-          <!-- Keep all three profile slots visible at the 768 px reference height. -->
+          <!--
+            All three profile slots fit at the 768 px reference height. Only
+            active profiles take a slot: archiving one removes it here and
+            leaves it reachable from the Global Dashboard instead.
+          -->
           <spacer height="4"/>
-          <use
-            template="sidebar-profile"
-            name="Juan Dela Cruz"
-            tin="TIN: 000-000-000-00000"
-            profile="juan_dela_cruz"
-            active="{juanProfileActive}"/>
-          <use
-            template="sidebar-profile"
-            name="Demo Corporation"
-            tin="TIN: 111-111-111-00000"
-            profile="demo_corporation"
-            active="{demoProfileActive}"/>
-          <use
-            template="sidebar-profile"
-            name="Sample Partnership"
-            tin="TIN: 222-222-222-00000"
-            profile="sample_partnership"
-            active="{partnershipProfileActive}"/>
+          <if test="{juanProfileVisible}">
+            <use
+              template="sidebar-profile"
+              name="Juan Dela Cruz"
+              tin="TIN: 000-000-000-00000"
+              profile="juan_dela_cruz"
+              active="{juanProfileActive}"/>
+          </if>
+          <if test="{demoProfileVisible}">
+            <use
+              template="sidebar-profile"
+              name="Demo Corporation"
+              tin="TIN: 111-111-111-00000"
+              profile="demo_corporation"
+              active="{demoProfileActive}"/>
+          </if>
+          <if test="{partnershipProfileVisible}">
+            <use
+              template="sidebar-profile"
+              name="Sample Partnership"
+              tin="TIN: 222-222-222-00000"
+              profile="sample_partnership"
+              active="{partnershipProfileActive}"/>
+          </if>
 
           <row width="232" height="48" cross="center">
             <list-item
@@ -411,26 +421,36 @@
         overscroll="none"
         label="Compact sidebar navigation">
         <column width="70" cross="center" gap="8">
-          <!-- Mirrors the expanded profile matrix exactly, with no mode jump. -->
+          <!--
+            Mirrors the expanded profile matrix exactly, with no mode jump.
+            The same visibility tests gate both modes, so an archived profile
+            leaves the identical slot in each.
+          -->
           <spacer height="4"/>
-          <use
-            template="sidebar-avatar"
-            initials="JD"
-            name="Juan Dela Cruz"
-            profile="juan_dela_cruz"
-            active="{juanProfileActive}"/>
-          <use
-            template="sidebar-avatar"
-            initials="DC"
-            name="Demo Corporation"
-            profile="demo_corporation"
-            active="{demoProfileActive}"/>
-          <use
-            template="sidebar-avatar"
-            initials="SP"
-            name="Sample Partnership"
-            profile="sample_partnership"
-            active="{partnershipProfileActive}"/>
+          <if test="{juanProfileVisible}">
+            <use
+              template="sidebar-avatar"
+              initials="JD"
+              name="Juan Dela Cruz"
+              profile="juan_dela_cruz"
+              active="{juanProfileActive}"/>
+          </if>
+          <if test="{demoProfileVisible}">
+            <use
+              template="sidebar-avatar"
+              initials="DC"
+              name="Demo Corporation"
+              profile="demo_corporation"
+              active="{demoProfileActive}"/>
+          </if>
+          <if test="{partnershipProfileVisible}">
+            <use
+              template="sidebar-avatar"
+              initials="SP"
+              name="Sample Partnership"
+              profile="sample_partnership"
+              active="{partnershipProfileActive}"/>
+          </if>
 
           <row width="48" height="64" main="center" cross="center">
             <button

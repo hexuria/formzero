@@ -21,6 +21,166 @@
   </column>
 </template>
 
+<!--
+  Lifecycle actions live here rather than on the sidebar row: selecting a
+  profile now goes straight to its dashboard, so this page is the one place
+  that owns the profile itself. Every action is administrator-only, and
+  `update` re-checks that flag - the gate is not markup-deep.
+-->
+<template name="profile-administration-card">
+  <card>
+    <column padding="24" gap="18">
+      <column gap="4">
+        <row gap="10" cross="center">
+          <icon name="alert" foreground="text_muted" width="22" height="22"/>
+          <text grow="1"><span weight="bold">Profile Administration</span></text>
+          <if test="{selectedProfileArchived}">
+            <badge variant="secondary">Archived</badge>
+          </if>
+        </row>
+        <text wrap="true" foreground="text_muted">
+          Archiving hides {selectedTaxpayerName} from the sidebar and keeps
+          every prepared return. Only an administrator can archive, restore,
+          or delete a taxpayer profile.
+        </text>
+      </column>
+      <separator/>
+
+      <if test="{adminSessionLocked}">
+        <column gap="12">
+          <text wrap="true" foreground="text_muted">
+            Administrator access is required. Unlock with the master PIN to
+            manage this profile.
+          </text>
+          <if test="{constrainedLayout}">
+            <button
+              variant="outline"
+              icon="circle-dot"
+              on-press="request_admin_access">Unlock Admin Access</button>
+          </if>
+          <else>
+            <row>
+              <button
+                variant="outline"
+                icon="circle-dot"
+                on-press="request_admin_access">Unlock Admin Access</button>
+            </row>
+          </else>
+        </column>
+      </if>
+      <else>
+        <column gap="12">
+          <if test="{selectedProfileActive}">
+            <column gap="12">
+              <text wrap="true" foreground="text_muted">
+                This profile is active and listed in the sidebar.
+              </text>
+              <if test="{constrainedLayout}">
+                <button
+                  variant="destructive"
+                  icon="archive"
+                  on-press="archive_selected_profile">Archive Profile</button>
+              </if>
+              <else>
+                <row>
+                  <button
+                    variant="destructive"
+                    icon="archive"
+                    on-press="archive_selected_profile">Archive Profile</button>
+                </row>
+              </else>
+            </column>
+          </if>
+
+          <if test="{selectedProfileArchived}">
+            <column gap="12">
+              <text wrap="true" foreground="text_muted">
+                This profile is archived. Restoring returns it to the
+                sidebar. Deleting is permanent and cannot be undone.
+              </text>
+              <if test="{profileDeleteIdle}">
+                <if test="{constrainedLayout}">
+                  <column gap="10">
+                    <button
+                      variant="primary"
+                      icon="repeat"
+                      on-press="restore_selected_profile">Restore Profile</button>
+                    <button
+                      variant="outline"
+                      icon="trash"
+                      on-press="request_delete_selected_profile">Delete Profile</button>
+                  </column>
+                </if>
+                <else>
+                  <row gap="12">
+                    <button
+                      variant="primary"
+                      icon="repeat"
+                      on-press="restore_selected_profile">Restore Profile</button>
+                    <button
+                      variant="outline"
+                      icon="trash"
+                      on-press="request_delete_selected_profile">Delete Profile</button>
+                  </row>
+                </else>
+              </if>
+              <else>
+                <column gap="10">
+                  <text>
+                    <span weight="bold">Delete {selectedTaxpayerName} permanently?</span>
+                  </text>
+                  <text wrap="true" foreground="text_muted">
+                    The profile and its prepared returns are removed. This
+                    cannot be undone.
+                  </text>
+                  <if test="{constrainedLayout}">
+                    <column gap="10">
+                      <button
+                        variant="destructive"
+                        icon="trash"
+                        on-press="confirm_delete_selected_profile">Yes, delete permanently</button>
+                      <button
+                        variant="ghost"
+                        on-press="cancel_delete_selected_profile">Cancel</button>
+                    </column>
+                  </if>
+                  <else>
+                    <row gap="12">
+                      <button
+                        variant="destructive"
+                        icon="trash"
+                        on-press="confirm_delete_selected_profile">Yes, delete permanently</button>
+                      <button
+                        variant="ghost"
+                        on-press="cancel_delete_selected_profile">Cancel</button>
+                    </row>
+                  </else>
+                </column>
+              </else>
+            </column>
+          </if>
+
+          <separator/>
+          <if test="{constrainedLayout}">
+            <button
+              variant="ghost"
+              icon="x-circle"
+              on-press="admin_lock">End Admin Session</button>
+          </if>
+          <else>
+            <row>
+              <button
+                variant="ghost"
+                icon="x-circle"
+                on-press="admin_lock">End Admin Session</button>
+            </row>
+          </else>
+        </column>
+      </else>
+    </column>
+  </card>
+</template>
+
 <template name="profile-setup-content">
   <column gap="24">
     <column gap="6">
@@ -227,6 +387,8 @@
         </else>
           </column>
         </card>
+
+        <use template="profile-administration-card"/>
       </column>
     </if>
 
