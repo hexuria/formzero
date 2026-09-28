@@ -1,8 +1,17 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1790239855,
+  "generated_at_unix": 1790590635,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmc:2026:100",
+      "kind": "RMC",
+      "title": "RMC No. 100-2026",
+      "summary": "Circularizing Executive Order No. 125, Series of 2026, Entitled \"Temporarily Suspending the Excise Taxes on Specific Petroleum Products Pursuant to Section 148 of Republic Act No. 8424, or the National Internal Revenue Code of 1997, as Amended\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20100-2026%20-%20redacted.pdf",
+      "published_at_unix": 1790524800,
+      "month_bucket": "2026-09"
+    },
     {
       "external_id": "bir:rmc:2026:099",
       "kind": "RMC",
