@@ -1,8 +1,71 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1790590635,
+  "generated_at_unix": 1790676816,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmo:2026:026",
+      "kind": "RMO",
+      "title": "RMO No. 26-2026",
+      "summary": "Reclassification of Implementing Offices",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2026-2026.pdf",
+      "published_at_unix": 1790611200,
+      "month_bucket": "2026-09"
+    },
+    {
+      "external_id": "bir:rmo:2026:025",
+      "kind": "RMO",
+      "title": "RMO No. 25-2026",
+      "summary": "Amending Certain Provision of Revenue Memorandum Order No. 27-2024 which Prescribed the Guidelines, Policies and Procedures in the Processing of Claims for Credit/Refund of Taxes Erroneously or Illegally Received or Collected or Penalties Imposed Without Authority Pursuant to Section 204(C) in Relation to Section 229 of the National Internal Revenue Code of 1997, as Amended, Except Those Under the Authority and Jurisdiction of the Legal Group",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2025-2026.pdf",
+      "published_at_unix": 1790611200,
+      "month_bucket": "2026-09"
+    },
+    {
+      "external_id": "bir:rmc:2026:105",
+      "kind": "RMC",
+      "title": "RMC No. 105-2026",
+      "summary": "Circularizing Department of Finance (DOF) Order No. 026-2026 re: Terms and Condictions on the Grant of the Enhanced Deduction Regime under Section 294(C) of the National Internal Revenue Code of 1997, as amended by Republic Act (RA) No. 12066\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20105-2026.pdf",
+      "published_at_unix": 1790611200,
+      "month_bucket": "2026-09"
+    },
+    {
+      "external_id": "bir:rmc:2026:104",
+      "kind": "RMC",
+      "title": "RMC No. 104-2026",
+      "summary": "Availability of Offline Electronic Bureau of Internal Revenue Forms (eBIRForms) Package Version 7.9.6.2",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20104-2026.pdf",
+      "published_at_unix": 1790611200,
+      "month_bucket": "2026-09"
+    },
+    {
+      "external_id": "bir:rmc:2026:103",
+      "kind": "RMC",
+      "title": "RMC No. 103-2026",
+      "summary": "Amending Certain Provisions of Revenue Memorandum Circular No. 74-2024 which Prescribed the Mandatory Requirements for Claims for Credit or Refund of Taxes Erroneously or Illegally Received or Collected or Penalties Imposed Without Authority Pursuant to Section 204(C), in Relation to Section 229 of the National Internal Revenue Code of 1997, as Amended, Except Those Under the Authority and Jurisdiction of the Legal Group",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20103-2026.pdf",
+      "published_at_unix": 1790611200,
+      "month_bucket": "2026-09"
+    },
+    {
+      "external_id": "bir:rmc:2026:102",
+      "kind": "RMC",
+      "title": "RMC No. 102-2026",
+      "summary": "Amending Certain Provisions of Revenue Memorandum Circular (RMC) No. 75-2024, as Amended by RMC No. 14-2025, which Prescribed the Mandatory Requirements for Claims for Tax Credit or Refund of Excess or Unutilized Creditable Withholding Taxes on Income Pursuant to Section 76(C), in Relation to Sections 204(C) and 229 of the National Internal Revenue Code of 1997, as Amended, Except Those Under the Authority and Jurisdiction of the Legal Group",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20102-2026.pdf",
+      "published_at_unix": 1790611200,
+      "month_bucket": "2026-09"
+    },
+    {
+      "external_id": "bir:rmc:2026:101",
+      "kind": "RMC",
+      "title": "RMC No. 101-2026",
+      "summary": "Publishing Fiscal Incentives Review Board (FIRB) Resolution No. 011-26 Prescribing Temporary Measures of Registered Business Enterprises (RBEs) in Light of the State of National Energy Emergency",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20101-2026.pdf",
+      "published_at_unix": 1790611200,
+      "month_bucket": "2026-09"
+    },
     {
       "external_id": "bir:rmc:2026:100",
       "kind": "RMC",
