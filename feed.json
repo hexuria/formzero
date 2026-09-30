@@ -1,8 +1,17 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1790676816,
+  "generated_at_unix": 1790762721,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmc:2026:106",
+      "kind": "RMC",
+      "title": "RMC No. 106-2026",
+      "summary": "Celebration of the 37th National Statistics Month",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20106-2026.pdf",
+      "published_at_unix": 1790697600,
+      "month_bucket": "2026-09"
+    },
     {
       "external_id": "bir:rmo:2026:026",
       "kind": "RMO",
