@@ -1,8 +1,44 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1790762721,
+  "generated_at_unix": 1790850812,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rr:2026:006",
+      "kind": "RR",
+      "title": "RR No. 6-2026",
+      "summary": "Amending the Mandatory Information Contained in the Invoice Pursuant to Section 6(B) of Revenue Regulations No. 07-2024 to Include Creditable Withholding Tax Information",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RR%20No.%206-2026.pdf",
+      "published_at_unix": 1790784000,
+      "month_bucket": "2026-10"
+    },
+    {
+      "external_id": "bir:rr:2026:005",
+      "kind": "RR",
+      "title": "RR No. 5-2026",
+      "summary": "Further Amending Revenue Regulations No. 2-98, as Amended, to Impose Withholding Tax on Gross Remittances Made by the Independendt Electricity Market Operator of the Philippines for the Sale of Electricity",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RR%20No.%205-2026.pdf",
+      "published_at_unix": 1790784000,
+      "month_bucket": "2026-10"
+    },
+    {
+      "external_id": "bir:rmc:2026:108",
+      "kind": "RMC",
+      "title": "RMC No. 108-2026",
+      "summary": "CY 2026 BIR Priority Programs and Projects",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20108-2026.pdf",
+      "published_at_unix": 1790784000,
+      "month_bucket": "2026-10"
+    },
+    {
+      "external_id": "bir:rmc:2026:107",
+      "kind": "RMC",
+      "title": "RMC No. 107-2026",
+      "summary": "Clarification on Certain Issues and Concerns in the Implementation of the Enhanced Electronic Documentary Stamp Tax (eDST) System Pursuant to Revenue Regulations No. 28-2025",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20107-2026.pdf",
+      "published_at_unix": 1790784000,
+      "month_bucket": "2026-10"
+    },
     {
       "external_id": "bir:rmc:2026:106",
       "kind": "RMC",
