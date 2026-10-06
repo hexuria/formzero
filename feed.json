@@ -1,8 +1,26 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1790850812,
+  "generated_at_unix": 1791284010,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmo:2026:027",
+      "kind": "RMO",
+      "title": "RMO No. 27-2026",
+      "summary": "BIR Strategic Plan for 2026-2028",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2027-2026_redacted.pdf",
+      "published_at_unix": 1791216000,
+      "month_bucket": "2026-10"
+    },
+    {
+      "external_id": "bir:rmc:2026:109",
+      "kind": "RMC",
+      "title": "RMC No. 109-2026",
+      "summary": "Announcing the availability of the Taxpayer Portal to taxpayers classified as Large under Ease of Paying Taxes Act",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20109-2026.pdf",
+      "published_at_unix": 1791216000,
+      "month_bucket": "2026-10"
+    },
     {
       "external_id": "bir:rr:2026:006",
       "kind": "RR",
