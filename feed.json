@@ -1,8 +1,26 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1791284010,
+  "generated_at_unix": 1791890166,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rr:2026:007",
+      "kind": "RR",
+      "title": "RR No. 7-2026",
+      "summary": "Amending Revenue Regulations No. 07-10 Relative to the Burden-Sharing Agreement of Establishments Claiming Senior Citizen Discounts as Tax Deduction Pursuant to Republic Act No. 9994, Otherwise Known as the \"Expanded Senior Citizens Act of 2010\"",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RR%20No.%207-2026_redacted.pdf",
+      "published_at_unix": 1791820800,
+      "month_bucket": "2026-10"
+    },
+    {
+      "external_id": "bir:rmc:2026:110",
+      "kind": "RMC",
+      "title": "RMC No. 110-2026",
+      "summary": "Prescribing the Accreditation, Technical, Operational, Security, Data Governance, Institutional, Legal, and Continuing Compliance Requirements for Electronic Invoicing Solutions of Electronic Invoicing Service Providers (ESPs)",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20110-2026_redacted.pdf",
+      "published_at_unix": 1791820800,
+      "month_bucket": "2026-10"
+    },
     {
       "external_id": "bir:rmo:2026:027",
       "kind": "RMO",
