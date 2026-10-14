@@ -261,8 +261,7 @@ pins no separator yet and stays fail-closed. File any other disagreement.
 
 ### Line endings (blocks byte parity for 1601C and 1701Q)
 
-- formzero pins tab + CRLF + 12 spaces (`separator = "	
-            "`
+- formzero pins tab + CRLF + 12 spaces (`separator = "\t\r\n            "`
   in `form_1701q_2018/document.zig` and `form_1601c_2018/document.zig`), from
   a controlled check of Windows' HTML engine (`docs/ansi-code-page-capture.md`).
 - buwiz-forms' samples use tab + LF + 12 spaces for some forms (1601C, 1701Q
