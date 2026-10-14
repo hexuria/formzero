@@ -27,7 +27,7 @@ Verified by reading the repository, not by running it:
 | Rule research corpus | `rules/forms/<form>-v<rev>/` (`fields.json`, `validations.json`, `calculations.json`, `workflow.json`, `fixtures/`, `gaps.md`), `rules/shared/` | Data. 659 JSON files, 2,007 validation rules, 623 calculations, 1,354 negative fixtures, each tied to an official HTA hash and line. |
 | Executable validation | Hand-written Rust per form: `crates/bir-core/src/forms/form_*.rs` (`validate_on`, `recompute`, `to_bir_field_map`). Compiled rule IR (`crates/bir-rules`, `bir-rules-codegen`) only covers 2550Q today | Port target. The fixtures above are the acceptance tests. |
 | Submit plaintext layouts | `crates/bir-core/data/official-xml/*.json` (51 layouts) and `official_xml.rs` (`write`, `read`, `js_escape`, `official_amount`) | Data plus a small generic writer to port. Layouts were produced by running each HTA's own `saveXMLsubmit()` loop in jsdom (`tools/official-xml`). |
-| Byte-exact oracles | `crates/bir-core/tests/sample-payloads/*.official.xml`, `*.plain.xml` (78 each), `*.steps.json` (UI scripts for the jsdom oracle: `click`, `set`, `call`), typed drafts in `crates/bir-core/tests/sample_payloads/form_*.rs` | Test data, fetched at test time, never committed here (§2 bans raw XML). All 78 are pure ASCII. Only 7 forms have a `positive-minimal.json` fixture. |
+| Byte-exact oracles | `crates/bir-core/tests/sample-payloads/*.official.xml`, `*.plain.xml` (78 each), `*.steps.json` (UI scripts for the jsdom oracle: `click`, `set`, `call`), typed drafts in `crates/bir-core/tests/sample_payloads/form_*.rs` | Test data, vendored as binary and SHA-checked; committed only after the §2 amendment, fetched at test time until then. All 78 are pure ASCII with LF line endings. Only 7 forms have a `positive-minimal.json` fixture. |
 | Official runtime oracle | `tools/official-xml/` (`oracle.js`, `runtime.js`, `gen_layout.js`) over the byte-exact official package | Tool. This repo's `Justfile` already requires Node. |
 | Printed sheets | `html-frozen/<slug>/` (`index.html`, `form.css`, `writer-cells.json`, `provenance.json`), `base.css`, Arimo/Tinos fonts; generator in [hexuria/buwiz-forms-html](https://github.com/hexuria/buwiz-forms-html) (`v1-frozen`) | Data plus the fill pass in `crates/bir-print/src/frozen_html.rs` to port. |
 | IAF encryption | `crates/bir-core/src/crypto.rs` (`compress_and_encrypt`: C zlib level 9 through `libz-sys`, then DCPcrypt's AES-256 chaining: SHA-256 key, encrypted-zero-block IV, CBC on full blocks, final partial block XORed with the encrypted chaining value, no padding, so ciphertext length equals compressed length) | Port by extending `legacy.zig`. The 78 ciphertext SHA-256 pins came from unicorn emulation of `Encrypt.exe`, not a native run. The passphrase is hardcoded in `crypto.rs` and is not ported. |
@@ -74,7 +74,7 @@ keeps that distinction.
 | Link `bir-core` as a C-ABI static library | Rejected. It pulls tokio, reqwest, russh, vendored OpenSSL, rusqlite/SQLCipher and IMAP into a Zig app that already owns SQLite, and adds a second toolchain to every platform build. |
 | Link only `bir-rules` | Not enough. Its compiled IR covers 2550Q; the other 42 forms validate in hand-written `bir-core` code. |
 | Shell out to the `bir` CLI | Rejected. The official sample payloads are a better oracle and need no Rust toolchain. |
-| **Reuse the language-neutral artifacts, generate what is mechanical, port the rest** | **Chosen.** Layouts, rule fixtures and frozen HTML are committed data; sample payloads and ciphertexts are fetched and hash-checked at test time; the writer, fill pass, crypto and validators are small enough to port, and the byte-exact oracles make a port checkable. |
+| **Reuse the language-neutral artifacts, generate what is mechanical, port the rest** | **Chosen.** Layouts, rule fixtures and frozen HTML are committed data; sample payloads and ciphertexts are vendored as binary and hash-checked (fetched at test time until §2 allows committing them); the writer, fill pass, crypto and validators are small enough to port, and the byte-exact oracles make a port checkable. |
 
 Rules for the port:
 
@@ -92,8 +92,8 @@ Rules for the port:
   here both come from private runtime configuration, as `legacy.zig` already
   requires.
 - Nothing §2 bans is committed: no raw official XML, no ciphertexts, no
-  endpoints. Those are fetched at test time and checked against a committed
-  hash manifest (W1).
+  endpoints. Until §2 is amended, raw samples are fetched at test time and
+  checked against a committed hash manifest (W1).
 - No binary floating point for amounts. buwiz-forms uses `f64` in several
   form models (for example `form_1601eq.rs` `rate_for_year`); ports use this
   repo's `domain/money.zig` decimals.
@@ -118,7 +118,8 @@ long as they follow the artifact rules below.
 | Artifact | Where it lives |
 | --- | --- |
 | Rule corpus, fixtures, layout JSON, frozen HTML | Committed under `vendor/buwiz-forms/` after the HTA source provenance and licence review in W1 |
-| Official sample XML (`*.official.xml`, `*.plain.xml`), `*.steps.json`, ciphertexts (`*.iaf.xml`) | Not committed. Fetched at test time from the pinned buwiz-forms commit into an ignored cache, checked against SHA-256 values in the committed manifest. §2 bans raw XML. |
+| Official sample XML (`*.official.xml`, `*.plain.xml`), ciphertexts (`*.iaf.xml`) | Vendored as binary (`-text` in `.gitattributes`, so git never rewrites line endings) and checked against SHA-256 values in the committed manifest. §2 bans committed raw XML, so they enter git only once the §2 amendment allows these dummy-TIN samples; until then the same bytes are fetched at test time into an ignored cache and checked against the same manifest. |
+| `*.steps.json` | Fetched at test time like the samples (only the W3 jsdom check uses them). |
 | IAF passphrase, dispatcher unwrap secret | Never in this repo. Supplied at runtime by a private harness or private config. Tests that need them skip with a visible reason when absent. |
 | Dispatcher and SFTP hosts | Runtime configuration, not source. §2 bans committed endpoints, so this plan refers to them through buwiz-forms `transport.rs`. |
 
@@ -185,9 +186,15 @@ tracking issue; HTTPS go/no-go recorded.
   into `vendor/buwiz-forms/`: `rules/forms/**`, `rules/shared/**`,
   `crates/bir-core/data/official-xml/*.json`, `html-frozen/**` (including
   fonts and `provenance.json`).
-- `scripts/buwiz-sync.mjs --fetch-test-data` downloads the sample XML,
-  `*.steps.json` and ciphertexts into an ignored cache (outside `vendor/`),
-  per the artifact rules above.
+- `*.official.xml`, `*.plain.xml` and `*.iaf.xml` are vendored as binary:
+  `.gitattributes` marks them `-text`. buwiz-forms' own `.gitattributes`
+  (`* text=auto eol=lf`) normalizes every text file to LF and only marks
+  `*.iaf.xml` binary, so the sync copies the exact bytes at the pinned commit
+  and never lets git touch them again. Until the §2 amendment,
+  `scripts/buwiz-sync.mjs --fetch-test-data` writes them (and `*.steps.json`)
+  to an ignored cache instead, with the same manifest check.
+- The manifest records each sample's line separator, because it differs per
+  form (see "Line endings" below).
 - Write `vendor/buwiz-forms/MANIFEST.json`: source commit, path, SHA-256 per
   file, for committed and fetched files alike. `just check` fails if a
   committed byte differs; tests fail if a fetched byte differs.
@@ -216,8 +223,10 @@ write it back with the layout writer, and get identical bytes. The
 `*.steps.json` files are UI scripts for the jsdom oracle, not typed inputs,
 so replaying them needs per-form recompute and belongs to W3.
 
-This byte parity does not qualify `editable_serializer_exact` or
-`final_plaintext_serializer_exact` (see risk 4).
+This exit test is measured on the LF text buwiz-forms committed. It proves the
+reader and writer are lossless, not that LF is what the official package
+writes (see "Line endings"). It also does not qualify
+`editable_serializer_exact` or `final_plaintext_serializer_exact` (risk 4).
 
 ### W3. Per-form validation and calculations
 
@@ -242,11 +251,33 @@ Positive fixtures are thin: only 7 forms have `positive-minimal.json`. For
 the rest, the sample payloads are the only positive evidence, and each form's
 promotion report says so.
 
-For 1701Q, 1601C and 1601EQ the formzero port already exists. Compare its
-codec output directly against the fetched official XML (no `bir` CLI). Before
-calling the two repos equivalent, confirm that buwiz-forms' submit plaintext
-(from `saveEncryptedProfile`) equals formzero's Final Copy representation:
-editable save plus the rights notice and trailing `0`. File any disagreement.
+For 1701Q, 1601C and 1601EQ the formzero port already exists. buwiz-forms'
+`*.official.xml` files are Final Copy documents (they end in
+`All Rights Reserved BIR 2012.0`), so the differential test compares formzero
+codec output with them byte for byte; no `bir` CLI. Until the line-ending
+capture lands, that comparison is structural only for 1601C and 1701Q: their
+codecs pin CRLF and every buwiz-forms sample is LF. 1601EQ's `document.zig`
+pins no separator yet and stays fail-closed. File any other disagreement.
+
+### Line endings (blocks byte parity for 1601C and 1701Q)
+
+- formzero pins tab + CRLF + 12 spaces (`separator = "	
+            "`
+  in `form_1701q_2018/document.zig` and `form_1601c_2018/document.zig`), from
+  a controlled check of Windows' HTML engine (`docs/ansi-code-page-capture.md`).
+- buwiz-forms' samples use tab + LF + 12 spaces for some forms (1601C, 1701Q
+  among them) and spaces only for the rest (0619E, 0619F, 1600PT/VT, 1601EQ,
+  1604C, …). None of the 78 `*.official.xml` files at `8a95f630` contains a
+  `
+`, and buwiz-forms' `* text=auto eol=lf` would strip one anyway.
+- The `Encrypt.exe` SHA-256 pins in `sample_payloads/form_*.rs` were computed
+  from those LF `.plain.xml` files, so they inherit the question.
+
+Decide which line ending is real with one Windows capture, done in the
+existing ANSI capture session (`docs/ansi-code-page-capture.md`). Until then,
+buwiz-forms' samples are a structural oracle for 1601C and 1701Q, and every
+"byte for byte" or SHA-pin result in this plan is labelled as measured on LF
+text.
 
 Order (from `FORM_BUILD_PRIORITY.md` and architecture plan §11):
 
@@ -318,13 +349,17 @@ to `IAF_RDO_Copy/`, and `Encrypt.exe` produces the encrypted IAF. W5 ports
   supplies it, and skip visibly otherwise.
 - Known-answer vectors: the 78 buwiz-forms ciphertexts are official
   known-answer vectors. They follow formzero's private-vector model, not
-  public vendoring: fetched at test time, with only their SHA-256 and
-  provenance in the committed manifest. Their pins came from unicorn emulation
+  casual vendoring: binary (`-text`), SHA-checked, and committed only if the
+  §2 amendment allows it; otherwise fetched at test time with only their
+  SHA-256 and provenance in the committed manifest. Their pins came from unicorn emulation
   of `Encrypt.exe`, not a native run; W5 records a native Windows capture for
   at least one sample before calling the encrypt path qualified.
 
 Exit test: with the private passphrase supplied, Zig ciphertext SHA-256
-equals the pinned value for every fetched sample, and decrypt round-trips.
+equals the pinned value for every sample, and decrypt round-trips. Those pins
+were computed from LF plaintext, so until the line-ending capture lands the
+result is reported as measured on LF text, and it does not qualify the
+encrypt path for 1601C or 1701Q.
 Without it, the tests skip and the gate stays closed.
 
 ### W6. Submission
@@ -422,15 +457,18 @@ The tracking issue keeps one checkbox per workstream and per form group.
    until Windows `CreateTextFile` output is captured. All 78 buwiz-forms
    samples are ASCII and were produced in jsdom, which does not model
    `CreateTextFile`, so they cannot qualify those flags.
-5. **Dispatcher HTTPS** (W0, W6). If BIR serves only HTTP, submission needs an
+5. **Line endings.** formzero pins CRLF for 1601C and 1701Q; every
+   buwiz-forms sample and ciphertext pin is LF. One Windows capture decides
+   which is real (W3, "Line endings").
+6. **Dispatcher HTTPS** (W0, W6). If BIR serves only HTTP, submission needs an
    explicit security exception.
-6. **Architecture changes need the owner:** the §2/§12 amendment for W6 and W7,
+7. **Architecture changes need the owner:** the §2/§12 amendment for W6 and W7,
    and the WebView for print (W4).
-7. **Ciphertext provenance.** The pins come from emulating `Encrypt.exe`
+8. **Ciphertext provenance.** The pins come from emulating `Encrypt.exe`
    (W5).
-8. **Live filing** is proven for one form in buwiz-forms. Do not claim more
+9. **Live filing** is proven for one form in buwiz-forms. Do not claim more
    for this app until its own acceptance runs say so.
-9. Disagreements between the two repos on 1701Q, 1601C and 1601EQ are resolved
+10. Disagreements between the two repos on 1701Q, 1601C and 1601EQ are resolved
    against the official package, with the evidence recorded in both repos.
 
 ## Verification commands
