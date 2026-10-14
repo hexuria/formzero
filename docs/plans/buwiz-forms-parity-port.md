@@ -1,6 +1,6 @@
 # Plan: port buwiz-forms validation, printed forms and submission into formzero
 
-Status: plan, tracked in the linked GitHub issue. Update both as work lands.
+Status: plan, tracked in [#95](https://github.com/hexuria/formzero/issues/95). Update both as work lands.
 
 ## Goal
 
