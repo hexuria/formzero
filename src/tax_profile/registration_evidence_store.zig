@@ -430,7 +430,9 @@ fn setProtectedFilePermissions(
     basename: []const u8,
 ) !void {
     var file = noFollowFile(try evidence_dir.openFile(io, basename, .{
-        .mode = .write_only,
+        // Windows needs write access to change file attributes; POSIX fchmod
+        // works on a read-only handle and must accept existing 0400 evidence.
+        .mode = if (@import("builtin").os.tag == .windows) .write_only else .read_only,
         .allow_directory = false,
         .follow_symlinks = false,
         .resolve_beneath = true,
@@ -633,6 +635,66 @@ test "protected copy is digest addressed reusable private and source independent
             @as(std.posix.mode_t, 0o600),
             file_stat.permissions.toMode() & 0o777,
         );
+    }
+}
+
+test "reuse restores private permissions on read-only existing evidence" {
+    if (comptime std.Io.File.Permissions.has_executable_bit) {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(std.testing.io, .{
+            .sub_path = "registration.pdf",
+            .data = "%PDF-1.4 protected evidence",
+        });
+
+        var source_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const source_path = try fixturePath(
+            &source_path_buffer,
+            &tmp.sub_path,
+            "registration.pdf",
+        );
+        var data_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const data_path = try fixturePath(&data_path_buffer, &tmp.sub_path, "data");
+        try tmp.dir.createDir(std.testing.io, "data", .default_dir);
+        const fingerprint = try inspect(std.testing.io, source_path);
+
+        var protected_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const protected_path = try protect(
+            std.testing.io,
+            data_path,
+            source_path,
+            &fingerprint.sha256,
+            fingerprint.byte_size,
+            &protected_path_buffer,
+        );
+        {
+            var file = try std.Io.Dir.cwd().openFile(std.testing.io, protected_path, .{});
+            defer file.close(std.testing.io);
+            try file.setPermissions(std.testing.io, @enumFromInt(0o400));
+        }
+
+        var reused_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const reused_path = try protect(
+            std.testing.io,
+            data_path,
+            source_path,
+            &fingerprint.sha256,
+            fingerprint.byte_size,
+            &reused_path_buffer,
+        );
+        try std.testing.expectEqualStrings(protected_path, reused_path);
+
+        const stat = try std.Io.Dir.cwd().statFile(
+            std.testing.io,
+            protected_path,
+            .{},
+        );
+        try std.testing.expectEqual(
+            @as(std.posix.mode_t, 0o600),
+            stat.permissions.toMode() & 0o777,
+        );
+    } else {
+        return error.SkipZigTest;
     }
 }
 
