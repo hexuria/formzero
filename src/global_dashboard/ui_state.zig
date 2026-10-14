@@ -173,6 +173,15 @@ pub fn State(
             self.clearDayWhenPeriodChanged(year, month);
         }
 
+        /// Returns to an absolute month directly, clearing a day selection
+        /// left over from the period being abandoned.
+        pub fn jumpToMonth(self: *Self, year: i32, month: u8) void {
+            const previous_year = self.calendar.selected_year;
+            const previous_month = self.calendar.selected_month;
+            self.calendar.jumpToMonth(year, month);
+            self.clearDayWhenPeriodChanged(previous_year, previous_month);
+        }
+
         /// The canonical code of the active RDO context, or `null` while the
         /// dashboard shows the nationwide schedule.
         pub fn rdoContext(self: *const Self) ?[]const u8 {
@@ -296,6 +305,23 @@ test "calendar navigation clears a selected day after a successful move" {
     try std.testing.expectEqual(@as(i32, 2026), state.calendar.selected_year);
     try std.testing.expectEqual(@as(u8, 7), state.calendar.selected_month);
     try std.testing.expect(state.selectedDay() == null);
+}
+
+test "jumpToMonth abandons the old period's selected day" {
+    const TestState = State(2, 16);
+    var state = TestState{};
+    state.calendar.selected_year = 2026;
+    state.calendar.selected_month = 6;
+
+    try std.testing.expect(state.toggleDay(30));
+    state.jumpToMonth(2026, 11);
+    try std.testing.expectEqual(@as(u8, 11), state.calendar.selected_month);
+    try std.testing.expect(state.selectedDay() == null);
+
+    // Jumping back to the same period is a no-op that keeps the selection.
+    try std.testing.expect(state.toggleDay(5));
+    state.jumpToMonth(2026, 11);
+    try std.testing.expectEqual(@as(?u8, 5), state.selectedDay());
 }
 
 test "the dashboard starts nationwide and adopts one session RDO context" {

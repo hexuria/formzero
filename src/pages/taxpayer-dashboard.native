@@ -51,7 +51,12 @@
                   <text text-alignment="center"><span weight="bold">{cell.dayLabel}</span></text>
                 </if>
                 <else>
-                  <text text-alignment="center">{cell.dayLabel}</text>
+                  <if test="{cell.today}">
+                    <text text-alignment="center" foreground="accent"><span weight="bold">{cell.dayLabel}</span></text>
+                  </if>
+                  <else>
+                    <text text-alignment="center">{cell.dayLabel}</text>
+                  </else>
                 </else>
                 <if test="{cell.hasDeadlines}">
                   <row grow="1" main="center" cross="center">
