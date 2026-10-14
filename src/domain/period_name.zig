@@ -3,6 +3,8 @@
 //! Separate from `date.zig`, which owns arithmetic: these are presentation
 //! strings and carry no calendar semantics.
 
+const std = @import("std");
+
 pub fn fullMonthName(month: u8) []const u8 {
     return switch (month) {
         1 => "January",
@@ -47,4 +49,36 @@ pub fn shortQuarterName(quarter: u8) []const u8 {
         4 => "Q4",
         else => "",
     };
+}
+
+test "full month names cover the civil year in order" {
+    const expected = [_][]const u8{
+        "January",   "February", "March",    "April",
+        "May",       "June",     "July",     "August",
+        "September", "October",  "November", "December",
+    };
+    for (expected, 0..) |name, index| {
+        try std.testing.expectEqualStrings(name, fullMonthName(@intCast(index + 1)));
+    }
+    try std.testing.expectEqualStrings("Unknown month", fullMonthName(0));
+    try std.testing.expectEqualStrings("Unknown month", fullMonthName(13));
+}
+
+test "short month and quarter names stay bounded and empty out of range" {
+    const expected = [_][]const u8{
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    };
+    for (expected, 0..) |name, index| {
+        try std.testing.expectEqualStrings(name, shortMonthName(@intCast(index + 1)));
+    }
+    try std.testing.expectEqualStrings("", shortMonthName(0));
+    try std.testing.expectEqualStrings("", shortMonthName(13));
+
+    try std.testing.expectEqualStrings("Q1", shortQuarterName(1));
+    try std.testing.expectEqualStrings("Q2", shortQuarterName(2));
+    try std.testing.expectEqualStrings("Q3", shortQuarterName(3));
+    try std.testing.expectEqualStrings("Q4", shortQuarterName(4));
+    try std.testing.expectEqualStrings("", shortQuarterName(0));
+    try std.testing.expectEqualStrings("", shortQuarterName(5));
 }

@@ -168,3 +168,113 @@ test "reviewed evidence bindings are ordered by typed fact subject" {
     );
     try std.testing.expect(values[0].isValid());
 }
+
+test "binding validity requires every provenance component" {
+    const testId = struct {
+        fn parse(comptime Id: type, raw: []const u8) Id {
+            return Id.parse(raw) catch unreachable;
+        }
+    }.parse;
+    const binding = ReviewedEvidenceBinding{
+        .subject = .{ .taxpayer_identity_revision = testId(
+            registration.TaxpayerRevisionId,
+            "taxpayer-rev-a",
+        ) },
+        .evidence_id = testId(registration.RegistrationEvidenceId, "evidence-a"),
+        .review_decision_id = testId(
+            registration.RegistrationEvidenceReviewDecisionId,
+            "decision-a",
+        ),
+        .review_decision_sequence = 1,
+        .assertion_id = testId(
+            registration.RegistrationEvidenceAssertionId,
+            "assertion-a",
+        ),
+    };
+    try std.testing.expect(binding.isValid());
+
+    // A zero review sequence is the nullary transition marker, never valid.
+    var missing_sequence = binding;
+    missing_sequence.review_decision_sequence = 0;
+    try std.testing.expect(!missing_sequence.isValid());
+
+    // Empty opaque ids parse to length zero and fail every presence check.
+    var missing_evidence = binding;
+    missing_evidence.evidence_id = .{};
+    try std.testing.expect(!missing_evidence.isValid());
+
+    var missing_assertion = binding;
+    missing_assertion.assertion_id = .{};
+    try std.testing.expect(!missing_assertion.isValid());
+
+    // An unset revision id removes the fact bytes that ground the binding.
+    var missing_subject = binding;
+    missing_subject.subject = .{ .taxpayer_identity_revision = .{} };
+    try std.testing.expect(!missing_subject.isValid());
+}
+
+test "binding ordering resolves ties down to the assertion id" {
+    const testId = struct {
+        fn parse(comptime Id: type, raw: []const u8) Id {
+            return Id.parse(raw) catch unreachable;
+        }
+    }.parse;
+    const base = ReviewedEvidenceBinding{
+        .subject = .{ .taxpayer_identity_revision = testId(
+            registration.TaxpayerRevisionId,
+            "taxpayer-rev-a",
+        ) },
+        .evidence_id = testId(registration.RegistrationEvidenceId, "evidence-a"),
+        .review_decision_id = testId(
+            registration.RegistrationEvidenceReviewDecisionId,
+            "decision-a",
+        ),
+        .review_decision_sequence = 1,
+        .assertion_id = testId(
+            registration.RegistrationEvidenceAssertionId,
+            "assertion-a",
+        ),
+    };
+    var values = [_]ReviewedEvidenceBinding{
+        base,
+        base,
+    };
+    values[1].assertion_id = testId(
+        registration.RegistrationEvidenceAssertionId,
+        "assertion-z",
+    );
+    sort(&values);
+    try std.testing.expectEqualStrings(
+        "assertion-a",
+        values[0].assertion_id.asSlice(),
+    );
+
+    // Same subject and evidence, later review decision: later sequence wins.
+    var by_sequence = [_]ReviewedEvidenceBinding{ base, base };
+    by_sequence[0].review_decision_sequence = 2;
+    by_sequence[1].review_decision_sequence = 1;
+    sort(&by_sequence);
+    try std.testing.expectEqual(
+        @as(u32, 1),
+        by_sequence[0].review_decision_sequence,
+    );
+
+    // A later evidence id orders after the same subject with earlier evidence.
+    var by_evidence = [_]ReviewedEvidenceBinding{
+        base,
+        base,
+    };
+    by_evidence[1].evidence_id = testId(
+        registration.RegistrationEvidenceId,
+        "evidence-b",
+    );
+    sort(&by_evidence);
+    try std.testing.expectEqualStrings(
+        "evidence-a",
+        by_evidence[0].evidence_id.asSlice(),
+    );
+
+    // Equal components compare equal: sorting is stable and reversible.
+    try std.testing.expect(lessThan(base, base) == false);
+    try std.testing.expect(base.eql(&base));
+}
