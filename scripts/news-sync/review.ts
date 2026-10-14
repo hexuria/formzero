@@ -38,7 +38,7 @@ export type ReviewReportInput = {
 
 /** `review/bir-rmc-2026-089.md` for `bir:rmc:2026:089`. */
 export function reviewReportPath(reviewDir: string, externalId: string): string {
-  return path.join(reviewDir, `${externalId.replaceAll(":", "-")}.md`);
+  return path.posix.join(reviewDir, `${externalId.replaceAll(":", "-")}.md`);
 }
 
 function escapeCell(text: string): string {
