@@ -1,0 +1,152 @@
+name: Release
+
+# Release builds run only when a release-v* branch is pushed (or by hand), not
+# on every pull request. The full CI quality gate runs first; packaging starts
+# only after it passes.
+
+on:
+  push:
+    branches: ['release-v*']
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  package-linux:
+    name: Package (Linux)
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22.15'
+          cache: npm
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+
+      - name: Install Just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just@1.43.1
+
+      - name: Restore pinned Zig toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/zig
+          key: zig-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.zig.zon') }}
+
+      - name: Restore Zig package and build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/zig
+            .zig-cache
+          key: zig-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.zig.zon', 'build.zig') }}-${{ github.sha }}
+          restore-keys: |
+            zig-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.zig.zon', 'build.zig') }}-
+            zig-cache-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Prepare Zig cache directories
+        run: mkdir -p "$HOME/.cache/zig/tmp" "$HOME/.cache/zig/p"
+
+      - name: Provision toolchain
+        run: scripts/setup-dev-env.sh
+
+      - name: Package Linux artifact
+        run: just package
+
+      - name: Install Linux artifact
+        env:
+          BUWIZ_INSTALL_DIR: ${{ runner.temp }}/buwiz-install
+        run: just install
+
+      - name: Assert Linux install layout
+        env:
+          BUWIZ_INSTALL_DIR: ${{ runner.temp }}/buwiz-install
+        run: |
+          eval "$(node scripts/app-identity.mjs prepare --format shell)"
+          test -x "$BUWIZ_INSTALL_DIR/bin/$BUWIZ_APP_NAME"
+          test -x "$BUWIZ_INSTALL_DIR/lib/$BUWIZ_APP_NAME/bin/$BUWIZ_APP_NAME"
+          test -f "$BUWIZ_INSTALL_DIR/share/applications/$BUWIZ_APP_NAME.desktop"
+          grep -Fq "Exec=\"$BUWIZ_INSTALL_DIR/bin/$BUWIZ_APP_NAME\"" \
+            "$BUWIZ_INSTALL_DIR/share/applications/$BUWIZ_APP_NAME.desktop"
+
+      - name: Upload Linux package
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-package
+          path: zig-out/package/
+          if-no-files-found: error
+
+  package-macos:
+    name: Package (macOS)
+    needs: ci
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22.15'
+          cache: npm
+
+      - name: Install Just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just@1.43.1
+
+      - name: Restore pinned Zig toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/zig
+          key: zig-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.zig.zon') }}
+
+      - name: Restore Zig package and build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/zig
+            .zig-cache
+          key: zig-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.zig.zon', 'build.zig') }}-${{ github.sha }}
+          restore-keys: |
+            zig-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.zig.zon', 'build.zig') }}-
+            zig-cache-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Prepare Zig cache directories
+        run: mkdir -p "$HOME/.cache/zig/tmp" "$HOME/.cache/zig/p"
+
+      - name: Provision toolchain
+        run: scripts/setup-dev-env.sh
+
+      # Ad hoc signed; package-macos.sh verifies the signature.
+      - name: Package macOS app
+        run: just package
+
+      - name: Upload macOS package
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-package
+          path: zig-out/package/*.app
+          if-no-files-found: error

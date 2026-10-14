@@ -1,18 +1,23 @@
 name: CI
 
 # Runs the quality gate documented in README.md and
-# docs/NATIVE_SDK_GUIDE_AND_IMPROVEMENT_PLAN.md on every change.
+# docs/NATIVE_SDK_GUIDE_AND_IMPROVEMENT_PLAN.md on every change that can
+# affect the app. A change that only touches documentation runs the diff
+# hygiene check alone; the heavy jobs report as skipped, which satisfies the
+# required checks on main.
 #
-# macOS remains the primary development host. Linux has its own build,
-# package, and user-install gate below. Windows ARM64 is audited through the
-# pinned environment documented in docs/WINDOWS_DEVELOPMENT.md because a
-# matching hosted ARM64 runner is not part of this workflow.
+# macOS remains the primary development host. Linux has its own build gate
+# below. Packaging and install checks live in release.yml, which runs this
+# workflow first. Windows ARM64 is audited through the pinned environment
+# documented in docs/WINDOWS_DEVELOPMENT.md because a matching hosted ARM64
+# runner is not part of this workflow.
 
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 # A superseded run proves nothing about the tip of a branch.
 concurrency:
@@ -23,18 +28,97 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Changes and diff hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+      setup: ${{ steps.classify.outputs.setup }}
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          # Both the classification and the whitespace check compare against
+          # the merge base, which is unreachable in a shallow clone.
+          fetch-depth: 0
+
+      # `code` gates the quality gates; `setup` gates the setup-script proof.
+      # Pull requests and pushes to main compare against their base. Anything
+      # else (a release branch calling this workflow, a manual run, or a base
+      # that is no longer reachable after a force push) runs everything.
+      #
+      # Some Markdown is an input rather than documentation:
+      # docs/tax-profile/FORM_FIELD_CATALOG.md is generated and checked by
+      # `check:tax-catalog`, and Markdown under scripts/ and src/ is read by
+      # tests or carries provenance. Those count as code.
+      - name: Classify changed files
+        id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          base=''
+          if [ "$EVENT" = pull_request ]; then
+            base="$PR_BASE"
+          elif [ "$EVENT" = push ] && [ "$REF" = refs/heads/main ]; then
+            base="$PUSH_BEFORE"
+          fi
+
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "No comparable base for $EVENT on $REF; running every job."
+            echo 'code=true' >> "$GITHUB_OUTPUT"
+            echo 'setup=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          code=false
+          setup=false
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            case "$file" in
+              scripts/setup-dev-env.sh | build.zig.zon | package.json | package-lock.json | .github/workflows/ci.yml)
+                setup=true ;;
+            esac
+            case "$file" in
+              docs/tax-profile/FORM_FIELD_CATALOG.md | src/* | scripts/*) code=true ;;
+              docs/* | .agents/* | *.md | LICENSE*) ;;
+              *) code=true ;;
+            esac
+          done <<< "$(git diff --name-only "$base" HEAD)"
+
+          echo "Compared $base..HEAD: code=$code setup=$setup"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "setup=$setup" >> "$GITHUB_OUTPUT"
+
+      # No whitespace damage or conflict markers in the change itself. This
+      # runs for documentation too.
+      - name: Check diff hygiene
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            base="$PR_BASE"
+          else
+            base="$(git rev-parse HEAD^ 2>/dev/null || git rev-parse HEAD)"
+          fi
+          echo "Comparing against $base"
+          git diff --check "$base" HEAD
+
   quality-gate:
     name: Quality gate (macOS)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: macos-latest
     timeout-minutes: 45
 
     steps:
       - name: Check out
         uses: actions/checkout@v5
-        with:
-          # Whitespace and conflict-marker checking compares against the merge
-          # base, which is unreachable in a shallow clone.
-          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@v5
@@ -48,14 +132,18 @@ jobs:
           path: ~/.local/zig
           key: zig-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.zig.zon') }}
 
+      # Keyed per commit so every run saves what it compiled; a fixed key is
+      # written once and then restored stale forever. Restore falls back to the
+      # newest cache for the same build files, then to any cache for this host.
       - name: Restore Zig package and build cache
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/zig
             .zig-cache
-          key: zig-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.zig.zon', 'build.zig') }}
+          key: zig-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.zig.zon', 'build.zig') }}-${{ github.sha }}
           restore-keys: |
+            zig-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.zig.zon', 'build.zig') }}-
             zig-cache-${{ runner.os }}-${{ runner.arch }}-
 
       # A restored cache can recreate ~/.cache/zig without the scratch
@@ -106,16 +194,7 @@ jobs:
           npm run typecheck:news-sync
           npm run test:news-sync
 
-      # Gate 3 — no whitespace damage or conflict markers in the change itself.
-      - name: Check diff hygiene
-        run: |
-          if [ '${{ github.event_name }}' = 'pull_request' ]; then
-            base='${{ github.event.pull_request.base.sha }}'
-          else
-            base="$(git rev-parse HEAD^ 2>/dev/null || git rev-parse HEAD)"
-          fi
-          echo "Comparing against $base"
-          git diff --check "$base" HEAD
+      # Gate 3 (diff hygiene) runs in the `changes` job.
 
       # Gate 4 — model, calendar, storage, export, and component behaviour,
       # including the SQLite-linked test roots registered in build.zig.
@@ -144,14 +223,14 @@ jobs:
 
   linux-quality-gate:
     name: Quality gate (Linux)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
     steps:
       - name: Check out
         uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@v5
@@ -164,14 +243,35 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
 
+      # A prebuilt, checksum-verified binary; `cargo install` compiled it from
+      # source on every run.
       - name: Install Just
-        run: cargo install just --version 1.43.1 --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just@1.43.1
 
-      - name: Provision toolchain
-        run: scripts/setup-dev-env.sh
+      - name: Restore pinned Zig toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/zig
+          key: zig-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.zig.zon') }}
+
+      - name: Restore Zig package and build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/zig
+            .zig-cache
+          key: zig-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.zig.zon', 'build.zig') }}-${{ github.sha }}
+          restore-keys: |
+            zig-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.zig.zon', 'build.zig') }}-
+            zig-cache-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Prepare Zig cache directories
         run: mkdir -p "$HOME/.cache/zig/tmp" "$HOME/.cache/zig/p"
+
+      - name: Provision toolchain
+        run: scripts/setup-dev-env.sh
 
       - name: Report toolchain
         run: |
@@ -183,36 +283,50 @@ jobs:
       - name: Verify Linux build
         run: just verify
 
-      - name: Package Linux artifact
-        run: just package
-
-      - name: Install Linux artifact
-        env:
-          BUWIZ_INSTALL_DIR: ${{ runner.temp }}/buwiz-install
-        run: just install
-
-      - name: Assert Linux install layout
-        env:
-          BUWIZ_INSTALL_DIR: ${{ runner.temp }}/buwiz-install
-        run: |
-          eval "$(node scripts/app-identity.mjs prepare --format shell)"
-          test -x "$BUWIZ_INSTALL_DIR/bin/$BUWIZ_APP_NAME"
-          test -x "$BUWIZ_INSTALL_DIR/lib/$BUWIZ_APP_NAME/bin/$BUWIZ_APP_NAME"
-          test -f "$BUWIZ_INSTALL_DIR/share/applications/$BUWIZ_APP_NAME.desktop"
-          grep -Fq "Exec=\"$BUWIZ_INSTALL_DIR/bin/$BUWIZ_APP_NAME\"" \
-            "$BUWIZ_INSTALL_DIR/share/applications/$BUWIZ_APP_NAME.desktop"
-
-  setup-script:
-    name: Setup script (${{ matrix.os }})
-    # Proves scripts/setup-dev-env.sh provisions a clean host on both the
-    # supported build host and the Linux images used by development
-    # containers, before any contributor or agent depends on it.
-    runs-on: ${{ matrix.os }}
+  # Proves scripts/setup-dev-env.sh provisions a clean host on both the
+  # supported build host and the Linux images used by development containers,
+  # before any contributor or agent depends on it. Two named jobs rather than a
+  # matrix: a skipped matrix job reports under its unexpanded name, which would
+  # leave the required "Setup script (…)" checks pending.
+  setup-script-macos:
+    name: Setup script (macos-latest)
+    needs: changes
+    if: needs.changes.outputs.setup == 'true'
+    runs-on: macos-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22.15'
+
+      - name: Provision from a cold cache
+        run: scripts/setup-dev-env.sh
+
+      - name: Assert the pinned compiler is on PATH
+        run: |
+          zig version
+          test "$(zig version)" = '0.16.0'
+
+      - name: Assert a repeat run is idempotent and offline-clean
+        run: |
+          scripts/setup-dev-env.sh --skip-npm | tee second-run.log
+          grep -q 'already installed' second-run.log
+          if grep -q 'downloading' second-run.log; then
+            echo '::error::Re-running the setup script downloaded Zig again.'
+            exit 1
+          fi
+
+  setup-script-linux:
+    name: Setup script (ubuntu-latest)
+    needs: changes
+    if: needs.changes.outputs.setup == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Check out
