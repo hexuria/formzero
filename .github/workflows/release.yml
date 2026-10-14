@@ -150,3 +150,113 @@ jobs:
           name: macos-package
           path: zig-out/package/*.app
           if-no-files-found: error
+
+  package-windows:
+    name: Package (Windows)
+    needs: ci
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Disable automatic line-ending conversion
+        run: git config --global core.autocrlf false
+
+      - name: Check out
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22.15'
+          cache: npm
+
+      - name: Install Just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just@1.43.1
+
+      - name: Restore pinned Zig toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~\.local\zig-x86_64-windows-0.16.0
+          key: zig-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.zig.zon') }}
+
+      - name: Provision Zig
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zigRoot = Join-Path $HOME '.local\zig-x86_64-windows-0.16.0'
+          $zigExe = Join-Path $zigRoot 'zig.exe'
+          if (-not (Test-Path -LiteralPath $zigRoot)) {
+            $zipPath = Join-Path $env:RUNNER_TEMP 'zig-x86_64-windows-0.16.0.zip'
+            $extractRoot = Join-Path $env:RUNNER_TEMP 'zig-extract'
+            $expectedZipSha256 = '68659eb5f1e4eb1437a722f1dd889c5a322c9954607f5edcf337bc3684a75a7e'
+            # SHA-256 from https://ziglang.org/download/index.json (0.16.0 x86_64-windows).
+            Invoke-WebRequest -Uri 'https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip' -OutFile $zipPath
+            $zipSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash
+            if ($zipSha256 -ne $expectedZipSha256) {
+              throw "Zig archive SHA-256 mismatch: $zipSha256"
+            }
+            Expand-Archive -LiteralPath $zipPath -DestinationPath $extractRoot -Force
+            $extractedRoot = Join-Path $extractRoot 'zig-x86_64-windows-0.16.0'
+            if (-not (Test-Path -LiteralPath $extractedRoot)) {
+              throw "Zig archive did not contain the expected directory: $extractedRoot"
+            }
+            New-Item -ItemType Directory -Path (Split-Path -Parent $zigRoot) -Force | Out-Null
+            Move-Item -LiteralPath $extractedRoot -Destination $zigRoot
+          }
+          if (-not (Test-Path -LiteralPath $zigExe)) {
+            throw "Pinned Zig executable is missing: $zigExe"
+          }
+          $expectedZigSha256 = '086CE9D47BA42F33A514E1A6E04EB1D4A8FA1D75E0868E0213CAAD447C91E864'
+          $zigSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $zigExe).Hash
+          if ($zigSha256 -ne $expectedZigSha256) {
+            throw "Zig executable SHA-256 mismatch: $zigSha256"
+          }
+          $nativeSdkPath = Join-Path $env:GITHUB_WORKSPACE 'node_modules\@native-sdk\cli'
+          $globalCache = Join-Path $env:LOCALAPPDATA 'Buwiz\zig-cache\global'
+          $globalCacheTemp = Join-Path $globalCache 'tmp'
+          $localCache = Join-Path $env:LOCALAPPDATA 'Buwiz\zig-cache\local\formzero'
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value $zigRoot
+          @(
+            "NATIVE_SDK_ZIG=$zigExe"
+            'BUWIZ_WINDOWS_TARGET=aarch64-windows'
+            "NATIVE_SDK_PATH=$nativeSdkPath"
+            "ZIG_GLOBAL_CACHE_DIR=$globalCache"
+            "ZIG_LOCAL_CACHE_DIR=$localCache"
+          ) | Add-Content -LiteralPath $env:GITHUB_ENV
+          New-Item -ItemType Directory -Path $globalCache, $globalCacheTemp, $localCache -Force | Out-Null
+
+      - name: Restore Zig package and build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~\AppData\Local\Buwiz\zig-cache
+          key: zig-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.zig.zon', 'build.zig') }}-${{ github.sha }}
+          restore-keys: |
+            zig-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.zig.zon', 'build.zig') }}-
+            zig-cache-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install dependencies
+        run: just setup
+
+      - name: Report toolchain
+        run: |
+          just --version
+          zig version
+          node --version
+          npx.cmd native --version
+
+      - name: Build aarch64 Windows product
+        run: just build
+
+      - name: Package Windows artifact
+        run: just package
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-package
+          path: zig-out/package/*-windows
+          if-no-files-found: error

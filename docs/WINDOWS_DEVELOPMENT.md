@@ -12,6 +12,13 @@ under Windows emulation:
 This is a host-tool workaround, not a change to the product target. The x64
 Zig compiler is always passed `-Dtarget=aarch64-windows`.
 
+## CI
+
+The hosted Windows gate runs on x64: checks and headless tests execute natively
+on x64, Windows-specific regressions run there, and the product is
+cross-compiled for `aarch64-windows`. It does not execute the product on ARM64
+or use this guide's pinned Node 24 ARM64/MinGit toolchain.
+
 ## Current 1701Q integration status
 
 The safe implementation now contains the typed 173-control 1701Q engine,
