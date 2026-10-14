@@ -1,8 +1,17 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1791890166,
+  "generated_at_unix": 1791968875,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmo:2026:028",
+      "kind": "RMO",
+      "title": "RMO No. 28-2026",
+      "summary": "Policies and guidelines on the use of videoconferencing platforms/tools",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2028-2026_redacted.pdf",
+      "published_at_unix": 1791907200,
+      "month_bucket": "2026-10"
+    },
     {
       "external_id": "bir:rr:2026:007",
       "kind": "RR",
