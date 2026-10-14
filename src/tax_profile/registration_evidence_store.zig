@@ -9,6 +9,14 @@ const std = @import("std");
 const domain = @import("registration_domain.zig");
 const storage_contract = @import("registration_storage_contract.zig");
 
+// Zig 0.16 opens no-follow handles for asynchronous I/O on Windows but
+// reports them as blocking; mark them so reads take the async path.
+fn noFollowFile(file: std.Io.File) std.Io.File {
+    var marked = file;
+    if (@import("builtin").os.tag == .windows) marked.flags.nonblocking = true;
+    return marked;
+}
+
 pub const max_document_bytes: u64 = 16 * 1024 * 1024;
 pub const directory_name = "registration-evidence";
 
@@ -164,8 +172,12 @@ pub fn protectInDirectory(
         .follow_symlinks = false,
     }) catch return error.StorageUnavailable;
     defer evidence_dir.close(io);
-    evidence_dir.setPermissions(io, privateDirectoryPermissions()) catch
-        return error.StorageUnavailable;
+    // Windows keeps the inherited ACL of the per-user data directory because
+    // Zig 0.16 does not implement directory permissions on that platform.
+    if (comptime std.Io.File.Permissions.has_executable_bit) {
+        evidence_dir.setPermissions(io, privateDirectoryPermissions()) catch
+            return error.StorageUnavailable;
+    }
 
     const destination_stat = evidence_dir.statFile(
         io,
@@ -300,11 +312,11 @@ fn verifyDigestFile(
     if (before.kind != .file or before.nlink != 1) {
         return error.SourceUnreadable;
     }
-    var file = evidence_dir.openFile(io, basename, .{
+    var file = noFollowFile(evidence_dir.openFile(io, basename, .{
         .allow_directory = false,
         .follow_symlinks = false,
         .resolve_beneath = true,
-    }) catch |err| return mapOpenSourceError(err);
+    }) catch |err| return mapOpenSourceError(err));
     defer file.close(io);
     const after = file.stat(io) catch return error.SourceUnreadable;
     if (after.kind != .file or
@@ -417,11 +429,12 @@ fn setProtectedFilePermissions(
     evidence_dir: std.Io.Dir,
     basename: []const u8,
 ) !void {
-    var file = try evidence_dir.openFile(io, basename, .{
+    var file = noFollowFile(try evidence_dir.openFile(io, basename, .{
+        .mode = .write_only,
         .allow_directory = false,
         .follow_symlinks = false,
         .resolve_beneath = true,
-    });
+    }));
     defer file.close(io);
     try file.setPermissions(io, privateFilePermissions());
 }

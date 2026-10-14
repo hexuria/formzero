@@ -86,6 +86,14 @@ const sqlite = @cImport({
     @cInclude("sqlite3.h");
 });
 
+// Zig 0.16 opens no-follow handles for asynchronous I/O on Windows but
+// reports them as blocking; mark them so reads take the async path.
+fn noFollowFile(file: std.Io.File) std.Io.File {
+    var marked = file;
+    if (@import("builtin").os.tag == .windows) marked.flags.nonblocking = true;
+    return marked;
+}
+
 pub const latest_schema_version: u32 = 28;
 pub const normal_file_schema_version: u32 = 27;
 const migration_component = "tax_profile";
@@ -2945,7 +2953,7 @@ fn openRegistrationFixtureLockFile(
     ) catch return Error.RegistrationFixtureDirectoryUnowned;
     try validateRegistrationFixtureRegularFile(before, 0);
 
-    var file = directory.openFile(
+    var file = noFollowFile(directory.openFile(
         io,
         registration_fixture_directory_lock_name,
         .{
@@ -2955,7 +2963,7 @@ fn openRegistrationFixtureLockFile(
             .lock = .exclusive,
             .lock_nonblocking = true,
         },
-    ) catch return Error.RegistrationFixtureDirectoryUnowned;
+    ) catch return Error.RegistrationFixtureDirectoryUnowned);
     errdefer file.close(io);
     const after = try file.stat(io);
     try validateRegistrationFixtureRegularFile(after, 0);
@@ -3011,7 +3019,7 @@ fn readRegistrationFixtureOwnerMarker(
         return Error.RegistrationFixtureDirectoryUnowned;
     }
 
-    var marker = directory.openFile(
+    var marker = noFollowFile(directory.openFile(
         io,
         registration_fixture_directory_marker_name,
         .{
@@ -3019,7 +3027,7 @@ fn readRegistrationFixtureOwnerMarker(
             .follow_symlinks = false,
             .resolve_beneath = true,
         },
-    ) catch return Error.RegistrationFixtureDirectoryUnowned;
+    ) catch return Error.RegistrationFixtureDirectoryUnowned);
     defer marker.close(io);
     const after = try marker.stat(io);
     if (after.inode != before.inode or
