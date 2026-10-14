@@ -17,10 +17,10 @@
 //! - filer/page-2 name and TIN fan-out: HTA lines 4735-4753;
 //! - RDO selection: HTA lines 4755-4756 and exact `rdo_options.zig`.
 //!
-//! The qualified byte layer is ASCII-only. Rejecting non-ASCII here makes the
-//! byte/code-unit address split deterministic and avoids inventing an ANSI
-//! code-page conversion. Values exceeding an exact legacy `maxlength` are
-//! rejected, never truncated.
+//! The qualified byte layer is Windows-1252. Live control values stay UTF-8;
+//! `maxlength` is counted in Unicode scalars (legacy UTF-16 code units for
+//! this BMP repertoire). Values exceeding an exact legacy `maxlength` are
+//! rejected, never truncated. Characters outside 1252 stay fail-closed.
 
 const std = @import("std");
 const domain_date = @import("../../../domain/date.zig");
@@ -34,9 +34,10 @@ const projection = @import("../../../tax_profile/projection.zig");
 const evolution = @import("../../../tax_profile/evolution.zig");
 const occurrences = @import("occurrences.zig");
 const rdo_options = @import("rdo_options.zig");
+const windows_1252 = @import("../../windows_1252.zig");
 
 pub const evidence_id = "desktop-7.9.6-1701qv2018-hta";
-pub const max_control_value_bytes: usize = 100;
+pub const max_control_value_bytes: usize = 300;
 
 pub const Transform = enum {
     identity,
@@ -311,15 +312,17 @@ fn findControlSeed(control_id: []const u8) ?occurrences.ControlSeed {
 
 pub const ControlValue = struct {
     bytes: [max_control_value_bytes]u8 = undefined,
-    len: u8 = 0,
+    len: u16 = 0,
 
     pub fn asSlice(self: *const ControlValue) []const u8 {
         return self.bytes[0..self.len];
     }
 
     fn init(raw: []const u8, maximum_length: u8) RenderError!ControlValue {
-        try ensureAscii(raw);
-        if (raw.len > maximum_length or raw.len > max_control_value_bytes) {
+        try ensureWindows1252(raw);
+        const units = windows_1252.utf8CodepointCount(raw) catch
+            return error.UnqualifiedTextEncoding;
+        if (units > maximum_length or raw.len > max_control_value_bytes) {
             return error.ValueExceedsLegacyControl;
         }
         var result: ControlValue = .{};
@@ -479,10 +482,10 @@ pub fn joinDate(
 }
 
 pub const AddressParts = struct {
-    line_1: [100]u8 = undefined,
-    line_1_len: u8 = 0,
-    line_2: [50]u8 = undefined,
-    line_2_len: u8 = 0,
+    line_1: [300]u8 = undefined,
+    line_1_len: u16 = 0,
+    line_2: [150]u8 = undefined,
+    line_2_len: u16 = 0,
 
     pub fn firstLine(self: *const AddressParts) []const u8 {
         return self.line_1[0..self.line_1_len];
@@ -502,10 +505,14 @@ pub fn splitAddress(
     value: *const field.RegisteredAddress,
 ) AddressMappingError!AddressParts {
     const raw = value.asSlice();
-    try ensureAscii(raw);
-    if (raw.len > 150) return error.AddressExceedsLegacyControls;
+    try ensureWindows1252(raw);
+    const total = windows_1252.utf8CodepointCount(raw) catch
+        return error.UnqualifiedTextEncoding;
+    if (total > 150) return error.AddressExceedsLegacyControls;
 
-    const first_len = @min(raw.len, 100);
+    const first_end = windows_1252.utf8ByteIndexAfterCodepoints(raw, 100) catch
+        return error.UnqualifiedTextEncoding;
+    const first_len = first_end;
     const second_len = raw.len - first_len;
     var result: AddressParts = .{};
     @memcpy(result.line_1[0..first_len], raw[0..first_len]);
@@ -519,21 +526,23 @@ pub fn joinAddress(
     line_1: []const u8,
     line_2: []const u8,
 ) AddressMappingError!field.RegisteredAddress {
-    try ensureAscii(line_1);
-    try ensureAscii(line_2);
-    if (line_1.len > 100 or line_2.len > 50) {
+    try ensureWindows1252(line_1);
+    try ensureWindows1252(line_2);
+    const first_units = windows_1252.utf8CodepointCount(line_1) catch
+        return error.UnqualifiedTextEncoding;
+    const second_units = windows_1252.utf8CodepointCount(line_2) catch
+        return error.UnqualifiedTextEncoding;
+    if (first_units > 100 or second_units > 50) {
         return error.AddressExceedsLegacyControls;
     }
-    var raw: [150]u8 = undefined;
+    var raw: [450]u8 = undefined;
     @memcpy(raw[0..line_1.len], line_1);
     @memcpy(raw[line_1.len .. line_1.len + line_2.len], line_2);
     return field.RegisteredAddress.parse(raw[0 .. line_1.len + line_2.len]);
 }
 
-fn ensureAscii(raw: []const u8) error{UnqualifiedTextEncoding}!void {
-    for (raw) |byte| {
-        if (byte > 0x7f) return error.UnqualifiedTextEncoding;
-    }
+fn ensureWindows1252(raw: []const u8) error{UnqualifiedTextEncoding}!void {
+    if (!windows_1252.utf8IsEncodable(raw)) return error.UnqualifiedTextEncoding;
 }
 
 pub const MappingBlockReason = enum {
@@ -1430,7 +1439,7 @@ test "unlisted RDO and unqualified text fail closed" {
         1,
         "987-654-321-000",
         "019",
-        "\xC3\x89XAMPLE PERSON",
+        "\xCE\xA9XAMPLE PERSON",
         "SYNTHETIC ADDRESS",
     );
     const unicode_result = try composeProfileControls(
@@ -1440,5 +1449,23 @@ test "unlisted RDO and unqualified text fail closed" {
     try std.testing.expectEqual(
         MappingBlockReason.unqualified_text_encoding,
         unicode_result.blocked.reason,
+    );
+
+    var accented = try individualRevision(
+        "profile-accented",
+        "revision-accented-1",
+        1,
+        "987-654-321-000",
+        "019",
+        "\xC3\x89XAMPLE PERSON",
+        "SYNTHETIC ADDRESS",
+    );
+    const accented_result = try composeProfileControls(
+        &.{.{ .role = .filer, .revision = &accented }},
+        on,
+    );
+    try std.testing.expectEqualStrings(
+        "\xC3\x89XAMPLE PERSON",
+        accented_result.accepted.get("frm1701q:txtTaxpayerName").?.value.asSlice(),
     );
 }

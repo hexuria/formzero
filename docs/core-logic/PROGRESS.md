@@ -585,9 +585,12 @@ Workflow findings:
 - Synthetic golden SHA-256 tests pin both outputs and the two runtime-injected
   RDO positions.
 - MSHTML separator normalization is proven as TAB + CRLF + twelve spaces.
-  Complete `CreateTextFile` machine-ANSI behavior is not yet invariant or
-  paired-capture-qualified, so raw non-ASCII fails closed and both exact-codec
-  evidence flags remain false.
+  Philippine offline eBIRForms `CreateTextFile` is pinned to Windows-1252
+  by the 2026-08-23 1601C ACP-1252 Save capture. Raw values encode as 1252;
+  scalars outside 1252 fail closed (no Windows best-fit). Editable and Final
+  Copy serializer-exact flags are true. Artifacts stay candidate until
+  calculation and validation are also reconciled. See
+  `docs/core-logic/MAC_HANDOVER_WINDOWS_1252.md`.
 
 ### 1701Q tax-profile projection
 
@@ -836,8 +839,9 @@ Workflow findings:
 ### Remaining promotion blockers
 
 - Official paired captures or controlled oracle reconciliation for the
-  calculation sequence, ordered validation, editable plaintext, Final Copy
-  plaintext, and legacy ANSI behavior.
+  calculation sequence and ordered validation. Editable and Final Copy
+  plaintext serializers are Windows-1252 exact; remaining codec work is
+  calc/validation, not another ACP guess.
 - The private 67-vector decrypt-and-encrypt corpus, protocol secret, and a
   compatible pinned compressor. The remaining observed corpus gap is 20
   observational physical instances and nine unique ciphertext hashes; source-

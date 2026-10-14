@@ -36,6 +36,7 @@ const calculations = @import("calculations.zig");
 const validation = @import("validation.zig");
 const document = @import("document.zig");
 const evidence = @import("evidence.zig");
+const windows_1252 = @import("../../windows_1252.zig");
 const sensitive_memory = @import("../../../security/sensitive_memory.zig");
 
 pub const control_count = occurrences.control_seeds.len;
@@ -97,8 +98,8 @@ pub const StoredText = struct {
 
     fn init(raw: []const u8) Error!StoredText {
         if (raw.len > max_state_text_bytes) return error.ValueTooLong;
+        if (!windows_1252.utf8IsEncodable(raw)) return error.NonAsciiValue;
         for (raw) |byte| {
-            if (byte > 0x7f) return error.NonAsciiValue;
             if (byte < 0x20 or byte == 0x7f) {
                 return error.ControlCharacter;
             }
@@ -124,7 +125,9 @@ fn validateControlLength(control_id: []const u8, raw: []const u8) Error!void {
         return error.EvidenceMismatch;
     if (contract.kind == .radio) return error.KindMismatch;
     if (contract.max_length) |maximum| {
-        if (raw.len > @as(usize, maximum)) return error.ValueTooLong;
+        const units = windows_1252.utf8CodepointCount(raw) catch
+            return error.NonAsciiValue;
+        if (units > @as(usize, maximum)) return error.ValueTooLong;
     }
 }
 
@@ -2188,9 +2191,19 @@ test "typed setters and getters reject cross-origin and wrong-kind access" {
         state.setText(
             .filing_context,
             "frm1701q:txtYear",
-            "\xc3\xa9",
+            "\xCE\xA9",
         ),
     );
+    try state.setText(
+        .filing_context,
+        "frm1701q:txtYear",
+        "\xc3\xa9",
+    );
+    try std.testing.expectEqualStrings(
+        "\xc3\xa9",
+        try state.text(.filing_context, "frm1701q:txtYear"),
+    );
+    try state.unset(.filing_context, "frm1701q:txtYear");
     try std.testing.expectError(
         error.ControlCharacter,
         state.setText(
