@@ -1,8 +1,26 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1791968875,
+  "generated_at_unix": 1792573086,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmo:2026:029",
+      "kind": "RMO",
+      "title": "RMO No. 29-2026",
+      "summary": "Prescribing the revised guidelines and procedures on the reporting and evaluation of accomplishments of RDOs under the Taxpayer Awareness Program",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2029-2026_redacted.pdf",
+      "published_at_unix": 1792512000,
+      "month_bucket": "2026-10"
+    },
+    {
+      "external_id": "bir:rmc:2026:111",
+      "kind": "RMC",
+      "title": "RMC No. 111-2026",
+      "summary": "Circularizing the Additional Personal Equity and Retirement Account (PERA) Unit Investment Trust Fund (UITF) Duly Approved by the Bangko Sentral ng Pilipinas (BSP)",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20111-2026.pdf",
+      "published_at_unix": 1792512000,
+      "month_bucket": "2026-10"
+    },
     {
       "external_id": "bir:rmo:2026:028",
       "kind": "RMO",
