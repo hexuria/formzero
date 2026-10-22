@@ -1,8 +1,17 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1792573086,
+  "generated_at_unix": 1792659663,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmc:2026:112",
+      "kind": "RMC",
+      "title": "RMC No. 112-2026",
+      "summary": "Clarifying the Provisions of Revenue Regulations No. 006-2026 on the Separate Presentation of Creditable Withholding Tax in Sales Invoices, and Providing Transitory Guidelines Thereof",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20112-2026_redacted.pdf",
+      "published_at_unix": 1792598400,
+      "month_bucket": "2026-10"
+    },
     {
       "external_id": "bir:rmo:2026:029",
       "kind": "RMO",
