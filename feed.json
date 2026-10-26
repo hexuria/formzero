@@ -1,8 +1,44 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1792659663,
+  "generated_at_unix": 1793031798,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmo:2026:030",
+      "kind": "RMO",
+      "title": "RMO No. 30-2026",
+      "summary": "Amending Pertinent Provisions of Revenue Memorandum Order No. 43-2025 re: Guidelines on the Grant of Medical Allowance to Employees of the Bureau of Internal Revenue",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMO%20No.%2030-2026_redacted.pdf",
+      "published_at_unix": 1792944000,
+      "month_bucket": "2026-10"
+    },
+    {
+      "external_id": "bir:rmc:2026:115",
+      "kind": "RMC",
+      "title": "RMC No. 115-2026",
+      "summary": "Providing Extension of Deadlines for Filing of Tax Return and Payment of Tax Dues, Including Submission of Required Attachments due to Technical Issues in the Use of EFPS",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20115-2026%20redacted.pdf",
+      "published_at_unix": 1792944000,
+      "month_bucket": "2026-10"
+    },
+    {
+      "external_id": "bir:rmc:2026:114",
+      "kind": "RMC",
+      "title": "RMC No. 114-2026",
+      "summary": "Circularizing the Full Text of the Memorandum of Agreement and the Data Sharing Agreement between the Insurance Commission and the Bureau of Internal Revenue",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20114-2026_redacted.pdf",
+      "published_at_unix": 1792944000,
+      "month_bucket": "2026-10"
+    },
+    {
+      "external_id": "bir:rmc:2026:113",
+      "kind": "RMC",
+      "title": "RMC No. 113-2026",
+      "summary": "Suspension of the Mandatory Display of the BIR Registration Seal Badge",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20113-2026_redacted.pdf",
+      "published_at_unix": 1792944000,
+      "month_bucket": "2026-10"
+    },
     {
       "external_id": "bir:rmc:2026:112",
       "kind": "RMC",

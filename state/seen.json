@@ -2410,6 +2410,51 @@
       "extractedAtUnix": 0,
       "feedRev": 0
     },
+    "bir:rmc:2026:113": {
+      "pdfSha256": null,
+      "pdfBytes": null,
+      "firstSeenAtUnix": 1793031798,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:114": {
+      "pdfSha256": null,
+      "pdfBytes": null,
+      "firstSeenAtUnix": 1793031798,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmc:2026:115": {
+      "pdfSha256": "e8c648aad00571af8fb918d71406f8025a767e777b17ee7df9228e3cd25daf3f",
+      "pdfBytes": 92363,
+      "pdfEtag": "\"d93b169df2db3fe897c920480e12395f\"",
+      "firstSeenAtUnix": 1793031798,
+      "extractedAtUnix": 1793031798,
+      "feedRev": 5,
+      "extraction": {
+        "externalId": "bir:rmc:2026:115",
+        "headerDateIssued": "2026-10-26",
+        "globalExtendedDate": "2026-10-29",
+        "window": {
+          "from": "2026-10-26",
+          "to": "2026-10-29"
+        },
+        "statedOfficeCount": null,
+        "rdos": [],
+        "rdoCodes": [],
+        "rows": [],
+        "needsManualReview": false,
+        "notes": [
+          "text layer: 1302 characters over 1 page(s)",
+          "page-1 letterhead issue date: 2026-10-26",
+          "RDO references: 0 matched, 0 distinct office(s), 0 emitted code(s) after lettered expansion",
+          "no RDO scope resolved — an unscoped nationwide override is forbidden in v1, so no override can be emitted for this circular",
+          "office-count invariant: the prose states no count, nothing to compare",
+          "deadline table: 0 block(s), 0 with a printed date pair, 0 recorded against the circular window, 0 flagged for review",
+          "no deadline-table blocks were found; the table header may have moved"
+        ]
+      }
+    },
     "bir:rmo:2026:001": {
       "pdfSha256": null,
       "pdfBytes": null,
@@ -2610,6 +2655,13 @@
       "pdfSha256": null,
       "pdfBytes": null,
       "firstSeenAtUnix": 1792573086,
+      "extractedAtUnix": 0,
+      "feedRev": 0
+    },
+    "bir:rmo:2026:030": {
+      "pdfSha256": null,
+      "pdfBytes": null,
+      "firstSeenAtUnix": 1793031798,
       "extractedAtUnix": 0,
       "feedRev": 0
     },
