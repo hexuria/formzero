@@ -1,8 +1,17 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1793031798,
+  "generated_at_unix": 1793878960,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmc:2026:116",
+      "kind": "RMC",
+      "title": "RMC No. 116-2026",
+      "summary": "Clarifying the Deadlines for the Compliance with a Subpoena Duces Tecum and Filing of Specific Explanations, Replies, Protests, Applications, Requests, and Other Submissions, When the Due Dates Thereof Fall on Days Covered by a Declared Work-From-Home Arrangement",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20116-2026_redacted.pdf",
+      "published_at_unix": 1793808000,
+      "month_bucket": "2026-11"
+    },
     {
       "external_id": "bir:rmo:2026:030",
       "kind": "RMO",
