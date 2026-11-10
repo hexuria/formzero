@@ -1,8 +1,17 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1794311776,
+  "generated_at_unix": 1794346409,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmc:2026:118",
+      "kind": "RMC",
+      "title": "RMC No. 118-2026",
+      "summary": "Extension of Filing and Payment Deadlines Due to System Maintenance Affecting the eBIRForms Offline Package",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20118-2026_redacted.pdf",
+      "published_at_unix": 1794240000,
+      "month_bucket": "2026-11"
+    },
     {
       "external_id": "bir:rmc:2026:117",
       "kind": "RMC",

@@ -2469,6 +2469,190 @@
       "extractedAtUnix": 0,
       "feedRev": 0
     },
+    "bir:rmc:2026:118": {
+      "pdfSha256": "5681e170b4839c7ee5efcadf5a30367d18374ae8f9682a13a7ae0536e2f45f53",
+      "pdfBytes": 1159345,
+      "firstSeenAtUnix": 1794346409,
+      "extractedAtUnix": 1794346409,
+      "feedRev": 6,
+      "extraction": {
+        "externalId": "bir:rmc:2026:118",
+        "headerDateIssued": "2026-11-10",
+        "globalExtendedDate": null,
+        "window": {
+          "from": "2026-11-12",
+          "to": "2026-11-12"
+        },
+        "statedOfficeCount": null,
+        "rdos": [],
+        "rdoCodes": [],
+        "rows": [
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR Form No. 2200-M — Excise Tax Return for the Amount of Excise Taxes Collected from Payment Made to Sellers of Metallic Minerals. Month of October 2026.",
+            "formCodesDisplay": [
+              "2200-M"
+            ],
+            "formCodesCanonical": [
+              "2200M"
+            ],
+            "originalDate": "2026-11-10",
+            "extendedDate": "2026-11-13",
+            "dateAssignment": "same_line",
+            "confidence": "high",
+            "notes": [
+              "Channel header: \"e-FILING          &        PAYMENT/REMITTANCE (Online/Manual)\""
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR Form Nos. 1601-C (Monthly Remittance Return of Income Taxes Withheld on Compensation), 0619-E (Monthly Remittance Form of Creditable Income Taxes Withheld—Expanded), and/or 0619-F (Monthly Remittance Form of Final Income Taxes Withheld). Non- eFPS filers; month of October 2026.",
+            "formCodesDisplay": [
+              "1601-C",
+              "0619-E",
+              "0619-F"
+            ],
+            "formCodesCanonical": [
+              "1601C",
+              "0619E",
+              "0619F"
+            ],
+            "originalDate": "2026-11-10",
+            "extendedDate": "2026-11-13",
+            "dateAssignment": "same_line",
+            "confidence": "high",
+            "notes": [
+              "Channel header: \"e-FILING & PAYMENT (Online/Manual)\""
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR Form No. 2200-C — Excise Tax Return for Cosmetic Procedures, with Monthly Summary of Cosmetic Procedures Performed. Month of October 2026.",
+            "formCodesDisplay": [
+              "2200-C"
+            ],
+            "formCodesCanonical": [
+              "2200C"
+            ],
+            "originalDate": "2026-11-10",
+            "extendedDate": "2026-11-13",
+            "dateAssignment": "same_line",
+            "confidence": "high",
+            "notes": [
+              "Channel header: \"e-FILING & PAYMENT (Online/Manual)\""
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR Form Nos. 1600-VT (Monthly Remittance Return of Value-Added Tax Withheld) and/or 1600-PT (Monthly Remittance Return of Other Percentage Taxes Withheld), including the Monthly Alphalist of Payees (MAP), where required. Non-eFPS filers; month of October 2026.",
+            "formCodesDisplay": [
+              "1600-VT",
+              "1600-PT"
+            ],
+            "formCodesCanonical": [
+              "1600VT",
+              "1600PT"
+            ],
+            "originalDate": "2026-11-10",
+            "extendedDate": "2026-11-13",
+            "dateAssignment": "same_line",
+            "confidence": "high",
+            "notes": [
+              "Channel header: \"e-FILING & PAYMENT (Online/Manual)\""
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR Form No. 1606 — Withholding Tax Remittance Return for Onerous Transfer of Real Property Other Than Capital Asset (Taxable and Exempt). Month of October 2026.",
+            "formCodesDisplay": [
+              "1606"
+            ],
+            "formCodesCanonical": [
+              "1606"
+            ],
+            "originalDate": "2026-11-10",
+            "extendedDate": "2026-11-13",
+            "dateAssignment": "same_line",
+            "confidence": "high",
+            "notes": [
+              "Channel header: \"e-FILING & PAYMENT (Online/Manual)\""
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR National Office Bldg., Senator Miriam Defensor-Santiago Avenue, Diliman, Quezon City Website: www.bir.gov.ph Trunkline: 8981-7000 ; 8929-7676 BIR Forms/Returns Original Due Date Extended Due Date",
+            "formCodesDisplay": [],
+            "formCodesCanonical": [],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING & PAYMENT (Online/Manual)\"",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR Form No. 0620 — Monthly Remittance Form of Tax Withheld on the Amount Withdrawn from the Decedent’s Deposit Account. Non-eFPS filers; month of October 2026.",
+            "formCodesDisplay": [
+              "0620"
+            ],
+            "formCodesCanonical": [
+              "0620"
+            ],
+            "originalDate": "2026-11-10",
+            "extendedDate": "2026-11-13",
+            "dateAssignment": "same_line",
+            "confidence": "high",
+            "notes": [
+              "Channel header: \"e-FILING & PAYMENT (Online/Manual)\""
+            ]
+          },
+          {
+            "channel": "nonefps",
+            "rawDescription": "BIR Forms/Returns Original Due Date Extended Due Date ONE-TIME TRANSACTIONS (ONETT)—FILING & PAYMENT BIR Form Nos. 1800, 1801, 1706, 1707 and 1707A — only where the applicable original deadline for filing and/or payment falls from November 10 to November 12, 2026. PAYMENT OF APPLICABLE TAXES BIR Payment Form No. 0605 — only where the applicable original payment deadline falls from November 10 to November 12, 2026. PAYMENT UNDER TCVD/TAX MAPPING BIR Payment Form No. 0613 (Payment Form under Tax Compliance Verification Drive/Tax Mapping) — only where the applicable original payment deadline falls from November 10 to November 12, 2026.",
+            "formCodesDisplay": [
+              "1800",
+              "1801",
+              "1706",
+              "1707",
+              "1707A",
+              "0605",
+              "0613"
+            ],
+            "formCodesCanonical": [
+              "1800",
+              "1801",
+              "1706",
+              "1707",
+              "1707A",
+              "0605",
+              "0613"
+            ],
+            "originalDate": null,
+            "extendedDate": null,
+            "dateAssignment": "window",
+            "confidence": "review",
+            "notes": [
+              "Channel header: \"e-FILING & PAYMENT (Online/Manual)\"",
+              "Block states its own deadline range 2026-11-12 to 2026-11-12",
+              "No date pair printed on this block's lines; recorded against the circular window (no override emitted)"
+            ]
+          }
+        ],
+        "needsManualReview": false,
+        "notes": [
+          "text layer: 4110 characters over 2 page(s)",
+          "page-1 letterhead issue date: 2026-11-10",
+          "no circular-level extended date found in the prose; rows with a damaged extended column cannot fall back to one",
+          "RDO references: 0 matched, 0 distinct office(s), 0 emitted code(s) after lettered expansion",
+          "no RDO scope resolved — an unscoped nationwide override is forbidden in v1, so no override can be emitted for this circular",
+          "office-count invariant: the prose states no count, nothing to compare",
+          "deadline table: 8 block(s), 6 with a printed date pair, 2 recorded against the circular window, 2 flagged for review"
+        ]
+      }
+    },
     "bir:rmo:2026:001": {
       "pdfSha256": null,
       "pdfBytes": null,
