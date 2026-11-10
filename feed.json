@@ -1,8 +1,17 @@
 {
   "schema_version": 1,
-  "generated_at_unix": 1793878960,
+  "generated_at_unix": 1794311776,
   "source_label": "BIR",
   "notices": [
+    {
+      "external_id": "bir:rmc:2026:117",
+      "kind": "RMC",
+      "title": "RMC No. 117-2026",
+      "summary": "Revised People's Freedom of Information Manual of the Bureau of Internal Revenue and Updated List of FOI Receiving Officers",
+      "url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RMC%20No.%20117-2026_redacted.pdf",
+      "published_at_unix": 1794240000,
+      "month_bucket": "2026-11"
+    },
     {
       "external_id": "bir:rmc:2026:116",
       "kind": "RMC",
